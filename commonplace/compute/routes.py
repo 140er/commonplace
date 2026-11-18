@@ -105,6 +105,8 @@ def handle(gateway, handler):
         if h.command == "GET":
             if not parts:
                 return send_json(h, 200, store.inventory(principal, **auth))
+            if parts == ["credentials"]:
+                return send_json(h, 200, store.list_credentials(principal, **auth))
             if len(parts) == 1 and parts[0] in _CREATE_FIELDS:
                 kind = parts[0]
                 return send_json(h, 200, {kind: getattr(store, "list_" + kind)(principal, **auth)})

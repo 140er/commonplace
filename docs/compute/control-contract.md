@@ -47,6 +47,7 @@ existing control DB; not a boolean authority claim. Document public methods.
   not proof that an individual target is ready; dispatch rechecks authority,
   credentials and verified bindings.
 - GET `/gateways`, `/nodes`, `/scopes`, `/executions`: named array.
+- GET `/credentials`: `{credentials:[{id,purpose,account,version,state,expires_at}],status}`; status is `ready`, `unprovisioned` or `unavailable`. Owner-only and read-only; reads only the plaintext reference columns of the separate custody file (no wrapping key, encrypted or public key, owner or binding IDs), so the contract's "avoid opening custody" still holds for key material.
 - POST `/gateways`: `{board,name,address,port,account,host_key:{algorithm,key},credential_id,credential_version,pin_confirmed:true}` -> `{gateway}`.
   `key` is base64 full public SSH host-key bytes, not an unchecked display hash.
   Numeric management endpoint only. `pin_confirmed` records explicit owner

@@ -49,3 +49,12 @@
 .compute-advanced > .compute-quiet { margin-top: 8px; }
 .compute-advanced > .compute-inventories { margin-top: 16px; }
 .compute-plain { margin-top: 8px; font-size: 13px; color: var(--text-2); }
+.compute-credential { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--well); min-width: 0; }
+.compute-credential h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.compute-credential-status { font-size: 13px; margin: 0; }
+.compute-credential-status[data-tone="warn"] { color: var(--wait); }
+.compute-credential-status[data-tone="ok"] { color: var(--text); }
+.compute-credential-next { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; }
+.compute-credential-next p { margin: 0; }
+.compute-credential-next pre { max-height: 220px; background: var(--surface); }
+.compute-verification { font-size: 13px; color: var(--text-2); margin: 0; }

@@ -25,6 +25,7 @@ import pytest
         "discovery",
         "discovery-cancellation",
         "scripts",
+        "credentials",
     ],
 )
 def test_compute_ui(case):

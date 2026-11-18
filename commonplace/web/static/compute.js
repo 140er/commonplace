@@ -15,6 +15,47 @@ export const ADVANCED = {
   nodes: "A target is one machine behind a gateway that agents may work on.",
   scopes: "A passive scope is a time-limited permission to look at a network, never to change it.",
 };
+// The one documented way to create a credential (docs/compute/RUNNING.md, "Provision a credential"); the form
+// only displays it, filling in values that match a strict safe pattern. No key is ever typed or shown here.
+const PROVISION = `uv run python - <<'PY'
+from pathlib import Path
+from commonplace.compute.credentials import (
+    CredentialBinding,
+    CredentialStore,
+    initialize_wrapping_key,
+)
+
+root = Path("WORKSPACE_DATA_DIR")
+database, key = root / "compute-credentials.sqlite3", Path("WRAPPING_KEY_FILE")
+NODE_ID = ""
+if database.exists():
+    store = CredentialStore(database, key, root, lambda *_: True)
+else:
+    if not key.exists():
+        initialize_wrapping_key(key, root, database_path=database)
+    store = CredentialStore.initialize(database, key, root, lambda *_: True)
+binding = CredentialBinding(
+    "WORKSPACE_ID", "PERSON_ID", "GATEWAY_ID", NODE_ID, "ACCOUNT", "PURPOSE", VERSION
+)
+made = store.generate(binding, object())
+store.close()
+print(made.credential_id, made.public_key)
+PY`;
+const safeName = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/, safeAccount = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+export function provisionCommand({ workspace, purpose, account, version, gateway } = {}) {
+  let text = PROVISION;
+  const fill = (token, value, ok) => { if (ok) text = text.replace(token, () => value); };
+  const target = purpose === "target", number = String(version ?? "").trim();
+  fill('"WORKSPACE_ID"', `"${workspace}"`, safeName.test(String(workspace ?? "")));
+  fill('"GATEWAY_ID"', `"${gateway}"`, safeName.test(String(gateway ?? "")));
+  fill('"ACCOUNT"', `"${account}"`, safeAccount.test(String(account ?? "")));
+  fill('"PURPOSE"', `"${target ? "target" : "gateway"}"`, purpose === "gateway" || target);
+  fill("VERSION\n", `${number}\n`, /^[1-9]\d{0,9}$/.test(number) && Number(number) <= 2 ** 31 - 1);
+  fill('NODE_ID = ""', 'NODE_ID = "TARGET_NODE_ID"', target);
+  return text;
+}
+const credentialStates = { pending: "Created, not switched on yet", active: "Active", revoked: "Revoked", expired: "Expired" };
+const credentialLabel = row => `${row.id} · version ${row.version} · account ${row.account} · ${credentialStates[row.state] || row.state}`;
 const same = (a, b) => String(a) === String(b);
 const digestOK = value => /^[a-f0-9]{64}$/.test(String(value));
 const discoveryCancellable = row => row && ["queued", "claimed", "dispatching", "uncertain"].includes(row.state) && row.reason !== "cancellation_requested";
@@ -116,11 +157,12 @@ export function computeExecutionHTML(row, { busy = false } = {}) {
 
 // One visit owns its DOM, session object and all requests. Even transports that
 // ignore abort cannot publish after a different route/session has taken over.
-export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, expectedRoute = "#/compute", title = "", onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID() }) {
+export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, expectedRoute = "#/compute", title = "", onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID(), copy = text => globalThis.navigator?.clipboard?.writeText(text) }) {
   let host = null, session = null, workspace = null, identity = null, live = false, epoch = 0, revision = 0;
   let inventory = null, projects = [], reading = false, busy = false, uncertain = false, error = "", notice = "", boardError = "";
   let discoveries = [], discoveryAvailable = false, discoveryError = "";
   let scripts = [], scriptDetail = null, scriptsError = "";
+  let credentials = [], credentialStatus = "unknown", copyNote = "";
   let advancedOpen = false;
   let editor = "", values = {}, selected = null, approvalDigest = "", attempt = null;
   const requests = new Set();
@@ -138,8 +180,8 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   function denied(failure) {
     if (failure?.status === 401) { stop(); return true; }
     if ([403, 404].includes(failure?.status)) {
-      revision++; abort(); scripts = []; scriptDetail = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; attempt = null; approvalDigest = "";
-      reading = false; busy = false; error = errorText(failure); notice = ""; render(); return true;
+      revision++; abort(); scripts = []; scriptDetail = null;  inventory = null; projects = []; editor = ""; values = {}; selected = null; attempt = null; approvalDigest = "";
+      credentials = []; credentialStatus = "unknown"; reading = false; busy = false; error = errorText(failure); notice = ""; render(); return true;
     }
     return false;
   }
@@ -155,6 +197,35 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   const check = (name, label) => `<label class="compute-check compute-wide"><input type="checkbox" name="${name}" required${values[name] ? " checked" : ""}><span>${label}</span></label>`;
   const gatewaySelect = () => select("gateway_id", "Gateway and project", (inventory?.gateways || []).map(row => [row.id, `${row.name} · ${row.board}`]));
 
+  // Reference-only credential guidance for the gateway/target form. Saving stays possible for any typed reference.
+  const credentialPurpose = () => editor === "node" ? "target" : "gateway";
+  function credentialCheck() {
+    const purpose = credentialPurpose(), id = String(values.credential_id ?? "").trim(), version = String(values.credential_version ?? "").trim(), account = String(values.account ?? "").trim();
+    const choices = credentials.filter(row => row.purpose === purpose), listed = credentialStatus === "ready" || credentialStatus === "unprovisioned";
+    if (!listed) return { problem: true, tone: "warn", text: "The list of credentials could not be read right now, so a reference cannot be checked here. You can still type one by hand; it is checked when verification runs." };
+    const row = id ? credentials.find(item => item.id === id) : null, name = e(id);
+    if (!id) return choices.length ? { tone: "info", text: "Choose a credential above, or type a reference by hand." } : { problem: true, tone: "warn", text: credentials.length ? `None of this workspace’s credentials is for a ${purpose}.` : "No credentials exist in this workspace yet." };
+    if (!row) return { problem: true, tone: "warn", text: `No credential named ${name} exists in this workspace. Pick one from the list or create one with the steps below. You can still save this reference, but it cannot be verified until that credential exists.` };
+    if (row.purpose !== purpose) return { problem: true, tone: "warn", text: `${name} is for a ${e(row.purpose)}, not a ${purpose}. Pick a ${purpose} credential or create one with the steps below.` };
+    if (row.state === "revoked") return { problem: true, tone: "warn", text: `${name} was revoked and can no longer be used. Pick another or create a new one with the steps below.` };
+    if (row.state === "expired") return { problem: true, tone: "warn", text: `${name} expired and can no longer be used. Pick another or create a new one with the steps below.` };
+    if (version && version !== String(row.version)) return { tone: "warn", text: `${name} is version ${e(row.version)}, not ${e(version)}. Change the version below.` };
+    if (account && account !== row.account) return { tone: "warn", text: `${name} is for the account ${e(row.account)}, but this form uses ${e(account)}. Use the matching account or pick another credential.` };
+    return row.state === "pending" ? { tone: "info", text: `${name} exists but has not been switched on yet. You can save now; it must be switched on before it can be used.` } : { tone: "ok", text: `${name} is active and ready for verification.` };
+  }
+  function credentialStatusHTML() {
+    const check = credentialCheck(), choices = credentials.filter(row => row.purpose === credentialPurpose());
+    const showStep = check.problem || (!String(values.credential_id ?? "").trim() && !choices.length);
+    const command = provisionCommand({ workspace, purpose: credentialPurpose(), account: values.account, version: values.credential_version, gateway: values.gateway_id });
+    return `<p class="compute-credential-status" data-tone="${check.tone}" role="status">${check.text}</p>`
+      + (showStep ? `<div class="compute-credential-next"><p><strong>How to create one</strong></p><p>Credentials are not created in the browser, so no secret passes through this page. Run this on the server as the service user, or ask the person who runs it. It prints only the new credential’s name and public key. Then choose “Check again” and pick it from the list. Replace the capitalised placeholders; the full steps are in docs/compute/RUNNING.md under “Provision a credential”.</p><pre data-compute-provision tabindex="0">${e(command)}</pre><div class="compute-actions">${button("copy-provision", "Copy these steps")}${button("refresh", reading ? "Checking…" : "Check again", reading)}</div>${copyNote ? `<p role="status">${e(copyNote)}</p>` : ""}</div>` : "");
+  }
+  function credentialSectionHTML() {
+    const choices = credentials.filter(row => row.purpose === credentialPurpose());
+    const chosen = choices.find(row => row.id === String(values.credential_id ?? "").trim());
+    const chooser = choices.length ? `<label>Choose an existing credential<select name="credential_choice"><option value="">Choose…</option>${choices.map(row => `<option value="${e(row.id)}"${chosen === row ? " selected" : ""}>${e(credentialLabel(row))}</option>`).join("")}</select><small>Only the name, version, account and state are shown. The key itself is never shown or typed here.</small></label>` : "";
+    return `<div class="compute-wide compute-credential"><h3>Credential</h3><p class="compute-quiet">A credential is the SSH identity Commonplace uses to reach this machine. Pick one that already exists in this workspace.</p>${chooser}<div data-compute-credential-status>${credentialStatusHTML()}</div></div>`;
+  }
   function editorHTML() {
     if (!editor || !manageable()) return "";
     let fields = "", heading = "", submit = "";
@@ -165,10 +236,12 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + field("name", "Name") + field("address", gateway ? "Numeric management address" : "Private numeric target address", { max: 64 })
         + field("port", "SSH port", { type: "number", min: 1, ceiling: 65535 }) + field("account", "SSH account", { max: 64 })
         + (gateway ? "" : field("interface", "Exact gateway interface", { max: 64 }))
-        + field("credential_id", "Existing credential reference", { help: "Reference only. Credential provisioning happens separately." })
+        + credentialSectionHTML()
+        + field("credential_id", "Existing credential reference", { help: "Pick one above, or type the reference by hand. Only a name is entered here, never a key." })
         + field("credential_version", "Credential version", { type: "number", min: 1 })
         + select("host_key_algorithm", "Public host key algorithm", algorithms.map(item => [item, item]))
         + area("host_key_key", "Full public SSH host key (base64 bytes)", 5464, "Use the full public host key from an independent trusted source, not a display fingerprint.")
+        + '<p class="compute-wide compute-verification"><strong>What “verification” means.</strong> Saving this form does not connect to the machine and cannot run anything. It only records the address, account, host key and credential reference you entered, marked Pending verification. A separate verification step later checks that the machine shows exactly this full public host key and that the credential is switched on for this account. If either differs, Commonplace refuses to connect instead of trusting a new key.</p>'
         + check("pin_confirmed", "I compared this full public host key with an independent trusted source for this exact gateway or target, address and account.")
         + '<p class="compute-wide">Saving records your confirmation. The connection remains pending verification and grants no execution access.</p>';
     } else if (editor === "scope") {
@@ -248,10 +321,10 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (!eligible() || reading || busy) return;
     const page = epoch, read = ++revision;
     reading = true; error = ""; render();
-    const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`), request(`${BASE}/scripts`)]);
+    const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`), request(`${BASE}/scripts`), request(`${BASE}/credentials`)]);
     if (!valid(page) || read !== revision) return;
     reading = false;
-    const [data, boards, passive, bundles] = results;
+    const [data, boards, passive, bundles, refs] = results;
     if (data.status === "rejected") { if (!denied(data.reason)) { error = errorText(data.reason); render(); } return; }
     // A failed board read does not replace the successful Compute inventories.
     if (boards.status === "rejected" && boards.reason?.status === 401) { stop(); return; }
@@ -260,6 +333,9 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     discoveryAvailable = passive.status === "fulfilled" && passive.value.capabilities?.passive_discovery === true;
     discoveryError = passive.status === "rejected" ? "Passive observations could not be loaded. Reload before collecting." : "";
     if (bundles.status === "rejected" && [401, 403].includes(bundles.reason?.status)) { denied(bundles.reason); return; }
+    if (refs.status === "rejected" && [401, 403].includes(refs.reason?.status)) { denied(refs.reason); return; }
+    credentials = refs.status === "fulfilled" && Array.isArray(refs.value.credentials) ? refs.value.credentials : [];
+    credentialStatus = refs.status === "fulfilled" && ["ready", "unprovisioned"].includes(refs.value.status) ? refs.value.status : "unavailable";
     scripts = bundles.status === "fulfilled" ? bundles.value.scripts : [];
     scriptsError = bundles.status === "rejected" ? "Script bundles could not be loaded. Reload before creating or approving scripts." : "";
     inventory = data.value;
@@ -283,7 +359,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (kind === "discovery" && !discoveryAvailable) return;
     if (kind === "script" && (!inventory.nodes.length || scriptsError)) return;
     if (kind === "script-proposal" && !scripts.some(row => same(row.id, id))) return;
-    editor = kind; selected = id; values = ["node", "gateway"].includes(kind) ? { port: "22" } : kind === "script" ? { arguments: "[]" } : kind === "script-proposal" ? { node_id: scripts.find(row => same(row.id, id)).node_id, task_number: scripts.find(row => same(row.id, id)).task_number, bundle_id: id } : {}; error = ""; notice = ""; uncertain = false; attempt = null;
+    editor = kind; selected = id; values = ["node", "gateway"].includes(kind) ? { port: "22" } : kind === "script" ? { arguments: "[]" } : kind === "script-proposal" ? { node_id: scripts.find(row => same(row.id, id)).node_id, task_number: scripts.find(row => same(row.id, id)).task_number, bundle_id: id } : {}; error = ""; notice = ""; copyNote = ""; uncertain = false; attempt = null;
     render(); host.querySelector("#compute-editor-heading")?.focus();
   }
   async function inspectScript(id) {
@@ -355,6 +431,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (target.disabled || !eligible()) return;
     if (action === "inspect-script") { void inspectScript(id); return; }
     if (action === "refresh") { void refresh(); return; }
+    if (action === "copy-provision") { void copyProvision(); return; }
     if (busy) return;
     if (action === "close") { editor = ""; values = {}; selected = null; approvalDigest = ""; error = ""; attempt = null; if (uncertain) notice = "Receipt unavailable. Reload inventory before starting another action."; render(); return; }
     if (uncertain) return;
@@ -367,6 +444,20 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       if (row && !row.revoked && Number(row.expires_at) > now()) void mutate(`${BASE}/scopes/${enc(id)}/revoke`, {}, "scopes", "revoke");
     } else if (["gateway", "node", "scope", "proposal", "approve", "discovery", "script", "script-proposal"].includes(action)) open(action, id);
   }
+  async function copyProvision() {
+    if (!["gateway", "node"].includes(editor)) return;
+    const page = epoch;
+    let note = "Copied.";
+    try { await copy(provisionCommand({ workspace, purpose: credentialPurpose(), account: values.account, version: values.credential_version, gateway: values.gateway_id })); }
+    catch { note = "Copying is not available here. Select the text above and copy it."; }
+    if (!valid(page) || !["gateway", "node"].includes(editor)) return;
+    copyNote = note; refreshCredentialStatus();
+  }
+  // Update only the guidance so typing keeps its focus; fall back to a full render when it is not mounted.
+  function refreshCredentialStatus() {
+    const spot = host?.querySelector?.("[data-compute-credential-status]");
+    if (spot) spot.innerHTML = credentialStatusHTML(); else render();
+  }
   function input(event) {
     const field = event.target;
     if (!editor || !eligible() || !field.name) return;
@@ -376,6 +467,12 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       const confirmation = host.querySelector('[name="pin_confirmed"]');
       if (confirmation) confirmation.checked = false;
     }
+    if (["gateway", "node"].includes(editor) && field.name === "credential_choice") {
+      const row = credentials.find(item => item.id === field.value && item.purpose === credentialPurpose());
+      if (row) { values.credential_id = row.id; values.credential_version = String(row.version); }
+      copyNote = ""; render(); return;
+    }
+    if (["gateway", "node"].includes(editor) && ["credential_id", "credential_version", "account", "gateway_id"].includes(field.name)) { copyNote = ""; refreshCredentialStatus(); }
   }
   const routeChanged = () => { if (live && !eligible()) stop(); };
   function stop() {
@@ -386,6 +483,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     host = null; session = null; workspace = null; identity = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; approvalDigest = ""; attempt = null;
     discoveries = []; discoveryAvailable = false; discoveryError = "";
     scripts = []; scriptDetail = null; scriptsError = "";
+    credentials = []; credentialStatus = "unknown"; copyNote = "";
     busy = false; reading = false; uncertain = false; notice = ""; error = ""; boardError = "";
   }
   function show() {
