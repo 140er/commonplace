@@ -412,7 +412,7 @@ const cases = {
     const rich = view({open: [step("m1", "merge", "started")], in_doubt: [step("t1", "thread", "in_doubt")], findings: [finding(1)]});
     const {host} = await mount({responses: [rich], restore: [pending()]});
     for (const name of ["void", "step-void", "reassign", "retire", "finding-ack", "resume", "heartbeat"]) assert.equal(has(host, name), false, name);
-    assert.match(host.text, /Voiding a step, reassigning it and retiring an experiment are not offered on this page yet\. The owner does those through the orchestrator tools\./);
+    assert.match(host.text, /Voiding a step, reassigning it and retiring an experiment are not offered on this page yet\. The owner does those through the Coworker tools\./);
     assert.ok(has(host, "end"), "End lease keeps its existing confirm");
     assert.ok(has(host, "restore"));
   },
