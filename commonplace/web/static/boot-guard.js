@@ -23,7 +23,7 @@
     } catch { /* The visible Retry remains usable. */ }
   };
   const watchdog = setTimeout(fail, 30000);
-  globalThis.commonplaceBootGuard = {started() { stop(); }};
+  globalThis.commonplaceBootGuard = {started() { stop(); }, failed: fail};
   addEventListener('error', event => {
     if (event.target?.type === 'module' || /\/app\/[^?#]+\.js(?:[?#]|$)/.test(event.filename || '')) fail();
   }, true);

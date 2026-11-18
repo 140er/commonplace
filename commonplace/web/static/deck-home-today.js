@@ -121,6 +121,7 @@ export function runHTML(run, e) {
   return `<article class="bh-run${failed ? ' bh-run-failed' : ''}"><header>${run.bot ? `${avatar(run.bot, e)}<b>${e(run.bot.name)}</b>` : ''}${timeHTML(run.at, e)}</header><p>${e(displayText(run.text))}</p>${steps.length ? `<ul>${steps.map(step => `<li class="bt-step" data-state="${e(step.state)}"><span aria-hidden="true">${['ok', 'done', 'completed', 'succeeded'].includes(step.state) ? '✓' : ['running', 'working'].includes(step.state) ? '▍' : '·'}</span>${e(displayText(step.label))}</li>`).join('')}</ul>` : ''}${failed || !steps.length ? `<p class="bh-run-state" role="status">${e(stateName(run.state))}</p>` : ''}${failed ? `${run.reason ? `<p class="bh-run-reason">${e(displayText(run.reason))}${run.code === 'needs_configuration' && run.canConfigure ? ' <a href="#/settings">Choose one</a>' : ''}</p>` : ''}${run.intent ? `<button type="button" class="bh-retry" data-bh-retry="${e(run.requestId)}">Try again</button>` : ''}` : ''}</article>`;
 }
 export function addStyles(doc) {
+  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-home-today.css')) return;
   if (!doc?.head || doc.querySelector('link[data-home-today]')) return;
   const link = doc.createElement('link'); link.rel = 'stylesheet'; link.href = new URL('./deck-home-today.css', import.meta.url).href; link.dataset.homeToday = ''; doc.head.append(link);
 }

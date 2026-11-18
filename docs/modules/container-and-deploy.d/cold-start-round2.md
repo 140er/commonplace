@@ -1,0 +1,4 @@
+- **Owns:** The separate production web asset image stage.
+- **Promises:** The Node 22.14.0 stage copies the committed compiler scripts and static sources, builds with Node built-ins only, and copies generated output into the existing Python runtime before packaging. Local generated assets are excluded from the build context.
+- **How it fails:** An asset build failure stops image creation. No npm install or third-party JavaScript build dependency is needed. Node does not enter the runtime; development without a manifest stays unbundled.
+- **Tests:** tests/test_commonplace_deploy.py and tests/test_web_bundle.py.

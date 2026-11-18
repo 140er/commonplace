@@ -1,3 +1,9 @@
+FROM node:22.14.0-bookworm-slim AS web-assets
+WORKDIR /build
+COPY scripts/web-build/*.mjs ./scripts/web-build/
+COPY commonplace/web/static/ ./commonplace/web/static/
+RUN node scripts/web-build/build.mjs
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -18,6 +24,7 @@ WORKDIR /opt/commonplace
 COPY pyproject.toml README.md ./
 COPY mempalace/ ./mempalace/
 COPY commonplace/ ./commonplace/
+COPY --from=web-assets /build/commonplace/web/static/build/ ./commonplace/web/static/build/
 ARG COMMONPLACE_BUILD_COMMIT=""
 RUN python -c "import os, pathlib, re; sha = os.environ['COMMONPLACE_BUILD_COMMIT']; assert not sha or re.fullmatch(r'(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})', sha), 'Invalid build commit'; pathlib.Path('commonplace/web/_build_commit.txt').write_text(sha + chr(10), encoding='ascii')"
 RUN pip install ".[commonplace]"

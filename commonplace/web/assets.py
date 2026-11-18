@@ -68,6 +68,26 @@ def closure(graph, entries):
 
 
 def index(body, static):
+    manifest_path = static / "build" / "manifest.json"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_bytes())
+        body = re.sub(rb'<link rel="stylesheet"[^>]+>\n?', b"", body)
+        styles = f'<link rel="stylesheet" href="/app/build/{manifest["css"]}">\n'
+        styles += "".join(
+            f'<link rel="preload" href="/app/fonts/{name}" as="font" type="font/woff2" crossorigin>\n'
+            for name in manifest["fonts"]
+        )
+        body = body.replace(b"</title>", b"</title>\n" + styles.encode())
+        body = body.replace(
+            b'<script type="module" src="/app/app.js"></script>',
+            b'<script type="module" data-bundle-entry>' + bundle_entry(static) + b"</script>",
+        )
+        return body.replace(
+            b'<script src="/app/deck-prepaint.js">',
+            b"<script data-boot-guard>"
+            + (static / "boot-guard.js").read_bytes()
+            + b'</script>\n<script src="/app/deck-prepaint.js">',
+        )
     links = "".join(
         f'<link rel="modulepreload" href="/app/{name}">\n'
         for name in closure(graph(static), ["app.js"])
@@ -90,7 +110,27 @@ def boot_policy(static, policy):
     digest = base64.b64encode(
         hashlib.sha256((static / "boot-guard.js").read_bytes()).digest()
     ).decode()
-    return policy.replace("script-src 'self'", f"script-src 'self' 'sha256-{digest}'")
+    hashes = f"'sha256-{digest}'"
+    if (static / "build" / "manifest.json").is_file():
+        entry_digest = base64.b64encode(hashlib.sha256(bundle_entry(static)).digest()).decode()
+        hashes += f" 'sha256-{entry_digest}'"
+    return policy.replace("script-src 'self'", f"script-src 'self' {hashes}")
+
+
+def bundle_entry(static):
+    """The URL fragment is client-only; select its route bundle without another fetch."""
+    manifest = json.loads((static / "build" / "manifest.json").read_bytes())
+    return (
+        "globalThis.commonplaceAssetManifest="
+        + json.dumps(manifest, separators=(",", ":"))
+        + ";\nconst parts=location.hash.replace(/^#\\//,'').split(/[/?]/);"
+        "let route=parts[0]||'home';"
+        "if(route==='bots'&&['coworkers','compute','management','conversations'].includes(parts[2]))route='coworkers';"
+        "if(route==='board'&&parts[2]==='chat')route='chat';"
+        "const routes=globalThis.commonplaceAssetManifest.routes;"
+        "try{await import('/app/build/'+(Object.hasOwn(routes,route)?routes[route]:routes.shell));}"
+        "catch{globalThis.commonplaceBootGuard?.failed();}\n"
+    ).encode()
 
 
 def route_preload(static):

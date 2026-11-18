@@ -1,0 +1,4 @@
+- **Owns:** Lossless transfer compression of large board REST JSON responses.
+- **Promises:** Explicit gzip negotiation compresses responses of at least 4096 bytes; decoded JSON and verbatim card words are unchanged. Responses retain no-store and vary by accepted encoding.
+- **How it fails:** Clients without gzip support, or with gzip quality zero or invalid quality, receive the original representation. Stored content, authorization and mutation versions are unchanged.
+- **Tests:** tests/test_web_bundle.py and tests/test_commonplace_boards.py.

@@ -772,11 +772,13 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
 
 test('Add a machine navigates to the existing enrollment screen without a discovery write', async () => {
   const f = harness(); await flush();
-  const before = f.calls.length;
+  // Read-only map hydration may still settle; only a write would start discovery.
+  const writes = () => f.calls.filter(([, options]) => options?.method && options.method !== 'GET').length;
+  const before = writes();
   f.click({ computeAction: 'add-machine' }); await flush();
   assert.deepEqual(f.nav, ['#/admin']);
   // Enrollment moved to Admin: replace the old discovery POST expectation with no writes or form here.
-  assert.equal(f.calls.length, before);
+  assert.equal(writes(), before);
   assert.doesNotMatch(f.root.html, /<form|<input/);
   f.ui.stop();
 });

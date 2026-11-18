@@ -85,6 +85,9 @@ commonplace = ["cryptography>=42"]
 # Opt-in two-hop Compute transport; no network capability is enabled on install.
 compute = ["cryptography>=42", "paramiko>=5.1,<6"]
 dev = [
+    # The wheel artifact regression calls the existing build backend directly,
+    # with no installer, build isolation, cache lookup or network during tests.
+    "hatchling",
     "cryptography>=42",
     "paramiko>=5.1,<6",
     "pytest>=7.0",
@@ -202,6 +205,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build]
+artifacts = ["commonplace/web/static/build/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["mempalace", "commonplace"]
