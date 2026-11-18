@@ -5,7 +5,9 @@ import json
 import logging
 import secrets
 import sqlite3
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from commonplace import control_db, redact, sessions
 from commonplace.boards.service import BoardService
@@ -15,7 +17,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 from commonplace.projects import models
 
-from . import chat_context
+from . import budgets, chat_context, chat_ledger, costs, jobs, registry
 from .registry import CHAT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ RELAY_CODES = (
     "bad_output",
     "no_access",
     "daily_limit",
+    "budget_exceeded",
 )
 RUNNER_FAIL_CODES = ("cli_failed", "cli_timeout", "cli_not_configured", "bad_output")
 
@@ -97,6 +100,80 @@ def _day(now: float) -> tuple[str, str]:
         hour=0, minute=0, second=0, microsecond=0
     )
     return control_db._iso(start), control_db._iso(start + timedelta(days=1))
+
+
+def _ts(now: float) -> str:
+    return datetime.fromtimestamp(now, timezone.utc).strftime(costs.TS)
+
+
+def _store(gateway, workspace_id: str):
+    """The workspace's runner store when it exists (no budget can be set before it does)."""
+    if not (Path(gateway.workspace_dir(workspace_id)) / "runner.sqlite3").is_file():
+        return None
+    return jobs.open_store(gateway, workspace_id)
+
+
+def _refusal_text(stop: dict) -> str:
+    return (
+        "This message was not sent to your runner: the %s budget (%s) is spent for the window "
+        "%s to %s. Answers already running finish. The workspace owner can raise or clear "
+        "the budget."
+        % (
+            budgets.label(stop["scope_kind"], stop["scope_key"]),
+            stop["budget"],
+            stop["window_start"],
+            stop["window_end"],
+        )
+    )
+
+
+def _refuse(gateway, workspace_id: str, board: str, message_id: int, user_id: str, stop) -> None:
+    """Tell the person in the chat why their message got no runner answer."""
+    try:
+        store.open_replies(gateway, workspace_id).add(
+            board=board,
+            message_id=message_id,
+            for_user=user_id,
+            kind="answer",
+            code="budget_exceeded",
+            text=_refusal_text(stop),
+            redacted=(),
+            model=None,
+        )
+    except (OSError, sqlite3.Error, TimeoutError) as exc:
+        log_failure(logger, "chat budget refusal reply failed", exc)
+
+
+def _settle(db, rconn, now: float) -> None:
+    """End the ledger rows of chat jobs that are no longer leased (an expired lease may or may
+    not have run, so it ends as uncertain with an unknown cost)."""
+    for row in rconn.execute(
+        "SELECT job_id FROM run_ledger WHERE source='chat' AND ended_at IS NULL"
+    ).fetchall():
+        with db._lock:
+            job = db._conn.execute(
+                "SELECT state FROM chat_runner_jobs WHERE id=?", (row["job_id"],)
+            ).fetchone()
+        if job is None or job["state"] != "leased":
+            chat_ledger.finish(rconn, {"id": row["job_id"]}, None, "uncertain", _ts(now))
+
+
+def _report(gateway, row, machine, status, now, *, provider, model, usage=None) -> None:
+    """Append the chat job's one cost event. A failure is logged; the answer still stands."""
+    try:
+        with jobs.open_store(gateway, row["workspace_id"]).transaction() as rconn:
+            chat_ledger.finish(
+                rconn,
+                row,
+                machine,
+                status,
+                _ts(now),
+                provider=provider,
+                model=model,
+                usage=usage,
+            )
+    except Exception as exc:
+        log_failure(logger, "chat cost report failed", exc)
 
 
 def _used_today(conn, workspace_id, user_id, now):
@@ -164,8 +241,32 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float) -> bool
         return False
     if main_active(gateway, principal, board, now) and not any(m["relay_always"] for m in eligible):
         return False
+    agents = [
+        machine["worker_connection_id"]
+        for machine in (registry.get_machine(db, ws, m["machine_id"]) for m in eligible)
+        if machine is not None
+    ]
+    runner = _store(gateway, ws)
+    # The budget check and the insert share one runner write transaction, like a card start.
+    with runner.transaction() if runner is not None else nullcontext() as rconn:
+        stop = None
+        if rconn is not None:
+            _settle(db, rconn, now)
+            stops = [
+                budgets.stop_reason(rconn, _ts(now), agent=agent, project=board, task_number=None)
+                for agent in agents
+            ]
+            stop = stops[0] if stops and all(stops) else None
+        capped, inserted = _insert(db, ws, board, message_id, user, cli, model, stop, now)
+    if stop is not None and inserted:
+        _refuse(gateway, ws, board, message_id, user, stop)
+    return bool(inserted and not capped and stop is None)
+
+
+def _insert(db, ws, board, message_id, user, cli, model, stop, now):
     with db._lock, db._tx() as conn:
-        capped = _used_today(conn, ws, user, now) >= DAILY_CAP
+        capped = stop is None and _used_today(conn, ws, user, now) >= DAILY_CAP
+        skipped = capped or stop is not None
         inserted = conn.execute(
             "INSERT OR IGNORE INTO chat_runner_jobs "
             "(id,workspace_id,board,message_id,user_id,cli,model,state,code,created_at,updated_at) "
@@ -178,13 +279,13 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float) -> bool
                 user,
                 cli,
                 model,
-                "skipped" if capped else "queued",
-                "daily_limit" if capped else "",
+                "skipped" if skipped else "queued",
+                "budget_exceeded" if stop is not None else "daily_limit" if capped else "",
                 _stamp(now),
                 _stamp(now),
             ),
         ).rowcount
-    return bool(inserted and not capped)
+    return capped, inserted
 
 
 def _poster(gateway, row):
@@ -283,6 +384,36 @@ def lease(
         except Exception as exc:
             log_failure(logger, "chat relay finish failed", exc)
         return None
+    try:
+        with jobs.open_store(gateway, claimed["workspace_id"]).transaction() as rconn:
+            _settle(db, rconn, now)
+            stop = budgets.stop_reason(
+                rconn,
+                _ts(now),
+                agent=machine["worker_connection_id"],
+                project=claimed["board"],
+                task_number=None,
+            )
+            if stop is None:
+                chat_ledger.start(rconn, claimed, machine, _ts(now))
+    except Exception as exc:
+        log_failure(logger, "chat lease admission failed", exc)
+        with db._lock:
+            _finish(db._conn, claimed, "failed", "bad_output", now)
+        return None
+    if stop is not None:
+        # Queued, not running: a spent budget skips it. Running work is never touched.
+        with db._lock:
+            _finish(db._conn, claimed, "skipped", "budget_exceeded", now)
+        _refuse(
+            gateway,
+            claimed["workspace_id"],
+            claimed["board"],
+            claimed["message_id"],
+            claimed["user_id"],
+            stop,
+        )
+        return None
     return {
         "job": claimed["id"],
         "lease_token": token,
@@ -308,7 +439,15 @@ def _fenced(conn, machine, job, lease_token, now):
 
 
 def answer(
-    gateway, machine: dict, job: str, lease_token: str, text: str, cli: str, model: str, now: float
+    gateway,
+    machine: dict,
+    job: str,
+    lease_token: str,
+    text: str,
+    cli: str,
+    model: str,
+    now: float,
+    usage: dict | None = None,
 ) -> dict:
     machine = dict(machine)
     db = gateway.db
@@ -351,12 +490,30 @@ def answer(
             except (OSError, sqlite3.Error):
                 raise ReplyBusy() from None
             _finish(conn, row, "done", "ok", now)
+    _report(
+        gateway,
+        row,
+        machine,
+        "errored" if poster is None else "completed",
+        now,
+        provider=cli,
+        model=model,
+        usage=usage,
+    )
     if poster is None:
         raise Fenced()
     return {"job": job, "state": "done"}
 
 
-def fail(gateway, machine: dict, job: str, lease_token: str, code: str, now: float) -> dict:
+def fail(
+    gateway,
+    machine: dict,
+    job: str,
+    lease_token: str,
+    code: str,
+    now: float,
+    usage: dict | None = None,
+) -> dict:
     machine = dict(machine)
     db = gateway.db
     with db._lock, db._tx() as conn:
@@ -364,6 +521,9 @@ def fail(gateway, machine: dict, job: str, lease_token: str, code: str, now: flo
         if code not in RUNNER_FAIL_CODES:
             raise InvalidReply("Invalid runner failure code")
         _finish(conn, row, "failed", code, now)
+    _report(
+        gateway, row, machine, "errored", now, provider=row["cli"], model=row["model"], usage=usage
+    )
     return {"job": job, "state": "failed", "code": code}
 
 

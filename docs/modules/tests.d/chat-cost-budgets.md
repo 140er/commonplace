@@ -1,0 +1,3 @@
+- **Tests:**
+
+  - `tests/test_chat_cost_budgets.py` covers chat in the cost ledger: one cost event per chat job readable per workspace, agent and project (and left out of the card sums), a retried answer not counted twice, unknown usage counted apart and never blocking, invalid usage refused, failed and expired jobs ending with an unknown cost, refusal of a new chat start at 100% with a plain reply in the chat, project and agent scopes, a queued start re-checked at lease, a running turn finishing, the 80% warning for the workspace's owner only and once per window, no secrets or text in ledger rows, and chat unchanged with no budget.

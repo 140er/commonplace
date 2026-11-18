@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 TS = "%Y-%m-%dT%H:%M:%SZ"
-SOURCES = ("machine_report", "run_end", "backfill", "recorded")
+SOURCES = ("machine_report", "run_end", "backfill", "recorded", "chat")
 # Runs that have a cost to report: started, or maybe started (uncertain).
 COUNTED = ("started", "completed", "errored", "stopped", "uncertain")
 WINDOWS = ("calendar_month", "calendar_week", "calendar_day", "rolling_days")
@@ -307,7 +307,7 @@ def summarize(conn, start, end, *, boards=None, listed=UNKNOWN_LIST_LIMIT):
     marks = ",".join("?" for _ in COUNTED)
     rows = conn.execute(
         "SELECT l.job_id, l.task_number, l.board_slug, l.project, l.agent, l.status, "
-        "l.created_at, e.input_tokens, e.output_tokens, e.cost_micros, e.currency, "
+        "l.source, l.created_at, e.input_tokens, e.output_tokens, e.cost_micros, e.currency, "
         "COALESCE(e.cost_unknown,0) AS declared "
         "FROM run_ledger l LEFT JOIN cost_events e ON e.id=" + _LATEST + " "
         "WHERE l.created_at>=? AND l.created_at<? AND l.status IN (" + marks + ") "
@@ -327,7 +327,7 @@ def summarize(conn, start, end, *, boards=None, listed=UNKNOWN_LIST_LIMIT):
         "by_project": _groups(rows, lambda r: r["project"], lambda r: {"project": r["project"]}),
         "by_board": _groups(rows, lambda r: r["board_slug"], lambda r: {"board": r["board_slug"]}),
         "by_card": _groups(
-            rows,
+            [row for row in rows if row["source"] != "chat"],
             lambda r: (r["board_slug"], r["task_number"]),
             lambda r: {"board": r["board_slug"], "task": r["task_number"]},
         ),
@@ -342,6 +342,7 @@ def summarize(conn, start, end, *, boards=None, listed=UNKNOWN_LIST_LIMIT):
                     "status": row["status"],
                     "started_at": row["created_at"],
                     "declared_unknown": bool(row["declared"]),
+                    "source": row["source"] or "card",
                 }
                 for row in unknown[:listed]
             ],
