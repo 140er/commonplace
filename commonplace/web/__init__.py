@@ -27,7 +27,8 @@ CSP = (
 def _response(h, status, body=b"", content_type="text/plain; charset=utf-8", headers=None):
     h.send_response(status)
     h.send_header("Content-Type", content_type)
-    h.send_header("Content-Length", str(len(body)))
+    if status != 304:
+        h.send_header("Content-Length", str(len(body)))
     h.send_header("Cache-Control", (headers or {}).get("Cache-Control", "no-store"))
     h.send_header("Content-Security-Policy", CSP)
     h.send_header("X-Content-Type-Options", "nosniff")

@@ -1,4 +1,4 @@
 - **Owns:** Route controller imports, route styles, parallel module discovery and static asset revalidation.
 - **Promises:** The shell loads independently of unopened route controllers; only the current route's styles gate its content; Deck prepaint precedes the entry module; identity retains its ten-second first attempt and three bounded retries.
-- **How it fails:** Failed imports or styles leave a plain Retry state without signing out; concurrent imports share a promise; stale route completions cannot replace a newer route; unversioned assets revalidate with ETag, while matching content fingerprints permit immutable caching.
+- **How it fails:** Failed imports or styles leave a plain Retry state without signing out; concurrent imports share a promise; stale route completions cannot replace a newer route; unversioned assets revalidate with ETag, while matching content fingerprints permit immutable caching; conditional reads preserve the cached representation.
 - **Tests:** tests/test_cold_modules.py, tests/test_boot_recovery.py, tests/cold_modules_browser.py and all Node harness wrappers.

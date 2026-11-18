@@ -121,6 +121,10 @@ async def measure(args):
                                     unused.add("bots.js")
                                 fetched = {path.rsplit("/", 1)[-1] for path in requested}
                                 assert not unused & fetched, (route, sorted(unused & fetched))
+                                # Revalidation must keep cached executable bodies usable on reload.
+                                await page.reload(wait_until="domcontentloaded")
+                                await page.wait_for_selector(key, timeout=20000)
+                                assert not errors, errors
                         finally:
                             await context.close()
                 finally:

@@ -71,6 +71,7 @@ def test_static_files_revalidate_without_redownload(cold_hub):
         conn.request("GET", "/app/api.js", headers={**cookie, "If-None-Match": etag})
         response = conn.getresponse()
         assert response.status == 304 and response.read() == b""
+        assert response.getheader("Content-Length") is None
         assert body
     finally:
         conn.close()
