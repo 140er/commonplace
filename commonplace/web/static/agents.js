@@ -1,3 +1,4 @@
+import { wingLabel } from "./wing-label.js";
 import { connectionLabel, scopeHTML } from './deck-settings-capy.js';
 import { api, escape as e, elapsed } from "./api.js";
 import { agentTypesControl } from "./tasktypes.js";
@@ -44,7 +45,7 @@ export function usedText(value) {
 
 function readAccess(c, wings) {
   if (!wings.length) return "";
-  return `<details data-agent-access><summary>Read access</summary>${wings.map((wing) => `<label><input type="checkbox" value="${e(wing)}" ${(c.read_wings || []).some((grant) => grant === "*" || grant === wing) ? "checked" : ""}>${e(wing)}</label>`).join("")}<button type="button" data-action="agent-wings" data-agent-mutation data-agent-id="${e(c.id)}">Save read access</button></details>`;
+  return `<details data-agent-access><summary>Read access</summary>${wings.map((wing) => `<label><input type="checkbox" value="${e(wing)}" ${(c.read_wings || []).some((grant) => grant === "*" || grant === wing) ? "checked" : ""}>${e(wingLabel(wing))}</label>`).join("")}<button type="button" data-action="agent-wings" data-agent-mutation data-agent-id="${e(c.id)}">Save read access</button></details>`;
 }
 
 // The consent copy comes from the server (one source); agents and seats are never grantable.

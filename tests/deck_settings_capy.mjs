@@ -172,3 +172,9 @@ test('a member cannot submit through segmented controls even if a click is dispa
   list.onclick({target:{closest:()=>button}});
   assert.equal(controls[0].disabled,true);
 });
+
+test('agent read-access wings share readable labels and keep grant values', async () => {
+  const { agentsView } = await import('../commonplace/web/static/agents.js');
+  const html = agentsView({ wings: ['project_blue_eye'], connections: [{ id: 'fixture', name: 'Fixture', auth: 'pat', read_wings: ['project_blue_eye'] }] });
+  assert.match(html, /value="project_blue_eye" checked>Blue Eye<\/label>/);
+});
