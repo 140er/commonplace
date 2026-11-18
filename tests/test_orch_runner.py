@@ -1273,7 +1273,7 @@ def test_404_reviewer_and_gate_gaps_get_an_item_with_a_button_and_the_same_fix_i
     assert refusal.code == "model_unresolved" and refusal.details["role"] == "gate"
     assert "gate" in text and "Agent models" in text and "None" not in text
     [item] = model_role_items(world)
-    assert item["action"]["role"] == "gate" and "Agent models" in item["message"]
+    assert "gate" in item["roles"] and "Agent models" in item["message"]
 
 
 def test_404_start_roles_agree_with_the_role_a_start_runs(world):
