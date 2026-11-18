@@ -25,6 +25,10 @@ if (scenario === 'card-history') {
 } else if (scenario === 'styles') {
   const {loadRouteStyles} = await import('../commonplace/web/static/route-styles.js');
   const links = [], doc = {createElement: () => ({remove() {}}), head: {append(link) {links.push(link);}}};
+  const existing = {sheet: {}};
+  const reused = loadRouteStyles('#/memory', {...doc, querySelector: () => existing});
+  assert.equal(links.length, 0, 'Document styles must keep their original cascade position');
+  await reused;
   let settled = false;
   const first = loadRouteStyles('#/settings', doc).then(() => {settled = true;});
   await Promise.resolve(); assert.equal(settled, false, 'Content must wait for its route CSS');

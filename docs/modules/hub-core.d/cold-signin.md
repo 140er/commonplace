@@ -1,4 +1,4 @@
-- **Promises:**
-
-  - Anonymous app-shell GETs (documents, assets and provider inventory) use a separate bounded 600/minute per-source budget. Credential routes retain both 30/minute anonymous and 10/minute credential budgets; per-email limits are unchanged. Other anonymous requests and short links keep their existing policies. No route gains public access.
-  - Throttled browser navigations to sign-in routes retain HTTP 429 and Retry-After, with a readable token-free recovery screen. JSON clients keep the existing error contract.
+- **Owns:** Anonymous shell admission and throttled sign-in navigation recovery.
+- **Promises:** Anonymous documents and provider inventory use a bounded 600/minute per-source budget; public script, style, font and image GETs use a separate 6000/minute per-source ceiling for anonymous and signed-in callers without spending API/session admission; credential routes retain both 30/minute anonymous and 10/minute credential budgets; per-email, other anonymous and short-link policies remain unchanged; no route gains public access.
+- **How it fails:** Throttled browser sign-in navigations retain HTTP 429 and Retry-After with a readable token-free recovery screen; JSON clients keep the existing error contract.
+- **Tests:** tests/test_commonplace_public_surface.py, tests/test_cold_asset_limits.py and tests/test_commonplace_email_auth.py.

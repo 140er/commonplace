@@ -54,6 +54,11 @@ def test_initial_modules_preload_before_app_execution(cold_hub):
     assert response.status == 200
     preloads = set(re.findall(r'rel="modulepreload" href="/app/([^"]+)"', html))
     assert initial_modules() <= preloads
+    # Preloading controllers must retain the document's stylesheet cascade.
+    expected_styles = re.findall(
+        r'<link rel="stylesheet"[^>]+>', (STATIC / "index.html").read_text()
+    )
+    assert re.findall(r'<link rel="stylesheet"[^>]+>', html) == expected_styles
     assert html.index('src="/app/deck-prepaint.js"') < html.index('src="/app/app.js"')
 
 

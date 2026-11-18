@@ -1,4 +1,4 @@
-// Keep the shared look blocking; wait for this route's styles before drawing its content.
+// Reuse document styles in their original cascade order; missing route CSS still gates content.
 const styles = {
   settings: ['deck-settings-capy.css'],
   board: ['deck-board.css', 'chat.css', 'chatdock.css'],
@@ -19,8 +19,10 @@ const pending = new Map();
 export function loadRouteStyles(hash = '', doc = globalThis.document) {
   const name = hash.replace(/^#\//, '').split(/[/?]/)[0] || 'home';
   return Promise.all((Object.hasOwn(styles, name) ? styles[name] : []).map(file => {
+    const existing = doc.querySelector?.('link[rel="stylesheet"][href="/app/' + file + '"]');
+    if (existing?.sheet) return Promise.resolve();
     if (!pending.has(file)) pending.set(file, new Promise((resolve, reject) => {
-      const link = doc.createElement('link');
+      const link = existing || doc.createElement('link');
       const finish = error => {
         clearTimeout(timer); link.onload = link.onerror = null;
         if (error) { pending.delete(file); link.remove(); reject(error); } else resolve();
@@ -29,7 +31,7 @@ export function loadRouteStyles(hash = '', doc = globalThis.document) {
       link.rel = 'stylesheet'; link.href = '/app/' + file;
       link.onload = () => finish();
       link.onerror = () => finish(new Error('Could not load screen styles. Retry to load this screen.'));
-      doc.head.append(link);
+      if (!existing) doc.head.append(link);
     }));
     return pending.get(file);
   }));

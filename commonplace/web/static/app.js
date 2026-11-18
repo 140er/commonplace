@@ -2193,6 +2193,7 @@ setInterval(() => {
   });
 }, 15000);
 async function boot() {
+  globalThis.commonplaceBootGuard?.started();
   if (state.bootPending || state.me) return;
   state.bootPending = true;
   try {

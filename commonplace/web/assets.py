@@ -1,5 +1,6 @@
 """Parallel module discovery and revalidation for the unbundled web app."""
 
+import base64
 import hashlib
 import json
 import re
@@ -72,11 +73,24 @@ def index(body, static):
         for name in closure(graph(static), ["app.js"])
     )
     # Keep the blocking look script in its original position before the module entry.
+    body = body.replace(
+        b'<script src="/app/deck-prepaint.js">',
+        b"<script data-boot-guard>"
+        + (static / "boot-guard.js").read_bytes()
+        + b'</script>\n<script src="/app/deck-prepaint.js">',
+    )
     return body.replace(
         b'<script type="module" src="/app/app.js">',
         links.encode()
         + b'<script async src="/app/route-preload.js"></script>\n<script type="module" src="/app/app.js">',
     )
+
+
+def boot_policy(static, policy):
+    digest = base64.b64encode(
+        hashlib.sha256((static / "boot-guard.js").read_bytes()).digest()
+    ).decode()
+    return policy.replace("script-src 'self'", f"script-src 'self' 'sha256-{digest}'")
 
 
 def route_preload(static):

@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -33,7 +34,12 @@ async def measure(args):
     from commonplace import sessions
     from commonplace.boards.service import BoardService
     from commonplace.extensions import ToolContext
+    from commonplace.web import STATIC
     from tests._commonplace_helpers import Hub
+
+    expected_styles = re.findall(
+        r'<link rel="stylesheet" href="([^"]+)"', (STATIC / "index.html").read_text()
+    )
 
     def unavailable(*_args):
         raise RuntimeError("Fixture memory worker unavailable")
@@ -66,6 +72,15 @@ async def measure(args):
                                 [{"name": sessions.COOKIE, "value": session, "url": origin}]
                             )
                             page = await context.new_page()
+                            await page.add_init_script("""(() => {
+                              const observer = new MutationObserver(() => {
+                                if (!document.querySelector('.shell')) return;
+                                window.coldShellStyles = [...document.querySelectorAll('link[rel="stylesheet"]')]
+                                  .map(link => ({path:new URL(link.href).pathname,ready:!!link.sheet}));
+                                observer.disconnect();
+                              });
+                              observer.observe(document, {childList:true,subtree:true});
+                            })();""")
                             errors = []
                             requested = []
                             page.on(
@@ -92,8 +107,21 @@ async def measure(args):
                             await page.goto(origin + "/app/" + route, wait_until="domcontentloaded")
                             await page.wait_for_selector(".shell", timeout=20000)
                             shell = await page.evaluate("performance.now()")
-                            await page.wait_for_selector(key, timeout=20000)
+                            try:
+                                await page.wait_for_selector(key, timeout=20000)
+                            except Exception:
+                                args.output.parent.mkdir(parents=True, exist_ok=True)
+                                args.output.with_suffix(".failure.html").write_text(
+                                    await page.content()
+                                )
+                                await page.screenshot(
+                                    path=str(args.output.with_suffix(".failure.png"))
+                                )
+                                raise
                             result = await page.evaluate("""() => ({key:performance.now(),
+                              shellStyles:window.coldShellStyles,
+                              styles:[...document.querySelectorAll('link[rel="stylesheet"]')]
+                                .map(link => ({path:new URL(link.href).pathname,ready:!!link.sheet})),
                               resources:performance.getEntriesByType('resource').map(r => ({
                                 path:new URL(r.name).pathname+new URL(r.name).search,
                                 end:r.responseEnd,ms:r.duration}))})""")
@@ -102,6 +130,12 @@ async def measure(args):
                             )
                             results.append(result)
                             assert not errors, errors
+                            for styles in (result["shellStyles"], result["styles"]):
+                                # Route controllers can add their own extra styles; the document's
+                                # original links must already be ready and keep their cascade order.
+                                pinned = [s for s in styles if s["path"] in expected_styles]
+                                assert [s["path"] for s in pinned] == expected_styles, styles
+                                assert all(s["ready"] for s in pinned), styles
                             if args.assert_lazy:
                                 unused = {
                                     "admin.js",
@@ -127,6 +161,46 @@ async def measure(args):
                                 assert not errors, errors
                         finally:
                             await context.close()
+                    if args.assert_lazy:
+                        # Fail a required module before app.js can run, then recover through Retry.
+                        recovery = []
+                        for failure in (429, 503, "network"):
+                            context = await browser.new_context()
+                            try:
+                                await context.add_cookies(
+                                    [{"name": sessions.COOKIE, "value": session, "url": origin}]
+                                )
+                                page = await context.new_page()
+                                reads = []
+                                page.on(
+                                    "request",
+                                    lambda req, reads=reads: reads.append(urlsplit(req.url).path),
+                                )
+
+                                async def refuse(route, _request, failure=failure):
+                                    if failure == "network":
+                                        await route.abort()
+                                    else:
+                                        await route.fulfill(status=failure, body="Unavailable")
+
+                                await page.route("**/app/api.js", refuse)
+                                await page.goto(
+                                    origin + "/app/#/settings", wait_until="domcontentloaded"
+                                )
+                                await page.wait_for_selector("[data-module-retry]:visible")
+                                text = await page.locator("#root").inner_text()
+                                assert "Could not reach Commonplace, retrying..." in text
+                                assert "Sign in" not in text and "Email a sign-in link" not in text
+                                assert not any(p.startswith("/api/") for p in reads), reads
+                                await page.unroute("**/app/api.js", refuse)
+                                await page.locator("[data-module-retry]").click()
+                                await page.wait_for_selector(".settings", timeout=20000)
+                                recovery.append({"failure": failure, "retry_recovered": True})
+                            finally:
+                                await context.close()
+                        args.output.with_suffix(".recovery.json").write_text(
+                            json.dumps(recovery, indent=2) + "\n"
+                        )
                 finally:
                     await browser.close()
         finally:

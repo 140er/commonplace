@@ -2809,6 +2809,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
         topup = False
+        asset = self.command == "GET" and ratelimit.app_asset(path)
+        if asset:
+            # Public files share a generous per-IP ceiling, never the session/API budget.
+            policies.append((ratelimit.STATIC_ASSETS, ip))
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
@@ -2817,7 +2821,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
             policies.append((ratelimit.CREDENTIALS, ip))
-        if principal is not None:
+        if principal is not None and not asset:
             if principal.person:
                 session = sessions.cookie_value(self.headers.get("Cookie")) or ""
                 identity = "session:" + hashlib.sha256(session.encode()).hexdigest()
@@ -2837,7 +2841,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         # Short links replace the anonymous policy with their own budget.
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
-        elif principal is None:
+        elif principal is None and not asset:
             # Only shell reads use this budget. Credential routes keep BOTH
             # their original anonymous and sensitive limits, including GETs.
             shell = self.command == "GET" and (

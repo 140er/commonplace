@@ -30,11 +30,11 @@ def _response(h, status, body=b"", content_type="text/plain; charset=utf-8", hea
     if status != 304:
         h.send_header("Content-Length", str(len(body)))
     h.send_header("Cache-Control", (headers or {}).get("Cache-Control", "no-store"))
-    h.send_header("Content-Security-Policy", CSP)
+    h.send_header("Content-Security-Policy", (headers or {}).get("Content-Security-Policy", CSP))
     h.send_header("X-Content-Type-Options", "nosniff")
     h.send_header("Referrer-Policy", "no-referrer")
     for name, value in (headers or {}).items():
-        if name != "Cache-Control":
+        if name not in ("Cache-Control", "Content-Security-Policy"):
             h.send_header(name, value)
     h.end_headers()
     h.wfile.write(body)
@@ -103,14 +103,16 @@ def _static(h):
     if mime.startswith("text/"):
         mime += "; charset=utf-8"
     body = target.read_bytes()
+    policy = None
     if target.name == "index.html":
         from . import assets
 
         body = assets.index(body, STATIC)
-    _asset_response(h, body, mime)
+        policy = assets.boot_policy(STATIC, CSP)
+    _asset_response(h, body, mime, policy=policy)
 
 
-def _asset_response(h, body, mime):
+def _asset_response(h, body, mime, *, policy=None):
     from .assets import etag
 
     tag = etag(body)
@@ -121,6 +123,8 @@ def _asset_response(h, body, mime):
         "Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache",
         "ETag": tag,
     }
+    if policy:
+        headers["Content-Security-Policy"] = policy
     validators = [
         item.strip().removeprefix("W/") for item in h.headers.get("If-None-Match", "").split(",")
     ]
