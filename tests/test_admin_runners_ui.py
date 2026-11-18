@@ -31,5 +31,5 @@ def test_runner_block_routes_and_one_time_tokens(hub):
 
 def test_admin_screen_wires_the_runner_block(hub):
     app = _served(hub, "app")
-    assert 'from "./adminrunners.js"' in app
+    assert 'import("./adminrunners.js")' in app
     assert "runners: createRunnerBlock({ api, e })" in app

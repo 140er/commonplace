@@ -229,7 +229,7 @@ test("the canvas mounts the panel with one import and one call", async () => {
   const canvas = await read("topology-map.js");
   assert.equal(canvas.split("createNodePanel").length - 1, 2);
   assert.match(canvas, /import \{ createNodePanel \} from "\.\/topology-detail\.js";/);
-  assert.match(await read("index.html"), /<link rel="stylesheet" href="\/app\/topology-detail\.css">/);
+  assert.match(await read("route-styles.js"), /'compute-map': \[.*'topology-detail\.css'/);
 });
 
 // ---------- the screen ----------

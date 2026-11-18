@@ -1,3 +1,4 @@
+export { waitingTotal } from "./bot-counts.js";
 // Bots screen: a roster of named bots and one streamed chat thread per bot.
 // Pure markup functions (…HTML) take the escape helper `e`; createBots owns state, polling and events.
 // Controls carry data-bots-action / data-bots-form, never data-action, so the shell's own click
@@ -380,12 +381,6 @@ const newRequestId = () => {
 };
 /** Questions waiting on the person across all their bots. The General bot's count already covers every
  * readable project, so project bots are not added on top of it (each question would count twice). */
-export function waitingTotal(bots) {
-  const n = (bot) => Number.isSafeInteger(bot?.waiting) && bot.waiting > 0 ? bot.waiting : 0;
-  const list = Array.isArray(bots) ? bots : [];
-  const general = list.find((bot) => bot?.kind === "general");
-  return general ? n(general) : list.reduce((sum, bot) => sum + n(bot), 0);
-}
 const lastId = (messages) => messages.reduce((top, m) => Math.max(top, Number(m.id) || 0), 0);
 const merge = (rows, added) => [...new Map([...rows, ...added].map((m) => [m.id, m])).values()].sort((a, b) => a.id - b.id);
 const waitingIds = (list) => list.map((b) => b.card).sort().join(",");

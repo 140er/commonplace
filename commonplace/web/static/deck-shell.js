@@ -208,7 +208,8 @@ export function createDeckShell({ root, api, context, on }) {
       if (mic) mic.click(); else if (context?.()?.voice) void context().voice(composer()?.querySelector('[name="text"], [name="reply"], textarea[data-draft], input[data-draft], .cb-composer textarea')); else context?.()?.go?.('#/');
     }
   });
-  root?.addEventListener?.('keydown', event => {
+  // A route render can move focus to body while its lazy controller finishes.
+  (root?.ownerDocument || root)?.addEventListener?.('keydown', event => {
     const sheet = root.querySelector('#phone-tabs .deck-more');
     if (event.key !== 'Escape' || !sheet || sheet.hidden) return;
     showMore(sheet, false); root.querySelector('.deck-tab-more')?.focus();

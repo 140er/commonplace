@@ -152,6 +152,17 @@ def after(db, workspace_id: str, seq: int = 0, limit: int = 200) -> list:
     return [_row(r) for r in rows]
 
 
+def recent(db, workspace_id: str, limit: int = 200) -> list:
+    """A bounded initial web window; ascending order and the live cursor survive."""
+    ensure_schema(db)
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT * FROM events WHERE workspace_id=? ORDER BY seq DESC LIMIT ?",
+            (workspace_id, limit),
+        ).fetchall()
+    return [_row(row) for row in reversed(rows)]
+
+
 def latest_seq(db, workspace_id: str) -> int:
     ensure_schema(db)
     with db._lock:

@@ -700,8 +700,8 @@ test("each roster load reports the bots to the shell, so the rail badge needs no
 
 test("the shell routes #/bots and #/bots/<id>, loads the stylesheet and lists Bots once in rail and tabs", async () => {
   const app = await read("app.js"), html = await read("index.html"), rail = await read("rail.js");
-  assert.match(html, /<link rel="stylesheet" href="\/app\/bots\.css">/);
-  assert.match(app, /import \{ createBots, waitingTotal \} from "\.\/bots\.js"/);
+  assert.match(await read("route-styles.js"), /bots: \['bots\.css'/);
+  assert.match(app, /createBots \} = await import\("\.\/bots\.js"\)/);
   assert.ok(app.includes("bots(?:\\/[A-Za-z0-9_-]+)?"), "route regex");
   assert.match(app, /botsScreen\(\)/);
   const { renderRail, renderPhoneTabs } = await import("../commonplace/web/static/rail.js");

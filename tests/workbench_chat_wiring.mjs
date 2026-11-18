@@ -34,7 +34,7 @@ const api = async (path, options) => {
   if (path.endsWith('/status')) return {orchestrator: {visible: false, last_seen: 'private'}};
   return {me: {user: 'maya'}, board: selectedBoard.slug, messages: rows, replies, cursor: messageCursor, reply_cursor: replyCursor};
 };
-const context = {state, root, e, enc: encodeURIComponent, api, adminUI: null, instanceAdminUI: null, botsUI: null, ...chatstate,
+const context = {loadRouteModule: async () => {}, state, root, e, enc: encodeURIComponent, api, adminUI: null, instanceAdminUI: null, botsUI: null, ...chatstate,
   seenStore: (user, slug) => chatstate.seenStore(user, slug, storageAPI), clearSeen: (user) => chatstate.clearSeen(user, storageAPI),
   currentBoard: () => selectedBoard, singleKeysEnabled: () => true, chatUI: null,
   createChat: (options) => {chatOptions = options; creates++; return pane;},
@@ -42,10 +42,10 @@ const context = {state, root, e, enc: encodeURIComponent, api, adminUI: null, in
     dockOptions = options;
     dock = {opened: false, mounts: [], updates: [], destroyed: 0,
       mount(header, settings) {this.mounts.push({header, settings}); this.settings = settings;},
-      async open(options) {this.opened = true; this.openedWith = options; await pane.show(this.settings.board.slug, options);},
+      async open(options) {this.opened = true; this.openedWith = options; options?.resume; dockOptions.chat.setOpen(true); await dockOptions.chat.show(this.settings.board.slug, options);},
       close(options) {this.opened = false; this.closedWith = options;},
       isOpen() {return this.opened;}, update(options) {this.updates.push(options);},
-      destroy() {this.destroyed++; pane.stop();},
+      destroy() {this.destroyed++; dockOptions.chat.stop();},
     }; return dock;
   },
   renderPhoneTabs: (options) => {context.phoneOptions = options; return 'tabs';},
@@ -84,9 +84,8 @@ if (which === 'board_header') {
   assert.match(titleActions, /id="chat-toggle"/);
 } else if (which === 'styles') {
   const html = await read('index.html');
-  assert.match(html, /href="\/app\/chatdock.css"/);
-  assert.ok(html.indexOf('/app/chatdock.css') > html.indexOf('/app/workbench.css'));
-  assert.match(html, /href="\/app\/chat.css"/);
+  assert.match(html, /href="\/app\/workbench.css"/);
+  assert.match(await read('route-styles.js'), /board: \[.*'chat\.css'.*'chatdock\.css'/);
 } else if (which === 'anchors') {
   for (const [start,end] of [['function remember()', 'async function signin('], ['function navigation()', 'function showError'], ['function title(', 'function decision('], ['function needsView()', 'function boardView()'], ['function spaceView()', 'function boardsView()'], ['async function hydrateSpaceTasks()', 'function mergeChat('], ['function handoffForm(', 'async function settingsView('], ['async function approveProposal(', 'function clearDecisionDraft('], ['async function sendDecide(', 'async function route()']]) source(start,end);
 } else if (which === 'board_guards') {
@@ -108,13 +107,18 @@ if (which === 'board_header') {
   }
   mount(); await flush();
   const service = state.workbenchChat;
+  if (['closed_pane', 'inflight_close', 'visible_read', 'details', 'signout', 'chat_destroy'].includes(which)) await dockOptions.chat.show(alpha.slug);
   if (which === 'mount') {
-    assert.equal(dockOptions.root, nodes.get('.shell')); assert.equal(dockOptions.chat, pane);
+    assert.equal(dockOptions.root, nodes.get('.shell'));
+    assert.equal(creates, 0, 'A closed dock does not construct its transcript');
+    await dockOptions.chat.show(alpha.slug); assert.equal(creates, 1);
     nodes.set('#chat-content', make()); assert.equal(chatOptions.mount(), nodes.get('#chat-content'));
     assert.equal(dock.settings.board, alpha); assert.equal(dock.settings.label, 'Chat');
-    assert.match(app, /from "\.\/chatdock.js"/); assert.match(app, /from "\.\/chatstate.js"/);
+    assert.match(app, /import\("\.\/chatdock.js"\)/); assert.match(app, /from "\.\/chatstate.js"/);
   } else if (which === 'reuse') {
     run('mountWorkbenchChat(); mountWorkbenchChat();'); await flush();
+    assert.equal(creates, 0);
+    await Promise.all([dockOptions.chat.show(alpha.slug), dockOptions.chat.show(alpha.slug)]);
     assert.equal(creates, 1); assert.equal(dock.mounts.length, 3); assert.equal(dock.destroyed, 0);
   } else if (which === 'needs_project' || which === 'memory_project') {
     state.base = which === 'needs_project' ? '#/needs' : '#/memory?q=exact'; selectedBoard = harbor;

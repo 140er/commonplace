@@ -408,8 +408,13 @@ def needs_me(
             + " ORDER BY t.created_at,t.id",
             (snooze.now_stamp(),),
         ).fetchall()
+        # Authority is evaluated once per wing in this request, never cached
+        # across principals or requests. A project can contain thousands of cards.
+        readable = {
+            wing: principal.policy.can_read_wing(wing) for wing in {r["board_wing"] for r in rows}
+        }
         for row in rows:
-            if not principal.policy.can_read_wing(row["board_wing"]):
+            if not readable[row["board_wing"]]:
                 continue
             own_ask = (
                 bool(coordinated)
@@ -2663,13 +2668,14 @@ class BoardService(lifecycle.LifecycleMixin):
                     if runner is not _UNSET
                     else None
                 )
-                for row in conn.execute(
-                    "SELECT id FROM tasks WHERE board_id=? "
-                    + ("AND parent_number IS NULL " if top_level else "")
-                    + "ORDER BY priority,position,id",
+                for task in conn.execute(
+                    "SELECT t.*,b.slug AS board,b.wing AS board_wing,"
+                    "b.claim_minutes,b.done_needs_review,b.coordinator AS board_coordinator FROM tasks t "
+                    "JOIN boards b ON b.id=t.board_id WHERE t.board_id=? "
+                    + ("AND t.parent_number IS NULL " if top_level else "")
+                    + "ORDER BY t.priority,t.position,t.id",
                     (b["id"],),
                 ):
-                    task = task_row(conn, row["id"])
                     if not shown and snooze.active(conn, task["id"]):
                         continue
                     if (task["id"] in hidden) != archived:

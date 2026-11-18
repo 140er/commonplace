@@ -1,0 +1,67 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+const app = readFileSync('commonplace/web/static/app.js', 'utf8');
+const source = app.slice(app.indexOf('// Controllers load'), app.indexOf('import { api,'))
+  .replace(/import\("([^"]+)"\)/g, (_, path) => `load(${JSON.stringify(path)})`);
+const requested = [];
+let failing = false;
+const context = {state: {deck: {on: () => true, owns: () => false}}, root: {}, api() {}, refresh() {}, showError() {},
+  async loadRouteStyles() {},
+  async load(path) {
+    requested.push(path);
+    if (failing) throw new Error('Module unavailable');
+    if (path === "./decide.js") return import("../commonplace/web/static/decide.js");
+    return {rulesHandlers: () => ({})};
+  }, rulesUI: null};
+runInNewContext(source + '\nglobalThis.prepare = prepareRoute;', context);
+const scenario = process.argv[2];
+const paths = () => requested.map(path => path.slice(2, -3));
+if (scenario === 'new-bot-dispatch') {
+  await context.prepare('#/bots?new=1');
+  assert.deepEqual(paths(), ['bots']);
+  const begin = app.indexOf('if (state.base.startsWith("#/board/")) boardView();');
+  const dispatch = app.slice(begin, app.indexOf('if (!current()) return true;', begin));
+  let bots = 0;
+  await runInNewContext('(async () => {' + dispatch + '})()', {
+    state:{base:'#/bots?new=1',deck:{owns:()=>false}}, background:false,
+    botsScreen() {bots++;}, needsView() {throw new Error('New bot must not dispatch an unloaded Needs controller');},
+  });
+  assert.equal(bots, 1);
+} else if (scenario === 'card-history') {
+  await context.prepare('#/card/1', '#/board/project');
+  const history = runInNewContext('eventItem({at:"2026-01-01T00:00:00Z",actor:"owner",kind:"decide",choice:"Continue",text:"<exact words>"}, value => value)', context);
+  assert.match(history, /Continue/);
+  assert.match(history, /&lt;exact words&gt;/);
+} else if (scenario === 'styles') {
+  const {loadRouteStyles} = await import('../commonplace/web/static/route-styles.js');
+  const links = [], doc = {createElement: () => ({remove() {}}), head: {append(link) {links.push(link);}}};
+  const existing = {sheet: {}};
+  const reused = loadRouteStyles('#/memory', {...doc, querySelector: () => existing});
+  assert.equal(links.length, 0, 'Document styles must keep their original cascade position');
+  await reused;
+  let settled = false;
+  const first = loadRouteStyles('#/settings', doc).then(() => {settled = true;});
+  await Promise.resolve(); assert.equal(settled, false, 'Content must wait for its route CSS');
+  assert.equal(links.length, 1); links[0].onload(); await first;
+  await loadRouteStyles('#/settings', doc); assert.equal(links.length, 1);
+  const failed = loadRouteStyles('#/console', doc); links.at(-1).onerror();
+  await assert.rejects(failed, /Could not load screen styles/);
+  const retry = loadRouteStyles('#/console', doc); assert.equal(links.length, 3);
+  links.at(-1).onload(); await retry;
+} else if (scenario === 'retry') {
+  failing = true;
+  await assert.rejects(context.prepare('#/console'), /Module unavailable/);
+  failing = false;
+  await context.prepare('#/console');
+  assert.deepEqual(paths(), ['console', 'console']);
+} else if (scenario === 'single-flight') {
+  await Promise.all([context.prepare('#/admin'), context.prepare('#/admin')]);
+  assert.deepEqual(paths().sort(), ['admin', 'adminrunners', 'invites']);
+} else {
+  const pages = {settings: ['projects', 'agent-schedules', 'tool-policy', 'plan', 'agents'], admin: ['admin', 'adminrunners', 'invites'], memory: ['memory', 'board', 'chatdock'], bots: ['bots'], board: ['board', 'children', 'projectpanel', 'chatdock', 'cardmove']};
+  await context.prepare(scenario === 'board' ? '#/board/project' : `#/${scenario}`);
+  assert.deepEqual(paths().sort(), pages[scenario].sort());
+  assert.ok(!paths().includes('chat'), 'A closed chat does not load its transcript controller');
+  assert.ok(!paths().includes('details'), 'An unopened drawer does not load its controller');
+}

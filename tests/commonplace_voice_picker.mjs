@@ -187,7 +187,7 @@ assert.doesNotMatch(source, /SpeechRecognition|createObjectURL|\.submit\(|reques
 // session-expired event must still replace that shell with sign-in on a late 401.
 const apiSource = await readFile(new URL("../commonplace/web/static/api.js", import.meta.url), "utf8");
 const adminSource = await readFile(new URL("../commonplace/web/static/admin.js", import.meta.url), "utf8");
-const { boundedRequest } = await import(`data:text/javascript;base64,${Buffer.from(adminSource).toString("base64")}`);
+const { boundedRequest } = await import(`data:text/javascript;base64,${Buffer.from(adminSource.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href)).toString("base64")}`);
 const bootSource = app.slice(app.indexOf("async function boot()"), app.lastIndexOf("\nboot();"));
 const expiredSource = app.split("\n").find((line) => line.startsWith('document.addEventListener("session-expired"'));
 function bootFixture() {

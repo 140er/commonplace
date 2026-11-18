@@ -57,7 +57,7 @@ def test_instance_console_member_admin_foreign_target_and_retry(hub, chromium, w
         expect(draft).to_have_value("unsubmitted-draft")
         settings_panel = page.locator('[data-instance-panel="workspace_settings"]')
         expect(settings_panel.get_by_text("Workspace ID", exact=True)).to_be_visible()
-        expect(settings_panel.get_by_text("Orchestration", exact=True)).to_be_visible()
+        expect(settings_panel.get_by_text("Coworker management", exact=True)).to_be_visible()
         expect(
             settings_panel.get_by_text("Not configured. No store has been created.", exact=True)
         ).to_have_count(0)
@@ -73,8 +73,10 @@ def test_instance_console_member_admin_foreign_target_and_retry(hub, chromium, w
         assert page.locator(".instance-grid > section").count() == 5
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         if width < 700:
-            page.get_by_role("button", name="Project: Projects. Switch project", exact=True).click()
-            expect(page.get_by_role("option", name="Instance console", exact=True)).to_be_visible()
+            page.locator(".deck-tab-more").click()
+            expect(
+                page.locator("#deck-more").get_by_role("link", name="Instance console", exact=True)
+            ).to_be_visible()
             page.keyboard.press("Escape")
         else:
             page.locator(".user-menu summary").click()

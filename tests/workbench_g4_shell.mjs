@@ -28,7 +28,7 @@ const nodes = {};
 for (const selector of ['#content', '#card-panel', '#title', '#head-actions', '.shell']) nodes[selector] = node();
 const root = { querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {} };
 let titleActions = '';
-const context = { root, state, e, placeLifecycle: () => {}, mountProjectPanel: async () => {}, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
+const context = { prepareRoute: async () => {}, loadRouteModule: async () => {}, root, state, e, placeLifecycle: () => {}, mountProjectPanel: async () => {}, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
   matchMedia: () => ({ matches: false }), remember: () => ({}), restore() {}, markOpenCard() {}, title(_text, actions) { titleActions = actions; }, voice: { stop() {} }, showError() {}, message: (text) => text, showLoading: (host, text) => { host.innerHTML = text; } };
 const run = (s) => runInNewContext(s, context);
 // The shell's board helpers (child cards, phone width); a shell without them only lists state.cards.
@@ -87,7 +87,7 @@ if (which === 'details-button') {
   await run('cardPanel(5, 0)');
   assert.equal(hide.focused, 1); assert.equal(state.detailsSheet, false);
 } else if (which === 'row-src') {
-  const body = slice('onCard(number, row) {', '\n    const dock = createDock(').replace(/\}\);\s*$/, '');
+  const body = slice('onCard(number, row) {', '\n    let chatLoading').replace(/\};\s*$/, '');
   helpers();
   run(`var callbacks = { ${body} };`);
   assert.equal(typeof context.callbacks.onCard, 'function');

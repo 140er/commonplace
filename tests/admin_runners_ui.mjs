@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 let input = ''; for await (const part of process.stdin) input += part;
 const sources = JSON.parse(input);
-const load = text => import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`);
+const load = text => import(`data:text/javascript;base64,${Buffer.from(text.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href)).toString('base64')}`);
 const wingLabelURL = new URL('../commonplace/web/static/wing-label.js', import.meta.url).href;
 const { createRunnerBlock, parseList, chosenWings, grantBody } = await load(sources.adminrunners.replace('"./wing-label.js"', () => JSON.stringify(wingLabelURL)));
 const { createAdmin } = await load(sources.admin);

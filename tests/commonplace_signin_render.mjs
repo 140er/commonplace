@@ -9,7 +9,7 @@ const selection = process.env.SIGNIN_CASE || "all";
 const test = (name, fn) => {
   if (selection === "all" || (selection === "guards" ? !name.startsWith("RED ") : name.startsWith(`RED ${selection}:`))) nodeTest(name, fn);
 };
-const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+const url = (source) => `data:text/javascript;base64,${Buffer.from(source.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href)).toString("base64")}`;
 const read = (name) => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), "utf8");
 const apiUrl = url(await read("api.js"));
 const { escape } = await import(apiUrl);
