@@ -460,9 +460,11 @@ def link_remove(ctx, body):
         "source": target.get("source"),
         "target": target.get("target"),
         "label": target.get("label") or "",
-        "crossings": target.get("access_count") or 0,
     }
     effect_id = _effect_id(effect)
+    # The use count moves whenever the link is crossed, so it is shown but never part of the
+    # change a confirm has to match.
+    crossings = target.get("access_count") or 0
     ends = [
         f"{e.get('wing')} / {e.get('room')}"
         for e in (target.get("source"), target.get("target"))
@@ -473,11 +475,14 @@ def link_remove(ctx, body):
         + (f' (label "{effect["label"]}")' if effect["label"] else "")
         + ".",
         "Both places and every stored text in them stay exactly as they are.",
-        f"The record's use count ({effect['crossings']}) goes with it; the link can be added "
+        f"The record's use count ({crossings}) goes with it; the link can be added "
         "again, starting from zero.",
     ]
     if not body.get("confirm"):
-        return 200, {"preview": {**effect, "lines": lines}, "effect_id": effect_id}
+        return 200, {
+            "preview": {**effect, "crossings": crossings, "lines": lines},
+            "effect_id": effect_id,
+        }
     if body.get("effect_id") != effect_id:
         _fail(
             409,
