@@ -1,4 +1,4 @@
 - **Owns:** Ignored local web dependency and generated asset directories.
-- **Promises:** Build dependencies and content-addressed output remain reproducible from committed sources and the package lock.
+- **Promises:** Wheel packaging explicitly includes generated static build artifacts despite source-control ignores. Build dependencies and content-addressed output remain reproducible from committed sources and the package lock.
 - **How it fails:** An absent local dependency install makes the asset build fail explicitly; no generated bundles are committed.
 - **Tests:** tests/test_web_bundle.py.

@@ -118,6 +118,34 @@ def test_missing_manifest_retains_unbundled_development_entrypoint(tmp_path):
     assert html.count(b'rel="stylesheet"') == 23
 
 
+def test_wheel_contains_the_generated_manifest_and_exact_bundle_bytes(built, tmp_path):
+    from zipfile import ZipFile
+
+    source, manifest = built
+    for name in ("pyproject.toml", "README.md", ".gitignore", "mempalace/version.py"):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / name, target)
+    (tmp_path / "mempalace/__init__.py").write_text("")
+    shutil.copytree(source / "build", tmp_path / "commonplace/web/static/build")
+    (tmp_path / "commonplace/__init__.py").write_text("")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=10)
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path / "wheels")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    with ZipFile(next((tmp_path / "wheels").glob("*.whl"))) as wheel:
+        for name in ("manifest.json", manifest["css"], *manifest["routes"].values()):
+            assert (
+                wheel.read("commonplace/web/static/build/" + name)
+                == (source / "build" / name).read_bytes()
+            )
+
+
 @pytest.mark.parametrize(
     "encoding,compressed",
     [

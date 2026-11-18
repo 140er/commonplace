@@ -138,7 +138,7 @@ The production image adds an isolated Node 22.14.0 stage. It runs `npm ci
 --prefix scripts/web-build --ignore-scripts --no-audit --no-fund` against the
 committed lock (esbuild 0.25.12), then `node scripts/web-build/build.mjs`.
 Only generated `commonplace/web/static/build/` output is copied into the Python
-runtime before its existing package installation. The runtime needs no Node.
+runtime before its existing package installation. The wheel configuration explicitly retains these generated artifacts despite source-control ignores; a packaging regression test verifies the manifest and exact bundle bytes in the wheel. The runtime needs no Node.
 A developer can run the same two commands; without `build/manifest.json` the
 server retains the existing unbundled document and all 23 original stylesheet
 links. This deliberately preserves the Workbench source-link tests. The new
