@@ -244,6 +244,77 @@ def test_links_add_and_remove_leave_every_text_alone(chat_hub):
     assert post(h, h.owner, "/api/organise/links/remove", {"id": identifier})[0] == 404
 
 
+def add_link(h, label="same topic"):
+    link = {
+        "source_wing": "shared",
+        "source_room": "alpha",
+        "target_wing": "shared",
+        "target_room": "beta",
+        "label": label,
+    }
+    preview = post(h, h.owner, "/api/organise/links/add", link)[1]
+    status, done, _ = post(
+        h,
+        h.owner,
+        "/api/organise/links/add",
+        {**link, "confirm": True, "effect_id": preview["effect_id"]},
+    )
+    assert status == 201, done
+    return h.get(h.owner, "/api/organise/links")[1]["tunnels"][0]["id"]
+
+
+def test_link_remove_confirm_survives_a_crossing(chat_hub):
+    h = chat_hub
+    token = seed(h)
+    identifier = add_link(h)
+    status, preview, _ = post(h, h.owner, "/api/organise/links/remove", {"id": identifier})
+    assert status == 200
+    shown = preview["preview"]["crossings"]
+    # Someone crosses the link between preview and confirm: its use count moves.
+    crossed, _ = h.call(token, "mempalace_follow_tunnels", wing="shared", room="alpha")
+    assert crossed, crossed
+    now = h.get(h.owner, "/api/organise/links")[1]["tunnels"][0]["access_count"]
+    assert now > shown
+    # A new preview shows the current use count but names the same change.
+    again = post(h, h.owner, "/api/organise/links/remove", {"id": identifier})[1]
+    assert again["preview"]["crossings"] == now
+    assert again["effect_id"] == preview["effect_id"]
+    status, done, _ = post(
+        h,
+        h.owner,
+        "/api/organise/links/remove",
+        {"id": identifier, "confirm": True, "effect_id": preview["effect_id"]},
+    )
+    assert status == 200 and done["done"], done
+    assert h.get(h.owner, "/api/organise/links")[1]["tunnels"] == []
+
+
+def test_link_remove_confirm_refused_when_the_link_itself_changed(chat_hub):
+    h = chat_hub
+    token = seed(h)
+    identifier = add_link(h)
+    preview = post(h, h.owner, "/api/organise/links/remove", {"id": identifier})[1]
+    # The link's label is replaced between preview and confirm.
+    replaced, _ = h.call(
+        token,
+        "mempalace_create_tunnel",
+        source_wing="shared",
+        source_room="alpha",
+        target_wing="shared",
+        target_room="beta",
+        label="other",
+    )
+    assert replaced and replaced.get("id") == identifier, replaced
+    status, refused, _ = post(
+        h,
+        h.owner,
+        "/api/organise/links/remove",
+        {"id": identifier, "confirm": True, "effect_id": preview["effect_id"]},
+    )
+    assert status == 409 and "Nothing was changed" in refused["error"]
+    assert len(h.get(h.owner, "/api/organise/links")[1]["tunnels"]) == 1
+
+
 def test_link_changes_refuse_without_access(chat_hub):
     h = chat_hub
     seed(h)
