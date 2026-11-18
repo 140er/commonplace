@@ -856,7 +856,7 @@ test('Compute opens with the status line and the running jobs, each linking to i
   assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/node?key=studio-mac')), 'only machines recorded as runners are asked');
   // A refresh reads again and repaints.
   agents.maple = agentsOf('Maple', []);
-  const nodeReads = () => f.calls.filter(c => c[0].startsWith('/api/topology/node') && c[1]?.timeoutMs === 3000).length, before = nodeReads();
+  const nodeReads = () => f.calls.filter(c => c[0].startsWith('/api/topology/node') && c[1]?.timeoutMs === 15000).length, before = nodeReads();
   await f.ui.refresh(); await flush();
   assert.equal(nodeReads(), before, 'a refresh right after a read is served from what was just read');
   const real = Date.now; Date.now = () => real() + work.CACHE_MS + 1000;
@@ -919,7 +919,7 @@ const fallbackAgents = () => ({
 });
 // A selection reads the node after a zero-delay timer, which a run of immediates does not wait for.
 const settle = async () => { await flush(); await new Promise(resolve => setTimeout(resolve, 20)); await flush(); };
-const nodeCalls = (f, only = null) => f.calls.filter(c => c[0].startsWith('/api/topology/node') && (only === null || (c[1]?.timeoutMs === 3000) === only)).map(c => decodeURIComponent(c[0].split('key=')[1]));
+const nodeCalls = (f, only = null) => f.calls.filter(c => c[0].startsWith('/api/topology/node') && (only === null || (c[1]?.timeoutMs === 15000) === only)).map(c => decodeURIComponent(c[0].split('key=')[1]));
 
 test('runner-only topology (no machine on the map): counts and the job list come from the node route of each runner', async () => {
   const agents = fallbackAgents();
