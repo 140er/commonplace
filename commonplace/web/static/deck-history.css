@@ -17,7 +17,8 @@ body.history-page { height: auto; min-height: 100%; overflow: auto; font-size: 1
 .history-page .history-chain li { display: flex; flex-direction: column; gap: 2px; }
 .history-page .history-read { font-size: 13px; color: var(--text-2); }
 .history-page .history-words { margin: 6px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--well); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
-.history-page .history-notice { padding: 12px 14px; border-radius: 8px; background: var(--well); overflow-wrap: anywhere; }
+.history-page .history-notice { margin: 12px 0; padding: 12px 14px; border-radius: 8px; background: var(--well); overflow-wrap: anywhere; }
+.history-page .history-notice strong { display: block; margin-bottom: 2px; }
 .history-page .history-notice[data-kind="error"], .history-page .history-notice[data-kind="warning"] { background: var(--block-bg); }
 .history-page .history-notice[data-kind="done"] { background: var(--ok-bg); }
 .history-page .history-notice[data-kind="unavailable"], .history-page .history-notice[data-kind="missing"] { background: var(--wait-bg); }
