@@ -126,7 +126,7 @@ const context = {
   showError(value) { screenError = value; },
   // The tool policy mounts into its own section; tests/tool_policy_view.mjs covers that module.
   mountToolPolicy() {},
-  voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<h2>Agents</h2>',
+  voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<section class="settings-section"><h2>Agents</h2></section>',
   // Scheduled prompts mount into their own section; tests/agent_schedules_view.mjs covers that module.
   mountAgentSchedules() {},
 };
@@ -147,6 +147,15 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
 (async () => {
   const { createNeedLedger } = await import(require('node:url').pathToFileURL(require('node:path').resolve('commonplace/web/static/deck-home-today.js')).href);
   context.deckNeedsLedger = createNeedLedger();
+  if (mode === 'wings') {
+    blocked = false;
+    values['/api/connections'] = { wings: failure === 'stale' ? ['shared'] : null, wings_state: failure };
+    await context.refresh();
+    assert.match(html, /Agents/);
+    assert.match(html, failure === 'unavailable' ? /Memory wings unavailable/ : /Still loading memory wings/);
+    assert.match(html, /data-action="retry"/);
+    return;
+  }
   if (mode === 'progressive') {
     const load = context.refresh();
     await tick();
@@ -332,6 +341,18 @@ def test_orchestration_settings_lock_contention_is_retryable(monkeypatch, enable
 def test_settings_sections_render_independently(path):
     result = subprocess.run(
         ["node", "-e", HARNESS, path, "fetch", "progressive"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("state", ["loading", "unavailable", "stale", "unrecognized"])
+def test_settings_wings_pending_state_is_visible(state):
+    result = subprocess.run(
+        ["node", "-e", HARNESS, "/api/connections", state, "wings"],
         cwd=ROOT,
         capture_output=True,
         text=True,

@@ -99,13 +99,12 @@ def _static(h):
 
 def _connection_wings(gateway, principal, slot):
     """Bound an optional read even if worker startup or queueing blocks."""
-    from commonplace.extensions import ToolError
     from commonplace.rules.checks import deadline
 
     from .agents import grantable_wings
 
     if not slot.acquire(blocking=False):
-        raise ToolError("Memory wing listing is busy")
+        raise TimeoutError("Memory wing listing is busy")
     result = Future()
 
     def list_wings():
@@ -127,7 +126,7 @@ def _connection_wings(gateway, principal, slot):
     try:
         return result.result(timeout=CONNECTION_WINGS_TIMEOUT_S)
     except (FutureTimeoutError, TimeoutError):
-        raise ToolError("Memory wing listing timed out") from None
+        raise TimeoutError("Memory wing listing timed out") from None
 
 
 def _phone_feed(gateway, h, principal):
@@ -304,6 +303,8 @@ def install(gateway):
         wings, wings_state = snapshots(gateway).read(
             ("connection-wings", *viewer_key(principal)),
             lambda: _connection_wings(gateway, principal, connection_wings_slot),
+            wait_s=CONNECTION_WINGS_TIMEOUT_S,
+            retry_s=0.0,
         )
         send_json(
             h,
@@ -316,7 +317,7 @@ def install(gateway):
                     "confirm": bots_grant.CONFIRM_TEXT,
                     "learned": bots_grant.LEARNED_TEXT,
                 },
-                "wings": wings or [],
+                "wings": wings,
                 "wings_state": wings_state,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },

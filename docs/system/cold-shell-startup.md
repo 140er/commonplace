@@ -36,7 +36,7 @@ Startup request inventory (requests depend on the selected route):
 | `/api/coworkers/bots`, `/api/coworkers/conversations`, `/api/coworkers` | Workspace-local directory and conversation stores | Rail, home and thread enrichment, independent of main content; 3 s |
 | `/api/bots/shared`, bot threads/messages | Bot lifecycle, access and bounded message pages | Shared management list is optional; selected thread follows personal roster; 3 s default |
 | `/api/boards/<slug>/cards`, `/api/cards/<n>` | Board/card projection in local stores | Required main data; card read already starts beside board refresh; 3 s default |
-| `/api/connections` | Current connection grants; optional memory wing index/worker fallback | Connection rows return immediately; cached wing hints refresh separately (existing 1 s bound) |
+| `/api/connections` | Current connection grants; optional memory wing index/worker fallback | A cold request joins one shared wing lookup for at most 1 s; stale wing hints return immediately |
 | `/api/plan` | Account plan and transcription counters; workspace file-size walk | Counters return immediately; cached storage refresh 3 s, cooperative walk deadline |
 | `/api/webhooks`, `/api/phone-push`, `/api/chat-settings`, `/api/settings/orchestration` | Local settings and usage stores | Independent Settings sections; 3 s each |
 | `/api/voice` | Local voice configuration | Already started without awaiting it; now 3 s default |
@@ -65,12 +65,13 @@ first-load stall; no production trace is available to assign the observed
 
 Display snapshots retain at most 256 entries, coalesce each key and allow at most
 two simultaneous refreshes per gateway. Their cooperative deadline is 3 s, with
-30 s reuse/backoff (60 s for storage). A dependency that ignores its deadline
+30 s reuse/backoff (60 s for storage), except that a failed wing lookup has no backoff once it finishes. A dependency that ignores its deadline
 cannot accumulate readers; its result is discarded after expiry. Counts and
 wing hints are keyed by viewer policy, workspace, user, role and connection;
 storage totals are workspace-scoped and shown only after the existing owner
 check. Visible boards and connection grants are always read afresh. Missing
-values are `loading`/`unavailable`, never fabricated zero totals; retained values
+values are `loading`/`unavailable`, never fabricated zero totals; `wings` is
+`null` while unknown, and `[]` only after a successful empty lookup; retained values
 are `stale` while refreshing. No search, storage-admission or grant decision uses
 these display snapshots.
 
@@ -81,10 +82,20 @@ replaced independently by a 30 s stand-in (loopback HTTP, disposable stores):
 | --- | ---: | ---: | --- |
 | `/api/boards?view=shell` / full board projection | 30.0032 s | 0.0064 s | Expiry and runner/per-card projection |
 | `/api/bots` / project-name projection | 30.1817 s | 0.0225 s | Full board listing used only for names |
-| `/api/connections` / memory wing discovery | 1.0037 s | 0.0025 s | Optional wing index/worker read |
+| `/api/connections` / memory wing discovery | 1.0037 s | <1.1 s | Settings no longer waits for the wing lookup to render other sections |
 | `/api/plan` / workspace storage walk | 30.0027 s | 0.0016 s | File scan and storage-meter lock |
 | Rail waiting on roster / control database for identity | Blocked for entire 0.5 s test bound | <0.001 s | Opposite lock acquisition order |
 | Shell main data / queue, rule count or roster | 30 s virtual clock | 0 ms virtual clock | Badge join before route dispatch |
+
+Wing-budget follow-up: a cold wing request may wait up to the existing one-second
+transport deadline so available results are returned in that response. Concurrent
+cold callers join the same future and receive the same result. A stale successful
+value still returns immediately during refresh. A timed-out worker retains its
+physical single-flight slot until it exits, but its failure is not cached for
+30 seconds: a later request can retry as soon as that read releases the slot.
+Known empty results remain distinct from unknown/loading results. Regression
+coverage includes the worker's propagated transport budget, joined HTTP readers,
+retry after a timed-out read is released, and visible pending/unknown UI states.
 
 The same regression selection runs against both revisions. The virtual-clock
 harness executes the shipped refresh and API code and models a 30 s server that

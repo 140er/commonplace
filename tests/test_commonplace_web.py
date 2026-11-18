@@ -253,7 +253,8 @@ def test_connections_wings_deadline(hub, monkeypatch):
     assert elapsed[0] < 1.5
     status, _, body = replies[0]
     payload = json.loads(body)
-    assert status == 200 and payload["wings"] == []
+    assert status == 200 and payload["wings"] is None
+    assert payload["wings_state"] == "loading"
     assert [row["name"] for row in payload["connections"]] == ["desktop"]
     assert payload["mcp_url"].endswith("/mcp")
 
@@ -280,7 +281,8 @@ def test_connections_wings_deadline_slow_worker(hub, monkeypatch):
             worker.join(3)
     print(f"connections response with a 2s worker: {elapsed:.3f}s")
     assert elapsed < 1.5, "Connection management waited for a slow optional memory lookup"
-    assert status == 200 and json.loads(body)["wings"] == []
+    assert status == 200 and json.loads(body)["wings"] is None
+    assert json.loads(body)["wings_state"] == "loading"
 
 
 def test_connections_wings_transport_budget(hub, monkeypatch):
@@ -297,6 +299,64 @@ def test_connections_wings_transport_budget(hub, monkeypatch):
     status, _, body = request(hub, "/api/connections", headers=cookie)
     assert status == 200 and json.loads(body)["wings"] == ["project_atlas"]
     assert len(budgets) == 1 and 0 < budgets[0] <= 1, "Worker transport needs the lookup deadline"
+
+
+def test_connections_wings_concurrent_readers_share_available_result(hub, monkeypatch):
+    from concurrent.futures import Future
+
+    from commonplace.web import agents, startup
+
+    cookie, _, _ = login(hub)
+    release, joined = threading.Event(), threading.Event()
+    lock = threading.Lock()
+    waiters, calls, replies, errors = [], [], [], []
+
+    class ObservedFuture(Future):
+        def result(self, timeout=None):
+            with lock:
+                waiters.append(1)
+                if len(waiters) == 2:
+                    joined.set()
+            return super().result(timeout)
+
+    def wings(*_args):
+        calls.append(1)
+        assert release.wait(5)
+        return ["project_atlas"]
+
+    def load():
+        try:
+            replies.append(request(hub, "/api/connections", headers=cookie))
+        except Exception as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(startup, "Future", ObservedFuture)
+    monkeypatch.setattr(agents, "grantable_wings", wings)
+    clients = [threading.Thread(target=load) for _ in range(2)]
+    try:
+        for client in clients:
+            client.start()
+        assert joined.wait(2), "Both requests must wait on the shared result"
+    finally:
+        release.set()
+        for client in clients:
+            client.join(3)
+    assert not errors
+    assert len(calls) == 1, "Concurrent callers must share one upstream read"
+    assert len(replies) == 2
+    for status, _, body in replies:
+        assert status == 200
+        assert json.loads(body)["wings"] == ["project_atlas"]
+        assert json.loads(body)["wings_state"] == "ready"
+
+
+def test_connections_completed_empty_wings_are_distinct_from_loading(hub, monkeypatch):
+    cookie, _, _ = login(hub)
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", lambda *_: {"wings": {}})
+    status, _, body = request(hub, "/api/connections", headers=cookie)
+    assert status == 200
+    assert json.loads(body)["wings"] == []
+    assert json.loads(body)["wings_state"] == "ready"
 
 
 def test_connections_wings_single_flight(hub, monkeypatch):
@@ -322,7 +382,8 @@ def test_connections_wings_single_flight(hub, monkeypatch):
             worker.join(2)
     assert started == 1, "Repeated requests must not accumulate blocked wing lookups"
     assert elapsed < 0.5, "A busy optional lookup must fall back immediately"
-    assert status == 200 and json.loads(body)["wings"] == []
+    assert status == 200 and json.loads(body)["wings"] is None
+    assert json.loads(body)["wings_state"] == "loading"
 
     monkeypatch.setattr(
         hub.gateway, "call_memory_tool", lambda *_: {"wings": {"project_atlas": {}}}
@@ -342,7 +403,8 @@ def test_connections_wings_tool_error_fallback(hub, monkeypatch):
 
     monkeypatch.setattr(hub.gateway, "call_memory_tool", unavailable)
     status, _, body = request(hub, "/api/connections", headers=cookie)
-    assert status == 200 and json.loads(body)["wings"] == []
+    assert status == 200 and json.loads(body)["wings"] is None
+    assert json.loads(body)["wings_state"] == "unavailable"
     assert [row["name"] for row in json.loads(body)["connections"]] == ["desktop"]
     assert b"unavailable worker details" not in body
 

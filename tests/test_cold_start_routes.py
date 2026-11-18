@@ -77,6 +77,7 @@ def test_slow_dependency_does_not_hold_shell_data(cold_hub, monkeypatch, depende
         assert response.status == 200, payload
         assert elapsed < 2, f"{path} waited {elapsed:.3f}s on {dependency}"
         if dependency == "wing-list":
+            assert payload["wings"] is None
             assert payload["wings_state"] == "loading"
         if dependency == "storage-walk":
             assert payload["storage"]["used"] is None
