@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
 import mimetypes
 import re
@@ -112,6 +113,38 @@ def _static(h):
     _asset_response(h, body, mime, policy=policy)
 
 
+_COMPRESSIBLE = ("text/", "image/svg+xml", "application/json")
+_GZIP_MIN = 1024
+_gzipped: dict[str, bytes] = {}
+_gzip_lock = threading.Lock()
+
+
+def _accepts_gzip(h):
+    for item in h.headers.get("Accept-Encoding", "").split(","):
+        parts = [part.strip() for part in item.split(";")]
+        if parts[0].lower() != "gzip":
+            continue
+        try:
+            quality = next((float(p[2:]) for p in parts[1:] if p.startswith("q=")), 1)
+        except ValueError:
+            return False
+        return quality > 0
+    return False
+
+
+def _gzip_asset(body, tag):
+    """Lossless transfer encoding of one asset, deterministic and kept per content hash."""
+    with _gzip_lock:
+        packed = _gzipped.get(tag)
+    if packed is None:
+        packed = gzip.compress(body, compresslevel=9, mtime=0)
+        with _gzip_lock:
+            if len(_gzipped) >= 64:
+                _gzipped.pop(next(iter(_gzipped)))
+            _gzipped[tag] = packed
+    return packed
+
+
 def _asset_response(h, body, mime, *, policy=None):
     from .assets import etag
 
@@ -123,15 +156,23 @@ def _asset_response(h, body, mime, *, policy=None):
         "Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache",
         "ETag": tag,
     }
+    packed = len(body) >= _GZIP_MIN and mime.startswith(_COMPRESSIBLE) and _accepts_gzip(h)
+    if len(body) >= _GZIP_MIN and mime.startswith(_COMPRESSIBLE):
+        headers["Vary"] = "Accept-Encoding"
+    if packed:
+        # A distinct validator per representation; the fingerprint check above uses the plain one.
+        headers["ETag"] = tag[:-1] + '-gzip"'
+        headers["Content-Encoding"] = "gzip"
     if policy:
         headers["Content-Security-Policy"] = policy
     validators = [
         item.strip().removeprefix("W/") for item in h.headers.get("If-None-Match", "").split(",")
     ]
-    if tag in validators or "*" in validators:
+    if headers["ETag"] in validators or "*" in validators:
+        headers.pop("Content-Encoding", None)
         _response(h, 304, content_type=mime, headers=headers)
     else:
-        _response(h, 200, body, mime, headers)
+        _response(h, 200, _gzip_asset(body, tag) if packed else body, mime, headers)
 
 
 def _connection_wings(gateway, principal, slot):

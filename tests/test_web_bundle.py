@@ -88,7 +88,9 @@ def test_production_document_has_one_css_no_module_waterfall_and_csp_hashes(
         < body.index(b"data-bundle-entry")
     )
     for script in re.findall(
-        rb"<script[^>]*(?:data-boot-guard|data-bundle-entry)[^>]*>(.*?)</script>", body, re.S
+        rb"<script[^>]*(?:data-boot-guard|data-bundle-entry|data-early-hints)[^>]*>(.*?)</script>",
+        body,
+        re.S,
     ):
         import base64
 

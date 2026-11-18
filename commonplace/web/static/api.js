@@ -7,6 +7,16 @@ export class ApiError extends Error {
   }
 }
 
+// The page document starts the route's first plain reads beside the bundle (assets.early_script).
+// Only the matching GET takes one, once, while it is fresh; a write or any later read goes to the network.
+async function takeEarly(path, options) {
+  const early = globalThis.commonplaceEarly, entry = early?.[path];
+  if (!entry || options.body || (options.method && options.method.toUpperCase() !== "GET")) return null;
+  delete early[path];
+  if (options.signal?.aborted || Date.now() - entry.at > 15000) return null;
+  try { return await entry.response; } catch { return null; }
+}
+
 export async function api(path, options = {}) {
   const { timeoutMs = 0, optional = false, ...requestOptions } = options;
   if (timeoutMs > 0) {
@@ -31,7 +41,7 @@ export async function api(path, options = {}) {
       requestOptions.signal?.removeEventListener("abort", abort);
     }
   }
-  const response = await fetch(path, {
+  const response = (await takeEarly(path, requestOptions)) || await fetch(path, {
     credentials: "same-origin",
     cache: "no-store",
     ...requestOptions,
