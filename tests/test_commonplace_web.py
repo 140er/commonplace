@@ -99,7 +99,11 @@ def test_login_without_token_opens_normal_signin(hub, monkeypatch, query_string)
     assert status == 302 and headers["Location"] == "/app/"
     assert "Set-Cookie" not in headers and not body
     status, _, body = request(hub, headers["Location"])
-    assert status == 200 and b"<h1>Sign in</h1>" in body
+    assert (
+        status == 200
+        and "Loading Commonplace…".encode() in body
+        and b"<h1>Sign in</h1>" not in body
+    )
     assert b'<script type="module" src="/app/app.js">' in body
     status, _, body = request(hub, "/app/auth/providers")
     assert status == 200
@@ -124,7 +128,11 @@ def test_invalid_login_redirects_without_reflecting_or_logging_token(hub, caplog
     output = capsys.readouterr()
     assert token not in caplog.text + output.out + output.err
     status, _, body = request(hub, headers["Location"])
-    assert status == 200 and b"<h1>Sign in</h1>" in body
+    assert (
+        status == 200
+        and "Loading Commonplace…".encode() in body
+        and b"<h1>Sign in</h1>" not in body
+    )
     assert request(hub, "/api/me")[0] == 401
     with hub.db._lock:
         assert hub.db._conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
@@ -151,7 +159,11 @@ def test_fresh_user_logout_then_direct_login(hub):
         assert status == 302 and response_headers["Location"] == "/app/"
         assert "Set-Cookie" not in response_headers
         status, _, body = request(hub, response_headers["Location"], headers=headers)
-        assert status == 200 and b"<h1>Sign in</h1>" in body
+        assert (
+            status == 200
+            and "Loading Commonplace…".encode() in body
+            and b"<h1>Sign in</h1>" not in body
+        )
 
 
 def test_logout_refuses_foreign_origin_and_keeps_session(hub):
@@ -415,7 +427,8 @@ def test_static_index_and_spa_fallback(hub, path):
     status, headers, body = request(hub, path)
     assert status == 200 and headers["Content-Type"].startswith("text/html")
     assert b'<script type="module" src="/app/app.js">' in body
-    assert b"Sign in" in body
+    assert "Loading Commonplace…".encode() in body
+    assert b"Sign in" not in body
     assert b'<a class="brand-home" href="/app/"' in body
     assert b'<img class="brand-v2" src="/app/brand/logo-small-dark.svg"' in body
     assert "default-src 'self'" in headers["Content-Security-Policy"]

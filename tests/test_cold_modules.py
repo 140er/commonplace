@@ -96,7 +96,18 @@ def test_initial_owner_events_use_recent_window_and_resume(cold_hub):
 
 
 @pytest.mark.parametrize(
-    "scenario", ["settings", "admin", "memory", "bots", "board", "retry", "single-flight", "styles"]
+    "scenario",
+    [
+        "settings",
+        "admin",
+        "memory",
+        "bots",
+        "board",
+        "retry",
+        "single-flight",
+        "styles",
+        "card-history",
+    ],
 )
 def test_route_imports_only_its_controllers(scenario):
     import subprocess

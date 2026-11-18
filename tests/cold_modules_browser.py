@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 
 def arguments():
@@ -66,6 +67,13 @@ async def measure(args):
                             )
                             page = await context.new_page()
                             errors = []
+                            requested = []
+                            page.on(
+                                "request",
+                                lambda request, requested=requested: requested.append(
+                                    urlsplit(request.url).path
+                                ),
+                            )
                             page.on(
                                 "pageerror", lambda error, errors=errors: errors.append(str(error))
                             )
@@ -89,7 +97,9 @@ async def measure(args):
                               resources:performance.getEntriesByType('resource').map(r => ({
                                 path:new URL(r.name).pathname+new URL(r.name).search,
                                 end:r.responseEnd,ms:r.duration}))})""")
-                            result.update(route=route, shell=shell, errors=errors)
+                            result.update(
+                                route=route, shell=shell, errors=errors, requested=requested.copy()
+                            )
                             results.append(result)
                             assert not errors, errors
                             if args.assert_lazy:
@@ -109,12 +119,8 @@ async def measure(args):
                                     unused.remove("details.js")
                                 if route == "#/settings":
                                     unused.add("bots.js")
-                                completed = {
-                                    r["path"].rsplit("/", 1)[-1]
-                                    for r in result["resources"]
-                                    if r["end"] <= result["key"]
-                                }
-                                assert not unused & completed, (route, sorted(unused & completed))
+                                fetched = {path.rsplit("/", 1)[-1] for path in requested}
+                                assert not unused & fetched, (route, sorted(unused & fetched))
                         finally:
                             await context.close()
                 finally:

@@ -61,6 +61,7 @@ async function prepareRoute(hash, behind = "#/") {
   const page = hash.startsWith("#/card/") ? behind : hash;
   const names = [];
   if (/^#\/(board|space|chat)(?:\/|$)/.test(page)) names.push("board", "children", "projectpanel", "chatdock", "cardmove");
+  if (page.startsWith("#/space/")) names.push("decide");
   if (page.startsWith("#/memory")) names.push("memory", "board", "chatdock");
   if (page === "#/needs" || (page === "#/" && !state.deck?.on())) names.push("needs", "details", "board", "children", "chatdock", "cardmove");
   if (page.startsWith("#/decide")) names.push("decide", "decide-swipe");
@@ -71,7 +72,7 @@ async function prepareRoute(hash, behind = "#/") {
   if (page.startsWith("#/console")) names.push("console");
   if (page.startsWith("#/bots") && !state.deck?.owns(page)) names.push("bots");
   if (page === "#/compute-map") names.push("topology-map", "map-discovery");
-  if (hash.startsWith("#/card/")) names.push("details", "board", "children", "deck-board", "card-reviewer", "blockers", "lifecycle");
+  if (hash.startsWith("#/card/")) names.push("details", "board", "children", "deck-board", "card-reviewer", "blockers", "lifecycle", "decide");
   await Promise.all([loadRouteStyles(hash), loadRouteStyles(page), ...[...new Set(names)].map(loadRouteModule)]);
   if (page === "#/rules" && !rulesUI) rulesUI = rulesHandlers(root, api, refresh, showError);
 }

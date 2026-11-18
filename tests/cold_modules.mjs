@@ -11,12 +11,18 @@ const context = {state: {deck: {on: () => true, owns: () => false}}, root: {}, a
   async load(path) {
     requested.push(path);
     if (failing) throw new Error('Module unavailable');
+    if (path === "./decide.js") return import("../commonplace/web/static/decide.js");
     return {rulesHandlers: () => ({})};
   }, rulesUI: null};
 runInNewContext(source + '\nglobalThis.prepare = prepareRoute;', context);
 const scenario = process.argv[2];
 const paths = () => requested.map(path => path.slice(2, -3));
-if (scenario === 'styles') {
+if (scenario === 'card-history') {
+  await context.prepare('#/card/1', '#/board/project');
+  const history = runInNewContext('eventItem({at:"2026-01-01T00:00:00Z",actor:"owner",kind:"decide",choice:"Continue",text:"<exact words>"}, value => value)', context);
+  assert.match(history, /Continue/);
+  assert.match(history, /&lt;exact words&gt;/);
+} else if (scenario === 'styles') {
   const {loadRouteStyles} = await import('../commonplace/web/static/route-styles.js');
   const links = [], doc = {createElement: () => ({remove() {}}), head: {append(link) {links.push(link);}}};
   let settled = false;
