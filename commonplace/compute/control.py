@@ -714,10 +714,12 @@ class Store:
                 "credential_id": credential_id,
                 "credential_version": credential_version,
             }
-            conn.execute(
-                f"UPDATE {kind} SET metadata=? WHERE id=?",
-                (canonical(metadata).decode(), object_id),
+            update = (
+                "UPDATE gateways SET metadata=? WHERE id=?"
+                if kind == "gateways"
+                else "UPDATE nodes SET metadata=? WHERE id=?"
             )
+            conn.execute(update, (canonical(metadata).decode(), object_id))
             self._audit(conn, current, object_id, f"{kind[:-1]}.credential_bound")
             return self._get_public(conn, current, kind, object_id)
 
