@@ -113,6 +113,7 @@ def test_initial_owner_events_use_recent_window_and_resume(cold_hub):
         "single-flight",
         "styles",
         "card-history",
+        "new-bot-dispatch",
     ],
 )
 def test_route_imports_only_its_controllers(scenario):

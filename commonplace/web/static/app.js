@@ -1332,7 +1332,7 @@ async function refresh({ background = false, events = [] } = {}) {
       boardView();
     } else if (state.deck?.owns(state.base)) {
       await state.deck.show(state.base, { background, epoch });
-    } else if (/^#\/bots(?:\/|$)/.test(state.base)) {
+    } else if (/^#\/bots(?:[/?]|$)/.test(state.base)) {
       if (!background) botsScreen();
     } else if (/^#\/console(?:\?|$)/.test(state.base)) {
       if (!background) consoleScreen();

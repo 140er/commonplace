@@ -17,7 +17,18 @@ const context = {state: {deck: {on: () => true, owns: () => false}}, root: {}, a
 runInNewContext(source + '\nglobalThis.prepare = prepareRoute;', context);
 const scenario = process.argv[2];
 const paths = () => requested.map(path => path.slice(2, -3));
-if (scenario === 'card-history') {
+if (scenario === 'new-bot-dispatch') {
+  await context.prepare('#/bots?new=1');
+  assert.deepEqual(paths(), ['bots']);
+  const begin = app.indexOf('if (state.base.startsWith("#/board/")) boardView();');
+  const dispatch = app.slice(begin, app.indexOf('if (!current()) return true;', begin));
+  let bots = 0;
+  await runInNewContext('(async () => {' + dispatch + '})()', {
+    state:{base:'#/bots?new=1',deck:{owns:()=>false}}, background:false,
+    botsScreen() {bots++;}, needsView() {throw new Error('New bot must not dispatch an unloaded Needs controller');},
+  });
+  assert.equal(bots, 1);
+} else if (scenario === 'card-history') {
   await context.prepare('#/card/1', '#/board/project');
   const history = runInNewContext('eventItem({at:"2026-01-01T00:00:00Z",actor:"owner",kind:"decide",choice:"Continue",text:"<exact words>"}, value => value)', context);
   assert.match(history, /Continue/);
