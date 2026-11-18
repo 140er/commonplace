@@ -1,3 +1,4 @@
+import { wingLabel } from "./wing-label.js";
 import { mountMap } from "./map.js";
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
@@ -7,7 +8,7 @@ import { resultWords, sourcesWarning, renderDeckMemory, retryLine, retryText, sa
 
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
-const name = (board) => board.name || board.slug;
+const name = (board) => board.wing ? wingLabel(board.wing, board.name) : board.name || board.slug;
 const key = (row) => JSON.stringify([row.board, row.kind, row.id, row.field]);
 
 /** Local, readable time for a stored ISO stamp: "today, 16:12", "Wed 28 Oct 2026, 16:12",
@@ -268,7 +269,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       if (stopped || epoch !== sourceEpoch) return;
       let board = state.boards.find(board => board.wing === record.theme);
       if (!board) {
-        board = { slug: `notes:${record.theme}`, name: state.note.choices?.wings.find(row => row.wing === record.theme)?.name || record.theme, wing: record.theme, notesOnly: true };
+        board = { slug: `notes:${record.theme}`, name: state.note.choices?.wings.find(row => row.wing === record.theme)?.name || wingLabel(record.theme), wing: record.theme, notesOnly: true };
         state.boards = [...state.boards, board];
       }
       const result = { ...record, kind: "note", actor: record.author, wing: record.theme, board: board.slug };
@@ -316,7 +317,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
         state.retry = null;
       }
       state.retry = null;
-      for (const row of page.results) if (row.kind === "note" && !state.boards.some(board => board.wing === row.wing)) state.boards = [...state.boards, { slug: row.board, wing: row.wing, name: row.wing === "shared" ? "Workspace notes" : row.wing, notesOnly: true }];
+      for (const row of page.results) if (row.kind === "note" && !state.boards.some(board => board.wing === row.wing)) state.boards = [...state.boards, { slug: row.board, wing: row.wing, name: wingLabel(row.wing), notesOnly: true }];
       if (look === "deck") rememberRoomCounts(state, page.results, filters);
       const { retry: _retry, ...answer } = page;
       Object.assign(state, answer, { completedQuery: filters.query, searched: true });
@@ -557,7 +558,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   // caller may read it, and it joins the project rooms as a notes-only room.
   const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms", { timeoutMs: 8000 })).then((page) => {
     const owned = new Set(boards.map((board) => board.wing));
-    const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: room.name || room.wing, wing: room.wing, notesOnly: true }));
+    const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: wingLabel(room.wing, room.name), wing: room.wing, notesOnly: true }));
     if (rooms.length && !stopped) { const known = new Set(state.boards.map(board => board.wing)); state.boards = [...state.boards, ...rooms.filter(room => !known.has(room.wing))]; draw(); }
   }).catch(() => {});
   draw();
