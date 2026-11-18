@@ -31,6 +31,7 @@ def test_owner_lists_eligible_candidates(hub, fresh):
         "board": "work",
         "coordinator": None,
         "candidates": [{"name": "eligible", "actor": eligible.principal.actor, "current": False}],
+        "effect": {"open_cards": 0, "waiting_asks": 0},
     }
 
 

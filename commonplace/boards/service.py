@@ -2381,7 +2381,24 @@ class BoardService(lifecycle.LifecycleMixin):
                     }
                     for p in self._coordinator_candidates(b["wing"])
                 ],
+                "effect": self._coordinator_effect(conn, b),
             }
+
+    @staticmethod
+    def _coordinator_effect(conn, board):
+        """What replacing or clearing the coordinator touches: open cards and asks addressed to it."""
+        open_cards = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE board_id=? AND status IN ('backlog','todo','doing','review')",
+            (board["id"],),
+        ).fetchone()[0]
+        waiting = 0
+        if board["coordinator"]:
+            waiting = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE board_id=? AND status='review' "
+                "AND review_kind='decision' AND ask_to=?",
+                (board["id"], board["coordinator"]),
+            ).fetchone()[0]
+        return {"open_cards": open_cards, "waiting_asks": waiting}
 
     def _coordinator_waiting(self):
         if not self.principal.person or self.principal.role != "owner":
