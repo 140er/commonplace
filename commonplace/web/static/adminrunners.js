@@ -1,3 +1,4 @@
+import { wingLabel } from "./wing-label.js";
 /** Owner screen for runner machines: enroll, attest, edit wings and revoke. Tokens live only in the reveal panel. */
 const MODES = ['approval-required', 'auto-accept-edits', 'auto', 'full-access'];
 const SETUP_NOTE = 'Setup: put the machine token in the environment variable the runner config names as token_env, and the worker token in the Commonplace MCP entry of the worker\'s provider instance. Set hub_url to this site\'s address, then run "python -m commonplace runner check --config <file>" before starting the runner. See docs/runner.md.';
@@ -58,7 +59,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
   const wingBoxes = selected => {
     if (wingsPending) return '<p>Loading wings…</p>';
     const all = [...new Set([...wings, ...selected])].sort();
-    const boxes = all.length ? `<fieldset><legend>Wings</legend>${all.map(w => `<label><input type="checkbox" name="wings" value="${e(w)}"${selected.includes(w) ? ' checked' : ''}>${e(w)}</label>`).join('')}</fieldset>` : '';
+    const boxes = all.length ? `<fieldset><legend>Wings</legend>${all.map(w => `<label><input type="checkbox" name="wings" value="${e(w)}"${selected.includes(w) ? ' checked' : ''}>${e(wingLabel(w))}</label>`).join('')}</fieldset>` : '';
     if (wingsError) return `${boxes}<p>The wing list could not be loaded. Type a wing name to add it, or reload to try again.</p><label>Add wings (comma separated)<input name="typed_wings" autocomplete="off"></label>`;
     return boxes || '<p>No readable wings yet.</p>';
   };
@@ -96,7 +97,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
     return `<article class="runner-machine" aria-label="${e(m.label)}"><h3>${e(m.label)}</h3>
       <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · ${e(m.max_in_flight)} in flight</p>
       ${m.lifecycle ? `<p role="status">${e(m.lifecycle.service)} · Host verification: ${e(m.lifecycle.host_verification)}</p>` : ''}
-      <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.join(', '))}</p>${forms}</article>`;
+      <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.map(wing => wingLabel(wing)).join(', '))}</p>${forms}</article>`;
   };
   const renderList = resetForm => {
     const node = region('list');

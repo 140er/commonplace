@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 let input = ''; for await (const part of process.stdin) input += part;
 const sources = JSON.parse(input);
 const load = text => import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`);
-const { createRunnerBlock, parseList, chosenWings, grantBody } = await load(sources.adminrunners);
+const wingLabelURL = new URL('../commonplace/web/static/wing-label.js', import.meta.url).href;
+const { createRunnerBlock, parseList, chosenWings, grantBody } = await load(sources.adminrunners.replace('"./wing-label.js"', () => JSON.stringify(wingLabelURL)));
 const { createAdmin } = await load(sources.admin);
 const e = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
@@ -77,7 +78,7 @@ for (const service of ['Revoked; stop unconfirmed', 'Stopped']) {
 
 // 1. Listing and the wing picker come from the owner routes; values are escaped.
 {
-  const f = fixture({ machines: [machine({ label: 'x<img>', wings: ['shared', 'legacy'] })], wings: ['shared', 'team'] });
+  const f = fixture({ machines: [machine({ label: 'x<img>', wings: ['shared', 'legacy'] })], wings: ['shared', 'team', 'project_blue_eye'] });
   f.block.show(f.host); await flush();
   assert.deepEqual(f.calls.map(c => c.path).sort(), ['/api/runners', '/api/runners/wings'], 'wings come from the runner route, not the slow connections listing');
   assert.ok(f.calls.every(c => c.method === 'GET'));
@@ -85,6 +86,7 @@ for (const service of ['Revoked; stop unconfirmed', 'Stopped']) {
   assert.doesNotMatch(list, /<img>/); assert.match(list, /x&lt;img&gt;/);
   assert.match(enroll, /name="wings" value="team"/); assert.doesNotMatch(enroll, /legacy/);
   assert.match(list, /name="wings" value="legacy" checked/, 'a granted wing outside the picker stays visible and checked');
+  assert.match(enroll, /value="project_blue_eye">Blue Eye<\/label>/);
   assert.match(list, /value="conn_workerid"/, 'worker connection id is prefilled');
   assert.match(list, /value="worker"/, 'topics are prefilled');
   assert.match(list, /resets this machine to unbound/);
