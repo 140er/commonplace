@@ -1503,7 +1503,12 @@ async function route() {
   const direct = state.screen === 0 && /^#\/card\/[1-9]\d*$/.test(hash);
   // In the Deck look "#/" is its own Home screen: the logo draws it without waiting for the project list.
   if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || direct) {
-    const result = await api("/api/boards");
+    let result;
+    try { result = await api("/api/boards"); }
+    catch {
+      if (state.me) root.querySelector("#content").innerHTML = '<p class="message" role="status">Could not load projects. <button data-action="retry-route">Retry</button></p>';
+      return;
+    }
     if (!state.me) return;
     state.boards = result.boards;
   }
@@ -1779,6 +1784,7 @@ root.addEventListener("click", async (event) => {
       restore(saved);
       root.querySelector(`.cs [data-path="${CSS.escape(b.dataset.path)}"]`)?.focus({ preventScroll: true });
     } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
+    else if (action === "retry-route") await route();
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
       root.querySelector("#card-panel .assignment-refusal")?.remove();
@@ -2098,8 +2104,30 @@ setInterval(() => {
   });
 }, 15000);
 async function boot() {
-  try { state.me = await boundedRequest(api, "/api/me", { timeoutMs: 3000 }); setPeople(state.me.people); }
-  catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
+  if (state.bootPending || state.me) return;
+  state.bootPending = true;
+  try {
+    // boot runs after module evaluation. Start each deadline with the request,
+    // allowing ten seconds for the first cold identity read and three on retry.
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        const me = await boundedRequest(api, "/api/me", { timeoutMs: attempt === 0 ? 10000 : 3000 });
+        if (!me) throw new Error("Identity unavailable");
+        setPeople(me.people); state.me = me;
+        break;
+      } catch (error) {
+        if (error.status === 401) { state.error = ""; await signin(signinCode); return; }
+        root.innerHTML = `<main class="message" aria-label="Connection status"><h1>Commonplace</h1><p role="status">${attempt < 3 ? "Could not reach Commonplace, retrying..." : "Could not reach Commonplace. Retry to connect."}</p><button type="button" data-boot-retry>Retry</button></main>`;
+        root.querySelector("[data-boot-retry]").onclick = () => { if (state.bootRetry) state.bootRetry(); else void boot(); };
+        if (attempt === 3) return;
+        await new Promise(resolve => {
+          const finish = () => { state.bootRetry = null; resolve(); };
+          const timer = setTimeout(finish, [1000, 2000, 4000][attempt]);
+          state.bootRetry = () => { clearTimeout(timer); finish(); };
+        });
+      }
+    }
+  } finally { state.bootPending = false; }
   if (!state.me) return;
   shell(); state.voiceReady = Promise.resolve(voice.load());
   if (!state.me) return;
