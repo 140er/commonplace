@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import re
 import threading
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -27,12 +28,13 @@ def _response(h, status, body=b"", content_type="text/plain; charset=utf-8", hea
     h.send_response(status)
     h.send_header("Content-Type", content_type)
     h.send_header("Content-Length", str(len(body)))
-    h.send_header("Cache-Control", "no-store")
+    h.send_header("Cache-Control", (headers or {}).get("Cache-Control", "no-store"))
     h.send_header("Content-Security-Policy", CSP)
     h.send_header("X-Content-Type-Options", "nosniff")
     h.send_header("Referrer-Policy", "no-referrer")
     for name, value in (headers or {}).items():
-        h.send_header(name, value)
+        if name != "Cache-Control":
+            h.send_header(name, value)
     h.end_headers()
     h.wfile.write(body)
 
@@ -76,6 +78,11 @@ def _static(h):
     ):
         _response(h, 404, b"Not found")
         return
+    if relative == "route-preload.js":
+        from . import assets
+
+        _asset_response(h, assets.route_preload(STATIC), "text/javascript; charset=utf-8")
+        return
     target = (STATIC / relative).resolve()
     if not target.is_relative_to(STATIC.resolve()):
         _response(h, 404, b"Not found")
@@ -94,7 +101,32 @@ def _static(h):
         mime = "text/javascript"
     if mime.startswith("text/"):
         mime += "; charset=utf-8"
-    _response(h, 200, target.read_bytes(), mime)
+    body = target.read_bytes()
+    if target.name == "index.html":
+        from . import assets
+
+        body = assets.index(body, STATIC)
+    _asset_response(h, body, mime)
+
+
+def _asset_response(h, body, mime):
+    from .assets import etag
+
+    tag = etag(body)
+    # Long caching is safe only when a filename carries this content's hash.
+    fingerprint = re.search(r"[.-]([0-9a-f]{8,64})\.", urlsplit(h.path).path)
+    immutable = fingerprint and tag[1:-1].startswith(fingerprint[1])
+    headers = {
+        "Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache",
+        "ETag": tag,
+    }
+    validators = [
+        item.strip().removeprefix("W/") for item in h.headers.get("If-None-Match", "").split(",")
+    ]
+    if tag in validators or "*" in validators:
+        _response(h, 304, content_type=mime, headers=headers)
+    else:
+        _response(h, 200, body, mime, headers)
 
 
 def _connection_wings(gateway, principal, slot):
@@ -279,8 +311,14 @@ def install(gateway):
                 # A member-era ordinal is not a raw workspace cursor.
                 response = {"events": [], "seq": latest, "reset": True}
             else:
-                batch = events.after(
-                    gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                # Initial hydration already reads current lists. Replaying the
+                # entire historical log delays that first view without adding data.
+                batch = (
+                    events.recent(gateway.db, principal.workspace_id)
+                    if seq == 0 and principal.person
+                    else events.after(
+                        gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                    )
                 )
                 response = {"events": batch, "seq": latest}
         send_json(h, 200, response)

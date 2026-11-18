@@ -174,7 +174,8 @@ def test_events_workspace_isolation_cursor_and_large_batch(hub):
     assert request(hub, "/api/events")[0] == 401
     status, _, body = request(hub, "/api/events?after=0", headers=cookie)
     payload = json.loads(body)
-    assert status == 200 and len(payload["events"]) == 205
+    assert status == 200 and len(payload["events"]) == 200
+    assert payload["events"][0]["subject"] == "#5"
     assert payload["seq"] == events.latest_seq(hub.db, hub.workspace)
     assert b"other workspace secret" not in body
     assert all(event["workspace_id"] == hub.workspace for event in payload["events"])

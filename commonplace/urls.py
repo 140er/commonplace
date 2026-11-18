@@ -62,28 +62,45 @@ def ensure_schema(db) -> None:
 
 
 def share_link(db, workspace_id: str, path: str) -> str:
-    path = _path(path)
+    return share_links(db, workspace_id, [path])[path]
+
+
+def share_links(db, workspace_id: str, paths) -> dict[str, str]:
+    """Create a page's stable URLs in one transaction instead of one per card."""
+    paths = list(dict.fromkeys(_path(path) for path in paths))
+    if not paths:
+        return {}
     ensure_schema(db)
+    codes = {}
     with db._lock, db._tx() as conn:
-        row = conn.execute(
-            "SELECT code FROM short_links WHERE workspace_id = ? AND path = ?",
-            (workspace_id, path),
-        ).fetchone()
-        if row is not None:
-            return AGENT_URL + "/s/" + row["code"]
-        while True:
-            code = "".join(secrets.choice(_BASE62) for _ in range(7))
-            try:
-                conn.execute(
-                    "INSERT INTO short_links(code, workspace_id, path, created_at) VALUES (?,?,?,?)",
-                    (code, workspace_id, path, datetime.now(timezone.utc).isoformat()),
+        for start in range(0, len(paths), 400):
+            batch = paths[start : start + 400]
+            placeholders = ",".join("?" for _ in batch)
+            codes.update(
+                (row["path"], row["code"])
+                for row in conn.execute(
+                    f"SELECT path,code FROM short_links WHERE workspace_id=? AND path IN ({placeholders})",
+                    [workspace_id, *batch],
                 )
-            except sqlite3.IntegrityError:
-                # A code collision is retryable; invalid workspace ids are not.
-                if conn.execute("SELECT 1 FROM short_links WHERE code = ?", (code,)).fetchone():
-                    continue
-                raise
-            return AGENT_URL + "/s/" + code
+            )
+        for path in paths:
+            if path in codes:
+                continue
+            while True:
+                code = "".join(secrets.choice(_BASE62) for _ in range(7))
+                try:
+                    conn.execute(
+                        "INSERT INTO short_links(code, workspace_id, path, created_at) VALUES (?,?,?,?)",
+                        (code, workspace_id, path, datetime.now(timezone.utc).isoformat()),
+                    )
+                except sqlite3.IntegrityError:
+                    # A collision is retryable; invalid workspace ids still fail.
+                    if conn.execute("SELECT 1 FROM short_links WHERE code=?", (code,)).fetchone():
+                        continue
+                    raise
+                codes[path] = code
+                break
+    return {path: AGENT_URL + "/s/" + codes[path] for path in paths}
 
 
 def resolve_link(db, code: str) -> str | None:

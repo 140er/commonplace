@@ -15,7 +15,7 @@ const linksUrl = url(await read('cardlinks.js'));
 // A data: module cannot resolve "./x.js": every other sibling import loads from its file.
 const siblings = (source) => source.replace(/(from\s*)(['"])\.\/([\w-]+\.js)\2/g, (_all, from, _quote, name) => from + JSON.stringify(new URL(`../commonplace/web/static/${name}`, import.meta.url).href));
 async function module(name) {
-  assert.match(app, new RegExp(`from ["']\\./${name}\\.js["']`), `${name} import missing`);
+  assert.ok(app.includes(`from "./${name}.js"`) || app.includes(`import("./${name}.js")`), `${name} import missing`);
   return import(url(siblings((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl)).replace(/(['"])\.\/cardlinks\.js\1/g, JSON.stringify(linksUrl)))));
 }
 const e = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -26,7 +26,7 @@ function node() { return { innerHTML: '', hidden: true, dataset: {}, children: [
 for (const selector of ['#board-nav', '#phone-bar', '#phone-tabs', '#content', '#card-panel', '.shell', '#title', '#head-actions']) nodes[selector] = node();
 const root = { innerHTML: '', querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} };
 const storage = new Map();
-const context = { root, state, e, placeLifecycle: () => {}, enc: encodeURIComponent, document: { activeElement: null, title: '' }, location: { hash: state.route }, localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, URLSearchParams, remember: () => ({}), restore() {}, title() {}, markOpenCard() {}, voice: { stop() {} }, showError: (s) => assert.equal(s, ''), needsCards: () => [], message: (text) => text, showLoading: (host, text) => { host.innerHTML = text; }, matchMedia: () => ({matches: false, addEventListener() {}, removeEventListener() {}}), MutationObserver: class {observe() {} disconnect() {}}, setTimeout, clearTimeout };
+const context = { prepareRoute: async () => {}, loadRouteModule: async () => {}, root, state, e, placeLifecycle: () => {}, enc: encodeURIComponent, document: { activeElement: null, title: '' }, location: { hash: state.route }, localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, URLSearchParams, remember: () => ({}), restore() {}, title() {}, markOpenCard() {}, voice: { stop() {} }, showError: (s) => assert.equal(s, ''), needsCards: () => [], message: (text) => text, showLoading: (host, text) => { host.innerHTML = text; }, matchMedia: () => ({matches: false, addEventListener() {}, removeEventListener() {}}), MutationObserver: class {observe() {} disconnect() {}}, setTimeout, clearTimeout };
 const run = (s) => runInNewContext(s, context);
 // The shell's panel helpers (the panel observer's resume and the settings opener) sit at module level.
 run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));

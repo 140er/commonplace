@@ -1,45 +1,89 @@
-import { deckPaletteItems } from './deck-home-palette.js';
-import { mountWorkspaceOrchestration } from "./projects.js";
-import { mountProjectPanel } from "./projectpanel.js";
-import { mountAgentSchedules } from "./agent-schedules.js";
-import { mountToolPolicy } from "./tool-policy.js";
+import { loadRouteStyles } from "./route-styles.js";
+import { boundedRequest } from "./request-deadline.js";
+import { waitingTotal } from "./bot-counts.js";
+
+// Controllers load only for their route or an explicitly opened panel. Failed imports can retry.
+let deckPaletteItems, mountWorkspaceOrchestration, mountProjectPanel, mountAgentSchedules, mountToolPolicy, eventItem,
+  ASKED_KEY, DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow,
+  queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML,
+  bindSwipe, SWIPE, planView, rulesView, rulesHandlers, childProgress,
+  agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret, createAdmin,
+  createRunnerBlock, createInstanceAdmin, createInviteBlock, openWorkspaces, createConsole, createBots,
+  createTopologyMap, discoveryAction, createChat, createDock, renderBoard, bindBoard,
+  cardId, cardColumn, chatTag, loadChatTimes, roveTo, drawerCopy,
+  createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview,
+  reviewerChange, addBlockers, parseBlockerNumbers, removeBlocker, lifecycleRequest, placeLifecycle,
+  createNeeds, createMemory, createPalette, mountOnboarding, createCardMenu, putMove,
+  moveNotice, conflictText;
+const routeModules = new Map();
+function loadRouteModule(name) {
+  if (!routeModules.has(name)) routeModules.set(name, (async () => {
+    switch (name) {
+      case "deck-home-palette": ({ deckPaletteItems } = await import("./deck-home-palette.js")); break;
+      case "projects": ({ mountWorkspaceOrchestration } = await import("./projects.js")); break;
+      case "projectpanel": ({ mountProjectPanel } = await import("./projectpanel.js")); break;
+      case "agent-schedules": ({ mountAgentSchedules } = await import("./agent-schedules.js")); break;
+      case "tool-policy": ({ mountToolPolicy } = await import("./tool-policy.js")); break;
+      case "decide": ({ eventItem, ASKED_KEY, COPY: DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML } = await import("./decide.js")); break;
+      case "decide-swipe": ({ bindSwipe, SWIPE } = await import("./decide-swipe.js")); break;
+      case "plan": ({ planView } = await import("./plan.js")); break;
+      case "rules": ({ rulesView, rulesHandlers } = await import("./rules.js")); break;
+      case "children": ({ childProgress } = await import("./children.js")); break;
+      case "agents": ({ agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } = await import("./agents.js")); break;
+      case "admin": ({ createAdmin } = await import("./admin.js")); break;
+      case "adminrunners": ({ createRunnerBlock } = await import("./adminrunners.js")); break;
+      case "instance-admin": ({ createInstanceAdmin } = await import("./instance-admin.js")); break;
+      case "invites": ({ createInviteBlock, openWorkspaces } = await import("./invites.js")); break;
+      case "console": ({ createConsole } = await import("./console.js")); break;
+      case "bots": ({ createBots } = await import("./bots.js")); break;
+      case "topology-map": ({ createTopologyMap } = await import("./topology-map.js")); break;
+      case "map-discovery": ({ discoveryAction } = await import("./map-discovery.js")); break;
+      case "chat": ({ createChat } = await import("./chat.js")); break;
+      case "chatdock": ({ createDock } = await import("./chatdock.js")); break;
+      case "board": ({ boardView: renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } = await import("./board.js")); break;
+      case "deck-board": ({ drawerCopy } = await import("./deck-board.js")); break;
+      case "details": ({ createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview } = await import("./details.js")); break;
+      case "card-reviewer": ({ reviewerChange } = await import("./card-reviewer.js")); break;
+      case "blockers": ({ addBlockers, parseBlockerNumbers, removeBlocker } = await import("./blockers.js")); break;
+      case "lifecycle": ({ lifecycleRequest, placeLifecycle } = await import("./lifecycle.js")); break;
+      case "needs": ({ createNeeds } = await import("./needs.js")); break;
+      case "memory": ({ createMemory } = await import("./memory.js")); break;
+      case "palette": ({ createPalette } = await import("./palette.js")); break;
+      case "onboarding": ({ mountOnboarding } = await import("./onboarding.js")); break;
+      case "cardmenu": ({ createCardMenu } = await import("./cardmenu.js")); break;
+      case "cardmove": ({ putMove, moveNotice, conflictText } = await import("./cardmove.js")); break;
+      default: throw new Error("Unknown screen module");
+    }
+  })().catch(error => { routeModules.delete(name); throw error; }));
+  return routeModules.get(name);
+}
+async function prepareRoute(hash, behind = "#/") {
+  const page = hash.startsWith("#/card/") ? behind : hash;
+  const names = [];
+  if (/^#\/(board|space|chat)(?:\/|$)/.test(page)) names.push("board", "children", "projectpanel", "chatdock", "cardmove");
+  if (page.startsWith("#/memory")) names.push("memory", "board", "chatdock");
+  if (page === "#/needs" || (page === "#/" && !state.deck?.on())) names.push("needs", "details", "board", "children", "chatdock", "cardmove");
+  if (page.startsWith("#/decide")) names.push("decide", "decide-swipe");
+  if (page === "#/settings") names.push("projects", "agent-schedules", "tool-policy", "plan", "agents");
+  if (page === "#/rules") names.push("rules");
+  if (page === "#/admin") names.push("admin", "adminrunners", "invites");
+  if (page === "#/instance-admin") names.push("instance-admin");
+  if (page.startsWith("#/console")) names.push("console");
+  if (page.startsWith("#/bots") && !state.deck?.owns(page)) names.push("bots");
+  if (page === "#/compute-map") names.push("topology-map", "map-discovery");
+  if (hash.startsWith("#/card/")) names.push("details", "board", "children", "deck-board", "card-reviewer", "blockers", "lifecycle");
+  await Promise.all([loadRouteStyles(hash), loadRouteStyles(page), ...[...new Set(names)].map(loadRouteModule)]);
+  if (page === "#/rules" && !rulesUI) rulesUI = rulesHandlers(root, api, refresh, showError);
+}
 import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { needItems } from "./home.js";
-import { eventItem, ASKED_KEY, COPY as DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML } from "./decide.js";
-import { bindSwipe, SWIPE } from "./decide-swipe.js";
-import { planView } from "./plan.js";
-import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
-import { childProgress } from "./children.js";
-import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
-import { createAdmin, boundedRequest } from "./admin.js";
-import { createRunnerBlock } from "./adminrunners.js";
-import { createInstanceAdmin } from "./instance-admin.js";
-import { createInviteBlock, openWorkspaces } from "./invites.js";
-import { createConsole } from "./console.js";
-import { createBots, waitingTotal } from "./bots.js";
-import { createTopologyMap } from "./topology-map.js";
-import { discoveryAction } from "./map-discovery.js";
-import { createChat } from "./chat.js";
-import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
-import { boardView as renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } from "./board.js";
-import { drawerCopy } from "./deck-board.js";
-import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview } from "./details.js";
-import { reviewerChange } from "./card-reviewer.js";
-import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
-import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
 import { boardRoute, resolveRoute } from "./routes.js";
 import { showLoading } from "./loading.js";
-import { createNeeds } from "./needs.js";
-import { createMemory } from "./memory.js";
-import { createPalette } from "./palette.js";
-import { mountOnboarding } from "./onboarding.js";
-import { createCardMenu } from "./cardmenu.js";
-import { putMove, moveNotice, conflictText } from "./cardmove.js";
 import { applyDeck, createDeck } from "./deck.js";
 import { createNeedLedger } from "./deck-home-today.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
@@ -87,7 +131,7 @@ const state = {
 // The Deck look (the default; classic is the explicit opt-out): its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => shellMenu(), singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => { void shellMenu().catch(error => showError(error.message)); }, singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;
@@ -109,7 +153,7 @@ const options = (items, selected) => items.map((s) => `<option value="${e(s)}" $
 let speechState = { active: false, text: "" };
 const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
 const voice = voiceInput(root, api, showError);
-const rulesUI = rulesHandlers(root, api, refresh, showError);
+let rulesUI = null;
 function speechView() {
   const button = root.querySelector('[data-action="speak-digest"]');
   if (button) {
@@ -314,8 +358,12 @@ function paletteUI() {
   }
   return state.palette.ui;
 }
-function shortcutsView() { paletteUI().shortcuts(); }
-function shellMenu() {
+async function shortcutsView() {
+  try { await loadRouteModule("palette"); paletteUI().shortcuts(); } catch (error) { showError(error.message); }
+}
+async function shellMenu() {
+  try { await Promise.all(["palette", "deck-home-palette"].map(loadRouteModule)); }
+  catch (error) { showError(error.message); return; }
   const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
   const deck = document.documentElement.dataset.ui === "deck", roster = state.deckRoster;
   const bots = roster?.workspace === state.me?.workspace && roster?.actor === state.me?.actor ? roster.bots : [];
@@ -323,13 +371,14 @@ function shellMenu() {
 }
 async function paletteCommand(item) {
   const action = item.action;
+  if (action === "new-card") await Promise.all(["details", "blockers", "card-reviewer", "lifecycle"].map(loadRouteModule));
   if (action === "new-card") newCardForm();
   else if (action === "open-chat") {
     const slug = item.board || currentBoard()?.slug, target = slug && `#/board/${enc(slug)}/chat`;
     if (target && location.hash === target) void state.workbenchChat?.dock.open(); else if (target) location.hash = target;
-  } else if (action === "new-board") openOnboarding();
+  } else if (action === "new-board") await openOnboarding();
   else if (action === "coordinator" || action === "logout") shellAction(action, item.board);
-  else if (action === "workspaces") openWorkspaces({ api, e, onError: showError });
+  else if (action === "workspaces") { await loadRouteModule("invites"); openWorkspaces({ api, e, onError: showError }); }
   else if (action === "move-card" || action === "edit-card") { state.selected = item.number; openSelectedCard(action); }
   else if (action === "copy-card-link") {
     try { await navigator.clipboard.writeText(new URL(`${location.pathname}${item.href}`, location.origin).href); }
@@ -343,7 +392,8 @@ function shellAction(action, board) {
   if (board) button.dataset.board = board;
   root.append(button); button.click(); button.remove();
 }
-function openOnboarding() {
+async function openOnboarding() {
+  try { await loadRouteModule("onboarding"); } catch (error) { showError(error.message); return; }
   root.querySelector("#shell-dialog")?.close();
   if (state.onboarding) return;
   state.onboarding = mountOnboarding(document.body, { api, first: !state.boards.length,
@@ -996,7 +1046,7 @@ function mountWorkbenchChat() {
       }
       return result;
     };
-    chatUI ??= createChat({ mount: () => root.querySelector("#chat-content"), api: paneApi, e, me: state.me,
+    const chatOptions = { mount: () => root.querySelector("#chat-content"), api: paneApi, e, me: state.me,
       onState() {
         const heading = root.querySelector("#chat-content #chat-h"), view = root.querySelector("#chat-content .chat-view");
         if (heading && view) { heading.id = "chat-content-h"; view.setAttribute("aria-labelledby", heading.id); }
@@ -1015,8 +1065,27 @@ function mountWorkbenchChat() {
         state.chatDetail = { number, row };
         location.hash = `#/card/${number}`;
       },
-    });
-    const dock = createDock({ root: layout, api, e, chat: chatUI });
+    };
+    let chatLoading = null, stopped = false, headerListener = null, chatOpen = false;
+    const chat = () => chatLoading ||= loadRouteModule("chat").then(() => {
+      if (stopped || disposed) return null;
+      if (!chatUI) {
+        chatUI = createChat(chatOptions);
+        chatUI.setOpen?.(chatOpen);
+        if (headerListener) chatUI.watchHeader?.(headerListener);
+      }
+      return chatUI;
+    }).catch(error => { chatLoading = null; throw error; });
+    const lazyChat = {
+      async show(...args) { const ui = await chat(); return ui?.show(...args); },
+      stop() { stopped = true; if (!chatUI) chatLoading = null; chatUI?.stop(); },
+      setOpen(value) { chatOpen = value; if (value) stopped = false; chatUI?.setOpen?.(value); },
+      setQuote(value) { chatUI?.setQuote?.(value); },
+      focusComposer() { chatUI?.focusComposer?.(); },
+      watchHeader(handler) { headerListener = handler; chatUI?.watchHeader?.(handler); },
+      reopened() { chatUI?.reopened?.(); },
+    };
+    const dock = createDock({ root: layout, api, e, chat: lazyChat });
     function schedule() {
       clearTimeout(timer);
       if (!disposed && !document.hidden) timer = setTimeout(pollUnread, 15000);
@@ -1202,10 +1271,12 @@ async function refresh({ background = false, events = [] } = {}) {
     void rosterRead.then((roster) => {
       if (current() && roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); navigation(); }
     }).catch(() => {});
-    const [boards, needs, rules] = await Promise.all([
+    const cardRead = /^#\/(board|space)\//.test(state.base)
+      ? read(`/api/boards/${enc(decodeURIComponent(state.base.split("/")[2]))}/cards`) : null;
+    const [boards, needs, rules, cardData] = await Promise.all([
       read("/api/boards?view=shell", { timeoutMs: 3000 }),
       needsPage ? ownerNeeds : null,
-      state.base === "#/rules" ? ruleRead : null,
+      state.base === "#/rules" ? ruleRead : null, cardRead,
     ]);
     if (!current()) return;
     state.boards = boards.boards;
@@ -1213,7 +1284,7 @@ async function refresh({ background = false, events = [] } = {}) {
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
-      const result = await api(`/api/boards/${enc(slug)}/cards`);
+      const result = cardData;
       if (!current()) return;
       state.cards = result.cards;
       state.children = result.children || [];
@@ -1495,6 +1566,7 @@ async function sendDecide(effect, keepalive) {
 }
 async function route() {
   if (!state.me) return;
+  const routeRequest = state.routeRequest = (state.routeRequest || 0) + 1;
   remember();
   let hash = location.hash || "#/";
   // The Deck look has its own home; the classic one resolves "#/" to a project below.
@@ -1504,7 +1576,7 @@ async function route() {
   // In the Deck look "#/" is its own Home screen: the logo draws it without waiting for the project list.
   if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || direct) {
     let result;
-    try { result = await api("/api/boards"); }
+    try { result = await api("/api/boards?view=shell", { timeoutMs: 3000 }); }
     catch {
       if (state.me) {
         state.bootRoutePending = true;
@@ -1512,7 +1584,7 @@ async function route() {
       }
       return false;
     }
-    if (!state.me) return;
+    if (!state.me || routeRequest !== state.routeRequest) return false;
     state.boards = result.boards;
   }
   let last;
@@ -1520,10 +1592,19 @@ async function route() {
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
   const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last, deck: state.deck?.owns("#/compute") === true });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
+  try { await prepareRoute(hash, direct ? boardRoute({ boards: state.boards, last }) : state.base); }
+  catch (error) {
+    if (routeRequest !== state.routeRequest || !state.me) return false;
+    state.bootRoutePending = true;
+    root.querySelector("#content").innerHTML = message("Could not load this screen.", false) + '<button data-action="retry-route">Retry</button>';
+    showError(error.message);
+    return false;
+  }
+  if (routeRequest !== state.routeRequest || !state.me) return false;
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
   }
-  if (hash !== state.route) clearAgentSecret(root);
+  if (hash !== state.route) clearAgentSecret?.(root);
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
   if (!hash.startsWith("#/card/")) state.justAdded = null;
@@ -1717,9 +1798,12 @@ root.addEventListener("click", async (event) => {
     return;
   }
   try {
-    if (action === "shortcuts") shortcutsView();
+    if (action === "card-menu") await Promise.all(["cardmenu", "cardmove"].map(loadRouteModule));
+    if (["new-card", "edit-card", "handoff", "remove-assignment"].includes(action)) await Promise.all(["details", "blockers", "card-reviewer", "lifecycle"].map(loadRouteModule));
+    if (action === "switch-workspace" && state.deck?.on()) await loadRouteModule("invites");
+    if (action === "shortcuts") await shortcutsView();
     else if (action === "switch-workspace" && state.deck?.on()) openWorkspaces({ api, e, onError: showError });
-    else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
+    else if (["palette", "switch-project", "switch-workspace"].includes(action)) await shellMenu(action);
     else if (action === "cancel-card") cancelCard();
     else if (action === "card-menu") {
       const card = findCard(number), board = currentBoard() || state.boards.find((item) => item.slug === card?.board);
@@ -1822,7 +1906,7 @@ root.addEventListener("click", async (event) => {
       const result = await api(request.path, { method: "POST", body: request.body });
       if (action === "carry-on") location.hash = `#/card/${result.card.number}`;
     });
-    else if (action === "new-board") openOnboarding();
+    else if (action === "new-board") await openOnboarding();
     else if (action === "logout") {
       state.needsUI?.stop(); state.needsUI = null;
       voice.stop();
@@ -2094,7 +2178,7 @@ window.addEventListener("popstate", () => {
     root.querySelector("#card-panel").hidden = true;
   }
 });
-window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret?.(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {

@@ -3,7 +3,8 @@ import { runInNewContext } from 'node:vm';
 
 let raw = ''; for await (const part of process.stdin) raw += part;
 const sources = JSON.parse(raw);
-const url = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+sources.admin = sources.admin.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href);
+const url = source => `data:text/javascript;base64,${Buffer.from(source.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href)).toString('base64')}`;
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise, resolve, reject }; };
 const escape = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -118,7 +119,7 @@ try {
   const route = app.slice(app.indexOf('async function route()'),app.indexOf('// The current view'));
   const content={innerHTML:'',children:[]}, state={me:{can_manage_instance:false},screen:0,base:'#/',route:'#/',boards:[],chatVisible:new Set(),panelRequest:0};
   let shown=0,shared=0;
-  const context={remember(){},state,location:{hash:'#/instance-admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute:x=>x,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:null,instanceAdminUI:null,root:{querySelector:k=>k==='#content'?content:k==='#shell-dialog'?{close(){}}:{}},instanceAdminScreen(){shown++;},refresh(){shared++;}};
+  const context={prepareRoute:async()=>{},remember(){},state,location:{hash:'#/instance-admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute:x=>x,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:null,instanceAdminUI:null,root:{querySelector:k=>k==='#content'?content:k==='#shell-dialog'?{close(){}}:{}},instanceAdminScreen(){shown++;},refresh(){shared++;}};
   runInNewContext(route,context);await context.route();assert.equal(shown,1);assert.equal(shared,0);assert.equal(state.base,'#/instance-admin');
   }
 } catch(error) {

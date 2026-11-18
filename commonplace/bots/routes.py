@@ -80,7 +80,9 @@ def _bots(gateway, principal):
 def _asks(gateway, principal):
     """This person's open decisions across every project they can read."""
     try:
-        return BoardService(ToolContext(principal=principal, gateway=gateway)).needs_me()["asks"]
+        return BoardService(ToolContext(principal=principal, gateway=gateway)).needs_me(
+            cards_only=True
+        )["asks"]
     except ToolError:
         return []  # a member without the needs-me tool has none waiting
 

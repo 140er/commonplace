@@ -152,7 +152,8 @@ if (which === "need_items") {
   assert.equal(home.homeView, undefined, "homeView must be removed");
   const html = await read("index.html");
   assert.ok(!html.includes("/app/home.css"), "home.css link must be dropped");
-  assert.ok(html.includes("/app/workbench.css") && html.includes("/app/chatdock.css"));
+  assert.ok(html.includes("/app/workbench.css"));
+  assert.match(await read("route-styles.js"), /board: \[.*'chatdock\.css'/);
   assert.doesNotMatch(app, /homeView|home-tasks|home-spaces/);
 } else if (which === "needs_view") {
   // RED: the shell's needsView renders the Needs me module (class="needs-me"), not Home.

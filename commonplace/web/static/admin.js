@@ -1,31 +1,11 @@
+import { boundedRequest } from "./request-deadline.js";
+export { boundedRequest } from "./request-deadline.js";
 /** Read-first workspace administration, with independently bounded section loads. The one write is the owner's machine requester list. */
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Agents and connections',
   runtime: 'Coworkers and runners/machines', limits: 'Agent limits',
   stuck: 'Needs-me and stuck cards', deploy: 'Deployment and health', backups: 'Backups', 'index-stats': 'Memory index',
 };
-
-// api includes response.json(): the deadline covers both transport and body decoding.
-export async function boundedRequest(api, path, { timers = globalThis, signal, timeoutMs = 5000 } = {}) {
-  const controller = new AbortController();
-  let timer, abort;
-  const deadline = new Promise((_, reject) => {
-    abort = () => { controller.abort(); reject(Object.assign(new Error('Request cancelled'), { name: 'AbortError' })); };
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) abort();
-    timer = timers.setTimeout(() => {
-      controller.abort();
-      reject(Object.assign(new Error('Request timed out'), { name: 'TimeoutError' }));
-    }, timeoutMs);
-  });
-  try {
-    if (controller.signal.aborted) return await deadline;
-    return await Promise.race([deadline, api(path, { signal: controller.signal })]);
-  } finally {
-    timers.clearTimeout(timer);
-    signal?.removeEventListener('abort', abort);
-  }
-}
 
 export function createAdmin({ mount, api, e, current, runners = null, invites = null, timers = globalThis }) {
   let host = null, body = null, workspace = null, epoch = 0, live = false, instanceBlocked = false;

@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 
 const mode = process.argv[2];
 const app = readFileSync('commonplace/web/static/app.js', 'utf8');
-const admin = readFileSync('commonplace/web/static/admin.js', 'utf8');
+const admin = readFileSync('commonplace/web/static/request-deadline.js', 'utf8');
 const api = readFileSync('commonplace/web/static/api.js', 'utf8');
 let now = 100000, sequence = 0, signedIn = 0, shells = 0, routes = 0, polls = 0;
 const timers = new Map(), requests = [], buttons = {};
@@ -37,7 +37,7 @@ const context = {
   },
 };
 runInNewContext(api.replace(/export /g, '') + '\n' +
-  admin.slice(admin.indexOf('export async function boundedRequest'), admin.indexOf('export function createAdmin')).replace('export ', '') + '\n' +
+  admin.replace('export ', '') + '\n' +
   app.slice(app.indexOf('async function boot()')).replace(/boot\(\);\s*$/, 'globalThis.ready = boot();'), context);
 async function advance(ms) {
   now += ms;
