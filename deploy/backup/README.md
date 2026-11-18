@@ -90,14 +90,62 @@ name than the hook (it refuses `BACKUP_HOOK` pointing at itself), e.g.
 Outcome files in `/var/log/lvm-snapshot-backup`: `result` (`PASS`, `CHECK-PENDING ...`,
 `FAIL ...` or `FALLBACK ...`), `lvm-proof.json` (adds `check_pending` and `snapshot_left`), and one `lvm-snap-<ts>.log` per run.
 
+**The exit status alone is not the verdict.** `CHECK-PENDING` exits 0 (the upload is
+good, only the integrity check is outstanding), so a "unit succeeded" signal also covers
+a run that still needs `--retry-check`. Monitoring and any proof of a backup must read
+the `result` line (anything other than `PASS` needs a look) and the proof's
+`check_pending` and `snapshot_left` fields (both must be 0 for a clean run), not only
+the exit status.
+
+`snapshot_present` fails closed: only `lvs` exit 5 (volume not found) means the
+snapshot is gone. Any other `lvs` failure (a busy lock, a metadata error) counts as
+"still present", so the run ends with the `ALERT` / `snapshot_left: 1` outcome and
+cleanup refuses to remove a volume whose origin it could not verify, instead of
+reporting a clean run.
+
 Tests: `uv run pytest tests/test_host_backup_lvm_snapshot.py` (stubbed tools; no
 real volume is touched).
 
-## Install on the host
+## Install on the production host
 
 The script lives in the repository only; merging the change does not alter the
-production host. The host owner copies the new version over the installed
-script (same path, root-owned, mode 0755), keeps the unit's environment as it is
-(the new tunables have defaults), and reads `result` after the next run. Until then the
-old script keeps running unchanged. A run left in `CHECK-PENDING` is finished by
-running the installed script once with `--retry-check`.
+production host. Until the host owner installs it, the old script keeps running
+unchanged.
+
+**The script needs three variables from the unit's environment** and exits 2 without
+any of them, so the unit environment does not stay as it is when the old wrapper
+hard-coded these values:
+
+| Variable | Meaning |
+| --- | --- |
+| `BACKUP_HOOK` | Path of the executable the script calls for the pause route, `--check` and `--latest-json` (the existing host backup hook). It must not point at the script itself. |
+| `BACKUP_RESTIC_HOST` | The restic `--host` label the hook uses, so new snapshots stay in the same lineage as the existing ones. |
+| `BACKUP_HOOK_LOCK_NAME` | File name (not a path) of the hook's own lock file inside the backups directory (`BACKUP_LOCK_DIR`); the script locks it as well as its own lock. |
+
+Set them in a systemd drop-in, for example
+`/etc/systemd/system/<backup-unit>.service.d/lvm-snapshot.conf` (generic example values):
+
+```ini
+[Service]
+Environment=BACKUP_HOOK=/usr/local/sbin/host-backup-hook
+Environment=BACKUP_RESTIC_HOST=backup-host
+Environment=BACKUP_HOOK_LOCK_NAME=.host-backup-hook.lock
+```
+
+Run `systemctl daemon-reload` afterwards. Use the real values of the old wrapper or
+hook, not the examples. A plain copy of the new script over an older wrapper that
+hard-codes these values, without the drop-in, makes every backup fail at once (exit 2
+before anything is backed up).
+
+Steps for the host owner:
+
+1. Keep the old script as `<name>.bak` next to the installed one.
+2. Copy the new version to the installed path (root-owned, mode 0755) and set up
+   the drop-in above.
+3. `bash -n` on the installed script.
+4. Do not start a manual backup. The next scheduled backup is the proof: read the
+   `result` line and the proof's `check_pending` and `snapshot_left` fields (see the
+   outcome files above; the unit exit status alone is not enough).
+
+A run left in `CHECK-PENDING` is finished by running the installed script once with
+`--retry-check`.
