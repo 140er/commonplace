@@ -1,0 +1,4 @@
+- **Owns:** The pinned web asset compiler and its deterministic manifest.
+- **Promises:** A clean install of esbuild 0.25.12 compiles shared module factories into one ESM entry per route, keeping other controllers behind dynamic imports. All route bundles reuse one runtime module cache. Filenames hash the exact emitted bytes; CSS retains the original order without imports.
+- **How it fails:** Unknown static dependencies fail the build. Import failures reject and may retry; a deferred closure cannot replace an evaluated module singleton. Source-relative styles retain their original absolute URL.
+- **Tests:** tests/test_web_bundle.py and tests/cold_bundle_browser.py.

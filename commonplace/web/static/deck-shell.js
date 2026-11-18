@@ -122,7 +122,7 @@ const micButton = className => `<button type="button" class="${className}" data-
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
 
 export function createDeckShell({ root, api, context, on }) {
-  let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '', rosterReady = false, directoryReady = false;
+  let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '', rosterReady = false, directoryReady = false, syncedAt = 0;
   const closed = new Set();
   const composer = () => [...(root?.querySelectorAll?.(composerSelector) || [])].find(form => !form.closest('[hidden]') && form.getClientRects().length);
   // The sheet stays open across the shell's refreshes, and closes when the route changes.
@@ -164,15 +164,16 @@ export function createDeckShell({ root, api, context, on }) {
     const status = root?.querySelector?.('[data-deck-rail-error]');
     if (status) { status.hidden = !error; status.innerHTML = error ? 'Could not load the bot tree. <button data-deck-shell-action="retry">Retry</button>' : ''; }
   }
-  function reset() { generation++; bots = []; directory = {}; closed.clear(); pending = null; error = ''; rosterReady = directoryReady = false; }
+  function reset() { generation++; bots = []; directory = {}; closed.clear(); pending = null; error = ''; rosterReady = directoryReady = false; syncedAt = 0; }
   function identify() {
     const me = context?.()?.me, key = JSON.stringify([me?.actor, me?.workspace]);
     if (key !== identity) { reset(); identity = key; }
   }
-  async function sync() {
+  async function sync({ cached = false } = {}) {
     if (!on() || !api) return;
     identify();
     if (pending) return pending;
+    if (cached && syncedAt && Date.now() - syncedAt < 2000) return;
     const token = generation;
     pending = (async () => {
       const results = await Promise.allSettled([api('/api/coworkers/bots', { timeoutMs: 10000 }), api('/api/coworkers/conversations', { timeoutMs: 10000 })]);
@@ -184,7 +185,7 @@ export function createDeckShell({ root, api, context, on }) {
       else if ([401, 403, 404].includes(results[1].reason?.status)) directory = { ...directory, conversations: [] };
       error = results.some(result => result.status === 'rejected') ? 'unavailable' : '';
       paint();
-    })().finally(() => { if (token === generation) pending = null; });
+    })().finally(() => { if (token === generation) { pending = null; syncedAt = Date.now(); } });
     return pending;
   }
   root?.addEventListener?.('toggle', event => {

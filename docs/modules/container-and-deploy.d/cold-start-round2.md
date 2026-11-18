@@ -1,0 +1,4 @@
+- **Owns:** The separate production web asset image stage.
+- **Promises:** The Node 22.14.0 build stage installs the exact package lock, builds assets from repository sources and copies only generated output into the existing Python runtime before packaging. Local generated assets are excluded from the build context.
+- **How it fails:** A dependency or asset build failure stops image creation. Node and build dependencies do not enter the runtime; development without a manifest remains unbundled.
+- **Tests:** tests/test_commonplace_deploy.py and tests/test_web_bundle.py.

@@ -1,6 +1,7 @@
 *.egg-info/
 dist/
 build/
+node_modules/
 __pycache__/
 .hypothesis/
 *.pyc

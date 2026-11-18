@@ -130,3 +130,86 @@ route assertions carry the `timing` marker and run explicitly with that marker
 enabled. These are dependency-isolation timings, not a production cold-load measurement.
 The project owner must still measure the large workspace after release against
 the <2.5 s cold-start target, including static module loading and real rendering.
+
+
+Production delivery and first paint (card #595)
+
+The production image adds an isolated Node 22.14.0 stage. It runs `npm ci
+--prefix scripts/web-build --ignore-scripts --no-audit --no-fund` against the
+committed lock (esbuild 0.25.12), then `node scripts/web-build/build.mjs`.
+Only generated `commonplace/web/static/build/` output is copied into the Python
+runtime before its existing package installation. The runtime needs no Node.
+A developer can run the same two commands; without `build/manifest.json` the
+server retains the existing unbundled document and all 23 original stylesheet
+links. This deliberately preserves the Workbench source-link tests. The new
+build tests also require those exact styles in the same order within one CSS
+file, followed by optional route styles; there are no CSS imports. Both local
+variable fonts are preloaded and keep `font-display: swap`.
+
+The server reads the manifest into the entry document. Its CSP-hashed module
+selector sees the URL fragment and imports one content-addressed entry containing
+the shell, rail and that route's controller set. Other screens remain dynamic
+imports. The small shared runtime compiles module factories with esbuild rather
+than rewriting JavaScript exports by hand; it evaluates each module once across
+route changes. Deferred closures register missing factories without replacing
+live exports, so identity/people maps and component state stay shared. Paths in
+`import.meta.url` retain their source location. Generated JS and CSS use the
+existing content-fingerprint immutable cache policy; the document and development
+sources revalidate. The module watchdog, neutral loading document, capped module
+reloads, 6000/minute public static bucket, ten-second initial identity read and
+three retries remain the earlier contracts. HTTP 401 alone opens sign-in.
+
+The foreground board wave requires only the cheap board directory and card list,
+which run in parallel. Queue/rules/roster badges, project panel/chat decoration
+and full board summaries wait until main data has had browser frames to paint.
+The rail coalesces directory reads and reuses results for two seconds; event
+polling starts two seconds after routing instead of immediately replaying the
+initial backlog. Settings sections and required queue/rule content keep their
+existing independent reads and deadlines. No ordinary GET timeout is shortened.
+
+A 1000-card fixture exposed a remaining 1.3 MB card-list transfer. Board REST JSON
+responses of at least 4096 bytes now support explicitly negotiated gzip at level
+one, with deterministic gzip bytes, `Vary: Accept-Encoding` and `Cache-Control:
+no-store`. This is lossless transfer encoding, not storage compression or a
+content projection: all original words and fields survive decoding. A client
+without gzip support, or with quality zero/invalid quality, gets plain JSON.
+The measured fixture falls to about 34 KB on the wire.
+
+The shell retains at most four mounted board trees and their display data for
+the signed-in visit. A revisit reattaches the tree immediately, rebinds handlers
+and revalidates data. An identical response skips markup generation; a changed
+response preserves card nodes and only changes affected contents. Cached values
+never authorize a write; mutation versions and server permissions still apply.
+A 401/403/404 evicts the retained board view; sign-out clears it. A cold
+`#/board` discovers the readable directory before choosing the saved or first
+board, matching in-session navigation and retaining the empty-workspace start
+screen when no board exists.
+
+Reproduction: install the locked build dependency and run the build above, then
+`python -m tests.cold_bundle_browser --output /tmp/cold-small.json --samples 3
+--check` and the same command with `--cards 1000` for the large fixture. Use
+Playwright 1.65.2 and `PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright`. Each run
+uses disposable stores, a fresh Chromium context per sample, 1280x800, 4x CPU,
+100 ms latency and 1.25 MB/s. The key milestone follows two animation frames;
+request counts include issued requests through that milestone. The six keys
+are Home composer, bot readiness, Memory search interface, card details, board
+counters and Settings. Memory's worker is deliberately unavailable in this
+frontend fixture. The large store has 1000 cards and 20000 historical events.
+The project owner must still remeasure the live workspace after release.
+
+Measured before/after medians on development base `60a7de90` and this change:
+
+| Route | Small requests | Small seconds | Large requests | Large seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Home | 74 → 14 | 1.74 → 1.48 | 74 → 14 | 1.74 → 1.48 |
+| Bot | 74 → 18 | 1.84 → 1.61 | 74 → 18 | 1.84 → 1.59 |
+| Memory | 78 → 13 | 1.82 → 1.54 | 78 → 13 | 1.82 → 1.50 |
+| Card panel | 79 → 15 | 1.86 → 1.53 | 79 → 15 | 1.86 → 1.53 |
+| Board | 75 → 13 | 1.75 → 1.42 | 80 → 13 | 3.83 → 2.38 |
+| Settings | 79 → 23 | 1.88 → 1.56 | 79 → 23 | 1.86 → 1.57 |
+
+The small fixture board revisit median is 208 → 34 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
+
+The large fixture board revisit median is 2786 → 1798 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
+
+Three unchanged browser-free tests fail on the development source: five API reads before the board paint (budget two), two renders of an unchanged 1000-card board (budget one), and cold `#/board` resolving to `#/start`. All three pass on this change. The Chromium request budget also fails on development (74–80 requests, threshold below 40) and passes here. Production bundle 429, 503 and network failures retain the neutral retry message and recover through manual Retry in all three real-browser cases.

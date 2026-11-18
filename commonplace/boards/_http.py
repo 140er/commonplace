@@ -1,5 +1,6 @@
 """Private contract-compatible HTTP helpers until shared helpers are merged."""
 
+import gzip
 import json
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -30,6 +31,22 @@ def read_json(h) -> dict:
 
 def send_text(h, status, text, content_type, headers=None):
     body = text.encode("utf-8")
+    headers = dict(headers or {})
+    if content_type.startswith("application/json"):
+        headers["Vary"] = "Accept-Encoding"
+        if len(body) >= 4096:
+            for item in getattr(h, "headers", {}).get("Accept-Encoding", "").split(","):
+                parts = [part.strip() for part in item.split(";")]
+                if parts[0].lower() != "gzip":
+                    continue
+                try:
+                    quality = next((float(p[2:]) for p in parts[1:] if p.startswith("q=")), 1)
+                except ValueError:
+                    quality = 0
+                if quality > 0:
+                    body = gzip.compress(body, compresslevel=1, mtime=0)
+                    headers["Content-Encoding"] = "gzip"
+                break
     h.send_response(status)
     h.send_header("Content-Type", content_type)
     h.send_header("Content-Length", str(len(body)))

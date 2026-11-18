@@ -23,7 +23,12 @@ HOOK = ROOT / "backup-hook.sh"
 
 def test_image_installs_repo_and_runs_as_nonroot():
     text = DOCKERFILE.read_text()
-    assert text.startswith("FROM python:3.12-slim\n")
+    # Build tools stay in their stage; the runtime keeps the original Python base.
+    assert text.startswith("FROM node:22.14.0-bookworm-slim AS web-assets\n")
+    assert "\nFROM python:3.12-slim\n" in text
+    assert "npm ci --prefix scripts/web-build --ignore-scripts" in text
+    assert "RUN node scripts/web-build/build.mjs\n" in text
+    assert "COPY --from=web-assets /build/commonplace/web/static/build/" in text
     assert 'RUN pip install ".[commonplace]"\n' in text
     users = re.findall(r"^USER (.+)$", text, re.MULTILINE)
     assert users == ["10001:10001"]

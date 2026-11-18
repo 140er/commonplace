@@ -302,6 +302,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
+  state.boardCache?.clear();
   state.deck?.appearance?.stop();
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
@@ -479,7 +480,10 @@ function navigation() {
   // shell() draws this before route() sets state.base, so until the first route the stage reads the address: its first paint is final.
   const hash = globalThis.location?.hash || "#/";
   state.deck?.appearance?.sync(state.screen === 0 ? (hash === "#/" ? state.deck.home() : hash) : state.base);
-  void state.deck?.shell?.sync();
+  if (typeof requestAnimationFrame === "function") {
+    const viewer = state.me;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (viewer === state.me) void state.deck?.shell?.sync({ cached: true }); }));
+  } else void state.deck?.shell?.sync({ cached: true });
   state.shellSync?.();
 }
 function showError(text, { drawer = false } = {}) {
@@ -593,6 +597,8 @@ function boardView() {
   // The redrawn header gets the chat control back without waiting for the next refresh.
   if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
+  state.boardCache ||= new Map();
+  const cached = state.boardCache.get(board.slug) || {};
   // Keep the active phone column and a parked-card disclosure through polling.
   const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
   state.boardColumn = null;
@@ -602,10 +608,42 @@ function boardView() {
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column });
+  const options = { board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column };
+  // Counts/readiness do not change card markup. Retain the mounted tree on a
+  // revisit and skip identical polls; changed cards keep their unchanged peers.
+  const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], selected: null, fromBar });
+  const mounted = content.querySelector(".workbench-board");
+  if ((!state.restoringBoard && signature !== cached.signature) || !mounted) {
+    const html = fromBar + renderBoard(options);
+    if (mounted && content.ownerDocument) {
+      const template = content.ownerDocument.createElement("template"); template.innerHTML = html;
+      const next = template.content.querySelector(".workbench-board");
+      const oldRows = new Map([...mounted.querySelectorAll(".card[data-card]")].map(row => [row.dataset.card, row]));
+      const byNumber = new Map(cards.map(card => [String(card.number), JSON.stringify(card)]));
+      next.querySelectorAll(".card[data-card]").forEach(row => {
+        const old = oldRows.get(row.dataset.card);
+        if (!old) return;
+        if (cached.cardSignatures?.get(row.dataset.card) !== byNumber.get(row.dataset.card) || cached.presentation !== JSON.stringify([options.bots, options.filter, options.sheet])) {
+          old.replaceChildren(...row.childNodes);
+          for (const attribute of [...old.attributes]) if (!row.hasAttribute(attribute.name)) old.removeAttribute(attribute.name);
+          for (const attribute of row.attributes) old.setAttribute(attribute.name, attribute.value);
+        }
+        row.replaceWith(old);
+      });
+      mounted.replaceChildren(...next.childNodes);
+      for (const attribute of [...mounted.attributes]) if (!next.hasAttribute(attribute.name)) mounted.removeAttribute(attribute.name);
+      for (const attribute of next.attributes) mounted.setAttribute(attribute.name, attribute.value);
+      content.replaceChildren(...template.content.childNodes);
+      content.querySelector(".workbench-board").replaceWith(mounted);
+    } else content.innerHTML = html;
+    cached.signature = signature;
+    cached.cardSignatures = new Map(cards.map(card => [String(card.number), JSON.stringify(card)]));
+    cached.presentation = JSON.stringify([options.bots, options.filter, options.sheet]);
+  }
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
+    if (top.querySelector('[data-action="card-menu"]')) return;
     const id = top.querySelector(".cid")?.textContent || cardId(board, Number(top.closest("[data-card]").dataset.card));
     top.insertAdjacentHTML("beforeend", `<button type="button" class="iconbtn card-more" id="more-${e(id)}" data-action="card-menu" data-card="${e(top.closest("[data-card]").dataset.card)}" aria-label="${state.deck?.on() ? "Move to…" : `Actions for ${e(id)}: move, edit`}">${state.deck?.on() ? "Move to…" : '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg>'}</button>`);
   });
@@ -618,8 +656,18 @@ function boardView() {
   });
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
-  void fillChatTimes(board);
-  void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
+  cached.nodes = [...(content.childNodes || [])];
+  state.boardCache.set(board.slug, cached);
+  // At most four mounted boards, scoped to this signed-in shell; list data is
+  // always revalidated when revisited and mutations retain server versions.
+  if (state.boardCache.size > 4) state.boardCache.delete(state.boardCache.keys().next().value);
+  const extras = () => {
+    if (currentBoard()?.slug !== board.slug) return;
+    void fillChatTimes(board);
+    void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(extras));
+  else extras();
 }
 // The form closes and the new card shows at once, selected, in the column it landed in: the read behind the card route can take seconds.
 function cardAdded(card) {
@@ -1253,22 +1301,30 @@ async function refresh({ background = false, events = [] } = {}) {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
+  // Browser frames must get a turn before optional reads compete with main data.
+  // Non-browser harnesses keep their virtual-clock behavior.
+  const afterPaint = (work) => typeof requestAnimationFrame === "function"
+    ? new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))).then(() => current() ? work() : null)
+    : Promise.resolve().then(work);
   try {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
     // The owner queue is not a prerequisite for a member's workspace screens.
     const needsPage = ["#/needs", "#/decide"].includes(state.base) || (state.base === "#/" && !state.deck?.on());
     // Only bootstrap metadata has a short budget; actual queue/rule content
     // and subsequent card, list and memory reads retain their existing budgets.
-    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true, ...(needsPage ? {} : { timeoutMs: 3000 }) }) : Promise.resolve(null);
-    const ruleRead = state.base === "#/rules" ? read("/api/rules") : read("/api/rules/count", { timeoutMs: 3000 });
-    const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : read("/api/bots", { timeoutMs: 3000 });
+    let paintDone;
+    const painted = typeof requestAnimationFrame === "function" ? new Promise(resolve => { paintDone = resolve; }) : Promise.resolve();
+    const optionalRead = (path, options) => painted.then(() => afterPaint(() => read(path, options)));
+    const ownerNeeds = state.me.can_admin === true ? (needsPage ? read("/api/needs-me", { optional: true }) : optionalRead("/api/needs-me", { optional: true, timeoutMs: 3000 })) : Promise.resolve(null);
+    const ruleRead = state.base === "#/rules" ? read("/api/rules") : optionalRead("/api/rules/count", { timeoutMs: 3000 });
+    const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : optionalRead("/api/bots", { timeoutMs: 3000 });
     // Badges are optional, not prerequisites of Settings, Memory, a project or a card.
     // Keep the last value during revalidation and guard late arrivals by screen/request.
     void ownerNeeds.then((needs) => {
       if (!current()) return;
       state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me); navigation();
     }).catch(() => {});
-    void ruleRead.then((rules) => { if (current()) { state.rulesWaiting = rules.waiting; navigation(); } }).catch(() => {});
+    void ruleRead.then((rules) => { if (current() && rules) { state.rulesWaiting = rules.waiting; navigation(); } }).catch(() => {});
     void rosterRead.then((roster) => {
       if (current() && roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); navigation(); }
     }).catch(() => {});
@@ -1290,6 +1346,10 @@ async function refresh({ background = false, events = [] } = {}) {
       state.cards = result.cards;
       state.children = result.children || [];
       state.linked = result.linked;
+      if (state.base.startsWith("#/board/")) {
+        state.boardCache ||= new Map();
+        state.boardCache.set(slug, { ...state.boardCache.get(slug), data: result });
+      }
       if (state.base.startsWith("#/space/")) {
         if (state.chatBoard !== slug) {
           const page = await api(`/api/boards/${enc(slug)}/chat?last=50`);
@@ -1345,8 +1405,9 @@ async function refresh({ background = false, events = [] } = {}) {
       queueNoteOffline();
     } else needsView();
     if (!current()) return true;
+    paintDone?.();
     if (state.base.startsWith("#/board/") || state.base === "#/needs" || state.base.startsWith("#/memory")) {
-      mountWorkbenchChat();
+      void afterPaint(() => mountWorkbenchChat());
       if (events.some((event) => event.kind === "space_message" || event.kind === "space_replied")) void state.workbenchChat?.pollUnread();
     } else state.workbenchChat?.dispose();
     restore(saved); play();
@@ -1355,8 +1416,8 @@ async function refresh({ background = false, events = [] } = {}) {
     showError("");
     if (state.base === "#/boards" || state.base.startsWith("#/board/")) {
       // Detailed runner/waiting summaries start after the main data has painted.
-      void read("/api/boards").then((page) => {
-        if (!current()) return;
+      void afterPaint(() => read("/api/boards")).then((page) => {
+        if (!current() || !page) return;
         state.boards = page.boards; navigation();
         if (state.base === "#/boards") boardsView();
       }).catch(() => {});
@@ -1368,6 +1429,10 @@ async function refresh({ background = false, events = [] } = {}) {
     if (state.base === "#/rules") rulesUI.force = false;
     showError(error.message);
     const content = root.querySelector("#content");
+    if (state.base.startsWith("#/board/") && [401, 403, 404].includes(error.status)) {
+      state.boardCache?.delete(decodeURIComponent(state.base.split("/")[2]));
+      content.innerHTML = message(error.message, true);
+    }
     if ((state.base === "#/settings" && (!background || !content.querySelector(".settings"))) || !content.children.length) content.innerHTML = message(error.message, true);
     return false;
   }
@@ -1575,7 +1640,7 @@ async function route() {
   // A shared card link (first screen of the visit) needs a screen behind the card.
   const direct = state.screen === 0 && /^#\/card\/[1-9]\d*$/.test(hash);
   // In the Deck look "#/" is its own Home screen: the logo draws it without waiting for the project list.
-  if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || direct) {
+  if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || hash === "#/board" || direct) {
     let result;
     try { result = await api("/api/boards?view=shell", { timeoutMs: 3000 }); }
     catch {
@@ -1656,6 +1721,13 @@ async function route() {
   else if (cardPanelHost.hidden) state.cardRead = null;
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
+  const cachedBoard = state.base.startsWith("#/board/") && state.boardCache?.get(decodeURIComponent(state.base.split("/")[2]));
+  if (cachedBoard?.nodes?.length && cachedBoard.data && state.base !== previousBase) {
+    root.querySelector("#content").replaceChildren(...cachedBoard.nodes);
+    state.cards = cachedBoard.data.cards; state.children = cachedBoard.data.children || []; state.linked = cachedBoard.data.linked;
+    state.restoringBoard = true;
+    try { boardView(); } finally { state.restoringBoard = false; }
+  }
   showError("");
   if (state.bootRoutePending) { state.bootRoutePending = false; schedule(0); }
   if (hash === "#/admin") { adminScreen(); return; }
@@ -2237,6 +2309,6 @@ async function boot() {
   }
   if (await route() === false) return;
   if (moved) showError("This card is in another workspace. Sign out, then sign in again to open it.");
-  if (state.me) schedule(0);
+  if (state.me) schedule(2000);
 }
 boot();

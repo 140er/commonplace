@@ -17,6 +17,7 @@ const styles = {
 };
 const pending = new Map();
 export function loadRouteStyles(hash = '', doc = globalThis.document) {
+  if (globalThis.commonplaceAssetManifest?.styles) return Promise.resolve();
   const name = hash.replace(/^#\//, '').split(/[/?]/)[0] || 'home';
   return Promise.all((Object.hasOwn(styles, name) ? styles[name] : []).map(file => {
     const existing = doc.querySelector?.('link[rel="stylesheet"][href="/app/' + file + '"]');
