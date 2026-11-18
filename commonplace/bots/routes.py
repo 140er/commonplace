@@ -146,7 +146,9 @@ def _model(gateway, principal) -> dict:
 
 
 def _listing(gateway, h, principal):
-    boards = BoardService(ToolContext(principal=principal, gateway=gateway)).board_list()
+    boards = BoardService(ToolContext(principal=principal, gateway=gateway)).board_directory(
+        names_only=True
+    )
     lifecycle.sweep(gateway, principal.workspace_id)
     bots = _bots(gateway, principal)
     bots.ensure_defaults(principal.user_id, [(b["slug"], b["name"]) for b in boards])

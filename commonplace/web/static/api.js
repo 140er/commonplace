@@ -18,7 +18,7 @@ export async function api(path, options = {}) {
     try {
       // Race the complete read, including JSON decoding; abort alone may not settle it.
       return await Promise.race([
-        api(path, { ...requestOptions, optional, signal: controller.signal }),
+        api(path, { ...requestOptions, timeoutMs: 0, optional, signal: controller.signal }),
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             reject(new Error(`Request timed out: ${path}`));

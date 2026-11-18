@@ -21,9 +21,22 @@ let html = "Loading…", renders = 0, navigationCalls = 0, holdSettings = false;
 const content = {
   children: [{}],
   get innerHTML() { return html; },
-  set innerHTML(value) { html = value; if (value.includes('class="settings"')) renders++; },
-  querySelector: (selector) => selector === ".settings" && html.includes('class="settings"') ? {} : null,
+  set innerHTML(value) { html = value; skeleton = value; parts.clear();
+    for (const match of value.matchAll(/<section class="settings-section" data-settings-part="([a-z]+)">.*?<\/section>/g)) parts.set(match[1], {placeholder: match[0], value: match[0], node: node(match[0], match[1])});
+    if (value.includes('class="settings"')) renders++; },
+  querySelector: (selector) => {
+    const key = /^\[data-settings-part="([a-z]+)"\]$/.exec(selector)?.[1];
+    return key ? parts.get(key)?.node : selector === '.settings' && html.includes('class="settings"') ? {} : null;
+  },
 };
+const parts = new Map();
+let skeleton = '';
+function renderParts() { html = skeleton; for (const part of parts.values()) html = html.replace(part.placeholder, () => part.value); }
+function node(value, key) {
+  return { value, dataset: {}, querySelector: () => null,
+    set innerHTML(next) { parts.get(key).value = next; renderParts(); },
+    replaceWith(next) { parts.get(key).value = next.value; renderParts(); } };
+}
 const reads = [], settingsReads = [];
 let needsSnapshot = { count: 0, waiting: 0 };
 const free = { enabled: true, plan: "free", storage: { used: 12, limit: 1024 }, transcription: { used_today: 0, limit: 600 }, sync: { interval_seconds: 900 } };
@@ -33,10 +46,11 @@ const values = {
   "/api/settings/orchestration": { enabled: false },
 };
 const context = {
+  document: { createElement: () => ({ content: { firstElementChild: null }, set innerHTML(value) { this.content.firstElementChild = value ? node(value) : null; } }) },
   deckNeedsLedger: createNeedLedger(),
   state, root: { querySelector: (selector) => selector === "#content" ? content : null },
   api(path) {
-    if (["/api/boards", "/api/needs-me", "/api/rules/count"].includes(path)) {
+    if (["/api/boards?view=shell", "/api/needs-me", "/api/rules/count"].includes(path)) {
       return new Promise((resolve) => reads.push({ path, resolve }));
     }
     // The shell reads the bots roster with the shared reads to fill the Bots badge.
@@ -64,7 +78,7 @@ function batch() {
   const pending = reads.splice(0);
   assert.equal(pending.length, 3, "Each refresh must start its three shared reads");
   const boards = [{ slug: `project-${state.refreshRequest}` }];
-  return () => pending.forEach(({ path, resolve }) => resolve(path === "/api/boards" ? { boards } : path === "/api/needs-me" ? needsSnapshot : { count: 0, waiting: 0 }));
+  return () => pending.forEach(({ path, resolve }) => resolve(path === "/api/boards?view=shell" ? { boards } : path === "/api/needs-me" ? needsSnapshot : { count: 0, waiting: 0 }));
 }
 function completeView() {
   assert.equal(renders, 1, `First complete view never rendered: ${html}`);
@@ -123,7 +137,8 @@ if (["foreground_only", "settled_background", "settled_needs"].includes(which)) 
   }
   settingsReads.splice(0).forEach((resolve) => resolve());
   await foreground;
-  if (which === "navigate_during_settings") { assert.equal(renders, 0); assert.equal(html, "Another page"); }
+  // The Settings skeleton renders once before navigation; late sections cannot repaint it.
+  if (which === "navigate_during_settings") { assert.equal(renders, 1); assert.equal(html, "Another page"); }
   else completeView();
 } else {
   const background = context.refresh({ background: true, events: [{ kind: "board.created" }] });

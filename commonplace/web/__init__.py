@@ -99,13 +99,12 @@ def _static(h):
 
 def _connection_wings(gateway, principal, slot):
     """Bound an optional read even if worker startup or queueing blocks."""
-    from commonplace.extensions import ToolError
     from commonplace.rules.checks import deadline
 
     from .agents import grantable_wings
 
     if not slot.acquire(blocking=False):
-        raise ToolError("Memory wing listing is busy")
+        raise TimeoutError("Memory wing listing is busy")
     result = Future()
 
     def list_wings():
@@ -127,7 +126,7 @@ def _connection_wings(gateway, principal, slot):
     try:
         return result.result(timeout=CONNECTION_WINGS_TIMEOUT_S)
     except (FutureTimeoutError, TimeoutError):
-        raise ToolError("Memory wing listing timed out") from None
+        raise TimeoutError("Memory wing listing timed out") from None
 
 
 def _phone_feed(gateway, h, principal):
@@ -212,12 +211,18 @@ def install(gateway):
             return
         account = plans.workspace_account(gateway.db, principal.workspace_id)
         current = plans.get_plan(gateway.db, account) if account else None
-        used = (
-            gateway.storage_meter.used(
-                principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+        from .startup import snapshots
+
+        used, storage_state = (
+            snapshots(gateway).read(
+                ("storage", principal.workspace_id),
+                lambda: gateway.storage_meter.used(
+                    principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+                ),
+                ttl=60.0,
             )
             if account
-            else 0
+            else (0, "ready")
         )
         send_json(
             h,
@@ -225,7 +230,11 @@ def install(gateway):
             {
                 "enabled": True,
                 "plan": current.name if current else None,
-                "storage": {"used": used, "limit": current.storage_bytes if current else None},
+                "storage": {
+                    "used": used,
+                    **({"state": storage_state} if account else {}),
+                    "limit": current.storage_bytes if current else None,
+                },
                 "transcription": {
                     "used_today": plans.transcription_used(gateway.db, account) if account else 0,
                     "limit": current.transcription_seconds if current else None,
@@ -284,17 +293,19 @@ def install(gateway):
             send_json(h, 403, {"error": "Owner access required"})
             return
         from commonplace import bots_grant, decide_grant
-        from commonplace.extensions import ToolError
 
         from .agents import connection_view, decide_view
 
         rows = gateway.db.connections(principal.workspace_id)
         view = decide_view(gateway, principal)
-        try:
-            wings = _connection_wings(gateway, principal, connection_wings_slot)
-        except ToolError:
-            # Connection management remains available while memory is offline.
-            wings = []
+        from .startup import snapshots, viewer_key
+
+        wings, wings_state = snapshots(gateway).read(
+            ("connection-wings", *viewer_key(principal)),
+            lambda: _connection_wings(gateway, principal, connection_wings_slot),
+            wait_s=CONNECTION_WINGS_TIMEOUT_S,
+            retry_s=0.0,
+        )
         send_json(
             h,
             200,
@@ -307,6 +318,7 @@ def install(gateway):
                     "learned": bots_grant.LEARNED_TEXT,
                 },
                 "wings": wings,
+                "wings_state": wings_state,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },
         )

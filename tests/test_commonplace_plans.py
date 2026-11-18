@@ -441,7 +441,19 @@ def test_plan_api_payload_for_tokens_and_people(hub, monkeypatch, name):
         },
         "sync": {"interval_seconds": 900 if name == "free" else 0},
     }
-    assert api(hub, hub.owner_token(), "GET", "/api/plan") == (200, expected)
+    # The initial snapshot may still be loading. Join its bounded refresh,
+    # then check the exact counters without polling or a timing assumption.
+    token = hub.owner_token()
+    api(hub, token, "GET", "/api/plan")
+    from commonplace.web.startup import snapshots
+
+    cache = snapshots(hub.gateway)
+    assert cache.slots.acquire(timeout=2)
+    assert cache.slots.acquire(timeout=2)
+    cache.slots.release()
+    cache.slots.release()
+    expected["storage"]["state"] = "ready"
+    assert api(hub, token, "GET", "/api/plan") == (200, expected)
     cookie, _, _ = login(hub)
     assert api(hub, cookie, "GET", "/api/plan") == (200, expected)
     assert api(hub, None, "GET", "/api/plan")[0] == 401

@@ -1,0 +1,4 @@
+- **Owns:** The team-bot rail projection's bot-store then control-database lock order.
+- **Promises:** The sharing/roster authorization window stays intact while a contended roster never pins identity and Settings through a reversed lock order.
+- **How it fails:** A deterministic concurrent-reader regression fails when the rail owns the control lock while waiting for the bot store.
+- **Tests:** tests/test_cold_start_routes.py and tests/test_coworker_taxonomy.py.

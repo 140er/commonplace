@@ -709,7 +709,7 @@ function spaceView() {
 }
 function boardsView() {
   title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
@@ -904,22 +904,47 @@ async function phonePushAction(action) {
 }
 async function settingsView(epoch) {
   title("Settings");
-  const content = root.querySelector("#content");
-  if (!content.querySelector(".settings")) content.innerHTML = message("Loading settings…");
-  const [connections, hooks, plan, phonePush, chatSettings, orchestration] = await Promise.allSettled(["/api/connections", "/api/webhooks", "/api/plan", "/api/phone-push", "/api/chat-settings", "/api/settings/orchestration"].map((path) => api(path, { timeoutMs: 10000 })));
-  if (epoch !== state.screen) return;
+  const content = root.querySelector("#content"), request = (state.settingsRequest || 0) + 1;
+  state.settingsRequest = request;
+  const viewer = state.me;
+  const current = () => state.me === viewer && epoch === state.screen && request === state.settingsRequest;
+  const sections = {
+    plan: { path: "/api/plan", name: "Plan", view: planView },
+    orchestration: { path: "/api/settings/orchestration", name: "Coworker management", view: () => '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
+    chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
+    connections: { path: "/api/connections", name: "Agents", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
+    phone: { path: "/api/phone-push", name: "Phone notifications", view: phonePushView, ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },
+    hooks: { path: "/api/webhooks", name: "Webhooks", view: (value) => `<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${(value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks")}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section>` },
+  };
   const saved = remember();
-  const failed = (name, result) => message(`Could not load ${name}: ${result.reason?.message || "Request failed"}`, true);
-  state.phonePushPending = phonePush.status === "fulfilled" && phonePush.value.test?.status === "pending";
-  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : failed("Plan", plan)}${orchestration.status === "fulfilled" ? '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>' : failed("Coworker management", orchestration)}${voice.settings()}${chatSettings.status === "fulfilled" ? `<section class="settings-section"><h2>Chat</h2><p>${e(chatSettings.value.front.enabled && chatSettings.value.front.provider !== "none" ? `Answers by ${chatSettings.value.front.provider}/${chatSettings.value.front.model}` : chatSettings.value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(chatSettings.value.usage.used_today)} · Yours: ${e(chatSettings.value.usage.user_used_today)}</p>${chatSettings.value.usage.last_error ? `<p role="status">Last model error: ${e(chatSettings.value.usage.last_error)}</p>` : ""}</section>` : failed("Chat", chatSettings)}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${failed("Agents", connections)}</section>`}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section>${phonePush.status === "fulfilled" ? phonePushView(phonePush.value) : `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${failed("Phone notifications", phonePush)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : failed("Webhooks", hooks)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
-  if (orchestration.status === "fulfilled") mountWorkspaceOrchestration(content.querySelector("[data-workspace-orchestration]"), {api, e, enabled: orchestration.value.enabled, current: () => epoch === state.screen});
-  mountAgentSchedules(content.querySelector("[data-agent-schedules]"), {api, e, current: () => epoch === state.screen});
-  mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, presentation: state.deck?.policyPresentation(), current: () => epoch === state.screen});
+  content.innerHTML = `<div class="settings">${Object.entries(sections).map(([key, section]) => `<section class="settings-section" data-settings-part="${key}"><h2>${section.name}</h2>${message("Still loading…")}</section>`).join("")}${voice.settings()}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
+  mountAgentSchedules(content.querySelector("[data-agent-schedules]"), { api, e, current });
+  mountToolPolicy(content.querySelector("[data-tool-policy]"), { api, e, presentation: state.deck?.policyPresentation(), current });
   state.deck?.settings(content);
-  restore(saved);
-  void state.voiceReady?.then(() => {
-    if (epoch === state.screen && state.base === "#/settings" && state.deck?.on()) state.deck?.settings(content);
-  });
+  // Each section owns its placeholder. A late answer cannot recreate another
+  // section's form or erase a draft entered while an optional read was loading.
+  await Promise.all(Object.entries(sections).map(async ([key, section]) => {
+    try {
+      const value = await api(section.path, { timeoutMs: 3000 });
+      if (!current()) return;
+      const host = content.querySelector(`[data-settings-part="${key}"]`);
+      if (!host) return;
+      const template = document.createElement("template");
+      template.innerHTML = section.view(value);
+      const node = template.content.firstElementChild;
+      if (node) {
+        node.dataset.settingsPart = key;
+        host.replaceWith(node);
+        section.ready?.(value, node);
+      } else host.hidden = true;
+    } catch (error) {
+      if (!current()) return;
+      const host = content.querySelector(`[data-settings-part="${key}"]`);
+      if (host) host.innerHTML = `<section class="settings-section"><h2>${section.name}</h2>${message(`Could not load ${section.name}: ${error.message}`, true)}</section>`;
+    }
+    if (current()) { state.deck?.settings(content); restore(saved); }
+  }));
+  void state.voiceReady?.then(() => { if (current() && state.base === "#/settings") state.deck?.settings(content); });
 }
 
 async function memoryView(epoch, refresh = false) {
@@ -1151,21 +1176,40 @@ function consoleScreen() {
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
   if (["#/admin", "#/instance-admin"].includes(state.route)) return;
-  const epoch = state.screen, request = ++state.refreshRequest;
+  const epoch = state.screen, request = ++state.refreshRequest, viewer = state.me;
   if (!background) state.renderPending = epoch;
-  const current = () => epoch === state.screen && request === state.refreshRequest;
-  const read = (path, options = {}) => api(path, { ...options, ...(state.base === "#/settings" ? { timeoutMs: 10000 } : {}) }).catch((error) => {
+  const current = () => state.me === viewer && epoch === state.screen && request === state.refreshRequest;
+  const read = (path, options = {}) => api(path, options).catch((error) => {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
   try {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
     // The owner queue is not a prerequisite for a member's workspace screens.
-    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
-    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
+    const needsPage = ["#/needs", "#/decide"].includes(state.base) || (state.base === "#/" && !state.deck?.on());
+    // Only bootstrap metadata has a short budget; actual queue/rule content
+    // and subsequent card, list and memory reads retain their existing budgets.
+    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true, ...(needsPage ? {} : { timeoutMs: 3000 }) }) : Promise.resolve(null);
+    const ruleRead = state.base === "#/rules" ? read("/api/rules") : read("/api/rules/count", { timeoutMs: 3000 });
+    const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : read("/api/bots", { timeoutMs: 3000 });
+    // Badges are optional, not prerequisites of Settings, Memory, a project or a card.
+    // Keep the last value during revalidation and guard late arrivals by screen/request.
+    void ownerNeeds.then((needs) => {
+      if (!current()) return;
+      state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me); navigation();
+    }).catch(() => {});
+    void ruleRead.then((rules) => { if (current()) { state.rulesWaiting = rules.waiting; navigation(); } }).catch(() => {});
+    void rosterRead.then((roster) => {
+      if (current() && roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); navigation(); }
+    }).catch(() => {});
+    const [boards, needs, rules] = await Promise.all([
+      read("/api/boards?view=shell", { timeoutMs: 3000 }),
+      needsPage ? ownerNeeds : null,
+      state.base === "#/rules" ? ruleRead : null,
+    ]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
-    if (roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); }
+    state.boards = boards.boards;
+    if (needsPage || state.me.can_admin !== true) state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -1237,6 +1281,14 @@ async function refresh({ background = false, events = [] } = {}) {
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
     if (state.route.startsWith("#/card/") && !(background && (panelForm() || root.querySelector('form[data-form="release-origin"]')))) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
     showError("");
+    if (state.base === "#/boards" || state.base.startsWith("#/board/")) {
+      // Detailed runner/waiting summaries start after the main data has painted.
+      void read("/api/boards").then((page) => {
+        if (!current()) return;
+        state.boards = page.boards; navigation();
+        if (state.base === "#/boards") boardsView();
+      }).catch(() => {});
+    }
     return true;
   } catch (error) {
     if (!current() || !state.me) return;
@@ -2046,7 +2098,7 @@ setInterval(() => {
   });
 }, 15000);
 async function boot() {
-  try { state.me = await boundedRequest(api, "/api/me"); setPeople(state.me.people); }
+  try { state.me = await boundedRequest(api, "/api/me", { timeoutMs: 3000 }); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
   if (!state.me) return;
   shell(); state.voiceReady = Promise.resolve(voice.load());

@@ -64,7 +64,7 @@ test("the rail has exactly Bots and Memory; Workspace holds Projects, Needs me a
 
 test("the shell reads the roster for the badge on other screens and takes it from the bots screen otherwise", async () => {
   const app = await read("app.js");
-  assert.ok(app.includes('state.base.startsWith("#/bots") ? null : api("/api/bots")'), "no second read on the bots screen");
+  assert.match(app, /state\.base\.startsWith\("#\/bots"\) \? Promise\.resolve\(null\) : read\("\/api\/bots"(?:, \{ timeoutMs: 3000 \})?\)/, "no second read on the bots screen, with an optional explicit badge budget");
   assert.ok(app.includes("rememberDeckBots(bots); setBotsWaiting(waitingTotal(bots));"));
   assert.match(app, /function rememberDeckBots\(bots\).*shell\?\.roster\(bots\)/);
   assert.ok(app.includes("botsWaiting: state.botsWaiting"));

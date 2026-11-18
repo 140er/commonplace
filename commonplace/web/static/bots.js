@@ -553,16 +553,20 @@ export function createBots({
   }
   async function loadRoster(token) {
     try {
-      const [result, directory] = await Promise.all([api("/api/bots"), deck() && !s.sharingOnly ? api('/api/coworkers').catch(() => null) : null]);
+      const directory = deck() && !s.sharingOnly ? api('/api/coworkers') : Promise.resolve(null);
+      void directory.then((value) => {
+        if (!alive(token)) return;
+        s.coworkerConversations = value?.conversations || []; s.coworkerBots = value?.bots || []; paintRoster();
+      }).catch(() => {});
+      const result = await api("/api/bots");
       if (!alive(token)) return;
-      s.coworkerConversations = directory?.conversations || []; s.coworkerBots = directory?.bots || [];
       s.bots = result.bots || []; s.model = result.model || null; s.readiness = result.readiness || null; s.canConfigure = result.can_configure === true;
       if (deck() && s.canConfigure) {
-        try {
-          const all = await api("/api/bots/shared");
+        void api("/api/bots/shared").then((all) => {
           if (!alive(token)) return;
           for (const bot of all.bots || []) if (!s.bots.some(row => row.id === bot.id)) s.bots.push({ ...bot, mine: false, lifecycle: true, shared: true, kind: "custom" });
-        } catch { /* The personal roster remains available if workspace management is unavailable. */ }
+          onRoster(s.bots); paintRoster();
+        }).catch(() => {});
       }
       s.loaded = true; s.error = "";
       if (s.botId) s.bot = s.bots.find((b) => b.id === s.botId) || null;
