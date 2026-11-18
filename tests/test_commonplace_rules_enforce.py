@@ -514,7 +514,7 @@ def test_checked_and_exempt_inventory_covers_all_gateway_writes():
 @pytest.mark.parametrize(
     "route", [r for r in enforce.REST_ROUTES if r.kind == "checked"], ids=lambda r: r.tool
 )
-def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
+def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route, monkeypatch):
     card = setup(env)
     bodies = {
         "card_split_done": {"task": card["number"], "state": "kept"},
@@ -535,12 +535,18 @@ def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
         "memory_save": {"text": "Exact memory", "theme": "shared"},
         "fact_save": {"subject": "Avery", "predicate": "likes", "object": "tea"},
         "relaunch": {},
+        "handoff_start": {"thread": "thr_local", "to": "codex/sol"},
         "topology_propose": {
             "items": [{"node": "web1", "fields": {"kind": "server"}}],
             "evidence": "hostname: web1",
         },
         "project_panel_set": {"panel": {"format": "commonplace.panel/1", "highlights": ["Beta"]}},
     }
+    if route.tool == "handoff_start":
+        # The rules check is what is under test; the handoff itself has its own tests.
+        from commonplace.handoff import deck_start
+
+        monkeypatch.setattr(deck_start, "run", lambda *_a, **_k: {"preview": True})
     if route.tool == "card_split_done":
         from commonplace.projects import orchestration
 
@@ -755,6 +761,7 @@ def test_rest_route_inventory_matches_ast_write_branches():
                 and tuple(e.value for e in n.elts)
                 in {
                     ("POST", "/api/handoff"),
+                    ("POST", "/api/handoff/start"),
                     ("DELETE", "/api/settings/handoff"),
                 }
                 for n in ast.walk(registrations)

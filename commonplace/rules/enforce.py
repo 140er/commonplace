@@ -112,6 +112,7 @@ REST_ROUTES = (
     RestRoute("memory_tools", "POST", "/api/facts", "fact_save"),
     RestRoute("handoff.api", "POST", "/api/handoffs/<id>/relaunch", "relaunch"),
     RestRoute("handoff.api", "POST", "/api/handoff", "handoff_start", "exempt", "Automatic upload"),
+    RestRoute("handoff.api", "POST", "/api/handoff/start", "handoff_start"),
     RestRoute(
         "handoff.api", "POST", "/api/handoffs/<id>/successor", "", "exempt", "Automatic lifecycle"
     ),

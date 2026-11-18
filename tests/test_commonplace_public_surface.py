@@ -126,6 +126,8 @@ EXACT = {
     ("POST", "/api/settings/capture"): "authenticated",
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
+    ("GET", "/api/handoff/start"): "authenticated",
+    ("POST", "/api/handoff/start"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",
     ("GET", "/api/settings/handoff"): "authenticated",
     ("PUT", "/api/settings/handoff"): "authenticated",

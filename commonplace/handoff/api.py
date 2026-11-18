@@ -16,6 +16,8 @@ GET  /api/threads/<id>                    threads:read    StoredThread
 GET  /api/threads/<id>/messages?start=&end=   threads:read
 POST /api/threads/<id>/recall             threads:read    {query, limit?, follow_chain?}
 GET  /api/threads/<id>/chain              threads:read
+GET  /api/handoff/start?thread=<id>       threads:read    whether the Deck may offer a handoff, or why not
+POST /api/handoff/start                   launch authority  {thread, to, effort?, note?, confirm?}
 GET  /api/settings/handoff?agent=&task=   any token: rows + effective setting
 PUT  /api/settings/handoff                owner (members: task rows' enabled only)
 DELETE /api/settings/handoff?scope=&ref=  owner
@@ -31,6 +33,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from commonplace.extensions import ToolContext
 from commonplace.rules.enforce import RulesRefresh, rest_write
 
+from . import deck_start
 from .authority import HandoffPermissionError, require_launch_authority
 from .db import HandoffDBError
 from .models import (
@@ -270,6 +273,8 @@ class _API:
             status, result = 428, error.payload
         except _RequestError as error:
             status, result = error.status, {"error": error.message}
+        except deck_start.StartRefusal as error:
+            status, result = error.status, error.payload()
         except HandoffPermissionError as error:
             status, result = 403, {"error": str(error)}
         except ThreadNotFound:
@@ -372,6 +377,8 @@ class _API:
                 except _RequestError:
                     request = replace(request, meta=replace(request.meta, parent_handoff_id=""))
             return 200, self.result(principal, self.ctx.service.run(principal, request))
+        if path == "/api/handoff/start":
+            return self.deck_start(handler, principal, query)
         if path == "/api/handoffs":
             self.readable(principal)
             records = self.ctx.handoff_db.list(workspace, task_ref=_query(query, "task"))
@@ -429,6 +436,35 @@ class _API:
         if path.startswith("/api/threads/"):
             return self.threads(handler, principal, parts, query)
         _missing()
+
+    def deck_start(self, handler, principal, query: dict):
+        if handler.command == "GET":
+            self.readable(principal)
+            return 200, deck_start.inspect(
+                self.ctx, principal, _query(query, "thread"), readable=self.thread_for
+            )
+        require_launch_authority(principal)
+        self.readable(principal)
+        body = _read_json(handler)
+        if isinstance(body, dict):
+            body.pop("rules_seq", None)
+        data = _object(body, {"thread", "to", "effort", "note", "confirm"})
+        data = {
+            "thread": _text(data, "thread", required=True),
+            "to": _text(data, "to", required=True),
+            "effort": _text(data, "effort"),
+            "note": _text(data, "note"),
+            "confirm": data.get("confirm", False),
+        }
+        if type(data["confirm"]) is not bool:
+            raise _RequestError(400, "invalid confirm")
+        ctx = ToolContext(principal=principal, gateway=self.ctx.gateway)
+        # The rules check covers the preview too: both answer the same request for a handoff.
+        with rest_write(ctx, handler, "handoff_start", body):
+            return 200, deck_start.run(self.ctx, principal, data, readable=self.thread_for)
+
+    def thread_for(self, principal, thread_id):
+        return self.thread(principal, thread_id)
 
     def threads(self, handler, principal, parts: list[str], query: dict):
         # The row authorization below also admits separately consented import views.
@@ -522,6 +558,8 @@ def register(ctx) -> None:
     api = _API(ctx)
     for method, path in (
         ("POST", "/api/handoff"),
+        ("GET", "/api/handoff/start"),
+        ("POST", "/api/handoff/start"),
         ("GET", "/api/handoffs"),
         ("GET", "/api/handoffs/*"),
         ("POST", "/api/handoffs/*"),
