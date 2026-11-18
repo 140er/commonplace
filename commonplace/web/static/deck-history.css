@@ -1,0 +1,42 @@
+/* History and handoff: a document-style page in the Deck look. Inert unless the root is in Deck mode. */
+body.history-page { height: auto; min-height: 100%; overflow: auto; font-size: 14px; line-height: 1.6; }
+:root[data-ui="deck"] body.history-page { background: var(--bg); color: var(--text); font-family: var(--font); }
+.history-page .history-nav, .history-page main { max-width: 780px; margin: 0 auto; padding: 24px; }
+.history-page .history-nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-bottom: 0; }
+.history-page a { color: var(--text); text-underline-offset: 4px; }
+.history-page h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; }
+.history-page h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; line-height: 1.5; }
+.history-page p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.history-page code, .history-page .history-id { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.history-page .history-meta, .history-page .history-state { color: var(--text-3); font-size: 13px; }
+:root[data-ui="deck"] .history-page .history-section { margin-top: 20px; padding: 16px 20px; border-radius: var(--r); background: var(--surface); }
+.history-page .history-list, .history-page .history-chain { list-style: none; margin: 8px 0 0; padding: 0; }
+.history-page .history-list li, .history-page .history-chain li { padding: 10px 0; border-top: 1px solid var(--line); }
+.history-page .history-list li:first-child, .history-page .history-chain li:first-child { border-top: 0; }
+.history-page .history-row { display: flex; flex-direction: column; gap: 2px; text-decoration: none; min-height: 44px; justify-content: center; }
+.history-page .history-chain li { display: flex; flex-direction: column; gap: 2px; }
+.history-page .history-read { font-size: 13px; color: var(--text-2); }
+.history-page .history-words { margin: 6px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--well); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.history-page .history-notice { padding: 12px 14px; border-radius: 8px; background: var(--well); overflow-wrap: anywhere; }
+.history-page .history-notice[data-kind="error"], .history-page .history-notice[data-kind="warning"] { background: var(--block-bg); }
+.history-page .history-notice[data-kind="done"] { background: var(--ok-bg); }
+.history-page .history-notice[data-kind="unavailable"], .history-page .history-notice[data-kind="missing"] { background: var(--wait-bg); }
+.history-page .history-facts { margin: 0 0 12px; }
+.history-page .history-facts dt { margin-top: 10px; color: var(--text-3); font-size: 13px; }
+.history-page .history-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.history-page .history-facts ul { margin: 0; padding-left: 18px; }
+.history-page form { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.history-page label { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); font-size: 13px; }
+.history-page input, .history-page textarea { min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: var(--well); color: var(--text); font: inherit; font-size: 14px; }
+.history-page .history-inline { display: flex; gap: 8px; }
+.history-page .history-inline input { flex: 1; min-width: 0; }
+.history-page .history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.history-page .btn { min-height: 44px; padding: 0 18px; cursor: pointer; font: inherit; font-weight: 600; color: var(--text); }
+.history-page .btn:disabled { opacity: .6; cursor: default; }
+.history-page :is(a, button, input, textarea):focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+@media (max-width: 480px) {
+  .history-page .history-nav, .history-page main { padding: 16px; }
+  :root[data-ui="deck"] .history-page .history-section { padding: 14px 16px; }
+  .history-page .history-inline { flex-direction: column; }
+  .history-page .history-actions .btn, .history-page .history-handoff .btn { width: 100%; }
+}
