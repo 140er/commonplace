@@ -38,6 +38,33 @@ STAMP_FIELDS = tuple(FIELDS.values()) + ("hub_written_at",)
 # Who last changed a record. The original author fields above never change.
 UPDATE_FIELDS = ("hub_updated_by", "hub_updated_user", "hub_updated_trust", "hub_updated_at")
 
+STANDALONE_NOTE = "standalone-note-v1"
+_write_origin = contextvars.ContextVar("mempalace_write_origin", default=None)
+
+
+@contextlib.contextmanager
+def standalone_note_operation():
+    """Server-only origin for a standalone-note operation in the trusted header."""
+    token = _write_origin.set(STANDALONE_NOTE)
+    try:
+        yield
+    finally:
+        _write_origin.reset(token)
+
+
+def request_identity(identity):
+    return {**identity, **({"origin": _write_origin.get()} if _write_origin.get() else {})}
+
+
+def standalone_note(metadata, drawer_id):
+    """Fail closed for legacy, imported, mined and physical chunk drawers."""
+    return (
+        metadata.get("hub_origin") == STANDALONE_NOTE
+        and not any(metadata.get(key) for key in ("source_thread", "source_file", "source_url"))
+        and metadata.get("parent_drawer_id", drawer_id) == drawer_id
+    )
+
+
 _MAX_FIELD_LEN = 200
 _current: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
     "mempalace_verified_identity", default=None
@@ -74,6 +101,8 @@ def parse_identity(data) -> dict:
         if not isinstance(data["person"], bool):
             raise ValueError("identity person must be a boolean")
         out["person"] = data["person"]
+    if data.get("origin") == STANDALONE_NOTE:
+        out["origin"] = STANDALONE_NOTE
     return out
 
 
@@ -98,6 +127,8 @@ def stamp() -> Optional[dict]:
     if identity is None:
         return None
     fields = {field: identity[key] for key, field in FIELDS.items()}
+    if identity.get("origin") == STANDALONE_NOTE:
+        fields["hub_origin"] = STANDALONE_NOTE
     fields["hub_written_at"] = utc_now_iso()
     return fields
 

@@ -3,23 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib
 import json
 import logging
 import os
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from mempalace import fact_provenance
+from mempalace import fact_provenance, provenance
 from mempalace.config import sanitize_content
 from mempalace.deadline import BUSY_INDEXING, deadline
 from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
-from . import events
+from . import events, sessions
 from ._http import BadRequest, path_parts, query, read_json, require_principal, send_json
 from .extensions import LocalTool, RetryableToolError, ToolContext, ToolError, register
 from .http_util import log_failure
@@ -216,6 +218,7 @@ def _record(ctx, record, store=None):
         "at": metadata.get("hub_written_at") or metadata.get("filed_at", ""),
         "source": _stored_source(metadata),
         "cards": _cards(ctx, record["drawer_id"], store),
+        "_standalone_note": provenance.standalone_note(metadata, record["drawer_id"]),
     }
 
 
@@ -443,7 +446,7 @@ def _instant(value):
 
 
 def _map_hides_private(ctx):
-    """Map-only restriction: a person needs current workspace-owner proof."""
+    """Private maps and note deletion need current workspace-owner proof."""
     if not ctx.principal.person:
         return False
     try:
@@ -833,6 +836,106 @@ def note_composer(ctx, selected_wing=None):
     }
 
 
+def _note_save_origin(principal, body):
+    standalone = (
+        principal.person
+        and principal.auth == "session"
+        and not principal.connection_id
+        and body.get("source") is None
+        and body.get("task") is None
+    )
+    return provenance.standalone_note_operation() if standalone else nullcontext()
+
+
+def _note_delete_allowed(ctx, wing):
+    p = ctx.principal
+    return (
+        p.person
+        and p.auth == "session"
+        and not p.connection_id
+        and p.role == "owner"
+        and not _map_hides_private(ctx)
+        and not p.policy.refusal("mempalace_delete_drawer")
+        and p.policy.can_write_wing(wing)
+    )
+
+
+def _delete_note(ctx, h, identifier):
+    from .gateway import _same_origin_allowed
+
+    p = ctx.principal
+    session = sessions.cookie_value(h.headers.get("Cookie"))
+    if (
+        not p.person
+        or p.auth != "session"
+        or p.connection_id
+        or p.role != "owner"
+        or _map_hides_private(ctx)
+        or not ctx.db.user(p.user_id)["is_person"]
+        or h.headers.get("Authorization")
+        or not session
+    ):
+        raise ToolError("Only the workspace owner can delete a note in the browser.")
+    if not h.headers.get_all("Origin", []) or not _same_origin_allowed(ctx.gateway, h):
+        raise ToolError("Open Memory in this browser and try again.")
+    body = read_json(h)
+    csrf = body.get("csrf")
+    if (
+        set(body) != {"csrf"}
+        or not isinstance(csrf, str)
+        or not csrf.isascii()
+        or not hmac.compare_digest(csrf, sessions.memory_delete_csrf(session, identifier))
+    ):
+        raise ToolError("Open this note again and try again.")
+    record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": identifier})
+    metadata = record.get("metadata") or {}
+    wing = record.get("wing") or metadata.get("wing", "")
+    if not provenance.standalone_note(metadata, identifier) or not _note_delete_allowed(ctx, wing):
+        raise ToolError("Only standalone notes in a writable wing can be deleted here.")
+    from mempalace import storage_guard
+
+    if storage_guard.status(ctx.workspace_dir(), storage_guard.DEPLOYED_MIN_FREE_BYTES)["disk_low"]:
+        raise RetryableToolError(storage_guard.MESSAGE, storage_guard.RETRY_AFTER_S, "storage")
+    with provenance.standalone_note_operation():
+        _memory(ctx, "mempalace_delete_drawer", {"drawer_id": identifier})
+    metadata = record.get("metadata") or {}
+    ctx.db.audit(
+        action="memory.note.deleted",
+        decision="ok",
+        workspace_id=p.workspace_id,
+        user_id=p.user_id,
+        auth=p.auth,
+        wing=record.get("wing") or metadata.get("wing"),
+        target_ids=[identifier],
+        reason=json.dumps({"room": record.get("room") or metadata.get("room", "")}),
+    )
+    _emit(
+        ctx,
+        "memory.deleted",
+        identifier,
+        wing=record.get("wing") or metadata.get("wing"),
+        room=record.get("room") or metadata.get("room", ""),
+    )
+    send_json(h, 200, {"message": "Note deleted"})
+
+
+def _delete_offer(ctx, h, memory):
+    session = sessions.cookie_value(h.headers.get("Cookie"))
+    if (
+        memory.pop("_standalone_note", False)
+        and session
+        and not h.headers.get("Authorization")
+        and _note_delete_allowed(ctx, memory["theme"])
+    ):
+        memory["delete_note"] = {"csrf": sessions.memory_delete_csrf(session, memory["id"])}
+    return memory
+
+
+def _warm_rooms(gateway, principal):
+    if not principal.policy.refusal("memory_search"):
+        gateway.warm_memory(principal.workspace_id)
+
+
 def install(gateway):
     def handle(h):
         principal = require_principal(gateway, h)
@@ -841,11 +944,14 @@ def install(gateway):
         ctx = ToolContext(principal=principal, gateway=gateway)
         parts = path_parts(h, "/api/memory")
         try:
+            if h.command == "POST" and len(parts) == 2 and parts[1] == "delete":
+                _delete_note(ctx, h, parts[0])
+                return
             if h.command == "POST" and not parts:
                 if principal.policy.refusal("memory_save"):
                     raise ToolError("no: memory write refused")
                 body = read_json(h)
-                with rest_write(ctx, h, "memory_save", body):
+                with rest_write(ctx, h, "memory_save", body), _note_save_origin(principal, body):
                     memory_id, _, notice, theme, topic = _save(ctx, body)
                 send_json(
                     h,
@@ -865,12 +971,17 @@ def install(gateway):
                 args["limit"] = params.get("limit")
                 results, warming = _search_page(ctx, args, _boards(ctx))
                 # Additive: set only while the memory worker is warming up.
-                send_json(h, 200, {"results": results, **({"warming_up": True} if warming else {})})
+                send_json(
+                    h,
+                    200,
+                    {
+                        "results": [_delete_offer(ctx, h, row) for row in results],
+                        **({"warming_up": True} if warming else {}),
+                    },
+                )
             elif h.command == "GET" and parts == ["rooms"]:
                 rooms = note_rooms(principal)
-                if not principal.policy.refusal("memory_search"):
-                    # The Memory page asks for its rooms before it searches.
-                    gateway.warm_memory(principal.workspace_id)
+                _warm_rooms(gateway, principal)
                 send_json(
                     h,
                     200,
@@ -895,7 +1006,7 @@ def install(gateway):
                     if params.get("view") == "map"
                     else _get(ctx, parts[0], _boards(ctx))
                 )
-                send_json(h, 200, memory)
+                send_json(h, 200, _delete_offer(ctx, h, memory))
             else:
                 send_json(h, 404, {"error": "not found"})
         except BadRequest:

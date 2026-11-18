@@ -96,7 +96,7 @@ test('the Memory controller submits the note route and preserves a draft across 
     if (path.includes('compose=1')) return { composer: { default_wing: 'shared', wings: [{ wing: 'shared', name: 'Workspace notes' }] } };
     return path === '/api/memory' ? { id: 'saved', theme: 'shared' } : { rooms: [] };
   } });
-  const action = value => listeners.get('click')({ target: { closest: selector => selector === '[data-memory-action]' ? { dataset: { memoryAction: value } } : null } });
+  const action = value => listeners.get('click')({ target: { closest: selector => ['[data-memory-action]', '[data-memory-action], [data-memory-post]'].includes(selector) ? { dataset: { memoryAction: value } } : null } });
   action('note'); await new Promise(resolve => setImmediate(resolve));
   listeners.get('input')({ target: { name: 'note-text', value: '  exact 🧭\n  ' } });
   ui.setProject('other'); assert.match(mount.innerHTML, />\n  exact 🧭\n  <\/textarea>/);
@@ -126,6 +126,34 @@ test('preview, destination, errors and saved drawer are escaped plain words', ()
   assert.match(saved, /Saved to Workspace notes/);
   assert.match(saved, /href="#\/memory\?drawer=opaque"[^>]*>Open drawer/);
   assert.match(saved, /searchable shortly/);
+});
+
+for (const look of ['deck', 'classic']) for (const width of [1280, 390]) test(`${look} ${width}: cancel preserves words; confirmed deletion removes result and closes source`, async () => {
+  const listeners = new Map(), calls = [];
+  const node = () => ({ innerHTML: '', hidden: true, ownerDocument: { documentElement: { dataset: { ui: look } } },
+    addEventListener(type, handler) { listeners.set(type, handler); }, removeEventListener(type) { listeners.delete(type); }, querySelector() { return null; } });
+  const mount = node(), panel = node(), text = '$& <note>\nsecond line\nthird line\nfourth line';
+  const record = { id: 'note', text, theme: 'shared', delete_note: { csrf: 'proof' } };
+  const ui = createMemory({ mount, panel, boards: [{ slug: 'notes:shared', wing: 'shared', notesOnly: true }], api: async (path, options) => {
+    if (path.endsWith('/delete')) { calls.push([path, options]); return { message: 'Note deleted' }; }
+    if (path === '/api/memory/note') return record;
+    return { rooms: [] };
+  } });
+  const click = value => listeners.get('click')({ preventDefault() {}, target: { closest: selector => ['[data-memory-action]', '[data-memory-action], [data-memory-post]'].includes(selector) ? { dataset: { memoryAction: value } } : null } });
+  try {
+    await ui.select({ ...record, kind: 'note', wing: 'shared', board: 'notes:shared' });
+    assert.match(panel.innerHTML, /Delete this note/);
+    click('delete'); assert.match(panel.innerHTML, /Delete this note\? This cannot be undone\./);
+    assert.match(panel.innerHTML, /\$&amp; &lt;note&gt;\nsecond line\nthird line/);
+    assert.doesNotMatch(panel.innerHTML.match(/<dialog[\s\S]*?<\/dialog>/)[0], /fourth line/);
+    click('delete-cancel'); assert.equal(calls.length, 0); assert.equal(panel.hidden, false);
+    assert.doesNotMatch(panel.innerHTML, /<dialog/);
+    click('delete'); click('delete-confirm'); click('delete-confirm');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [['/api/memory/note/delete', { method: 'POST', body: { csrf: 'proof' } }]]);
+    assert.equal(panel.hidden, true); assert.equal(panel.innerHTML, '');
+    assert.match(mount.innerHTML, /Note deleted/);
+  } finally { ui.stop(); }
 });
 
 test('loading places has a load-specific error and an explicit retry', async () => {
