@@ -13,7 +13,11 @@ CASES = re.findall(r"^  (?:async )?(\w+)\(\) \{", SOURCE[SOURCE.index("const cas
 
 
 def test_the_case_list_is_complete():
-    assert len(CASES) >= 15 and "end_lease_leaves_unfinished_work_listed" in CASES
+    assert (
+        len(CASES) >= 35
+        and "restore_ack_cancel_sends_nothing_and_keeps_the_state" in CASES
+        and "end_lease_leaves_unfinished_work_listed" in CASES
+    )
 
 
 @pytest.mark.parametrize("case", CASES)
