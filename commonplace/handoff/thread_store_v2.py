@@ -318,25 +318,48 @@ class ThreadStoreV2(V1ThreadStore):
                 raise ThreadConflict("Source thread already has different stored content")
             if len(messages) <= stored.message_count:
                 return stored
-            added = messages[stored.message_count :]
-            self._check_storage_budget(max_storage_bytes, added)
-            cache = self._write_messages(stored_id, added)
-            self._write_chunks(
-                stored_id, chunk_messages(added), added, stored.chunk_count, cache=cache
+            return self._append_added(
+                stored,
+                messages[stored.message_count :],
+                max_storage_bytes,
+                lambda: canonical_sha256(messages),
             )
-            self._conn.execute(
-                "UPDATE threads SET message_count=?, chunk_count=?, sha256=? WHERE id=?",
-                (
-                    len(messages),
-                    self._conn.execute(
-                        "SELECT count(*) FROM chunk WHERE thread_id=?", (stored_id,)
-                    ).fetchone()[0],
-                    canonical_sha256(messages),
-                    stored_id,
-                ),
+
+    def append_rows(self, stored_id, rows, *, max_storage_bytes=None):
+        rows = list(rows)
+        with self._transaction():
+            stored = self.get(stored_id)
+            if stored is None:
+                raise ValueError("Thread not found")
+            if any(m.seq != stored.message_count + i for i, m in enumerate(rows)):
+                raise ValueError("Message sequence must continue the saved messages")
+            if not rows:
+                return stored
+            return self._append_added(
+                stored,
+                rows,
+                max_storage_bytes,
+                lambda: canonical_sha256(self.iter_messages(stored_id)),
             )
-            self._check_storage_budget(max_storage_bytes)
-            return self.get(stored_id)
+
+    def _append_added(self, stored, added, max_storage_bytes, digest):
+        stored_id = stored.id
+        self._check_storage_budget(max_storage_bytes, added)
+        cache = self._write_messages(stored_id, added)
+        self._write_chunks(stored_id, chunk_messages(added), added, stored.chunk_count, cache=cache)
+        self._conn.execute(
+            "UPDATE threads SET message_count=?, chunk_count=?, sha256=? WHERE id=?",
+            (
+                stored.message_count + len(added),
+                self._conn.execute(
+                    "SELECT count(*) FROM chunk WHERE thread_id=?", (stored_id,)
+                ).fetchone()[0],
+                digest(),
+                stored_id,
+            ),
+        )
+        self._check_storage_budget(max_storage_bytes)
+        return self.get(stored_id)
 
     def _write_messages(self, stored_id, added):
         last = self._conn.execute(

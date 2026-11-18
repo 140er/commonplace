@@ -333,6 +333,19 @@ def serve_gateway(args) -> int:
                 for store in stores:
                     store.release_memory()
                 reply = {**process_sample(False), "stores": len(stores)}
+            elif cmd == "stacks":
+                import traceback
+
+                names = {t.ident: t.name for t in threading.enumerate()}
+                reply = {
+                    "stacks": {
+                        f"{names.get(ident, '?')}-{ident}": [
+                            f"{Path(f.filename).name}:{f.lineno}:{f.name}"
+                            for f in traceback.extract_stack(frame)[-4:]
+                        ]
+                        for ident, frame in sys._current_frames().items()
+                    }
+                }
             elif cmd == "baseline":
                 gc.collect()
                 baseline["snap"] = tracemalloc.take_snapshot()

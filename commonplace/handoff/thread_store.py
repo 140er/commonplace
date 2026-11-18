@@ -129,13 +129,42 @@ def chunk_messages(messages: list, max_chars: int = CHUNK_MAX_CHARS) -> list[Chu
     return chunks
 
 
-def canonical_sha256(messages: list) -> str:
-    """SHA-256 over the messages' (seq, role, kind, name, call_id, text, raw)."""
-    canonical = [(m.seq, m.role, m.kind, m.name, m.call_id, m.text, m.raw) for m in messages]
-    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode(
-        "utf-8", "surrogatepass"
-    )
-    return hashlib.sha256(encoded).hexdigest()
+_HASH_PIECE = 1 << 20
+
+
+def _update_json_string(digest, value: str) -> None:
+    """Hash ``json.dumps(value, ensure_ascii=False)`` without building it whole.
+
+    Escaping works one character at a time, so a long text is escaped and encoded in pieces.
+    """
+    digest.update(b'"')
+    for start in range(0, len(value), _HASH_PIECE):
+        piece = json.dumps(value[start : start + _HASH_PIECE], ensure_ascii=False)
+        digest.update(piece[1:-1].encode("utf-8", "surrogatepass"))
+    digest.update(b'"')
+
+
+def canonical_sha256(messages) -> str:
+    """SHA-256 over the messages' (seq, role, kind, name, call_id, text, raw).
+
+    Hashes the same bytes as one compact JSON array of all messages, one message and one piece
+    of text at a time, so a long thread, or one very long message, is never copied whole.
+    ``messages`` may be any iterable.
+    """
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    for index, m in enumerate(messages):
+        head = json.dumps(
+            (m.seq, m.role, m.kind, m.name, m.call_id), ensure_ascii=False, separators=(",", ":")
+        )
+        digest.update(b"," if index else b"")
+        digest.update(head[:-1].encode("utf-8", "surrogatepass"))
+        for text in (m.text, m.raw):
+            digest.update(b",")
+            _update_json_string(digest, text)
+        digest.update(b"]")
+    digest.update(b"]")
+    return digest.hexdigest()
 
 
 def _stored_thread(row: Optional[sqlite3.Row]) -> Optional[StoredThread]:
@@ -784,47 +813,95 @@ class ThreadStore:
             stored = self.get(stored_id)
             if stored is None:
                 raise ValueError("Thread not found")
-            previous = self.messages(stored_id)
-            common = min(len(previous), len(messages))
-            if canonical_sha256(previous[:common]) != canonical_sha256(messages[:common]):
+            count = stored.message_count
+            if len(messages) < count:
+                # A stale prefix has no full-thread digest to compare. Read only that prefix.
+                previous = self.messages(stored_id, 0, len(messages) - 1) if messages else []
+                matches = canonical_sha256(previous) == canonical_sha256(messages)
+            else:
+                # The thread row carries the digest of every saved message, so the saved
+                # rows are not read back just to compare them.
+                matches = canonical_sha256(messages[:count]) == stored.sha256
+            if not matches:
                 raise ThreadConflict("Source thread already has different stored content")
-            if len(messages) <= len(previous):
+            if len(messages) <= count:
                 return stored
-            added = messages[len(previous) :]
-            self._check_storage_budget(max_storage_bytes, added)
-            chunks = chunk_messages(added)
+            return self._append_added(
+                stored, messages[count:], max_storage_bytes, lambda: canonical_sha256(messages)
+            )
 
-            def write():
-                self._conn.executemany(
-                    "INSERT INTO messages(thread_id, seq, role, kind, name, call_id, at, text, raw) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        (stored_id, m.seq, m.role, m.kind, m.name, m.call_id, m.at, m.text, m.raw)
-                        for m in added
-                    ],
-                )
-                self._conn.executemany(
-                    "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) VALUES (?, ?, ?, ?, ?)",
-                    [
-                        (stored_id, stored.chunk_count + c.index, c.seq_start, c.seq_end, c.text)
-                        for c in chunks
-                    ],
-                )
-                if self._fts_enabled:
-                    self._insert_fts([(stored_id, stored.chunk_count + c.index) for c in chunks])
-                self._conn.execute(
-                    "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
-                    (
-                        len(messages),
-                        stored.chunk_count + len(chunks),
-                        canonical_sha256(previous + added),
-                        stored_id,
-                    ),
-                )
-                self._check_storage_budget(max_storage_bytes)
-                return self.get(stored_id)
+    def append_rows(
+        self, stored_id: str, rows: list[ThreadMessage], *, max_storage_bytes=None
+    ) -> StoredThread:
+        """Append ``rows`` after the saved messages; their ``seq`` continues the saved count.
 
-            return self._write_with_fts_retry(write)
+        For a caller that holds only the new rows: the saved messages are never loaded
+        together, so a long thread costs the same memory to extend as a short one. The caller
+        has already proved the rows belong after what is saved (one writer, one transaction).
+        """
+        rows = list(rows)
+        with self._transaction():
+            stored = self.get(stored_id)
+            if stored is None:
+                raise ValueError("Thread not found")
+            if any(m.seq != stored.message_count + i for i, m in enumerate(rows)):
+                raise ValueError("Message sequence must continue the saved messages")
+            if not rows:
+                return stored
+            return self._append_added(
+                stored,
+                rows,
+                max_storage_bytes,
+                lambda: canonical_sha256(self.iter_messages(stored_id)),
+            )
+
+    def iter_messages(self, stored_id: str, page: int = 256):
+        """Saved messages in order, a page at a time; the thread is never held whole."""
+        start = 0
+        while True:
+            rows = self.messages(stored_id, start, start + page - 1)
+            yield from rows
+            if len(rows) < page:
+                return
+            start += page
+
+    def _append_added(self, stored, added, max_storage_bytes, digest):
+        """Write ``added`` after ``stored``'s messages; ``digest()`` hashes the whole thread."""
+        stored_id = stored.id
+        self._check_storage_budget(max_storage_bytes, added)
+        chunks = chunk_messages(added)
+
+        def write():
+            self._conn.executemany(
+                "INSERT INTO messages(thread_id, seq, role, kind, name, call_id, at, text, raw) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (stored_id, m.seq, m.role, m.kind, m.name, m.call_id, m.at, m.text, m.raw)
+                    for m in added
+                ],
+            )
+            self._conn.executemany(
+                "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (stored_id, stored.chunk_count + c.index, c.seq_start, c.seq_end, c.text)
+                    for c in chunks
+                ],
+            )
+            if self._fts_enabled:
+                self._insert_fts([(stored_id, stored.chunk_count + c.index) for c in chunks])
+            self._conn.execute(
+                "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
+                (
+                    stored.message_count + len(added),
+                    stored.chunk_count + len(chunks),
+                    digest(),
+                    stored_id,
+                ),
+            )
+            self._check_storage_budget(max_storage_bytes)
+            return self.get(stored_id)
+
+        return self._write_with_fts_retry(write)
 
     def put_doc(self, handoff_id: str, markdown: str) -> None:
         """Save a handoff's verbatim quotes beside its workspace transcript."""
