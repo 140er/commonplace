@@ -138,7 +138,7 @@ def _authority(gateway, ws, conn, version, board, row=None):
         > jobs.MODES.index(machine["max_runtime_mode"])
     ):
         return "grant_changed"
-    choice = models.resolve(gateway.db, ws, board["slug"], role.model_role)
+    choice = models.effective(gateway.db, ws, board["slug"], role.model_role).choice
     if choice is None:
         return "model_unresolved"
     if row and (row["model_provider"], row["model"]) != (choice.provider, choice.model):
@@ -150,7 +150,7 @@ def _new(conn, gateway, ws, version, board):
     config = version.config()
     role = next(r for r in config.roles.values() if r.kind == "orchestrator" and r.parent is None)
     machine = registry.get_machine(gateway.db, ws, config.runner.machine)
-    choice = models.resolve(gateway.db, ws, board["slug"], role.model_role)
+    choice = models.effective(gateway.db, ws, board["slug"], role.model_role).choice
     conn.execute(
         "INSERT INTO runner_sessions(board,id,state,config_version,config_sha256,machine_id,binding_epoch,"
         "project,topic,runtime_mode,requested_by,model_provider,model,updated_at) VALUES (?,?, 'idle',?,?,?,?,?,?,?,?,?,?,?)",

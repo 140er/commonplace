@@ -224,6 +224,12 @@ class World:
                 models.catalog_add(self.db, self.owner, BOARD, choice)
         models.put(self.db, self.owner, BOARD, body)
 
+    def clear_models(self):
+        """Nothing usable: no choice for any role and an empty model list."""
+        with self.db._lock, self.db._tx() as conn:
+            conn.execute("DELETE FROM chat_model_settings WHERE workspace_id=?", (self.ws,))
+            conn.execute("DELETE FROM project_model_catalog WHERE workspace_id=?", (self.ws,))
+
     def machine(self):
         return registry.get_machine(self.db, self.ws, self.machine_id)
 
@@ -1140,7 +1146,7 @@ def test_r24_runner_harness_and_unresolved_model_are_refused(world):
     assert info.value.code == "runner_harness_not_t3"
     card = world.card()
     world.configure()
-    world.set_models(None, role="worker")
+    world.clear_models()
     lease = world.claim(world.a)
     refused("model_unresolved", world.orch_start, world.a, lease, card, "s1")
     refused("model_unresolved", world.person_start, card)
@@ -1153,7 +1159,7 @@ def test_r24_runner_harness_and_unresolved_model_are_refused(world):
 def test_404_refused_start_names_the_missing_role_and_where_to_set_it(world):
     """#404: the refusal says which role has no model and where the owner sets it."""
     world.configure()
-    world.set_models(None, role="worker")
+    world.clear_models()
     card = world.card()
     refusal = refused("model_unresolved", world.person_start, card)
     text = str(refusal)
@@ -1172,12 +1178,13 @@ def owner_count(world):
 
 
 def test_404_unmapped_role_is_one_needs_me_item_until_mapped(world):
-    """#404: an accepted config whose role has no model raises exactly one owner item naming
-    the board and the role, with a button to the setting; it clears once the role is mapped."""
+    """#404/#419: an accepted config with no usable model (no choice, empty list) raises exactly
+    one owner item naming the board and the roles, with a button to the setting; it clears once
+    a model exists, and a role with no choice then runs on the default instead of raising one."""
     world.configure()
     assert model_role_items(world) == []  # both roles are mapped
     baseline = owner_count(world)
-    world.set_models(None, role="main")
+    world.clear_models()
     items = model_role_items(world)
     assert [(item["board"], item["role"]) for item in items] == [(BOARD, "main")]
     item = items[0]
@@ -1192,19 +1199,19 @@ def test_404_unmapped_role_is_one_needs_me_item_until_mapped(world):
     world.set_models(MODEL, role="main")
     assert model_role_items(world) == []
     assert owner_count(world) == baseline
-    world.set_models(None, role="worker")
-    assert [item["role"] for item in model_role_items(world)] == ["worker"]
-    assert owner_count(world) == baseline + 1
+    world.set_models(None, role="worker")  # no choice, but the list has a model: the default
+    assert model_role_items(world) == []
+    assert owner_count(world) == baseline
 
 
 def test_404_item_copy_names_the_blocked_starts(world):
     """#404: the copy says which starts cannot run, not that every card is stuck."""
     world.configure()
-    world.set_models(None, role="worker")
+    world.clear_models()
     [item] = model_role_items(world)
-    assert "Starts that use the worker role (builder)" in item["message"]
+    assert "Starts that use the main, worker roles (" in item["message"]
     assert "cannot run" in item["message"] and "its cards cannot start" not in item["message"]
-    assert item["config_roles"] == ["builder"]
+    assert item["config_roles"] == ["main", "builder"]
 
 
 def test_404_only_the_owner_is_asked_and_digest_and_push_stay_card_only(world):
@@ -1212,7 +1219,7 @@ def test_404_only_the_owner_is_asked_and_digest_and_push_stay_card_only(world):
     from commonplace.phone_push import evaluate
 
     world.configure()
-    world.set_models(None, role="main")
+    world.clear_models()
     assert len(model_role_items(world)) == 1
     member_user = world.db.create_user("member-404@example.com")
     world.db.add_member(world.ws, member_user, "member", actor=world.hub.admin)
@@ -1235,15 +1242,16 @@ def test_404_reviewer_and_gate_gaps_get_an_item_with_a_button_and_the_same_fix_i
     """A start role whose model_role is reviewer or gate is a configurable slot: the item has a
     button to the picker and the refused start points at the same project setting."""
     world.configure(model_role="reviewer")
+    world.clear_models()
     [item] = model_role_items(world)
-    assert (item["role"], item["config_roles"]) == ("reviewer", ["builder"])
+    assert "reviewer" in item["roles"] and "builder" in item["config_roles"]
     assert item["action"] == {
         "label": "Set the model",
         "type": "project_models",
         "board": BOARD,
-        "role": "reviewer",
+        "role": item["roles"][0],
     }
-    assert "Choose one in the project's Agent models" in item["message"]
+    assert "choose it in the project's Agent models" in item["message"]
     world.configure(model_role="gate")
     card = world.card()
     with world.boards.store.connection() as conn:
@@ -1265,7 +1273,7 @@ def test_404_reviewer_and_gate_gaps_get_an_item_with_a_button_and_the_same_fix_i
     assert refusal.code == "model_unresolved" and refusal.details["role"] == "gate"
     assert "gate" in text and "Agent models" in text and "None" not in text
     [item] = model_role_items(world)
-    assert item["action"]["role"] == "gate" and "Agent models" in item["message"]
+    assert "gate" in item["roles"] and "Agent models" in item["message"]
 
 
 def test_404_start_roles_agree_with_the_role_a_start_runs(world):

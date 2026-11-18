@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_role_model_default.py` and the node-harness case for the effective model in project settings.
+- **Promises:** A project with no model choices still starts its Coworker on the default and records it; with no usable model the owner sees exactly one actionable Needs me item; the effective model shows in project settings.
+- **How it fails:** Red on the previous base (the start was refused and no item appeared), green on the head.
+- **Tests:** `tests/test_role_model_default.py` and `tests/projects_view.mjs`.

@@ -2445,9 +2445,11 @@ class BoardService(lifecycle.LifecycleMixin):
         ]
 
     def _missing_model_roles(self):
-        """One item per board and model role the board's accepted config uses with no model set.
+        """One item per board whose accepted config has a start role with no usable model.
 
-        Owner-only. The item clears itself once the role resolves to a model."""
+        A role with no choice runs on the default (the first model of the project's list), so
+        this appears only when there is nothing to start on. Owner-only, one item per board
+        (plus one for a role that names no model_role); it clears itself once a model exists."""
         if not self.principal.person or self.principal.role != "owner":
             return []
         from commonplace.orch import schema as orch_schema, store as orch_store
@@ -2479,37 +2481,54 @@ class BoardService(lifecycle.LifecycleMixin):
                 if not config.has_runner:
                     continue
                 name = board["name"] or board["slug"]
-                for gap in models.missing_roles(
+                gaps = models.missing_roles(
                     self.ctx.db, self.principal.workspace_id, board["slug"], config
-                ):
-                    role, uses = gap["role"], ", ".join(gap["config_roles"])
-                    if role is None:
-                        message = (
-                            f"Starts that use the {uses} role on {name} cannot run: the role "
-                            "names no model_role. Add one to that role in the board's "
-                            "Coworker config; there is no setting for it here."
-                        )
-                        action = None
-                    else:
-                        message = (
-                            f"Starts that use the {role} role ({uses}) on {name} cannot run: no "
-                            "model is set for it. Choose one in the project's Agent models."
-                        )
-                        action = {
-                            "label": "Set the model",
-                            "type": "project_models",
-                            "board": board["slug"],
-                            "role": role,
-                        }
+                )
+                # A role with no choice runs on the default, so every settable slot is missing
+                # at once (the project's model list is empty): one item for the board names
+                # them all, and adding one model clears it.
+                settable = [gap for gap in gaps if gap["role"] is not None]
+                for gap in (g for g in gaps if g["role"] is None):
                     items.append(
                         {
                             "kind": "model_role",
                             "board": board["slug"],
                             "board_name": name,
-                            "role": role,
+                            "role": None,
                             "config_roles": gap["config_roles"],
-                            "message": message,
-                            "action": action,
+                            "message": (
+                                f"Starts that use the {', '.join(gap['config_roles'])} role on "
+                                f"{name} cannot run: the role names no model_role. Add one to "
+                                "that role in the board's Coworker config; there is no setting "
+                                "for it here."
+                            ),
+                            "action": None,
+                        }
+                    )
+                if settable:
+                    roles = [gap["role"] for gap in settable]
+                    uses = ", ".join(n for gap in settable for n in gap["config_roles"])
+                    items.append(
+                        {
+                            "kind": "model_role",
+                            "board": board["slug"],
+                            "board_name": name,
+                            "role": roles[0],
+                            "roles": roles,
+                            "config_roles": [n for gap in settable for n in gap["config_roles"]],
+                            "message": (
+                                f"Starts that use the {', '.join(roles)} "
+                                f"role{'s' if len(roles) > 1 else ''} ({uses}) on {name} cannot "
+                                "run: no model is set and the project's model list is empty, so "
+                                "there is no default to start on. Add a model to the list and "
+                                "choose it in the project's Agent models."
+                            ),
+                            "action": {
+                                "label": "Set the model",
+                                "type": "project_models",
+                                "board": board["slug"],
+                                "role": roles[0],
+                            },
                         }
                     )
         return items

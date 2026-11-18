@@ -103,8 +103,8 @@ or runtime are created; activation belongs to a later slice.
 
 Model routing has four slots, `main` (Coworker), `worker` (builder),
 `reviewer` and `gate`, set per project by the owner
-(`PUT /api/projects/<board>/models`) from the workspace's model list. A role the
-accepted config uses that has no model raises one owner item in Needs me; a start
+(`PUT /api/projects/<board>/models`) from the workspace's model list. A slot with no choice runs on the default, the first model in the board's list. Only
+when no model is usable does the owner get one Needs me item for the board, and a start
 refused as `model_unresolved` names that role and where to set it.
 
 A project may also carry one escalation rule
@@ -119,7 +119,7 @@ carries one of the `labels` (case-insensitive), the job is pinned to the
 rule's model instead of the slot's. The job records `model_provider`, `model`
 and `model_reason` (`failed_rounds:<n>` or `label:<name>`), and the start
 reply carries `model_reason`. Without a rule nothing changes, and a role with no
-default model stays unmapped (`model_unresolved`) even when a rule exists. Which
+default model and no listed model stays unmapped (`model_unresolved`) even when a rule exists. Which
 model escalation picked is a decision, not part of the request: a keyed retry
 (`request_key` or a Coworker `step_key`) replays its stored job whether it ran
 on the default or the escalation model and whether or not the rule still applies.

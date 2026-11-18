@@ -66,12 +66,18 @@ with an empty section list if memory is slow or unavailable.
 
 Owners pick the model for the Coworker, builder, reviewer and gate roles in project
 settings, under Agent models. Each role is a list of the models this workspace
-can use, with "Runner default" to leave it unset. The model already stored for a
+can use, with "Default" to leave it unset: a role with no choice runs on the first model in the list. The model already stored for a
 role always stays in the list and is shown as stored. A model that is not in the
 list is refused (`unknown_model`) and nothing is saved. To add one, use "Add a
 model to the list" in the same section (an owner action, also available as
 `POST /api/projects/<board>/models/catalog`). The list belongs to the board: it holds the models an owner added to it, the models
 chosen for it and the workspace defaults, never another board's choices.
+
+A role left on Default still starts: it runs on the first model in the board's list, in
+provider then model order, and the settings show which model that is and that it is a
+default. Only when no model is chosen and the list is empty does a start get refused; the
+owner then sees one Needs me item for the project, with a button to this section, that
+clears once a model is added.
 
 Saving a choice does not call a provider or start work, and does not change the
 separate workspace chat model settings. The Save models form works as soon as project

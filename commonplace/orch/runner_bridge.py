@@ -118,6 +118,7 @@ class Plan:
     escalation: escalation.Rule | None = None  # the project's rule, read with the snapshot
     labels: tuple = ()  # the card's labels
     model_reason: str | None = None  # why ``model`` is the escalation model
+    model_source: str | None = None  # project, workspace, default or escalation
 
     @property
     def role(self) -> schema.Role:
@@ -165,7 +166,7 @@ def ensure_schema(conn) -> None:
     for statement in MISSES_SCHEMA:
         conn.execute(statement)
     columns = {r[1] for r in conn.execute("PRAGMA table_info(runner_jobs)")}
-    for name in ("launch_role", "model_reason", "request_base_hash"):
+    for name in ("launch_role", "model_reason", "request_base_hash", "model_source"):
         if name not in columns:
             conn.execute(f"ALTER TABLE runner_jobs ADD COLUMN {name} TEXT")
 
@@ -283,9 +284,10 @@ def prepare(
         raise StartRefused("not_configured", "the board has no Coworker runner config")
     machine = registry.get_machine(gateway.db, workspace_id, config.runner.machine)
     try:
-        model = models.resolve(gateway.db, workspace_id, board_row["slug"], role.model_role)
-    except ValueError:
-        model = None
+        picked = models.effective(gateway.db, workspace_id, board_row["slug"], role.model_role)
+    except ValueError:  # a role with no model_role has no slot
+        picked = models.Effective(None, "none")
+    model = picked.choice
     with BoardStore(gateway.workspace_dir(workspace_id)).connection() as conn:
         limit = project_limits.get(conn, board_row["id"])["max_agents"]
         doing = frozenset(
@@ -324,6 +326,7 @@ def prepare(
         config=config,
         machine=dict(machine) if machine is not None else None,
         model=model,
+        model_source=picked.source,
         cap=cap,
         doing=doing,
         plan_label="plan" in _labels(card_row),
@@ -359,7 +362,12 @@ def _escalated(conn, plan: Plan) -> Plan:
     model, reason = escalation.pick(
         rule, plan.role.model_role, plan.model, failed=failed, labels=plan.labels
     )
-    return replace(plan, model=model, model_reason=reason)
+    return replace(
+        plan,
+        model=model,
+        model_reason=reason,
+        model_source="escalation" if reason else plan.model_source,
+    )
 
 
 def request_hash(plan: Plan, role: str) -> str:
@@ -563,8 +571,9 @@ def model_unresolved(plan: Plan) -> StartRefused:
         )
     else:  # config validation accepts only the four slots, so project settings can set it
         message = (
-            f"no model is set for the {role.model_role} role of board {plan.board}; "
-            "an owner sets it in the board's project settings under Agent models"
+            f"no model is set for the {role.model_role} role of board {plan.board} and the "
+            "project's model list is empty, so there is no default to start on; an owner adds "
+            "a model and picks it in the board's project settings under Agent models"
         )
     return StartRefused(
         "model_unresolved", message, role=role.model_role, config_role=role.name, board=plan.board
@@ -716,9 +725,10 @@ def _fenced(
         row = _job(conn, row["id"])
     if status == 201:
         conn.execute(
-            "UPDATE runner_jobs SET model_reason=?, request_base_hash=? WHERE id=?",
+            "UPDATE runner_jobs SET model_reason=?, model_source=?, request_base_hash=? WHERE id=?",
             (
                 plan.model_reason,
+                plan.model_source,
                 request_hash(base, role) if path == "orch" else base_digest(base),
                 row["id"],
             ),
@@ -1010,6 +1020,7 @@ def launch_reply(plan: Plan, outcome: Outcome) -> dict:
             "model": job.get("model", plan.model.model if plan.model else None),
         },
         "model_reason": job.get("model_reason", plan.model_reason),
+        "model_source": job.get("model_source", plan.model_source),
     }
 
 

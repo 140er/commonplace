@@ -157,7 +157,15 @@ def test_unavailable_runner_returns_reason_and_preserves_card(env, dispatch, cha
     if change == "revoked":
         registry.revoke(env.db, env.principal, dispatch.machine)
     elif change == "model":
-        models.put(env.db, env.principal, "work", {"worker": None})
+        with env.db._lock, env.db._tx() as conn:  # no choice and an empty list: nothing usable
+            conn.execute(
+                "DELETE FROM chat_model_settings WHERE workspace_id=?",
+                (env.principal.workspace_id,),
+            )
+            conn.execute(
+                "DELETE FROM project_model_catalog WHERE workspace_id=?",
+                (env.principal.workspace_id,),
+            )
     else:
         grant = {
             "disabled": {"enabled": False},
