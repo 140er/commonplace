@@ -316,3 +316,6 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   :root:not([data-ui="deck"]) .shell:not([data-view="bots"]) .center { min-height: 100dvh; }
   :root:not([data-ui="deck"]) .shell:not([data-view="bots"]) #phone-tabs { margin-top: auto; position: sticky; bottom: 0; z-index: 10; }
 }
+
+/* Project settings > Coordinator: the typed text that confirms a restore acknowledgement fills the row, also on a phone. */
+.orch-restore-text { width: 100%; box-sizing: border-box; }
