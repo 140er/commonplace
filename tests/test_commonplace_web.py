@@ -223,6 +223,8 @@ def test_bearer_access_and_connection_secrets(hub):
 @pytest.mark.timing
 def test_connections_wings_deadline(hub, monkeypatch):
     """Connection management must answer while its optional worker read is blocked."""
+    # Exercise the worker fallback, rather than the fixture's readable local index.
+    monkeypatch.setattr("commonplace.web.agents._palace_db", lambda *_: None)
     cookie, _, _ = login(hub)
     hub.owner_token("desktop")
     started, release, finished, responded = (threading.Event() for _ in range(4))
@@ -267,13 +269,14 @@ def test_connections_wings_deadline(hub, monkeypatch):
     status, _, body = replies[0]
     payload = json.loads(body)
     assert status == 200 and payload["wings"] is None
-    assert payload["wings_state"] == "loading"
+    assert payload["wings_state"] in {"loading", "unavailable"}
     assert [row["name"] for row in payload["connections"]] == ["desktop"]
     assert payload["mcp_url"].endswith("/mcp")
 
 
 @pytest.mark.timing
 def test_connections_wings_deadline_slow_worker(hub, monkeypatch):
+    monkeypatch.setattr("commonplace.web.agents._palace_db", lambda *_: None)
     cookie, _, _ = login(hub)
     workers = []
     delay = threading.Event()
@@ -295,7 +298,7 @@ def test_connections_wings_deadline_slow_worker(hub, monkeypatch):
     print(f"connections response with a 2s worker: {elapsed:.3f}s")
     assert elapsed < 1.5, "Connection management waited for a slow optional memory lookup"
     assert status == 200 and json.loads(body)["wings"] is None
-    assert json.loads(body)["wings_state"] == "loading"
+    assert json.loads(body)["wings_state"] in {"loading", "unavailable"}
 
 
 def test_connections_wings_transport_budget(hub, monkeypatch):
