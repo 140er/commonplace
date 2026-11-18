@@ -611,7 +611,7 @@ function boardView() {
   const options = { board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column };
   // Counts/readiness do not change card markup. Retain the mounted tree on a
   // revisit and skip identical polls; changed cards keep their unchanged peers.
-  const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], selected: null, fromBar });
+  const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], fromBar });
   const mounted = content.querySelector(".workbench-board");
   if ((!state.restoringBoard && signature !== cached.signature) || !mounted) {
     const html = fromBar + renderBoard(options);

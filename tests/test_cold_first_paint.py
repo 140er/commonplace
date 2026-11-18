@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("case", ["api-wave", "render-count", "bare-board"])
+@pytest.mark.parametrize("case", ["api-wave", "render-count", "bare-board", "selected-done"])
 def test_first_paint_regression(case):
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("cold_first_paint.mjs")), case],

@@ -20,6 +20,15 @@ if (mode === 'render-count') {
   runInNewContext(slice('function boardView()', '// The form closes'), context);
   context.boardView(); context.boardView();
   assert.equal(renders,1,'An unchanged 1000-card board must reuse its mounted tree');
+} else if (mode === 'selected-done') {
+  const {boardView} = await import(pathToFileURL(dir+'/board.js'));
+  state.cards = Array.from({length:60},(_,number)=>({number,title:`Card ${number}`,status:'done'}));
+  Object.assign(context,{boardCards:()=>state.cards,renderBoard:boardView});
+  runInNewContext(slice('function boardView()', '// The form closes'), context);
+  context.boardView();
+  assert.doesNotMatch(content.innerHTML,/id="col-done"[^>]*data-all/);
+  state.selected = 59; context.boardView();
+  assert.match(content.innerHTML,/id="col-done"[^>]*data-all/,'Selecting a retained hidden Done card must reveal its column');
 } else if (mode === 'api-wave') {
   const requests = [], atPaint = [];
   const paint = () => atPaint.push(...requests);
