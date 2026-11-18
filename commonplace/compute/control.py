@@ -592,9 +592,9 @@ class Store:
         port,
         account,
         host_key,
-        pin_confirmed,
         credential_id=None,
         credential_version=None,
+        pin_confirmed=None,
     ):
         with self._transaction(principal, session_hash) as (conn, current):
             context = self._authority(current, board)
@@ -644,9 +644,9 @@ class Store:
         interface,
         account,
         host_key,
-        pin_confirmed,
         credential_id=None,
         credential_version=None,
+        pin_confirmed=None,
     ):
         with self._transaction(principal, session_hash) as (conn, current):
             gateway, gm = self._gateway(conn, current, gateway_id)

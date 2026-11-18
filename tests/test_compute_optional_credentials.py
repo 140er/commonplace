@@ -167,3 +167,27 @@ def test_the_store_enforces_it_without_the_browser(compute_env):  # noqa: F811
         )
     assert (refused.value.code, refused.value.status) == ("credential_not_bound", 409)
     assert "gateway-reference" not in json.dumps(gateway)
+
+
+def test_an_agent_token_is_refused_on_the_bind_route_before_anything_changes(api):
+    gateway, node = unbound_pair(api)
+    env = api.env
+    _, token = env.db.create_token(
+        workspace_ref=env.workspace,
+        user_ref=env.owner,
+        name="owner-agent",
+        client="tests",
+        policy=sessions.person_policy(),
+        actor=env.owner,
+    )
+    body = {"credential_id": "ok", "credential_version": 1}
+    for kind, record in (("gateways", gateway), ("nodes", node)):
+        status, result = api.request(
+            "POST",
+            f"/{kind}/{record['id']}/credential",
+            body,
+            headers={"Authorization": "Bearer " + token},
+        )
+        assert (status, result) == (403, {"error": "owner_required"})
+    assert api.request(path="/gateways")[1]["gateways"][0]["credential_bound"] is False
+    assert api.request(path="/nodes")[1]["nodes"][0]["credential_bound"] is False
