@@ -1,0 +1,4 @@
+- **Owns:** The effective-model line per role in the project settings Agent models section (`projects.js`).
+- **Promises:** Each role shows the model it runs on, labelled chosen for the project, chosen for the workspace or default; an unknown state reads "Not known yet" and no usable model reads "No usable model".
+- **How it fails:** A payload without `models_effective` still shows "Not known yet" for every role, never an empty field.
+- **Tests:** `tests/projects_view.mjs` through `tests/test_projects_view.py`.

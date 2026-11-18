@@ -1,0 +1,4 @@
+- **Owns:** The Default model section of `docs/projects.md` and the model routing text of `docs/orchestrator.md`.
+- **Promises:** The docs state the default rule (first model of the project's list), the `model_source` record and the one Needs me item.
+- **How it fails:** A doc that drifts from `models.effective` fails review against `tests/test_role_model_default.py`.
+- **Tests:** `tests/test_role_model_default.py`.
