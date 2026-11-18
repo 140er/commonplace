@@ -73,6 +73,9 @@ MAX_SCOPE_SECONDS = 3600
 MAX_PROPOSAL_SECONDS = 900
 MAX_APPROVAL_SECONDS = 300
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+# Stands in for the reference only while validating a record saved without a credential;
+# it is never stored or used (`_enrollment`/`_route` refuse such records unless validating).
+_PLACEHOLDER_ID = "unbound"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gateways (
  id TEXT PRIMARY KEY, board TEXT NOT NULL, board_id INTEGER NOT NULL,
@@ -458,7 +461,15 @@ class Store:
         return value
 
     @staticmethod
-    def _enrollment(row, metadata):
+    def _unbound(metadata):
+        return metadata.get("credential_id") is None
+
+    @classmethod
+    def _enrollment(cls, row, metadata, *, allow_unbound=False):
+        # Every verification, proposal, script and discovery path builds its binding here,
+        # so a record without a credential is refused at one place, on the server.
+        if cls._unbound(metadata) and not allow_unbound:
+            raise StoreError("credential_not_bound", 409)
         return GatewayEnrollment(
             workspace=metadata["workspace"],
             gateway=row["id"],
@@ -467,11 +478,13 @@ class Store:
             account=metadata["account"],
             pin=_pin(metadata["host_key"]),
             epoch=metadata["epoch"],
-            credential_id=metadata["credential_id"],
-            credential_version=metadata["credential_version"],
+            credential_id=metadata["credential_id"] or _PLACEHOLDER_ID,
+            credential_version=metadata["credential_version"] or 1,
         )
 
-    def _route(self, row, metadata, gateway_id):
+    def _route(self, row, metadata, gateway_id, *, allow_unbound=False):
+        if self._unbound(metadata) and not allow_unbound:
+            raise StoreError("credential_not_bound", 409)
         return EnrolledRoute(
             workspace=self.workspace_id,
             gateway=gateway_id,
@@ -482,8 +495,8 @@ class Store:
             account=metadata["account"],
             pin=_pin(metadata["host_key"]),
             epoch=metadata["epoch"],
-            credential_id=metadata["credential_id"],
-            credential_version=metadata["credential_version"],
+            credential_id=metadata["credential_id"] or _PLACEHOLDER_ID,
+            credential_version=metadata["credential_version"] or 1,
         )
 
     @staticmethod
@@ -504,6 +517,7 @@ class Store:
             "board": row["board"],
             "created_at": row["created_at"],
             **{key: metadata[key] for key in fields},
+            "credential_bound": metadata["credential_id"] is not None,
         }
 
     def _public_node(self, row, metadata, gateway):
@@ -578,14 +592,15 @@ class Store:
         port,
         account,
         host_key,
-        credential_id,
-        credential_version,
         pin_confirmed,
+        credential_id=None,
+        credential_version=None,
     ):
         with self._transaction(principal, session_hash) as (conn, current):
             context = self._authority(current, board)
             if pin_confirmed is not True:
                 raise StoreError()
+            bound = self._reference(credential_id, credential_version)
             gateway_id = uuid.uuid4().hex
             binding = GatewayEnrollment(
                 self.workspace_id,
@@ -595,11 +610,13 @@ class Store:
                 account,
                 _pin(host_key),
                 1,
-                credential_version,
-                credential_id,
+                credential_version if bound else 1,
+                credential_id if bound else _PLACEHOLDER_ID,
             )
             metadata = {**_document(binding), "name": _text(name), "state": "pending_verification"}
             metadata["host_key"] = metadata.pop("pin")
+            if not bound:
+                metadata.update(credential_id=None, credential_version=None)
             self._capacity(conn, "gateways", MAX_GATEWAYS)
             conn.execute(
                 "INSERT INTO gateways VALUES (?,?,?,?,?)",
@@ -627,14 +644,15 @@ class Store:
         interface,
         account,
         host_key,
-        credential_id,
-        credential_version,
         pin_confirmed,
+        credential_id=None,
+        credential_version=None,
     ):
         with self._transaction(principal, session_hash) as (conn, current):
             gateway, gm = self._gateway(conn, current, gateway_id)
             if pin_confirmed is not True:
                 raise StoreError()
+            bound = self._reference(credential_id, credential_version)
             node_id = uuid.uuid4().hex
             route = EnrolledRoute(
                 self.workspace_id,
@@ -646,12 +664,14 @@ class Store:
                 account,
                 _pin(host_key),
                 1,
-                credential_version,
-                credential_id,
+                credential_version if bound else 1,
+                credential_id if bound else _PLACEHOLDER_ID,
             )
-            enrollment_digest(self._enrollment(gateway, gm), route)
+            enrollment_digest(self._enrollment(gateway, gm, allow_unbound=True), route)
             metadata = {**_document(route), "name": _text(name), "state": "pending_verification"}
             metadata["host_key"] = metadata.pop("pin")
+            if not bound:
+                metadata.update(credential_id=None, credential_version=None)
             self._capacity(conn, "nodes", MAX_NODES)
             conn.execute(
                 "INSERT INTO nodes VALUES (?,?,?,?)",
@@ -660,6 +680,46 @@ class Store:
             self._audit(conn, current, node_id, "node.created")
             row = self._row(conn, "nodes", node_id)
             return self._public_node(row, metadata, gateway)
+
+    @staticmethod
+    def _reference(credential_id, credential_version):
+        """True for a full reference, False for none; half a reference is invalid."""
+        if credential_id is None and credential_version is None:
+            return False
+        if credential_id is None or credential_version is None:
+            raise StoreError()
+        return True
+
+    def bind_credential(
+        self, principal, kind, object_id, *, session_hash, credential_id, credential_version
+    ):
+        """Bind a credential reference, once, to a gateway or target saved without one.
+
+        ``kind`` is ``gateways`` or ``nodes``; the reference is checked like one given at
+        creation, nothing is opened or verified here, and a bound record is never changed.
+        """
+        with self._transaction(principal, session_hash) as (conn, current):
+            if kind == "gateways":
+                row, metadata = self._gateway(conn, current, object_id)
+            else:
+                row, metadata, _, _ = self._node(conn, current, object_id)
+            if not self._unbound(metadata):
+                raise StoreError("credential_already_bound", 409)
+            if not self._reference(credential_id, credential_version):
+                raise StoreError()
+            identifier(credential_id)
+            positive_integer(credential_version)
+            metadata = {
+                **metadata,
+                "credential_id": credential_id,
+                "credential_version": credential_version,
+            }
+            conn.execute(
+                f"UPDATE {kind} SET metadata=? WHERE id=?",
+                (canonical(metadata).decode(), object_id),
+            )
+            self._audit(conn, current, object_id, f"{kind[:-1]}.credential_bound")
+            return self._get_public(conn, current, kind, object_id)
 
     def _agent(self, agent_id, board, task_number):
         identifier(agent_id)

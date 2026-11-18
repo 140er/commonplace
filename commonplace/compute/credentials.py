@@ -306,6 +306,9 @@ def list_credential_references(database_path, protected_data_root, workspace, *,
     Status is ``unprovisioned`` when no custody file exists, ``ready`` otherwise;
     unsafe, foreign-owned or unreadable custody raises the fixed
     ``credential_unavailable``. Only plaintext reference columns are selected.
+
+    Linux-only: the read-only open goes through ``/proc/self/fd``, so on a platform
+    without it (macOS, Windows) the listing reports ``credential_unavailable``.
     """
     try:
         path, root = _path(database_path), _path(protected_data_root)

@@ -23,7 +23,7 @@ const failure = (status, code) => Object.assign(new Error(code), { status, paylo
 
 // This intentionally narrow DOM fake runs the production controller. Requests
 // ignore AbortSignal to prove the response fences independently of cancellation.
-function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], credentials = { credentials: [], status: 'ready' }, currentTime = clock } = {}) {
+function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], credentials = { credentials: [], status: 'ready' }, currentTime = clock, copyImpl } = {}) {
   let html = '', user = { workspace: 'w-one', actor: 'user:u-one', can_admin: true }, hash = '#/compute', sequence = 0;
   const listeners = new Map(), requests = [], boardsSeen = [], copied = [], reads = [];
   const doc = new EventTarget(), events = new EventTarget(), confirmation = { checked: true };
@@ -42,7 +42,7 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
     const request = { path, options, settled: false, resolve(value) { request.settled = true; yes(structuredClone(value)); }, reject(error) { request.settled = true; no(error); } };
     requests.push(request); return promise;
   };
-  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}`, copy: text => { copied.push(text); return Promise.resolve(); } });
+  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}`, copy: copyImpl || (text => { copied.push(text); return Promise.resolve(); }) });
   const take = (path, method = 'GET') => {
     const request = requests.find(item => !item.taken && !item.settled && item.path === path && (item.options.method || 'GET') === method);
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
@@ -192,6 +192,88 @@ const cases = {
     // 9. The list is advisory: a 403 on it is the same owner boundary as the rest.
     const own = fixture({ credentials: Object.assign(new Error('x'), { status: 403, payload: { error: 'owner_required' } }) }); await own.open(inventory());
     assert.match(own.host.innerHTML, /requires the current workspace owner/); own.ui.stop();
+  },
+
+  async unbound() {
+    const text = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    const refs = [
+      { id: 'cc_' + 'a'.repeat(32), purpose: 'gateway', account: 'fixture', version: 2, state: 'active', expires_at: clock + 9000 },
+      { id: 'cc_' + 'c'.repeat(32), purpose: 'target', account: 'worker', version: 1, state: 'active', expires_at: clock + 9000 },
+    ];
+    const unboundGateway = { ...gateway, credential_id: null, credential_version: null, credential_bound: false };
+    const unboundNode = { ...node, credential_id: null, credential_version: null, credential_bound: false };
+    const env = { now: clock, requestId: 'request-fixed' };
+    // 1. The payload carries a reference only when one is given, and never half of one.
+    const bare = { ...gatewayValues(), credential_id: '', credential_version: '' };
+    const sent = computePayload('gateway', bare, env);
+    assert.ok(!('credential_id' in sent) && !('credential_version' in sent));
+    assert.throws(() => computePayload('gateway', { ...bare, credential_id: 'only-an-id' }, env), Error);
+    assert.throws(() => computePayload('gateway', { ...bare, credential_version: '1' }, env), Error);
+    assert.deepEqual(computePayload('bind', { credential_id: 'ref', credential_version: '3' }, env), { credential_id: 'ref', credential_version: 3 });
+    assert.throws(() => computePayload('bind', { credential_id: '', credential_version: '3' }, env), Error);
+    assert.throws(() => computePayload('bind', { credential_id: 'ref', credential_version: '' }, env), Error);
+    // 2. The form says in plain words that the credential is bound after the record exists.
+    const f = fixture({ credentials: { credentials: refs, status: 'ready' } });
+    await f.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); f.click('gateway');
+    let html = f.host.innerHTML;
+    assert.match(text(html), /You can save without a credential/); assert.match(text(html), /bound to this record’s ID, which Commonplace assigns when you save/);
+    assert.match(text(html), /No credential bound yet/); assert.match(text(html), /cannot be verified or used until one is bound/);
+    assert.doesNotMatch(html, /name="credential_id"[^>]*required/); assert.doesNotMatch(html, /name="credential_version"[^>]*required/);
+    assert.match(html, /name="credential_id"/, 'manual reference entry stays');
+    // 3. Saving with no credential sends none, and the same screen then offers to bind it.
+    f.submit('gateway', bare); const create = f.take('/api/compute/gateways', 'POST');
+    assert.ok(!('credential_id' in create.options.body) && !('credential_version' in create.options.body));
+    create.resolve({ gateway: unboundGateway }); await flush(); html = f.host.innerHTML;
+    assert.match(text(html), /Saved without a credential/); assert.match(html, /data-compute-form="bind"/);
+    assert.match(text(html), /Bind a credential to Fixture gateway/); assert.match(html, /<select name="credential_choice"/);
+    assert.ok(html.includes(refs[0].id) && !html.includes(refs[1].id), 'only gateway credentials are offered');
+    const step = html.match(/data-compute-provision[^>]*>([\s\S]*?)<\/pre>/)?.[1];
+    assert.ok(step && step.includes('&quot;g-one&quot;') && step.includes('&quot;fixture&quot;') && step.includes('&quot;gateway&quot;'), 'the step is filled with the new record’s ID and account');
+    assert.doesNotMatch(html, /ssh-ed25519 AAAA|PRIVATE|type="password"/);
+    // 4. The list and the detail say it plainly.
+    assert.match(text(html), /No credential bound yet/); assert.match(html, /data-credential="unbound"/);
+    assert.match(text(html), /Not usable for runs or verification until a credential is bound/);
+    assert.doesNotMatch(html, /null|undefined|version null/);
+    // 5. Choosing from the list and binding flips the record to bound.
+    f.input('credential_choice', refs[0].id);
+    f.submit('bind', { credential_id: refs[0].id, credential_version: '2' });
+    const bound = f.take('/api/compute/gateways/g-one/credential', 'POST');
+    assert.deepEqual(bound.options.body, { credential_id: refs[0].id, credential_version: 2 });
+    bound.resolve({ gateway: { ...gateway, credential_id: refs[0].id, credential_version: 2, credential_bound: true } }); await flush(); html = f.host.innerHTML;
+    assert.match(text(html), /Credential bound/); assert.match(html, /data-credential="bound"/); assert.doesNotMatch(html, /data-credential="unbound"|data-compute-form="bind"/);
+    assert.ok(html.includes(refs[0].id)); f.ui.stop();
+    // 6. A target saved without one can be bound from its row; the step carries its gateway and its own ID.
+    const t = fixture({ credentials: { credentials: refs, status: 'ready' } });
+    await t.open(inventory({ gateways: [gateway], nodes: [unboundNode], scopes: [], executions: [] }));
+    html = t.host.innerHTML; assert.match(html, /data-credential="unbound"/); assert.match(text(html), /No credential bound yet/);
+    t.click('bind-node', unboundNode.id); html = t.host.innerHTML;
+    assert.match(html, /data-compute-form="bind"/); assert.ok(html.includes(refs[1].id) && !html.includes(refs[0].id), 'only target credentials');
+    const targetStep = html.match(/data-compute-provision[^>]*>([\s\S]*?)<\/pre>/)?.[1] || '';
+    assert.ok(targetStep.includes('&quot;g-one&quot;') && targetStep.includes('NODE_ID = &quot;n-one&quot;') && targetStep.includes('&quot;target&quot;'));
+    t.input('credential_choice', refs[1].id); t.submit('bind', { credential_id: refs[1].id, credential_version: '1' });
+    assert.ok(t.take('/api/compute/nodes/n-one/credential', 'POST')); t.ui.stop();
+    // 7. The server's refusal reasons are shown in plain words, never an empty message.
+    const r = fixture({ credentials: { credentials: refs, status: 'ready' } });
+    await r.open(inventory({ gateways: [gateway], nodes: [unboundNode], scopes: [], executions: [] })); r.click('bind-node', unboundNode.id);
+    r.submit('bind', { credential_id: 'ref', credential_version: '1' });
+    r.take('/api/compute/nodes/n-one/credential', 'POST').reject(failure(409, 'credential_already_bound')); await flush();
+    assert.match(text(r.host.innerHTML), /already has a credential/);
+    r.ui.stop();
+    const p = fixture(); await p.open(inventory({ nodes: [unboundNode], scopes: [], executions: [] })); p.click('proposal');
+    p.submit('proposal', proposalValues()); p.take('/api/compute/executions', 'POST').reject(failure(409, 'credential_not_bound')); await flush();
+    assert.match(text(p.host.innerHTML), /No credential is bound to this target or its gateway yet/); p.ui.stop();
+    // 8. A record whose credential state is neither a reference nor null is never rendered blank, and existing bound records are unchanged.
+    const u = fixture(); await u.open(inventory({ gateways: [{ ...gateway, credential_id: undefined, credential_version: undefined }], nodes: [], scopes: [], executions: [] }));
+    assert.match(text(u.host.innerHTML), /Credential state unavailable/); assert.doesNotMatch(u.host.innerHTML, /data-credential="unbound"|undefined|null/); u.ui.stop();
+    const old = fixture(); await old.open(inventory());
+    assert.match(old.host.innerHTML, /data-credential="bound"/); assert.doesNotMatch(old.host.innerHTML, /data-credential="unbound"|data-compute-action="bind-/);
+    assert.ok(old.host.innerHTML.includes('fixture-gateway-key')); old.ui.stop();
+    // 9. Copy: a missing clipboard or a non-promise is a failed copy, never "Copied.".
+    for (const copyImpl of [() => undefined, () => true, () => { throw new Error('no clipboard'); }, () => Promise.reject(new Error('denied'))]) {
+      const c = fixture({ credentials: { credentials: [], status: 'ready' }, copyImpl });
+      await c.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); c.click('gateway'); c.click('copy-provision'); await flush();
+      assert.doesNotMatch(text(c.host.innerHTML), /Copied/); assert.match(text(c.host.innerHTML), /Copying is not available here/); c.ui.stop();
+    }
   },
 
   async payloads() {
