@@ -1,0 +1,4 @@
+- **Owns:** Executable identity, route-entry and rail bootstrap fault fixtures with a virtual clock.
+- **Promises:** Timeout, abort, network and server failures reproduce false sign-in on develop and recover on the change; a genuine 401 keeps its original behavior.
+- **How it fails:** Retry exhaustion, manual retry, slow first reads, unknown lists and stale or denied directory reads remain visible and cannot become a signed-out or fabricated empty state.
+- **Tests:** tests/test_boot_recovery.py, tests/boot_recovery.mjs, tests/boot_rail_recovery.mjs, tests/boot_route_recovery.mjs and the sign-in, shell and cold-start Node wrappers.

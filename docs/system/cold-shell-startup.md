@@ -27,7 +27,7 @@ Startup request inventory (requests depend on the selected route):
 
 | Request | Server work | Role at startup / deadline |
 | --- | --- | --- |
-| `/api/me` | Session, workspace, people and admin capabilities in the control database | Authentication first; 3 s complete-read bound |
+| `/api/me` | Session, workspace, people and admin capabilities in the control database | Authentication first; 10 s first read, 3 s retries; HTTP 401 alone opens sign-in |
 | `/api/boards?view=shell` | Current active, policy-readable board metadata; asynchronous grouped board counts | Main directory; 3 s browser bound; counts refresh 3 s |
 | `/api/boards` | Claim expiry, counts, runner capacity and waiting projections per project/card | Deferred until project main data has painted; original unlimited default |
 | `/api/needs-me` | Board task/approval, coordinator, orchestration and model-role projections | Required queue content keeps its original budget; background badge has 3 s |
@@ -58,9 +58,9 @@ assigning the exact live 60 s event still requires a production trace.
 
 The complete-read deadline races transport **and** JSON decoding and aborts the
 request even if the transport ignores abort. The shared API default remains
-`timeoutMs: 0` (unlimited). Only shell identity, the cheap board directory,
-optional shell badges and independent Settings sections pass an explicit 3 s
-budget. Other reads retain their original unlimited or explicit 8/10/15 s
+`timeoutMs: 0` (unlimited). The cheap board directory, optional shell badges
+and independent Settings sections pass an explicit 3 s budget. Identity starts
+with 10 s and uses 3 s on retry; see [identity bootstrap retry](identity-bootstrap-retry.md). Other reads retain their original unlimited or explicit 8/10/15 s
 budgets, including memory, card, list, search and thread reads. Queue and Rules
 content keep their original budgets when selected; only their shell badges
 use the short deadline. No production trace assigns the observed 60 s outlier

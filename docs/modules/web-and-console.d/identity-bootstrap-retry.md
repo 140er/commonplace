@@ -1,0 +1,4 @@
+- **Owns:** Identity bootstrap retries and honest pending or unavailable rail lists.
+- **Promises:** Only an HTTP 401 or explicit sign-out opens sign-in; transient failures keep a connection Retry screen; the first identity request has ten seconds and three retries have three seconds each, after 1/2/4-second backoff.
+- **How it fails:** Exhaustion leaves a working Retry button; unknown lists never claim no bots; transient refresh failures retain known rows while access refusals clear the affected directory rows.
+- **Tests:** tests/test_boot_recovery.py, tests/test_commonplace_signin_page.py, tests/test_deck_shell.py, tests/test_member_bootstrap.py and tests/test_cold_start.py.

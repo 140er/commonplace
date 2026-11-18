@@ -86,7 +86,7 @@ export function shellTrees(options = {}) {
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
       return `<li><a class="deck-tree-row" href="${href}"${current(hash === href)}><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`;
     }).join('')}</ul></div>`;
-  }).join('')}${group ? '</details>' : ''}`).join('') || `<p class="deck-rail-empty">${artHTML('rail')}No bots yet</p>`;
+  }).join('')}${group ? '</details>' : ''}`).join('') || `<p class="deck-rail-empty">${artHTML('rail')}${!options.treeState || options.treeState === 'ready' ? 'No bots yet' : options.treeState === 'unavailable' ? 'Could not load bots' : 'Still loading bots…'}</p>`;
 }
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
@@ -122,7 +122,7 @@ const micButton = className => `<button type="button" class="${className}" data-
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
 
 export function createDeckShell({ root, api, context, on }) {
-  let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '';
+  let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '', rosterReady = false, directoryReady = false;
   const closed = new Set();
   const composer = () => [...(root?.querySelectorAll?.(composerSelector) || [])].find(form => !form.closest('[hidden]') && form.getClientRects().length);
   // The sheet stays open across the shell's refreshes, and closes when the route changes.
@@ -137,7 +137,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (open) sheet.querySelector('a, button')?.focus();
   }
   const moreOpen = () => moreAt !== null && moreAt === hashNow();
-  const options = () => ({ bots, directory, closed, hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen() });
+  const options = () => ({ bots, directory, closed, treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen() });
   function chrome() {
     if (!on()) return;
     const form = composer(), tabs = root?.querySelector?.('[data-deck="tabs"]');
@@ -164,7 +164,7 @@ export function createDeckShell({ root, api, context, on }) {
     const status = root?.querySelector?.('[data-deck-rail-error]');
     if (status) { status.hidden = !error; status.innerHTML = error ? 'Could not load the bot tree. <button data-deck-shell-action="retry">Retry</button>' : ''; }
   }
-  function reset() { generation++; bots = []; directory = {}; closed.clear(); pending = null; error = ''; }
+  function reset() { generation++; bots = []; directory = {}; closed.clear(); pending = null; error = ''; rosterReady = directoryReady = false; }
   function identify() {
     const me = context?.()?.me, key = JSON.stringify([me?.actor, me?.workspace]);
     if (key !== identity) { reset(); identity = key; }
@@ -177,7 +177,11 @@ export function createDeckShell({ root, api, context, on }) {
     pending = (async () => {
       const results = await Promise.allSettled([api('/api/coworkers/bots', { timeoutMs: 10000 }), api('/api/coworkers/conversations', { timeoutMs: 10000 })]);
       if (token !== generation || !on()) return;
-      directory = { ...(results[0].status === 'fulfilled' ? results[0].value : {}), conversations: results[1].status === 'fulfilled' ? rows(results[1].value?.conversations) : [] };
+      // Failed refreshes retain known rows; unknown lists never become empty.
+      if (results[0].status === 'fulfilled') { directory = { ...directory, ...results[0].value }; directoryReady = true; }
+      else if ([401, 403, 404].includes(results[0].reason?.status)) { directory = { conversations: directory.conversations }; directoryReady = false; }
+      if (results[1].status === 'fulfilled') directory = { ...directory, conversations: rows(results[1].value?.conversations) };
+      else if ([401, 403, 404].includes(results[1].reason?.status)) directory = { ...directory, conversations: [] };
       error = results.some(result => result.status === 'rejected') ? 'unavailable' : '';
       paint();
     })().finally(() => { if (token === generation) pending = null; });
@@ -210,5 +214,5 @@ export function createDeckShell({ root, api, context, on }) {
     showMore(sheet, false); root.querySelector('.deck-tab-more')?.focus();
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });
-  return { options, sync, reset, roster(value) { identify(); bots = rows(value); paint(); } };
+  return { options, sync, reset, roster(value) { identify(); bots = rows(value); rosterReady = true; paint(); } };
 }
