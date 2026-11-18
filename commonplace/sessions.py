@@ -31,6 +31,11 @@ def workspace_csrf(session: str) -> str:
     return hashlib.sha256(("workspace-create-v1:" + session).encode()).hexdigest()
 
 
+def memory_delete_csrf(session: str, drawer_id: str) -> str:
+    """Bind note deletion proof to this browser session and exact drawer."""
+    return hashlib.sha256(("memory-delete-v1:" + session + ":" + drawer_id).encode()).hexdigest()
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS login_links (
     token_hash TEXT PRIMARY KEY,

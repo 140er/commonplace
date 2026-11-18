@@ -1323,3 +1323,9 @@ def test_throttled_browser_navigation_is_a_recovery_screen(surface, path):
     assert b'href="/app/?signin=throttled">Retry</a>' in content
     assert b"Set-Cookie" not in content
     assert "Set-Cookie" not in headers
+
+
+def test_note_delete_alias_requires_the_delete_tool():
+    from commonplace.gateway import _rest_tool
+
+    assert _rest_tool("POST", "/api/memory/id/delete") == "mempalace_delete_drawer"
