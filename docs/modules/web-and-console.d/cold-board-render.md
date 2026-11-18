@@ -1,0 +1,4 @@
+- **Owns:** The board's off-screen rule in `commonplace/web/static/board.js`: cards after the first twelve of a column skip style, layout and paint until they near the viewport.
+- **Promises:** Every card stays in the page with its words, so find in page, focus, keyboard moves and the card count are unchanged; the first twelve cards of each column paint at once. The Classic and Deck boards share the rule. A large board no longer waits for hundreds of off-screen cards before the first paint.
+- **How it fails:** A browser without `content-visibility` draws all cards as before. A skipped card keeps a reserved height of 76 px until it has been drawn once, so the scrollbar length can shift slightly as cards come into view.
+- **Tests:** `tests/test_board_cold_render.py` pins the rule and that no card is sliced away; `tests/cold_bundle_browser.py --check` confirms in Chromium that all cards exist and the thirteenth card is deferred.
