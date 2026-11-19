@@ -364,8 +364,8 @@ def test_a_runner_removed_between_the_check_and_the_drain_is_refused_inside_the_
     def racing(store, machine_id):
         calls.append(1)
         row = real(store, machine_id)
-        # The first read is the pre-check (not removed yet); the one inside the lock sees the removal.
-        return row if len(calls) == 1 else {**dict(row), "revoked_at": "2026-11-19T10:00:00Z"}
+        # The route's concealment read and the pre-check see it not removed yet; the read inside the lock sees the removal.
+        return row if len(calls) <= 2 else {**dict(row), "revoked_at": "2026-11-19T10:00:00Z"}
 
     monkeypatch.setattr(overview, "_machine_row", racing)
     assert act(api, made, "drain") == (409, {"error": "conflict", "reason": "revoked"})
