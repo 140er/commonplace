@@ -230,7 +230,9 @@
 .compute-pr { --pr-warn: var(--ws-warn, var(--wait)); }
 :root[data-ui="deck"] .compute-pr { --pr-warn: var(--amber, #f59e0b); }
 .compute-pr > [data-pr-top] > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
-.compute-pr :is(h2, h3, h4, [data-pr-summary], fieldset)[tabindex="-1"]:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Programmatic focus (after opening a panel) draws the ring only when the browser says the focus came from the keyboard. */
+.compute-pr :is(h2, h3, h4, [data-pr-summary], fieldset)[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.compute-pr :is(h2, h3, h4, [data-pr-summary], fieldset)[tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
 .compute-pr-list { max-height: none; overflow: visible; }
 .compute-pr-state[data-tone="ok"] { color: var(--text); }
 .compute-pr-state[data-tone="wait"] { color: var(--pr-warn); font-weight: 600; }
@@ -241,13 +243,16 @@
 .compute-pr-detail h4 { margin: 16px 0 8px; font-size: 14px; line-height: 22px; font-weight: 600; }
 .compute-pr-sentence { margin: 8px 0 0; font-size: 14px; }
 .compute-pr-next { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
-.compute-pr-command pre { max-height: none; overflow: visible; font-size: 13px; word-break: break-all; user-select: all; }
+.compute-pr-command pre { max-height: none; overflow: visible; font-size: 13px; overflow-wrap: anywhere; word-break: normal; user-select: all; }
+.compute-pr-run { margin: 8px 0 12px; padding-left: 22px; font-size: 14px; line-height: 1.5; }
+.compute-pr-run li + li { margin-top: 4px; }
+.compute-pr-grants { margin: 12px 0 0; }
 .compute-pr-gone { margin: 12px 0 0; padding: 12px; background: var(--well); border-radius: var(--r); font-size: 14px; }
 .compute-pr-steps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 0; }
 .compute-pr-steps li { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .compute-pr-steps li:last-child { border-bottom: 1px solid var(--line); }
 .compute-pr-steps [data-state="ok"] .compute-pr-step-state { color: var(--text); }
-.compute-pr-steps [data-state="pending"] .compute-pr-step-state { color: var(--text-2); }
+.compute-pr-steps :is([data-state="pending"], [data-state="not_run"]) .compute-pr-step-state { color: var(--text-2); }
 .compute-pr-steps [data-state="failed"] .compute-pr-step-state { color: var(--block); font-weight: 600; }
 .compute-pr-steps [data-state="ok"] .compute-pr-step-state::before { content: "✓ "; }
 .compute-pr-steps [data-state="failed"] .compute-pr-step-state::before { content: "✕ "; }
@@ -259,7 +264,7 @@
 .compute-pr-fingerprint { font: 13px/1.6 var(--mono); overflow-wrap: anywhere; word-spacing: .3em; }
 .compute-pr-kinds { display: grid; gap: 12px; margin: 12px 0 0; }
 .compute-pr-kinds .compute-check small { display: block; margin-top: 2px; }
-.compute-pr-kinds input[disabled] + span { opacity: .75; }
+.compute-pr-kinds input[disabled] + span small { color: var(--text); }
 .compute-pr-form .compute-fields { margin-top: 12px; }
 .compute-pr input[type="radio"] { width: 18px; height: 18px; margin: 2px 0; flex: none; accent-color: var(--accent); }
 /* The shared input rules give every input a minimum height (32px, 44px on touch); a tick box is sized by its own width and height and its label carries the target. */
@@ -285,6 +290,8 @@
   .compute-pr input[type="checkbox"], .compute-pr input[type="radio"] { width: 24px; height: 24px; }
 }
 @media (max-width: 699px) {
+  .compute-pr-actions { gap: 16px; }
+  .compute-pr-detail, .compute-pr-form { scroll-margin-bottom: var(--ws-tab-h); }
   .compute-pr-actions .btn, .compute-pr-command .compute-actions .btn { flex: 1 1 100%; justify-content: center; }
   .compute-pr-steps li { flex-direction: column; gap: 2px; }
 }

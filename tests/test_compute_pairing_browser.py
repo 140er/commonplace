@@ -387,19 +387,21 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         expect(page.locator("[data-pr-command]")).to_have_count(0)
         sheet = page.locator(".compute-pr-sheet")
         expect(sheet).to_contain_text("build-box")
+        # The machine has not finished and printed its fingerprint: the sheet waits, and Approve says why it waits.
+        expect(sheet).to_contain_text("Waiting for the machine to print its fingerprint.")
+        _shot(page, f"{label}-05-connected-waiting")
+        fx.steps(credentials)
+        expect(page.locator(".compute-pr-fingerprint")).to_be_visible(timeout=20000)
         groups = page.locator(".compute-pr-fingerprint").inner_text().split()
         assert len(groups) == FINGERPRINT_GROUPS and all(len(g) == 8 for g in groups)
         expect(sheet).to_contain_text("Fixture")
-        _shot(page, f"{label}-05-connected-approve")
+        _shot(page, f"{label}-05b-connected-approve")
         _no_sideways_scroll(page)
         if size == "phone":
             _assert_touch_targets(page)
         page.get_by_role("button", name="Approve this machine").click()
-        expect(section).to_contain_text("Approved")
-        expect(page.get_by_role("button", name="Approve this machine")).to_have_count(0)
-        _shot(page, f"{label}-06-approved")
-        fx.steps(credentials)
         expect(section).to_contain_text("Set up and checked", timeout=20000)
+        expect(page.get_by_role("button", name="Approve this machine")).to_have_count(0)
         expect(section).to_contain_text("Provider and attestation: not done yet")
         expect(section).to_contain_text("only after a provider is connected")
         assert "running" not in section.inner_text().lower().replace("keep services running", "")
@@ -599,14 +601,19 @@ def test_this_is_not_my_machine_asks_first_and_removes_its_access(served, ui, si
         section = _section(page)
         _open_pairing(page)
         page.get_by_role("button", name="This is not my machine").click()
-        confirm = page.get_by_role("group", name="Remove this machine's access?")
+        confirm = page.get_by_role("group", name="Is this not your machine?")
         expect(confirm).to_be_visible()
-        expect(page.get_by_role("button", name="Yes, remove its access")).to_be_focused()
+        # The safe answer takes focus: a second Enter must never remove access.
+        expect(page.get_by_role("button", name="Go back")).to_be_focused()
+        expect(section).not_to_contain_text("Approve this machine?")
         _shot(page, f"{label}-decline-confirm")
         if size == "phone":
             _assert_touch_targets(page)
-        page.get_by_role("button", name="Keep it").click()
+        page.keyboard.press("Enter")
         expect(confirm).to_have_count(0)
+        assert fx.alive(credentials), (
+            "Enter on the default answer leaves the machine's access alone"
+        )
         expect(page.get_by_role("button", name="This is not my machine")).to_be_focused()
         assert fx.alive(credentials), "keeping it leaves the machine's access alone"
         page.keyboard.press("Tab")
@@ -614,7 +621,7 @@ def test_this_is_not_my_machine_asks_first_and_removes_its_access(served, ui, si
         page.keyboard.press("Escape")
         expect(confirm).to_have_count(0)
         page.get_by_role("button", name="This is not my machine").click()
-        page.get_by_role("button", name="Yes, remove its access").click()
+        page.get_by_role("button", name="Yes, this is not my machine").click()
         expect(section).to_contain_text("Not approved")
         assert not fx.alive(credentials), "its credentials stop working"
         _shot(page, f"{label}-declined")
@@ -746,6 +753,17 @@ def test_every_state_fits_every_real_width_with_44px_targets_on_touch(
             _shot(page, f"{label}-{pair}")
             page.get_by_role("button", name="Back to the list").click()
         page.get_by_role("button", name="Add a machine").click()
+        expect(page.locator("#compute-pr-heading")).to_be_focused()
+        # The clean form first (nothing typed, nothing refused), then the same form after a refusal.
+        expect(page.locator("[data-pr-summary]")).to_be_empty()
+        _shot(page, f"{label}-form")
+        small = page.locator(
+            ".compute-pr small:visible, .compute-pr .compute-quiet:visible"
+        ).evaluate_all("els => els.map(el => parseFloat(getComputedStyle(el).fontSize))")
+        if touch:
+            assert small and min(small) >= 14, (
+                f"hints are 14px on touch screens: {sorted(small)[:3]}"
+            )
         page.get_by_role("button", name="Create the command").click()
         _no_sideways_scroll(page)
         if touch:
@@ -754,14 +772,6 @@ def test_every_state_fits_every_real_width_with_44px_targets_on_touch(
         # The error summary and the first field are both on screen: no bar covers them.
         expect(page.locator("[data-pr-summary]")).to_be_visible()
         _shot(page, f"{label}-form-errors")
-        small = page.locator(
-            ".compute-pr small:visible, .compute-pr .compute-quiet:visible"
-        ).evaluate_all("els => els.map(el => parseFloat(getComputedStyle(el).fontSize))")
-        if touch:
-            assert small and min(small) >= 14, (
-                f"hints are 14px on touch screens: {sorted(small)[:3]}"
-            )
-        _shot(page, f"{label}-form")
 
     _run(fx, ui, "desktop", body, viewport=viewport, touch=touch)
 
@@ -823,5 +833,172 @@ def test_a_background_check_keeps_focus_and_does_not_announce_again(served, ui):
             "document.activeElement?.dataset?.prAction || document.activeElement?.id || ''"
         )
         assert focus in ("decline", "approve", "compute-pr-heading"), focus
+
+    _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_the_page_says_where_to_run_the_command_and_what_approval_grants(served, ui, size):
+    """M1 and M2: three numbered lines above the command; the sheet says what approval grants and what it does not."""
+    fx = served
+
+    def body(page, label, context):
+        section = _section(page)
+        page.get_by_role("button", name="Add a machine").click()
+        _fill_form(page)
+        page.get_by_role("button", name="Create the command").click()
+        steps = section.locator(".compute-pr-run li")
+        expect(steps).to_have_count(3)
+        expect(steps.nth(0)).to_contain_text("Open a terminal on that machine")
+        expect(steps.nth(1)).to_contain_text("Ctrl+Shift+V")
+        expect(steps.nth(1)).to_contain_text("Do not type sudo in front of it")
+        expect(steps.nth(2)).to_contain_text("This page updates by itself")
+        above = page.evaluate(
+            "() => document.querySelector('.compute-pr-run').getBoundingClientRect().bottom"
+            " <= document.querySelector('#compute-pr-command').getBoundingClientRect().top"
+        )
+        assert above, "the numbered lines are above the command"
+        _shot(page, f"{label}-04b-run-steps")
+        credentials = fx.connect(setup_of(page.locator("[data-pr-command]").inner_text()))
+        expect(section).to_contain_text(
+            "Machine connected, waiting for your approval", timeout=20000
+        )
+        # The machine has not finished: the fingerprint is not offered yet and Approve says why it waits.
+        expect(section).to_contain_text("Waiting for the machine to print its fingerprint.")
+        approve = page.get_by_role("button", name="Approve this machine")
+        expect(approve).to_have_attribute("aria-disabled", "true")
+        expect(section).to_contain_text("You can approve once the machine has finished its setup")
+        approve.click(force=True)  # a press while it waits changes nothing
+        expect(section).to_contain_text("Machine connected, waiting for your approval")
+        _shot(page, f"{label}-05a-connected-waiting-fingerprint")
+        fx.steps(credentials)
+        expect(page.locator(".compute-pr-fingerprint")).to_be_visible(timeout=20000)
+        expect(approve).not_to_have_attribute("aria-disabled", "true")
+        text = section.locator(".compute-pr-detail").inner_text()
+        assert "Approving lets this machine use the access listed above." in text
+        assert (
+            "does not connect a provider" in text
+            and "attests it under Runner machines in Admin" in text
+        )
+        grants = page.evaluate(
+            "() => document.querySelector('[data-pr-grants]').getBoundingClientRect().bottom"
+            " <= document.querySelector('[data-pr-action=approve]').getBoundingClientRect().top"
+        )
+        assert grants, "the sentence is above the buttons"
+        for old in (
+            "May start work on it",
+            "Cards at once",
+            "What it may do alone",
+            "No agent yet",
+        ):
+            assert old not in text, old
+        expect(section).to_contain_text("Who can start work on it")
+        expect(section).to_contain_text("nobody yet")
+        _shot(page, f"{label}-05b-approve-sheet")
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_remove_asks_first_and_the_second_enter_removes_nothing(served, ui, size):
+    """M7 for the Remove dialog (the decline dialog is in the test above)."""
+    fx = served
+    item, credentials = fx.ready()
+
+    def body(page, label, context):
+        section = _section(page)
+        _open_pairing(page)
+        page.get_by_role("button", name="Remove this machine").click()
+        expect(page.get_by_role("group", name="Remove this machine?")).to_be_visible()
+        expect(page.get_by_role("button", name="Go back")).to_be_focused()
+        _shot(page, f"{label}-remove-confirm")
+        page.keyboard.press("Enter")  # the default answer is Go back
+        expect(page.get_by_role("group", name="Remove this machine?")).to_have_count(0)
+        expect(page.get_by_role("button", name="Remove this machine")).to_be_focused()
+        assert fx.alive(credentials), "Enter on the default answer removed nothing"
+        expect(section).to_contain_text("Set up and checked")
+        page.get_by_role("button", name="Remove this machine").click()
+        page.get_by_role("button", name="Yes, remove it").click()
+        expect(section).to_contain_text("Access removed")
+        assert not fx.alive(credentials)
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_set_up_again_after_a_failure_cancels_the_old_setup_and_makes_a_new_command(
+    served, ui, size
+):
+    """M3: for a failed machine Set up again is the single next step, and it works (the old name is freed first)."""
+    fx = served
+    item, setup = fx.add()
+    credentials = fx.connect(setup)
+    fx.report(credentials, "service", "failed", "service_failed")
+
+    def body(page, label, context):
+        section = _section(page)
+        _open_pairing(page)
+        expect(section).to_contain_text("A step failed")
+        expect(section).to_contain_text(pairing.CAUSES["service_failed"][1])
+        again = section.get_by_role("button", name="Set up again")
+        remove = section.get_by_role("button", name="Remove this machine")
+        first = again.evaluate(
+            "(a, b) => Boolean(a.compareDocumentPosition(document.querySelector('[data-pr-action=remove]')) & Node.DOCUMENT_POSITION_FOLLOWING)"
+        )
+        assert first and remove.count() == 1, "Set up again comes before Remove this machine"
+        steps = section.locator(".compute-pr-steps li")
+        expect(steps.nth(3)).to_contain_text("Not run")
+        _shot(page, f"{label}-failed-set-up-again")
+        again.click()
+        expect(page.locator("#compute-pr-heading")).to_be_focused()
+        expect(page.locator("#pr_label")).to_have_value("build-box")
+        assert not fx.alive(credentials), "the old machine's access was removed first"
+        page.get_by_role("button", name="Create the command").click()
+        expect(page.locator("[data-pr-command]")).to_be_visible()
+        expect(section).to_contain_text("Waiting for the machine")
+        _shot(page, f"{label}-set-up-again-new-command")
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_check_that_finds_nothing_new_keeps_the_commands_focus_and_selection(served, ui):
+    """M6: wait through one no-change poll, then the command block is the same node, still focused and selected."""
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="Add a machine").click()
+        _fill_form(page)
+        page.get_by_role("button", name="Create the command").click()
+        command = page.locator("#compute-pr-command")
+        expect(command).to_be_visible()
+        page.evaluate(
+            "() => { const pre = document.querySelector('#compute-pr-command'); window.__pre = pre; pre.focus();"
+            " const range = document.createRange(); range.selectNodeContents(pre);"
+            " const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); }"
+        )
+        clock = page.locator("[data-pr-checked]")
+        before = clock.inner_text()
+        # The page checks every three seconds; the clock line changes when a check has come back (no fixed wait).
+        expect(clock).not_to_have_text(before, timeout=20000)
+        assert page.evaluate("document.querySelector('#compute-pr-command') === window.__pre"), (
+            "the command was rebuilt"
+        )
+        assert (
+            page.evaluate("document.activeElement && document.activeElement.id")
+            == "compute-pr-command"
+        )
+        assert page.evaluate("getSelection().toString().trim()") == command.inner_text().strip()
+        # A second check, still nothing new.
+        second = clock.inner_text()
+        expect(clock).not_to_have_text(second, timeout=20000)
+        assert page.evaluate("document.querySelector('#compute-pr-command') === window.__pre")
+        assert (
+            page.evaluate("document.activeElement && document.activeElement.id")
+            == "compute-pr-command"
+        )
 
     _run(fx, ui, "desktop", body)
