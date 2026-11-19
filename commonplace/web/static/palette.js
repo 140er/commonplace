@@ -36,6 +36,7 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   add('rules', 'Rules', 'Workspace', { href: '#/rules' });
   add('console', 'Console', 'Workspace', { href: '#/console' });
   add('workspace-settings', 'Workspace settings', 'Workspace', { href: '#/settings', keywords: 'voice webhooks phone notifications plan' });
+  add('compute', 'Compute', 'Workspace', { href: '#/compute', keywords: 'cloud workspaces machines image cpu memory storage' });
   if (can_admin === true) add('compute-map', 'Compute map', 'Workspace', { href: '#/compute-map', keywords: 'topology machines network sites routes' });
   if (can_admin === true) add('admin', 'Admin', 'Workspace', { href: '#/admin' });
   if (can_manage_instance === true) add('instance-admin', 'Instance console', 'Workspace', { href: '#/instance-admin' });

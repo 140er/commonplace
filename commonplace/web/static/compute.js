@@ -171,7 +171,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   let discoveries = [], discoveryAvailable = false, discoveryError = "";
   let scripts = [], scriptDetail = null, scriptsError = "";
   let credentials = [], credentialStatus = "unknown", copyNote = "";
-  let advancedOpen = false, memberView = false;
+  let advancedOpen = false, memberView = false, focusRefresh = false;
   let editor = "", values = {}, selected = null, approvalDigest = "", attempt = null, bindCollection = "gateways";
   const requests = new Set();
   const eligible = () => live && current() === session && current()?.workspace === workspace && current()?.actor === identity && route() === expectedRoute;
@@ -196,7 +196,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     }
     return false;
   }
-  const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, machines: () => inventory?.nodes || [] });
+  const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, machines: () => inventory?.nodes || [], requestId });
   const rowById = (name, id) => inventory?.[name]?.find(row => same(row.id, id));
   const executionAvailability = () => inventory?.capabilities?.transport === true
     ? "The automatic execution worker is available. Approval permits automatic background execution over SSH without another dispatch confirmation. Each attempt still requires valid authority, bindings and target verification."
@@ -347,6 +347,8 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     } else if (inventory) body = `<p>Compute management requires the current workspace owner.</p><div class="compute-inventories">${workspaces.html()}</div>`;
     else if (memberView) body = `<div class="compute-inventories">${workspaces.html()}</div>`;
     host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? `<h1>${e(title)}</h1>` : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Reload inventory", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error && !memberView ? `<p class="compute-error" role="alert">${e(error)}</p>` : ""}${memberView ? '<p class="compute-notice">Compute management requires the current workspace owner. You can still look at the cloud workspaces below.</p>' : ""}${body}</div>`;
+    // Reload replaces its own button; once it is enabled again, put focus back on it.
+    if (focusRefresh && !reading) { focusRefresh = false; host.querySelector?.('[data-compute-action="refresh"]')?.focus?.(); }
   }
   async function refresh() {
     if (!eligible() || reading || busy) return;
@@ -472,7 +474,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     const { computeAction: action, id } = target.dataset;
     if (target.disabled || !eligible()) return;
     if (action === "inspect-script") { void inspectScript(id); return; }
-    if (action === "refresh") { void refresh(); return; }
+    if (action === "refresh") { focusRefresh = !reading && !busy; void refresh(); return; }
     if (action === "copy-provision") { void copyProvision(); return; }
     if (busy) return;
     if (action === "close") { editor = ""; values = {}; selected = null; approvalDigest = ""; error = ""; attempt = null; if (uncertain) notice = "Receipt unavailable. Reload inventory before starting another action."; render(); return; }
@@ -502,6 +504,9 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     const spot = host?.querySelector?.("[data-compute-credential-status]");
     if (spot) spot.innerHTML = credentialStatusHTML(); else render();
   }
+  function keydown(event) {
+    if (eligible()) workspaces.keydown(event);
+  }
   function input(event) {
     if (eligible() && workspaces.input(event)) return;
     const field = event.target;
@@ -522,7 +527,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   const routeChanged = () => { if (live && !eligible()) stop(); };
   function stop() {
     live = false; epoch++; revision++; abort();
-    host?.removeEventListener("click", click); host?.removeEventListener("submit", submit); host?.removeEventListener("input", input); host?.removeEventListener("change", input);
+    host?.removeEventListener("click", click); host?.removeEventListener("submit", submit); host?.removeEventListener("input", input); host?.removeEventListener("change", input); host?.removeEventListener("keydown", keydown);
     events?.removeEventListener("hashchange", routeChanged); events?.removeEventListener("pagehide", stop); doc?.removeEventListener("session-expired", stop);
     if (host) host.innerHTML = "";
     workspaces.reset(); memberView = false;
@@ -539,7 +544,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     workspace = session.workspace; identity = session.actor; host = mount();
     if (!host) return;
     live = true; epoch++;
-    host.addEventListener("click", click); host.addEventListener("submit", submit); host.addEventListener("input", input); host.addEventListener("change", input);
+    host.addEventListener("click", click); host.addEventListener("submit", submit); host.addEventListener("input", input); host.addEventListener("change", input); host.addEventListener("keydown", keydown);
     events?.addEventListener("hashchange", routeChanged); events?.addEventListener("pagehide", stop); doc?.addEventListener("session-expired", stop);
     render(); void refresh();
   }

@@ -10,7 +10,22 @@ import pytest
 
 @pytest.mark.parametrize(
     "case",
-    ["pure", "states", "escaping", "create", "server-errors", "edit", "bind", "member", "failures"],
+    [
+        "pure",
+        "names",
+        "states",
+        "status-copy",
+        "escaping",
+        "create",
+        "server-errors",
+        "edit",
+        "conflict",
+        "discard",
+        "registry-hidden",
+        "member",
+        "failures",
+        "focus",
+    ],
 )
 def test_compute_workspaces_ui(case):
     node = shutil.which("node")
