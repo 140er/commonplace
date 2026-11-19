@@ -1,0 +1,4 @@
+- **Owns:** `POST /api/runner-pairing/check` in the gateway's public-route list: like the enrollment exchange it takes no cookie or bearer token.
+- **Promises:** The route authenticates by pairing id plus the one-time code, refuses any request that carries a cookie or Authorization header, is rate limited per workspace and answers a reason, never a state change, to anyone but the holder of a live code.
+- **How it fails:** Anything else is a 404, and a wrong or stale code is answered with its reason and a next step.
+- **Tests:** `tests/test_compute_pairing.py`, `tests/test_commonplace_public_surface.py`.
