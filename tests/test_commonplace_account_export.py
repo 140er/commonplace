@@ -245,3 +245,31 @@ def test_workspace_creation_requests_export_only_to_their_person(site):
         }
     ]
     assert "creation-request" not in site.export(site.bob, site.bob_home).text()
+
+
+def test_published_previews_export_verbatim_with_their_owned_workspace(site):
+    mine = site.publish_preview(site.alice_home)
+    theirs = site.publish_preview(site.team)
+    archive = site.export(site.alice, site.alice_home)
+    assert archive.manifest["complete"] is True and archive.manifest["unclassified_tables"] == []
+    prefix = f"workspaces/{site.alice_home}/control"
+    (row,) = archive.rows(f"{prefix}/previews.ndjson")
+    assert row["id"] == mine and row["name"] == "home" and row["state"] == "ready"
+    assert archive.rows(f"{prefix}/preview_revisions.ndjson") == [
+        {
+            "preview_id": mine,
+            "revision": 1,
+            "digest": "d1",
+            "size_bytes": 14,
+            "file_count": 1,
+            "published_by": "a1",
+            "by_person": 0,
+            "published_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+    assert [e["kind"] for e in archive.rows(f"{prefix}/preview_events.ndjson")] == [
+        "publish_started",
+        "published",
+    ]
+    # The team is Bob's: a member's export holds none of its previews.
+    assert theirs not in archive.text()

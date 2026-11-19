@@ -103,6 +103,12 @@ RULES = {
     ),
     "phone_push_state": Rule(parent=("subscription_id", "phone_push_subscriptions", "id")),
     "phone_push_subscriptions": Rule(user=_U, workspace=_W),
+    # Previews belong to a workspace and stay when a person leaves it, like the card history
+    # they are noted in; the people named on them are actor labels, not user columns.
+    "preview_events": Rule(workspace=_W),
+    "preview_revisions": Rule(parent=("preview_id", "previews", "id")),
+    "preview_rules": Rule(workspace=_W),
+    "previews": Rule(workspace=_W),
     "project_model_catalog": Rule(workspace=_W),
     "project_model_escalation": Rule(workspace=_W),
     "project_orchestrators": Rule(workspace=_W, connection=_C),
@@ -173,8 +179,19 @@ RULES = {
 
 # A purge handles these itself: tombstones, the append-only audit log and the
 # rows that must go last because others point at them.
+# ``preview_events`` is append-only like the audit log (a trigger refuses every delete), holds
+# ids, actor labels and fixed reason codes but no content, and so stays when a workspace goes;
+# the preview rows and the files go with the workspace.
 KEPT = frozenset(
-    {"account_deletions", "audit_log", "connections", "memberships", "users", "workspaces"}
+    {
+        "account_deletions",
+        "audit_log",
+        "connections",
+        "memberships",
+        "preview_events",
+        "users",
+        "workspaces",
+    }
 )
 
 # Credentials and their digests are never exported, also not to their owner.
