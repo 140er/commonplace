@@ -536,7 +536,13 @@ export function createWorkspaces(ctx) {
     restore?.();
     if (!focus) return;
     const scope = ctx.host();
-    if (focus === "heading") scope?.querySelector?.("#compute-ws-heading")?.focus?.();
+    // A step starts at its heading, at the top of the screen: the sticky action bar of a phone form then sits at the form's
+    // end of the screen, not on top of its first fields (the heading used to take focus where it already was visible).
+    if (focus === "heading") {
+      const heading = scope?.querySelector?.("#compute-ws-heading");
+      try { heading?.scrollIntoView?.({ block: "start", behavior: "instant" }); } catch { /* old engines take no options */ }
+      heading?.focus?.({ preventScroll: true });
+    }
     else if (focus === "summary") scope?.querySelector?.("[data-ws-summary]")?.focus?.();
     else if (focus === "keep") scope?.querySelector?.('.compute-ws-actions [data-ws-action="close"]')?.focus?.();
     else if (focus === "keep-editing") scope?.querySelector?.('[data-ws-action="keep-editing"]')?.focus?.();

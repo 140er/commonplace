@@ -292,6 +292,7 @@ def _assert_bar_sits_on_the_tab_bar(page):
     """One bottom offset per look. While its panel runs on below the screen the bar is stuck: its bottom edge is the
     tab bar's top edge (in Deck, the end of the scroller above it). When the panel ends on screen the bar simply ends
     the panel (it is the panel's last row). In no case does it reach under the tab bar."""
+    _settled(page)  # the heading's focus scroll must have ended before the edges are measured
     geometry = _geometry(page)
     edge = geometry["tabs"]["top"] if geometry["tabs"] else geometry["height"]
     bar, panel = geometry["bar"], geometry["panel"]
@@ -361,7 +362,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
         address = page.get_by_role("textbox", name="Image address", exact=True)
         assert address.get_attribute("placeholder") is None  # an empty box does not read as filled
-        expect(section).to_contain_text("The name of the image, for example ubuntu:24.04.")
+        expect(section).to_contain_text("The address of the image, for example ubuntu:24.04.")
         # The jargon sits behind one disclosure with one definition.
         help_box = section.locator(".compute-ws-help")
         expect(help_box).not_to_have_attribute("open", "")
@@ -1315,6 +1316,8 @@ def test_the_stale_and_leave_rows_wrap_instead_of_clipping_on_a_narrow_phone(ser
         )
         page.get_by_role("button", name="Refresh").click()
         expect(page.get_by_role("button", name="Reload to continue")).to_be_visible()
+        # The whole screen repaints once more when the refresh ends: measure the stale row after that.
+        expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
         page.locator(".compute-ws-stale").scroll_into_view_if_needed()
         _settled(page)
         intact(page, ".compute-ws-stale")
@@ -1348,6 +1351,7 @@ def test_deck_calls_the_page_cloud_workspaces_and_keeps_the_route_card_on_the_ma
                 ) if phone else expect(entry).to_contain_text("Cloud workspaces")
                 if phone:
                     expect(entry).to_contain_text("Workspaces")
+                    expect(entry).to_be_visible()  # laid out before its text is measured
                     lines = entry.evaluate(
                         "el => { const text = [...el.childNodes].find(n => n.nodeType === 3);"
                         " const r = document.createRange(); r.selectNodeContents(text);"
