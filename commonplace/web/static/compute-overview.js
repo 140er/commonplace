@@ -79,12 +79,14 @@ export function rowHTML(item) {
     + `<div class="compute-actions"><button type="button" class="btn" data-ov-action="detail" data-kind="${e(item.kind)}" data-id="${e(item.id)}" aria-label="Status and activity of ${name}">Status and activity</button></div></li>`;
 }
 
-const dl = pairs => `<dl>${pairs.filter(([, value]) => value !== "" && value != null).map(([key, value]) => `<dt>${e(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
+const dl = pairs => `<dl>${pairs.filter(([, value]) => value !== "" && value != null && value !== "undefined").map(([key, value]) => `<dt>${e(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
 const usageRows = item => {
   const u = item.usage || {};
-  if (item.kind === "runner") return [["Runs", e(u.runs?.text)], ["Machine resources", e(u.resources?.text)], ["Spend", e(u.spend?.text)]];
-  if (item.kind === "workspace") return [["Limits", e(u.limits?.text)], ["Measured use", e(u.measured?.text)]];
-  return [["Cloud workspaces here", e(item.usage?.summary)], ["Measured use", e(u.measured?.text)]];
+  // A usage field the server did not send is left out, never printed as the word "undefined".
+  const text = value => e(value ?? "");
+  if (item.kind === "runner") return [["Runs", text(u.runs?.text)], ["Machine resources", text(u.resources?.text)], ["Spend", text(u.spend?.text)]];
+  if (item.kind === "workspace") return [["Limits", text(u.limits?.text)], ["Measured use", text(u.measured?.text)]];
+  return [["Cloud workspaces here", text(u.summary)], ["Measured use", text(u.measured?.text)]];
 };
 
 const chipHTML = item => `<span class="compute-state compute-ov-chip" data-tone="${e(item.status.tone)}" data-ov-chip>${e(item.status.label)}</span>`;

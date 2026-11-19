@@ -126,6 +126,7 @@ const cases = {
     assert.match(text(ov.detailHTML(fleet()[0], {})), /Nothing is blocking new work\./);
     assert.match(ov.detailHTML(fleet()[0], { loading: true }), /aria-busy="true"[\s\S]*Loading details…/);
     assert.match(ov.detailHTML(fleet()[0], { failed: true }), /The details could not be loaded\. Showing what the list knew\./);
+    for (const kind of ['runner', 'machine', 'workspace']) assert.doesNotMatch(ov.detailHTML({ ...fleet()[0], kind, usage: {}, activity: [], facts: [] }, {}), /undefined/, `${kind}: a missing usage field is left out`);
     assert.equal((html.match(/id="compute-ov-heading"/g) || []).length, 1);
     assert.equal((html.match(/role="alert"/g) || []).length, 0, 'no alert regions in the panel');
   },

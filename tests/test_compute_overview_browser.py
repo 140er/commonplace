@@ -578,36 +578,38 @@ def test_the_overview_refreshes_by_itself_and_stops_when_the_page_is_hidden(serv
             _visit(page, fx, ui)
             _go(page, fx, ui)
             assert len(reads) == 1, reads
+
+            def barrier():
+                # A round trip to the page: every request it made before this call has been reported by now.
+                page.evaluate("0")
+
             page.clock.run_for(29000)
+            barrier()
             assert len(reads) == 1, "no read before the interval is over"
-            page.clock.run_for(2000)
-            page.wait_for_function("() => true")
+            with page.expect_request(lambda r: r.url.endswith(OVERVIEW)):
+                page.clock.run_for(2000)
             expect(page.locator(".compute-ov-meta")).to_contain_text(
                 "It refreshes every 30 seconds"
             )
-            deadline = time.time() + 5
-            while len(reads) < 2 and time.time() < deadline:
-                page.wait_for_timeout(100)
             assert len(reads) == 2, "one read after 30 seconds"
             # A hidden page does not read.
             page.evaluate(
                 "Object.defineProperty(document, 'hidden', {value: true, configurable: true})"
             )
             page.clock.run_for(65000)
-            page.wait_for_timeout(300)
+            barrier()
             assert len(reads) == 2, "a hidden page does not read"
-            page.evaluate(
-                "Object.defineProperty(document, 'hidden', {value: false, configurable: true}); document.dispatchEvent(new Event('visibilitychange'))"
-            )
-            deadline = time.time() + 5
-            while len(reads) < 3 and time.time() < deadline:
-                page.wait_for_timeout(100)
+            with page.expect_request(lambda r: r.url.endswith(OVERVIEW)):
+                page.evaluate(
+                    "Object.defineProperty(document, 'hidden', {value: false, configurable: true});"
+                    " document.dispatchEvent(new Event('visibilitychange'))"
+                )
             assert len(reads) == 3, "coming back reads at once"
             # Leaving the screen stops the refresh.
             page.evaluate("location.hash = '#/'")
-            page.wait_for_timeout(300)
+            barrier()
             page.clock.run_for(65000)
-            page.wait_for_timeout(300)
+            barrier()
             assert len(reads) == 3, "a screen that is gone does not read"
             assert errors == []
             context.close()
