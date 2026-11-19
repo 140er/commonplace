@@ -10,7 +10,10 @@ const rewrite = (text, extra = {}) => Object.entries({ './api.js': apiURL, ...ex
 const overviewURL = moduleURL(rewrite(source('compute-overview')));
 const ov = await import(overviewURL);
 const workspacesURL = moduleURL(rewrite(source('compute-workspaces')));
-const { createCompute } = await import(moduleURL(rewrite(source('compute'), { './compute-workspaces.js': workspacesURL, './compute-overview.js': overviewURL })));
+// Add a machine is a section of the same screen: its module is part of the controller, and these suites ask it nothing.
+const pairingURL = moduleURL(rewrite(source('compute-pairing'), { './wing-label.js': moduleURL(source('wing-label')) }));
+const emptyPairings = { pairings: [], total: 0, setup_enabled: true };
+const { createCompute } = await import(moduleURL(rewrite(source('compute'), { './compute-workspaces.js': workspacesURL, './compute-overview.js': overviewURL, './compute-pairing.js': pairingURL })));
 const flush = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };
 const text = html => html.replace(/<[^>]*>/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ');
 const failure = (status, payload) => Object.assign(new Error(payload?.error || String(status)), { status, payload });
@@ -75,7 +78,7 @@ function fixture({ data = overviewOf(), hidden = false, narrow = false, signatur
   let monoNow = 5_000_000; // the monotonic clock: only time that really passes moves it
   const request = path => {
     calls.push(path);
-    const answer = state.answers.get(path) ?? (path === '/api/compute/overview' ? data : failure(404, { error: 'not_found' }));
+    const answer = state.answers.get(path) ?? (path === '/api/compute/pairings' ? emptyPairings : path === '/api/compute/pairings/options' ? { kinds: [] } : path === '/api/compute/overview' ? data : failure(404, { error: 'not_found' }));
     const out = typeof answer === 'function' ? answer() : answer;
     if (typeof out?.then === 'function') return out;
     return out instanceof Error ? Promise.reject(out) : Promise.resolve(structuredClone(out));

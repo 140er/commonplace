@@ -37,7 +37,9 @@ def dispatch(h, store, principal, parts, auth, body_reader):
     """``parts`` is the path after ``/api/compute/pairings``."""
     gateway, db = store.gateway, store.gateway.db
     pairing.ensure(db)
-    owner = store._member(principal, auth["session_hash"]).role == "owner"
+    # ``routes.handle`` has just re-read this session under the control lock (``_owner`` for a write, ``_member`` for a
+    # read), so the role on the principal is current; reading it again here would use the shared connection unlocked.
+    owner = principal.role == "owner"
     if h.command == "GET":
         if not parts:
             return send_json(h, 200, pairing.list_pairings(db, principal, owner=owner))
@@ -55,7 +57,8 @@ def dispatch(h, store, principal, parts, auth, body_reader):
                 payload["setup"] = setup
             return send_json(h, 201 if created else 200, payload)
         if len(parts) == 2 and parts[1] in ("accept", "close"):
-            pairing._find(db, principal.workspace_id, parts[0])
+            with db._lock:
+                pairing._find(db, principal.workspace_id, parts[0])
             fields = pairing.ACCEPT_FIELDS if parts[1] == "accept" else pairing.CLOSE_FIELDS
             body = body_reader(h, fields, ())
             action = pairing.accept if parts[1] == "accept" else pairing.close

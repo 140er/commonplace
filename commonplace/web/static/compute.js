@@ -1,5 +1,6 @@
 import { escape as e } from "./api.js";
 import { createOverview } from "./compute-overview.js";
+import { createPairing } from "./compute-pairing.js";
 import { createWorkspaces } from "./compute-workspaces.js";
 
 const BASE = "/api/compute";
@@ -166,7 +167,7 @@ export function computeExecutionHTML(row, { busy = false } = {}) {
 
 // One visit owns its DOM, session object and all requests. Even transports that
 // ignore abort cannot publish after a different route/session has taken over.
-export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, expectedRoute = "#/compute", title = "", onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID(), copy = text => globalThis.navigator?.clipboard?.writeText(text) }) {
+export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, expectedRoute = "#/compute", title = "", onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID(), copy = text => globalThis.navigator?.clipboard?.writeText(text), schedule = (fn, ms) => globalThis.setTimeout(fn, ms), cancel = handle => globalThis.clearTimeout(handle) }) {
   let host = null, session = null, workspace = null, identity = null, live = false, epoch = 0, revision = 0;
   let inventory = null, projects = [], reading = false, busy = false, uncertain = false, error = "", notice = "", boardError = "";
   let discoveries = [], discoveryAvailable = false, discoveryError = "";
@@ -191,13 +192,16 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if ([403, 404].includes(failure?.status)) {
       // A member is refused the owner inventory but may still read cloud workspaces, so keep that section.
       memberView = failure.status === 403 && failure.payload?.error === "owner_required";
-      if (!memberView) workspaces.reset();
+      if (!memberView) { workspaces.reset(); pairing.reset(); }
       revision++; abort(); scripts = []; scriptDetail = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; attempt = null; approvalDigest = "";
       credentials = []; credentialStatus = "unknown"; reading = false; busy = false; error = errorText(failure); notice = ""; render(); return true;
     }
     return false;
   }
   const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, machines: () => inventory?.nodes || [], requestId });
+  // Adding a machine repaints only its own section, even while it checks on the machine.
+  // Its own requests: a refusal elsewhere on this screen (a member is refused the inventory) aborts the shared ones, and a check on the machine must not read that as its own failure.
+  const pairing = createPairing({ request: async (path, options = {}) => api(path, { ...options, timeoutMs: 10000 }), epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, requestId, copy, schedule, cancel });
   // The overview repaints only its own section when it polls, so a half-typed form elsewhere is never disturbed.
   // The workspaces list is the record of cloud workspaces: the overview compares against it, so a workspace created, renamed or discarded below shows up above.
   const workspaceSignature = () => (workspaces.state.rows || []).map(row => `${row.id}:${row.version}`).join(",");
@@ -340,7 +344,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       const gatewayRows = inventory.gateways.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)))}</p>${credentialNote(row)}${bindButton(row, "gateway", busy || reading || uncertain)}<details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
       const nodeRows = inventory.nodes.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)), e(row.interface))}</p><p>Gateway ${e(rowById("gateways", row.gateway_id)?.name || row.gateway_id)}</p>${credentialNote(row)}${bindButton(row, "node", busy || reading || uncertain)}<details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
       const scopeRows = inventory.scopes.map(row => `<li class="compute-row"><header><strong>${parts(e(row.context?.project), e(row.context?.gateway))}</strong><span class="compute-state">${row.revoked ? "Revoked" : Number(row.expires_at) <= now() ? "Expired" : "Passive grant recorded"}</span></header><p>${parts(e((row.cidrs || []).join(", ")), e((row.interfaces || []).join(", ")))}</p><p>${parts(row.methods?.length ? `Methods: ${e(row.methods.join(", "))}` : "", taskHTML({ task_number: row.context?.task }), row.context?.agent ? `Actor ${e(row.context.agent)}` : "")}</p><p>Expires: ${e(Number.isFinite(Number(row.expires_at)) ? new Date(Number(row.expires_at) * 1000).toLocaleString() : "Unknown")}</p><details><summary>Scope limits and context</summary><dl><dt>Scope</dt><dd>${e(row.id)}</dd><dt>User</dt><dd>${e(row.context?.user)}</dd>${limitsHTML(row.limits)}</dl></details>${!row.revoked && Number(row.expires_at) > now() ? button("revoke", "Revoke passive scope", busy || reading || uncertain, row.id) : ""}</li>`);
-      body = `${editorHTML()}<div class="compute-inventories">${overview.html()}${workspaces.html()}<details class="compute-advanced compute-wide" data-compute-advanced${advancedOpen ? " open" : ""}><summary class="compute-advanced-summary">${ADVANCED.label}</summary><p class="compute-quiet">${ADVANCED.intro}</p><div class="compute-inventories">`
+      body = `${editorHTML()}<div class="compute-inventories">${overview.html()}${pairing.html()}${workspaces.html()}<details class="compute-advanced compute-wide" data-compute-advanced${advancedOpen ? " open" : ""}><summary class="compute-advanced-summary">${ADVANCED.label}</summary><p class="compute-quiet">${ADVANCED.intro}</p><div class="compute-inventories">`
         + inventorySection("gateways", "Gateways", gatewayRows, "No gateways added yet.", "gateway", "Add gateway", projects.length > 0, boardError || (!projects.length ? "Create a project before adding a gateway." : ""), "Add an existing project’s numeric management endpoint and explicitly confirm its full public host key.", ADVANCED.gateways)
         + inventorySection("nodes", "Targets", nodeRows, "No targets enrolled yet.", "node", "Enroll target", inventory.gateways.length > 0, !inventory.gateways.length ? "Add a gateway before enrolling a target." : "", "Enrollment uses an existing gateway and a separately confirmed public host key.", ADVANCED.nodes)
         + inventorySection("scopes", "Passive scopes", scopeRows, "No scopes granted yet.", "scope", "Grant scope", inventory.gateways.length > 0, "", "Each scope binds exact networks, interfaces, actor, task, bounds and expiry.", ADVANCED.scopes)
@@ -348,13 +352,13 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + inventorySection("discoveries", "Passive observations", discoveries.map(row => `<li class="compute-row"><header><strong>${parts(e(row.board), taskHTML(row))}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(row.scope_id ? `Scope ${e(row.scope_id)}` : "", e(row.reason))}</p><details><summary>${e(row.observations?.length || 0)} observations and usage</summary><pre>${e(JSON.stringify({ observations: row.observations || [], usage: row.usage || {} }, null, 2))}</pre></details>${discoveryCancellable(row) ? button("discovery-cancel", "Request cancellation", busy || reading || uncertain, row.id) + "<p>A cancellation request does not confirm remote termination.</p>" : ""}${row.reason === "cancellation_requested" ? "<p>Cancellation requested; remote termination is unconfirmed.</p>" : ""}${row.state === "uncertain" ? "<p>Outcome unknown. Capacity remains reserved; this attempt will not automatically repeat.</p>" : ""}</li>`), "No observations collected yet.", "discovery", "Collect observations", discoveryAvailable && inventory.scopes.some(row => !row.revoked && Number(row.expires_at) > now()), discoveryError || (!discoveryAvailable ? "Observation collection is not available yet." : ""), (discoveryAvailable ? "Collection reads approved gateway caches in the background. Reload to check progress." : "Passive collection is unavailable until its gateway and admission channel are configured."))
         + inventorySection("executions", "Execution proposals", inventory.executions.map(row => computeExecutionHTML(row, { busy: busy || reading || uncertain })), "No tasks waiting for approval.", "proposal", "Propose system info", inventory.nodes.length > 0, "", "The fixed system information operation requires a target and a canonical task.")
         + '</div></details></div><details class="compute-capabilities" aria-labelledby="compute-capabilities"><summary id="compute-capabilities">Technical details</summary><div><h3>Automatic execution</h3><p id="compute-transport-reason">' + e(executionAvailability()) + '</p></div><div><button class="btn" disabled aria-describedby="compute-passive-reason">Collect observations</button><p id="compute-passive-reason">Collection availability is shown with Passive observations. A scope grant never enrolls devices.</p></div><div><button class="btn" disabled aria-describedby="compute-script-reason">Scripts</button><p id="compute-script-reason">Script availability is shown with Scripts. Saving a bundle never runs it.</p></div></details>';
-    } else if (inventory) body = `<p>You can read this workspace's settings. Only its owner can change them.</p><div class="compute-inventories">${overview.html()}${workspaces.html()}</div>`;
-    else if (memberView) body = `<div class="compute-inventories">${overview.html()}${workspaces.html()}</div>`;
+    } else if (inventory) body = `<p>You can read this workspace's settings. Only its owner can change them.</p><div class="compute-inventories">${overview.html()}${pairing.html()}${workspaces.html()}</div>`;
+    else if (memberView) body = `<div class="compute-inventories">${overview.html()}${pairing.html()}${workspaces.html()}</div>`;
     // One outage message: when the overview has its own failure to say, the page's line is plain text, not a second alert.
     const overviewDown = Boolean(overview.state.loadError) || overview.state.refreshFailed;
-    const keepFocus = workspaces.holdFocus(), keepOverviewFocus = overview.holdFocus(), carryOverview = overview.carry();
+    const keepFocus = workspaces.holdFocus(), keepOverviewFocus = overview.holdFocus(), keepPairingFocus = pairing.holdFocus(), carryOverview = overview.carry();
     host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? "<h1>Cloud workspaces</h1>" : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Refresh", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error && !memberView ? `<p class="compute-error"${overviewDown ? "" : ' role="alert"'}>${e(error)}</p>` : ""}${memberView ? '<p class="compute-notice">You can read this workspace\'s settings. Only its owner can change them.</p>' : ""}${body}</div>`;
-    carryOverview(); keepFocus(); keepOverviewFocus();
+    carryOverview(); keepFocus(); keepOverviewFocus(); keepPairingFocus();
     // Reload replaces its own button; once it is enabled again, put focus back on it.
     if (focusRefresh && !reading) { focusRefresh = false; host.querySelector?.('[data-compute-action="refresh"]')?.focus?.(); }
   }
@@ -363,6 +367,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     const page = epoch, read = ++revision;
     reading = true; error = ""; render();
     void workspaces.load();
+    void pairing.load();
     // The one Refresh button reads the overview too: a press always reads at once, the screen's own reloads wait.
     void overview.load(manual ? { quiet: Boolean(overview.state.data), say: true } : { quiet: Boolean(overview.state.data), within: 5000 });
     const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`), request(`${BASE}/scripts`), request(`${BASE}/credentials`)]);
@@ -450,7 +455,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     } finally { if (valid(page)) { busy = false; render(); } }
   }
   function submit(event) {
-    if (workspaces.submit(event)) return;
+    if (pairing.submit(event) || workspaces.submit(event)) return;
     const form = event.target.closest("[data-compute-form]");
     if (!form) return;
     event.preventDefault(); event.stopPropagation();
@@ -476,7 +481,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     } catch (failure) { error = failure.message; render(); }
   }
   function click(event) {
-    if (eligible() && (workspaces.click(event) || overview.click(event))) return;
+    if (eligible() && (pairing.click(event) || workspaces.click(event) || overview.click(event))) return;
     // The native toggle opens or closes the section; remember it so a re-render keeps it as the person left it.
     if (event.target.closest("[data-compute-advanced] > summary")) { advancedOpen = !advancedOpen; return; }
     const target = event.target.closest("[data-compute-action]");
@@ -515,10 +520,10 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (spot) spot.innerHTML = credentialStatusHTML(); else render();
   }
   function keydown(event) {
-    if (eligible() && !workspaces.keydown(event)) overview.keydown(event);
+    if (eligible() && !pairing.keydown(event) && !workspaces.keydown(event)) overview.keydown(event);
   }
   function input(event) {
-    if (eligible() && (workspaces.input(event) || overview.change(event))) return;
+    if (eligible() && (pairing.input(event) || workspaces.input(event) || overview.change(event))) return;
     const field = event.target;
     if (!editor || !eligible() || !field.name) return;
     values[field.name] = field.type === "checkbox" ? field.checked : field.value;
@@ -540,7 +545,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     host?.removeEventListener("click", click); host?.removeEventListener("submit", submit); host?.removeEventListener("input", input); host?.removeEventListener("change", input); host?.removeEventListener("keydown", keydown);
     events?.removeEventListener("hashchange", routeChanged); events?.removeEventListener("pagehide", stop); doc?.removeEventListener("session-expired", stop);
     if (host) host.innerHTML = "";
-    workspaces.reset(); overview.reset(); memberView = false;
+    workspaces.reset(); overview.reset(); pairing.reset(); memberView = false;
     host = null; session = null; workspace = null; identity = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; approvalDigest = ""; attempt = null;
     discoveries = []; discoveryAvailable = false; discoveryError = "";
     scripts = []; scriptDetail = null; scriptsError = "";
