@@ -199,7 +199,9 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   }
   const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, machines: () => inventory?.nodes || [], requestId });
   // The overview repaints only its own section when it polls, so a half-typed form elsewhere is never disturbed.
-  const overview = createOverview({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, now: () => now() * 1000 });
+  // The workspaces list is the record of cloud workspaces: the overview compares against it, so a workspace created, renamed or discarded below shows up above.
+  const workspaceSignature = () => (workspaces.state.rows || []).map(row => `${row.id}:${row.version}`).join(",");
+  const overview = createOverview({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, now: () => now() * 1000, workspaceSignature });
   const rowById = (name, id) => inventory?.[name]?.find(row => same(row.id, id));
   const executionAvailability = () => inventory?.capabilities?.transport === true
     ? "The automatic execution worker is available. Approval permits automatic background execution over SSH without another dispatch confirmation. Each attempt still requires valid authority, bindings and target verification."
@@ -348,18 +350,19 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + '</div></details></div><details class="compute-capabilities" aria-labelledby="compute-capabilities"><summary id="compute-capabilities">Technical details</summary><div><h3>Automatic execution</h3><p id="compute-transport-reason">' + e(executionAvailability()) + '</p></div><div><button class="btn" disabled aria-describedby="compute-passive-reason">Collect observations</button><p id="compute-passive-reason">Collection availability is shown with Passive observations. A scope grant never enrolls devices.</p></div><div><button class="btn" disabled aria-describedby="compute-script-reason">Scripts</button><p id="compute-script-reason">Script availability is shown with Scripts. Saving a bundle never runs it.</p></div></details>';
     } else if (inventory) body = `<p>You can read this workspace's settings. Only its owner can change them.</p><div class="compute-inventories">${overview.html()}${workspaces.html()}</div>`;
     else if (memberView) body = `<div class="compute-inventories">${overview.html()}${workspaces.html()}</div>`;
-    const keepFocus = workspaces.holdFocus();
+    const keepFocus = workspaces.holdFocus(), keepOverviewFocus = overview.holdFocus(), carryOverview = overview.carry();
     host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? "<h1>Cloud workspaces</h1>" : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Refresh", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error && !memberView ? `<p class="compute-error" role="alert">${e(error)}</p>` : ""}${memberView ? '<p class="compute-notice">You can read this workspace\'s settings. Only its owner can change them.</p>' : ""}${body}</div>`;
-    keepFocus();
+    carryOverview(); keepFocus(); keepOverviewFocus();
     // Reload replaces its own button; once it is enabled again, put focus back on it.
     if (focusRefresh && !reading) { focusRefresh = false; host.querySelector?.('[data-compute-action="refresh"]')?.focus?.(); }
   }
-  async function refresh() {
+  async function refresh({ manual = false } = {}) {
     if (!eligible() || reading || busy) return;
     const page = epoch, read = ++revision;
     reading = true; error = ""; render();
     void workspaces.load();
-    void overview.load({ quiet: Boolean(overview.state.data), within: 5000 });
+    // The one Refresh button reads the overview too: a press always reads at once, the screen's own reloads wait.
+    void overview.load(manual ? { quiet: Boolean(overview.state.data), say: true } : { quiet: Boolean(overview.state.data), within: 5000 });
     const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`), request(`${BASE}/scripts`), request(`${BASE}/credentials`)]);
     if (!valid(page) || read !== revision) return;
     reading = false;
@@ -479,7 +482,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     const { computeAction: action, id } = target.dataset;
     if (target.disabled || !eligible()) return;
     if (action === "inspect-script") { void inspectScript(id); return; }
-    if (action === "refresh") { focusRefresh = !reading && !busy; void refresh(); return; }
+    if (action === "refresh") { focusRefresh = !reading && !busy; void refresh({ manual: true }); return; }
     if (action === "copy-provision") { void copyProvision(); return; }
     if (busy) return;
     if (action === "close") { editor = ""; values = {}; selected = null; approvalDigest = ""; error = ""; attempt = null; if (uncertain) notice = "Receipt unavailable. Refresh before starting another action."; render(); return; }

@@ -269,7 +269,7 @@ export function mount(context) {
   function frame() {
     if (tabs && !tabsHome) tabsHome = { parent: tabs.parentNode, next: tabs.nextSibling };
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
-    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
+    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. You can still save a cloud workspace without one (Management tab); add a machine when you want it to run somewhere.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
     topAdd ??= mountComputeTopAction(shell, hash=>ctx.go(hash));
     placeActions(); framed = true; actions();
@@ -281,6 +281,8 @@ export function mount(context) {
     region('summary').textContent = summaryText({ mode, rows, payload: latest });
     if (mode === 'topology') region('summary').insertAdjacentHTML?.('beforeend', summaryStatesHTML(mapModel(latest).nodes.filter(node=>MACHINE_KINDS.has(node.kind))));
     region('empty').hidden = !(mode === 'runners' && !rows.length);
+    // Nothing to read with no machine: say so now instead of leaving "Checking what is running…" up.
+    if (mode === 'runners' && !rows.length) region('status').textContent = statusText(workModel([]));
     note('');
     if (!map || built !== mode || phone !== narrow()) build(); else void map.refresh();
   }
