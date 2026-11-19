@@ -96,6 +96,7 @@ What this change does not do, and the app says so: it does not deliver the runne
 - **A lost connection at the exchange is the `files` step** (the checks passed; nothing was written), through the code route while the code is live.
 - **Closing a failed setup.** The close reason `abandoned` ("Setup removed") keeps the owner's "This is not my machine" the only way to read "Not approved". Members read the owner's approval in the third person ("Machine connected, waiting for the owner's approval").
 - **Smaller.** A 5xx answer to the machine's check is no answer (unreachable), not "the code cannot be used"; the machine's own failure is said even when the site is silent; a wrong-typed `cause` is a 400; refused checks are audited (id, reason, never the code); the launcher is fetched without following redirects; the missing runner program says to ask the person who runs the site for it (the app serves no runner guide); the fingerprint hint names the line "Machine fingerprint:" in the window; a ready machine's next step names Needs me for the provider sign-in.
+- **Tests keep one clock.** The pairing tests' clock fixture freezes when it is created and moves only with `at(...)`; a stall or offline boundary is measured from one fixed start, so a slow run cannot read it a second short.
 
 #### Screens (change C)
 

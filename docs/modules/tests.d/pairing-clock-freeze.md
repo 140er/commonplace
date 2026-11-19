@@ -1,0 +1,1 @@
+- **Owns:** the pairing tests' clock fixture (`tests/test_compute_pairing.py`) stands still from the moment it is created and moves only with `at(...)`, so a rule at a 15-minute boundary (stalled, offline) is measured from one fixed start however slowly the test runs; a regression test makes every look at the clock a second later than the last and asserts the fixture holds still.
