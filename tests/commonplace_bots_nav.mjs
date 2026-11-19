@@ -50,14 +50,15 @@ test("the Bots badge is the waiting total and hides at zero", () => {
   assert.doesNotMatch(count(renderPhoneTabs({ botsWaiting: 0 })), /count/);
 });
 
-test("the rail has exactly Bots and Memory; Workspace holds Projects, Needs me and Console; phone tabs are Bots and Memory", () => {
+test("the rail has Bots, Memory and Cloud workspaces; Workspace holds Projects, Needs me and Console; phone tabs are the same three", () => {
+  // Cloud workspaces (#614) is a deliberate third first-level entry: the usability review found Compute was not reachable at a glance in Classic.
   const rail = renderRail({ can_admin: true });
-  assert.deepEqual(hrefs(rail.slice(0, rail.indexOf("rail-foot"))), ["#/bots", "#/memory"]);
+  assert.deepEqual(hrefs(rail.slice(0, rail.indexOf("rail-foot"))), ["#/bots", "#/memory", "#/compute"]);
   const menu = rail.slice(rail.indexOf("user-links"));
   assert.match(menu, /role="group" aria-label="Workspace"/);
   assert.deepEqual(hrefs(menu).slice(0, 3), ["#/boards", "#/needs", "#/console"]);
   assert.match(menu, />Projects</);
-  assert.deepEqual(hrefs(renderPhoneTabs({})), ["#/bots", "#/memory"]);
+  assert.deepEqual(hrefs(renderPhoneTabs({})), ["#/bots", "#/memory", "#/compute"]);
   assert.deepEqual(hrefs(renderPhoneBar({})).slice(0, 3), ["#/boards", "#/needs", "#/console"]);
   assert.doesNotMatch(rail + renderPhoneBar({}) + renderPhoneTabs({}), /\bBoards?\b/);
 });

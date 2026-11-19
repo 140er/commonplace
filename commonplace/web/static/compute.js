@@ -2,7 +2,7 @@ import { escape as e } from "./api.js";
 import { createWorkspaces } from "./compute-workspaces.js";
 
 const BASE = "/api/compute";
-const intro = "The machines agents can reach, what they may look at, and tasks waiting for your approval.";
+const intro = "Where your Coworkers run: cloud workspaces first, then (for the workspace owner) the settings of the machines themselves under Advanced.";
 const parts = (...values) => values.filter(value => value !== undefined && value !== null && String(value).trim()).join(" · ");
 const endpoint = row => row.address ? [row.address, row.port].filter(value => value !== undefined && value !== null && value !== "").join(":") : "";
 const enc = encodeURIComponent;
@@ -11,9 +11,9 @@ const limits = { hosts: 4096, concurrency: 64, rate_per_second: 100, duration_se
 // Technical settings sit behind one "Advanced" label; each section opens with a one-line plain explanation.
 export const ADVANCED = {
   label: "Advanced",
-  intro: "Most people never need these. They are the technical settings behind how agents reach your machines.",
-  gateways: "A gateway is the door into one project’s network; agents reach your machines through it.",
-  nodes: "A target is one machine behind a gateway that agents may work on.",
+  intro: "Most people never need these. They are the technical settings behind how Coworkers reach your machines.",
+  gateways: "A gateway is the door into one project’s network; Coworkers reach your machines through it.",
+  nodes: "A target is one machine behind a gateway that Coworkers may work on.",
   scopes: "A passive scope is a time-limited permission to look at a network, never to change it.",
 };
 // The one documented way to create a credential (docs/compute/RUNNING.md, "Provision a credential"); the form
@@ -318,7 +318,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       const target = rowById("nodes", execution.node_id), gateway = rowById("gateways", execution.gateway_id);
       heading = "Approve exact proposal"; submit = "Approve automatic execution";
       fields = `<div class="compute-wide compute-snapshot"><p>${parts(e(execution.operation), e(execution.board), taskHTML(execution))}</p><p>Arguments: <code>${e(JSON.stringify(execution.arguments || {}))}</code></p><p>Current target binding: ${e(target?.name || execution.node_id)}</p>${bindingHTML(target)}<p>Current gateway binding: ${e(gateway?.name || execution.gateway_id)}</p>${bindingHTML(gateway)}<dl>${limitsHTML(execution.limits)}</dl><p>Exact SHA256 digest</p><pre>${e(approvalDigest)}</pre><p>The server rechecks this digest and current bindings before recording approval.</p></div>`
-        + (execution.operation === "workspace.script.v1" ? `<details class="compute-wide"><summary>Immutable script contract</summary><p>Bundle ${e(bundle?.id || execution.arguments?.bundle_id)} · SHA256 ${e(bundle?.digest || "Unavailable")}</p><pre>${e(JSON.stringify(bundle?.manifest || {}, null, 2))}</pre>${scriptDetail && same(scriptDetail.id, bundle?.id) && scriptDetail.digest === bundle?.digest ? `<pre aria-label="Approved script source">${e(scriptDetail.source)}</pre>` : "<p>Close this form and inspect the script source from Workspace scripts before confirming this digest.</p>"}</details>` : "")
+        + (execution.operation === "workspace.script.v1" ? `<details class="compute-wide"><summary>Immutable script contract</summary><p>Bundle ${e(bundle?.id || execution.arguments?.bundle_id)} · SHA256 ${e(bundle?.digest || "Unavailable")}</p><pre>${e(JSON.stringify(bundle?.manifest || {}, null, 2))}</pre>${scriptDetail && same(scriptDetail.id, bundle?.id) && scriptDetail.digest === bundle?.digest ? `<pre aria-label="Approved script source">${e(scriptDetail.source)}</pre>` : "<p>Close this form and inspect the script source under Scripts before confirming this digest.</p>"}</details>` : "")
         + field("expected_digest", "Type the full digest to confirm this exact proposal", { max: 64 })
         + field("expires_minutes", "Approval expires in minutes", { type: "number", min: 1, ceiling: 5 })
         + '<p class="compute-wide">Approving permits the executor to run this exact operation automatically in the background over SSH. No additional dispatch confirmation is required. Approval does not confirm that execution started or completed.</p>';
@@ -340,7 +340,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + inventorySection("nodes", "Targets", nodeRows, "No targets enrolled yet.", "node", "Enroll target", inventory.gateways.length > 0, !inventory.gateways.length ? "Add a gateway before enrolling a target." : "", "Enrollment uses an existing gateway and a separately confirmed public host key.", ADVANCED.nodes)
         + inventorySection("scopes", "Passive scopes", scopeRows, "No scopes granted yet.", "scope", "Grant scope", inventory.gateways.length > 0, "", "Each scope binds exact networks, interfaces, actor, task, bounds and expiry.", ADVANCED.scopes)
         + "</div></details>"
-        + inventorySection("scripts", "Workspace scripts", scripts.map(row => `<li class="compute-row"><header><strong>${e(row.id)}</strong>${taskHTML(row)}</header><p>${parts(row.node_id ? `Target ${e(row.node_id)}` : "", row.digest ? `Bundle SHA256 <code>${e(row.digest)}</code>` : "")}</p>${button("inspect-script", "Inspect source and manifest", busy || reading || uncertain, row.id)}</li>`), "No scripts saved yet.", "script", "Add Python script", inventory.nodes.length > 0 && !scriptsError, scriptsError, (inventory.capabilities?.scripts === true ? "Scripts use the independently verified confined target runtime and require exact approval." : "Script execution is unavailable until the target runtime and confinement are independently configured and verified."))
+        + inventorySection("scripts", "Scripts", scripts.map(row => `<li class="compute-row"><header><strong>${e(row.id)}</strong>${taskHTML(row)}</header><p>${parts(row.node_id ? `Target ${e(row.node_id)}` : "", row.digest ? `Bundle SHA256 <code>${e(row.digest)}</code>` : "")}</p>${button("inspect-script", "Inspect source and manifest", busy || reading || uncertain, row.id)}</li>`), "No scripts saved yet.", "script", "Add Python script", inventory.nodes.length > 0 && !scriptsError, scriptsError, (inventory.capabilities?.scripts === true ? "Scripts use the independently verified confined target runtime and require exact approval." : "Script execution is unavailable until the target runtime and confinement are independently configured and verified."))
         + inventorySection("discoveries", "Passive observations", discoveries.map(row => `<li class="compute-row"><header><strong>${parts(e(row.board), taskHTML(row))}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(row.scope_id ? `Scope ${e(row.scope_id)}` : "", e(row.reason))}</p><details><summary>${e(row.observations?.length || 0)} observations and usage</summary><pre>${e(JSON.stringify({ observations: row.observations || [], usage: row.usage || {} }, null, 2))}</pre></details>${discoveryCancellable(row) ? button("discovery-cancel", "Request cancellation", busy || reading || uncertain, row.id) + "<p>A cancellation request does not confirm remote termination.</p>" : ""}${row.reason === "cancellation_requested" ? "<p>Cancellation requested; remote termination is unconfirmed.</p>" : ""}${row.state === "uncertain" ? "<p>Outcome unknown. Capacity remains reserved; this attempt will not automatically repeat.</p>" : ""}</li>`), "No observations collected yet.", "discovery", "Collect observations", discoveryAvailable && inventory.scopes.some(row => !row.revoked && Number(row.expires_at) > now()), discoveryError || (!discoveryAvailable ? "Observation collection is not available yet." : ""), (discoveryAvailable ? "Collection reads approved gateway caches in the background. Reload to check progress." : "Passive collection is unavailable until its gateway and admission channel are configured."))
         + inventorySection("executions", "Execution proposals", inventory.executions.map(row => computeExecutionHTML(row, { busy: busy || reading || uncertain })), "No tasks waiting for approval.", "proposal", "Propose system info", inventory.nodes.length > 0, "", "The fixed system information operation requires a target and a canonical task.")
         + '</div><details class="compute-capabilities" aria-labelledby="compute-capabilities"><summary id="compute-capabilities">Access and execution details</summary><div><h3>Automatic execution</h3><p id="compute-transport-reason">' + e(executionAvailability()) + '</p></div><div><button class="btn" disabled aria-describedby="compute-passive-reason">Collect observations</button><p id="compute-passive-reason">Collection availability is shown with Passive observations. A scope grant never enrolls devices.</p></div><div><button class="btn" disabled aria-describedby="compute-script-reason">Scripts</button><p id="compute-script-reason">Script availability is shown with Workspace scripts. Saving a bundle never runs it.</p></div></details>';
@@ -355,7 +355,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   async function refresh() {
     if (!eligible() || reading || busy) return;
     const page = epoch, read = ++revision;
-    reading = true; error = ""; memberView = false; render();
+    reading = true; error = ""; render();
     void workspaces.load();
     const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`), request(`${BASE}/scripts`), request(`${BASE}/credentials`)]);
     if (!valid(page) || read !== revision) return;
@@ -374,7 +374,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     credentialStatus = refs.status === "fulfilled" && ["ready", "unprovisioned"].includes(refs.value.status) ? refs.value.status : "unavailable";
     scripts = bundles.status === "fulfilled" ? bundles.value.scripts : [];
     scriptsError = bundles.status === "rejected" ? "Script bundles could not be loaded. Reload before creating or approving scripts." : "";
-    inventory = data.value;
+    inventory = data.value; memberView = false;
     projects = boards.status === "fulfilled" ? boards.value.boards : [];
     boardError = boards.status === "rejected" ? "Projects could not be loaded. Reload before adding a gateway." : "";
     if (editor === "approve" && (rowById("executions", selected)?.digest !== approvalDigest || rowById("executions", selected)?.state !== "awaiting_approval")) {

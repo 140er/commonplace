@@ -66,7 +66,7 @@ const cases = {
   async presentation() {
     const f = fixture();
     await f.open(inventory({ nodes: [{ ...node, board: undefined, interface: undefined, address: '192.0.2.20' }], scopes: [], executions: [] }));
-    assert.match(f.host.innerHTML, /The machines agents can reach, what they may look at, and tasks waiting for your approval\./);
+    assert.match(f.host.innerHTML, /Where your Coworkers run: cloud workspaces first, then \(for the workspace owner\) the settings of the machines themselves under Advanced\./);
     assert.match(f.host.innerHTML, /No scripts saved yet\./);
     assert.doesNotMatch(f.host.innerHTML, /Set up pinned gateways|No immutable script bundles saved/);
     assert.match(f.host.innerHTML, /<p>192\.0\.2\.20:22<\/p>/);
@@ -85,7 +85,7 @@ const cases = {
     assert.match(html, /<details class="compute-advanced compute-wide" data-compute-advanced><summary class="compute-advanced-summary">Advanced<\/summary>/);
     assert.ok(at('data-compute-advanced') < at('id="compute-gateways"') && at('id="compute-gateways"') < at('id="compute-nodes"') && at('id="compute-nodes"') < at('id="compute-scopes"'));
     assert.match(html, /<\/div><\/details><section class="compute-inventory" aria-labelledby="compute-scripts"/, 'scripts, observations and proposals stay outside');
-    for (const sentence of ['A gateway is the door into one project’s network; agents reach your machines through it.', 'A target is one machine behind a gateway that agents may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
+    for (const sentence of ['A gateway is the door into one project’s network; Coworkers reach your machines through it.', 'A target is one machine behind a gateway that Coworkers may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
     assert.match(html, /Most people never need these\./);
     // What the person chose survives a re-render: open stays open, and it starts closed again on a fresh screen.
     f.toggleAdvanced(); f.click('refresh'); f.take('/api/compute').resolve(inventory({ executions: [] })); f.take('/api/boards').resolve({ boards: [{ slug: 'demo', name: 'Fixture project' }] }); await flush();

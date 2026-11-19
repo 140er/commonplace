@@ -48,10 +48,10 @@ if (which === 'shell') {
   run(slice('function navigation()', 'function showError') + '\nnavigation();');
   const html = nodes['#board-nav'].outerHTML;
   assert.equal(typeof html, 'string');
-  // The rail lists Bots and Memory only: no project rows, no per-project counts.
+  // The rail lists Bots, Memory and Cloud workspaces (a deliberate third entry from card #614: Compute was not reachable at a glance in Classic): no project rows, no per-project counts.
   assert.doesNotMatch(html, /agents working|9 need you|class="proj"/);
-  assert.deepEqual([...html.slice(0, html.indexOf('rail-foot')).matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1]), ['#/bots', '#/memory']);
-  assert.equal((nodes['#phone-tabs'].innerHTML.match(/<a /g) || []).length, 2);
+  assert.deepEqual([...html.slice(0, html.indexOf('rail-foot')).matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1]), ['#/bots', '#/memory', '#/compute']);
+  assert.equal((nodes['#phone-tabs'].innerHTML.match(/<a /g) || []).length, 3);
   state.base = '#/needs'; state.selected = 12;
   context.needsCards = () => [{number: 12, board: 'alpha'}];
   run('navigation();');

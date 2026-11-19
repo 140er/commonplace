@@ -1,13 +1,18 @@
 """Cloud workspaces in a real browser, Classic and Deck, desktop and phone, owner and member.
 
-Synthetic local data only: no remote connection and nothing is started. Run with Playwright
-installed (for example ``uv run --with playwright==1.64.1``) and a Chromium cache. Without
-Playwright the module is skipped with a stated reason, so ordinary collection is unaffected;
-with ``CP_BROWSER_E2E=1`` (a browser evidence run) a missing Playwright fails instead, so the
-cases can never be skipped by accident. Set COMPUTE_WORKSPACES_SHOTS to a directory to also
-save a viewport-sized screenshot of every state (desktop 1280x800, phone 390x844).
+Synthetic local data only: no remote connection and nothing is started. Needs the Playwright package and a
+Chromium cache. Playwright is deliberately not a declared dependency (as for the other browser suites), so run
+
+    uv run --with playwright==1.64.1 pytest tests/test_compute_workspaces_browser.py -rs
+
+(or any environment that has Playwright). Without Playwright every case here is reported as skipped with a
+reason: ``-rs`` prints one line with the count, so a run that skipped them cannot be mistaken for a pass. With
+``CP_BROWSER_E2E=1`` (a browser evidence run) a missing Playwright fails instead, so the cases can never be
+skipped by accident. Set COMPUTE_WORKSPACES_SHOTS to a directory to also save a viewport-sized screenshot of
+every state (desktop 1280x800, phone 390x844).
 """
 
+import importlib.util
 import os
 import threading
 from pathlib import Path
@@ -24,14 +29,20 @@ from commonplace.gateway import Gateway
 from commonplace.workers import WorkerSupervisor
 from tests.test_compute_control import gateway_payload, node_payload
 
+HAS_PLAYWRIGHT = importlib.util.find_spec("playwright") is not None
 if os.environ.get("CP_BROWSER_E2E") == "1":
     from playwright import sync_api as playwright_api  # an evidence run never skips
+elif HAS_PLAYWRIGHT:
+    from playwright import sync_api as playwright_api
 else:
-    playwright_api = pytest.importorskip(
-        "playwright.sync_api", reason="browser test needs the playwright package"
-    )
-sync_playwright = playwright_api.sync_playwright
-expect = playwright_api.expect
+    playwright_api = None
+# A mark on every case (not a module-level skip), so the skip count is the number of cases not run.
+pytestmark = pytest.mark.skipif(
+    playwright_api is None,
+    reason="browser cases need the playwright package (see this file's docstring for the command)",
+)
+sync_playwright = playwright_api.sync_playwright if playwright_api else None
+expect = playwright_api.expect if playwright_api else None
 
 SIZES = {"desktop": (1280, 800), "phone": (390, 844)}
 TOUCH = 44
@@ -75,8 +86,7 @@ def _rgb(text):
     return [int(float(part)) for part in text[text.index("(") + 1 : text.index(")")].split(",")[:3]]
 
 
-@pytest.fixture
-def served(tmp_path, monkeypatch):
+def _serve(tmp_path, monkeypatch, *, machine=True):
     for name in ("CHAT", "HOLD"):
         monkeypatch.setenv(f"COMMONPLACE_{name}_WORKER", "off")
     monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
@@ -99,8 +109,10 @@ def served(tmp_path, monkeypatch):
     )
     store = open_store(gateway, wid)
     auth = {"session_hash": sessions._hash(cookie)}
-    gw = store.create_gateway(principal, **auth, **gateway_payload())
-    node = store.create_node(principal, **auth, **node_payload(gw["id"], name="Build machine"))
+    node = None
+    if machine:
+        gw = store.create_gateway(principal, **auth, **gateway_payload())
+        node = store.create_node(principal, **auth, **node_payload(gw["id"], name="Build machine"))
     server = gateway.build_server("127.0.0.1", 0)
     origin = f"http://127.0.0.1:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -132,12 +144,25 @@ def served(tmp_path, monkeypatch):
         db.close()
 
 
-def _open(browser, fx, ui, size, cookie=None):
-    width, height = SIZES[size]
-    context = browser.new_context(viewport={"width": width, "height": height})
+@pytest.fixture
+def served(tmp_path, monkeypatch):
+    yield from _serve(tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def served_empty(tmp_path, monkeypatch):
+    yield from _serve(tmp_path, monkeypatch, machine=False)
+
+
+def _open(browser, fx, ui, size, cookie=None, viewport=None):
+    width, height = viewport or SIZES[size]
+    phone = width < 700
+    context = browser.new_context(
+        viewport={"width": width, "height": height}, has_touch=phone, is_mobile=phone
+    )
     context.add_cookies([{"name": sessions.COOKIE, "value": cookie or fx.cookie, "url": fx.origin}])
     page = context.new_page()
-    page.set_default_timeout(10000)
+    page.set_default_timeout(20000)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on(
@@ -156,12 +181,12 @@ def _open(browser, fx, ui, size, cookie=None):
     return context, page, errors
 
 
-def _run(fx, ui, size, body, cookie=None):
+def _run(fx, ui, size, body, cookie=None, viewport=None):
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
-            context, page, errors = _open(browser, fx, ui, size, cookie)
-            body(page, f"{ui}-{size}")
+            context, page, errors = _open(browser, fx, ui, size, cookie, viewport)
+            body(page, f"{ui}-{size}", context)
             assert errors == []
             context.close()
         finally:
@@ -176,11 +201,53 @@ def _focused(page):
     return page.evaluate(FOCUS)
 
 
-def _assert_touch_targets(page):
+def _swipe(context, page, x, start, end, steps=14):
+    """A real touch drag (touchstart, touchmove..., touchend) through the browser's input pipeline."""
+    cdp = context.new_cdp_session(page)
+    cdp.send(
+        "Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": start}]}
+    )
+    for step in range(1, steps + 1):
+        point = {"x": x, "y": start + (end - start) * step / steps}
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [point]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    page.wait_for_timeout(600)  # let the scroll settle
+
+
+def _scrolled(page):
+    """How far the document and the Deck scroller (#content) have scrolled."""
+    return page.evaluate(
+        "() => [Math.round(document.scrollingElement.scrollTop),"
+        " Math.round(document.querySelector('#content').scrollTop)]"
+    )
+
+
+def _geometry(page):
+    return page.evaluate(
+        "() => { const rect = el => { if (!el) return null; const r = el.getBoundingClientRect();"
+        " return {top: r.top, bottom: r.bottom, height: r.height}; };"
+        " return {bar: rect(document.querySelector('.compute-ws-actions')),"
+        " panel: rect(document.querySelector('.compute-ws-editor')),"
+        " tabs: rect(document.querySelector('#phone-tabs .m-tabs')), height: innerHeight}; }"
+    )
+
+
+def _under_the_bar(page, selector):
+    """True when the first visible match is overlapped by the sticky action bar."""
+    return page.evaluate(
+        "(selector) => { const el = document.querySelector(selector);"
+        " const bar = document.querySelector('.compute-ws-actions');"
+        " if (!el || !bar) return false; const a = el.getBoundingClientRect(), b = bar.getBoundingClientRect();"
+        " return a.bottom > b.top + 1 && a.top < b.bottom - 1; }",
+        selector,
+    )
+
+
+def _assert_touch_targets(page, inputs=True):
     # Every control in the section is at least 44px tall on the phone; checked per element by locator.
     controls = page.locator(
         ".compute-ws button:visible, .compute-ws input:visible, .compute-ws select:visible,"
-        " .compute-ws summary:visible"
+        " .compute-ws summary:visible, .compute > header button:visible"
     )
     heights = controls.evaluate_all("els => els.map(el => el.getBoundingClientRect().height)")
     assert heights and min(heights) >= TOUCH, (
@@ -190,7 +257,31 @@ def _assert_touch_targets(page):
         "els => els.filter(el => el.tagName === 'INPUT' || el.tagName === 'SELECT')"
         ".map(el => parseFloat(getComputedStyle(el).fontSize))"
     )
-    assert sizes and min(sizes) >= 16, "inputs are 16px on the phone so the browser does not zoom"
+    if inputs:
+        assert sizes and min(sizes) >= 16, (
+            "inputs are 16px on the phone so the browser does not zoom"
+        )
+
+
+def _assert_small_text_is_14px(page):
+    sizes = page.locator(
+        ".compute-ws small:visible, .compute-ws .compute-quiet:visible"
+    ).evaluate_all("els => els.map(el => parseFloat(getComputedStyle(el).fontSize))")
+    assert sizes and min(sizes) >= 14, (
+        f"hints and errors are 14px on the phone: {sorted(sizes)[:3]}"
+    )
+
+
+def _assert_bar_sits_on_the_tab_bar(page):
+    """One bottom offset per look. While its panel runs on below the screen the bar is stuck: its bottom edge is the
+    tab bar's top edge (in Deck, the end of the scroller above it). When the panel ends on screen the bar simply ends
+    the panel (it is the panel's last row). In no case does it reach under the tab bar."""
+    geometry = _geometry(page)
+    edge = geometry["tabs"]["top"] if geometry["tabs"] else geometry["height"]
+    bar, panel = geometry["bar"], geometry["panel"]
+    assert bar["bottom"] <= edge + 1.5, geometry
+    assert abs(bar["bottom"] - edge) <= 1.5 or panel["bottom"] - bar["bottom"] <= 14, geometry
+    assert bar["height"] <= 70, "Review and Cancel share one 44px row"
 
 
 @pytest.mark.parametrize("ui", UIS)
@@ -198,7 +289,7 @@ def _assert_touch_targets(page):
 def test_owner_creates_edits_and_reads_status(served, ui, size):
     fx = served
 
-    def body(page, label):
+    def body(page, label, context):
         section = _section(page)
         expect(section).to_contain_text("No cloud workspaces yet. Choose New cloud workspace")
         assert section.get_by_text("isolated environment").count() == 1
@@ -212,38 +303,43 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(page.get_by_role("textbox", name="Name", exact=True)).to_have_attribute(
             "required", ""
         )
-        expect(page.get_by_role("textbox", name="Name", exact=True)).to_have_attribute(
-            "placeholder", "Build box"
-        )
+        # Each size says what to choose; the presets fill the fields.
+        expect(section).to_contain_text("What do I need?")
+        assert section.get_by_text("What do I need?").count() == 3
         if size == "phone":
             _assert_touch_targets(page)
-            # The actions stay reachable above the fixed tab bar without scrolling to the end.
-            button = page.get_by_role("button", name="Review and create")
-            box = button.bounding_box()
-            bar = page.evaluate(
-                "(document.querySelector('#phone-tabs .m-tabs')?.getBoundingClientRect().top)"
-                " ?? window.innerHeight"
-            )
-            assert box["y"] >= 0 and box["y"] + box["height"] <= bar + 1, (box, bar)
+            _assert_small_text_is_14px(page)
+            _assert_bar_sits_on_the_tab_bar(page)
         _shot(page, f"{label}-02-create-form")
-        # A blank name: one summary alert, the error on the name control only, focus on that control.
+        page.get_by_role("button", name="Large", exact=False).first.click()
+        expect(page.get_by_role("spinbutton", name="CPU cores")).to_have_value("4")
+        expect(page.get_by_role("spinbutton", name="Memory (GiB)")).to_have_value("8")
+        expect(page.get_by_role("spinbutton", name="Storage (GiB)")).to_have_value("50")
+        expect(page.locator('[data-preset="large"]')).to_be_focused()
+        page.get_by_role("button", name="Standard", exact=False).first.click()
+        expect(page.get_by_role("spinbutton", name="CPU cores")).to_have_value("2")
+        # A blank name: one summary with a link, the error on the name control only, focus on that control.
         page.get_by_role("button", name="Review and create").click()
-        expect(page.locator("[data-ws-summary]")).to_have_text(
-            "Fix the highlighted fields, then review again."
-        )
-        assert section.locator('[role="alert"]').count() == 1
+        summary = page.locator("[data-ws-summary]")
+        expect(summary).to_contain_text("Fix this field, then review again:")
+        assert section.locator('[role="alert"]').count() == 0
         name = page.get_by_role("textbox", name="Name", exact=True)
         expect(name).to_have_attribute("aria-invalid", "true")
         expect(name).to_be_focused()
         assert section.locator('[aria-invalid="true"]').count() == 1
         expect(page.locator("#ws-error-name")).to_contain_text("Give it a name of 1 to 60")
+        summary.get_by_role("link", name="Name:").click()
+        expect(name).to_be_focused()
         _shot(page, f"{label}-03-blank-name")
         # Own image: example, definition, and the error lands on the address control, not the select.
         page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
         address = page.get_by_role("textbox", name="Image address", exact=True)
-        expect(address).to_have_attribute("placeholder", "ghcr.io/acme/tools:1.2")
+        expect(address).to_have_attribute("placeholder", "ubuntu:24.04")
         expect(section).to_contain_text(
             "An image is the ready-made software a workspace starts from."
+        )
+        expect(section).to_contain_text(
+            "It must be public: anyone can download it without signing in."
         )
         name.fill("Acceptance box")
         page.get_by_role("button", name="Review and create").click()
@@ -255,7 +351,6 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(page.locator("#ws-error-image")).to_contain_text("enter your own address")
         _shot(page, f"{label}-04-blank-image")
         # Invalid values: highlighted, never previewed as the plan, and the preview keeps GiB.
-        name.fill("Acceptance box")
         address.fill("ubuntu; rm -rf /")
         expect(page.locator("#ws-error-image")).to_contain_text(
             "doesn't look like an image address"
@@ -270,24 +365,38 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(page.locator("[data-ws-preview]")).not_to_contain_text("MiB")
         page.get_by_role("button", name="Review and create").click()
         assert page.locator("[data-ws-form]").count() == 1, "invalid values do not reach review"
+        expect(summary).to_contain_text("Fix these 3 fields, then review again:")
         _shot(page, f"{label}-05-validation-errors")
-        # Fix everything: the errors clear on their own controls and the preview follows.
+        # Fix everything: the errors clear on their own controls, the summary goes away and the preview follows.
         address.fill("ghcr.io/acme/tools:1.2")
         page.get_by_role("spinbutton", name="CPU cores").fill("2")
         page.get_by_role("spinbutton", name="Memory (GiB)").fill("4")
         expect(section.locator('[aria-invalid="true"]')).to_have_count(0)
+        expect(summary).to_be_hidden()
         page.get_by_role("combobox", name="Machine", exact=True).select_option(fx.node["id"])
         expect(page.locator("[data-ws-preview]")).to_contain_text(
             "2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine"
         )
+        expect(page.get_by_role("combobox", name="Machine", exact=True)).not_to_contain_text(
+            "not checked yet"
+        )
+        if size == "desktop":
+            # The bottom of the form: the machine row, the live preview and the actions.
+            page.locator(".compute-ws-actions").scroll_into_view_if_needed()
         _shot(page, f"{label}-06-machine-chosen")
         page.get_by_role("button", name="Review and create").click()
         expect(page.get_by_role("heading", name="Create Acceptance box?")).to_be_focused()
         assert fx.listed() == []
-        expect(page.locator(".compute-ws-review")).to_contain_text(
-            "2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine"
+        review = page.locator(".compute-ws-review")
+        expect(review).to_contain_text("2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine")
+        assert review.get_attribute("role") == "list"
+        expect(page.locator("[data-ws-honesty]")).to_contain_text(
+            "Nothing has been sent to a machine"
         )
-        expect(section).to_contain_text("This only saves the settings in Commonplace")
+        if size == "phone":
+            # The honesty sentence is fully above the action bar, never under it.
+            assert not _under_the_bar(page, "[data-ws-honesty]")
+            _assert_bar_sits_on_the_tab_bar(page)
         _shot(page, f"{label}-07-review")
         page.get_by_role("button", name="Confirm and create").click()
         row = page.locator("[data-ws-id]").first
@@ -298,9 +407,10 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
             "Saved Acceptance box in Commonplace. Nothing has been sent to Build machine yet."
         )
         expect(notice).to_be_focused()
-        expect(row).to_contain_text("Not started yet")
+        expect(row).to_contain_text("Not started")
         expect(row.get_by_role("heading", name="Acceptance box")).to_be_visible()
         expect(row).to_contain_text("2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine")
+        expect(row).to_contain_text("Image: ghcr.io/acme/tools:1.2")
         created = fx.listed()
         assert created[0]["image"] == "ghcr.io/acme/tools:1.2" and created[0]["cpu_cores"] == 2
         assert created[0]["memory_mib"] == 4096 and created[0]["started"] is False
@@ -308,7 +418,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         # Edit the limits: the review names exactly what changes, and only that is saved.
         row.get_by_role("button", name="Change settings for Acceptance box").click()
         expect(page.locator("[data-ws-id]")).to_have_count(0)  # the form replaces the row
-        expect(section).to_contain_text("Not started yet, so changes apply when it first starts.")
+        expect(section).to_contain_text("Not started. Starting is not available yet")
         _shot(page, f"{label}-09-edit-never-started")
         page.get_by_role("spinbutton", name="Memory (GiB)").fill("8")
         page.get_by_role("button", name="Review the change").click()
@@ -317,13 +427,15 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(notice).to_contain_text("Saved Acceptance box in Commonplace.")
         expect(notice).to_be_focused()
         assert fx.listed()[0]["memory_mib"] == 8192
-        assert fx.listed()[0]["revision"] == 2
+        assert (fx.listed()[0]["revision"], fx.listed()[0]["version"]) == (2, 2)
         # Details, with a plain way out: Escape closes and focus returns to the row's button.
         page.get_by_role("button", name="Details for Acceptance box").click()
         detail = page.locator(".compute-ws-detail")
         expect(page.locator("#compute-ws-heading")).to_be_focused()
-        expect(detail).to_contain_text("Changed 1 time since it was created")
-        expect(detail).to_contain_text("can't be deleted yet")
+        expect(detail).to_contain_text("Edited once")
+        expect(detail).to_contain_text("Hosted on")
+        expect(detail).to_contain_text("GitHub Container Registry (ghcr.io)")
+        expect(detail).to_contain_text("can't be discarded yet")
         _shot(page, f"{label}-10-detail")
         page.keyboard.press("Escape")
         expect(detail).to_have_count(0)
@@ -359,24 +471,31 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
     )
     failed = fx.make(name="Failed box", node_id=node, memory_mib=2048)
     fx.state(failed["id"], "failed", "out_of_memory", applied_revision=1)
+    first = fx.make(name="Failed first box", node_id=node, image="ghcr.io/acme/f:1")
+    fx.state(first["id"], "failed", "image_pull_failed")  # failed before anything was applied
 
-    def body(page, label):
+    def body(page, label, context):
         section = _section(page)
         page.locator(".compute-ws [data-ws-id]").first.wait_for()
+        names = (
+            "No machine yet box",
+            "Private box",
+            "Pending box",
+            "Ready box",
+            "Restart box",
+            "Failed box",
+            "Failed first box",
+        )
         rows = {
-            name: page.locator("[data-ws-id]", has=page.get_by_role("heading", name=name))
-            for name in (
-                "No machine yet box",
-                "Private box",
-                "Pending box",
-                "Ready box",
-                "Restart box",
-                "Failed box",
+            name: page.locator(
+                "[data-ws-id]", has=page.get_by_role("heading", name=name, exact=True)
             )
+            for name in names
         }
         expect(rows["No machine yet box"]).to_contain_text("No machine chosen")
-        expect(rows["Private box"]).to_contain_text("Needs a registry login")
-        expect(rows["Pending box"]).to_contain_text("Not started yet")
+        expect(rows["Private box"]).to_contain_text("Private image")
+        expect(rows["Pending box"]).to_contain_text("Not started")
+        expect(rows["Pending box"]).to_contain_text("Image: Python 3.12 (slim)")
         expect(rows["Ready box"]).to_contain_text("Ready")
         expect(rows["Failed box"]).to_contain_text("Failed")
         # One plain status per row: a restart is its own status and is never also "Ready".
@@ -384,46 +503,96 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
         expect(rows["Restart box"]).not_to_contain_text("Ready")
         expect(section).not_to_contain_text("matches the saved settings")
         assert section.get_by_role("button", name="Bind a registry login").count() == 0
-        # Row actions name their workspace; started workspaces cannot be discarded.
+        # Row actions name their workspace; a started workspace, or one whose start failed, cannot be discarded.
         expect(
             rows["Ready box"].get_by_role("button", name="Details for Ready box")
         ).to_be_visible()
         expect(rows["Ready box"].get_by_role("button", name="Discard Ready box")).to_have_count(0)
         expect(
+            rows["Failed first box"].get_by_role("button", name="Discard Failed first box")
+        ).to_have_count(0)
+        expect(
             rows["Pending box"].get_by_role("button", name="Discard Pending box")
         ).to_be_visible()
+        # Discard is danger-styled and set apart from the other actions.
+        assert "danger" in rows["Pending box"].get_by_role(
+            "button", name="Discard Pending box"
+        ).get_attribute("class")
         _shot(page, f"{label}-11-all-statuses")
+        # The private image offers its fix: a Change image button that opens the form on the image.
+        rows["Private box"].get_by_role("button", name="Details for Private box").click()
+        detail = page.locator(".compute-ws-detail")
+        expect(detail).to_contain_text(
+            "This image is private and Commonplace can't store registry logins yet"
+        )
+        expect(detail).to_contain_text("Choose a public image.")
+        _shot(page, f"{label}-18-private-detail")
+        detail.get_by_role("button", name="Change image").click()
+        expect(page.get_by_role("textbox", name="Image address", exact=True)).to_be_focused()
+        page.keyboard.press("Escape")
         rows["Restart box"].get_by_role("button", name="Details for Restart box").click()
         detail = page.locator(".compute-ws-detail")
-        expect(detail).to_contain_text("Its saved settings changed after it last started")
+        expect(detail).to_contain_text(
+            "Nothing to do now. Its new settings apply the next time it starts"
+        )
         expect(detail).not_to_contain_text("matches the saved")
-        expect(detail).to_contain_text("can't be deleted yet")
+        expect(detail).to_contain_text("can't be discarded yet")
         _shot(page, f"{label}-12-restart-needed-detail")
         page.keyboard.press("Escape")
         rows["Failed box"].get_by_role("button", name="Details for Failed box").click()
         expect(page.locator(".compute-ws-detail")).to_contain_text("ran out of memory at 2 GiB")
+        _shot(page, f"{label}-19-failed-detail")
         page.keyboard.press("Escape")
-        # The edit form of a started workspace says a restart is needed and locks the machine.
+        rows["Failed first box"].get_by_role("button", name="Details for Failed first box").click()
+        expect(page.locator(".compute-ws-detail")).to_contain_text("could not download the image")
+        expect(page.locator(".compute-ws-detail")).to_contain_text("Its last start failed.")
+        expect(
+            page.locator(".compute-ws-detail").get_by_role("button", name="Discard")
+        ).to_have_count(0)
+        page.keyboard.press("Escape")
+        # The edit form of a started workspace says what applies when, and locks the machine.
         rows["Ready box"].get_by_role("button", name="Change settings for Ready box").click()
-        expect(section).to_contain_text("applies when it is restarted")
+        expect(section).to_contain_text(
+            "Started. Changes to the image, limits or network apply the next time it starts"
+        )
         expect(page.get_by_role("combobox", name="Machine", exact=True)).to_be_disabled()
         expect(section).to_contain_text("A started workspace can't move to another machine yet.")
         _shot(page, f"{label}-13-edit-started")
         page.keyboard.press("Escape")
-        # Discard: a confirmation that says what happens, then a plain confirmation and focus on it.
+        # Discard: a danger-styled confirmation, Keep focused by default, then a plain confirmation.
         rows["Pending box"].get_by_role("button", name="Discard Pending box").click()
         expect(page.locator("#compute-ws-heading")).to_have_text("Discard Pending box?")
         expect(section).to_contain_text("nothing on a machine is affected")
-        assert len(fx.listed()) == 6
+        keep = page.get_by_role("button", name="Keep Pending box")
+        expect(keep).to_be_focused()
+        confirm = page.get_by_role("button", name="Discard Pending box", exact=True)
+        assert "danger" in confirm.get_attribute("class")
+        assert len(fx.listed()) == 7
         _shot(page, f"{label}-14-discard-confirm")
-        page.get_by_role("button", name="Keep it").click()
+        keep.click()
         expect(page.get_by_role("button", name="Discard Pending box")).to_be_focused()
         page.get_by_role("button", name="Discard Pending box").click()
+        # The record starts behind the page's back: the server refuses the discard and the panel says why.
+        fx.state(
+            next(item["id"] for item in fx.listed() if item["name"] == "Pending box"),
+            "ready",
+            applied_revision=1,
+        )
         page.get_by_role("button", name="Discard Pending box", exact=True).click()
+        expect(page.locator("[data-ws-summary]")).to_contain_text(
+            "has been started, so it can't be discarded yet"
+        )
+        expect(page.locator("[data-ws-summary]")).to_be_focused()
+        _shot(page, f"{label}-21-discard-refused")
+        page.keyboard.press("Escape")
+        rows["No machine yet box"].get_by_role("button", name="Discard No machine yet box").click()
+        page.get_by_role("button", name="Discard No machine yet box", exact=True).click()
         notice = page.locator("[data-ws-notice]")
-        expect(notice).to_have_text("Discarded Pending box. Nothing on a machine was affected.")
+        expect(notice).to_have_text(
+            "Discarded No machine yet box. Nothing on a machine was affected."
+        )
         expect(notice).to_be_focused()
-        assert [item["name"] for item in fx.listed()].count("Pending box") == 0
+        assert [item["name"] for item in fx.listed()].count("No machine yet box") == 0
         _shot(page, f"{label}-15-discarded")
         if size == "phone":
             _no_sideways_scroll(page)
@@ -433,12 +602,12 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
 
 @pytest.mark.parametrize("ui", UIS)
 @pytest.mark.parametrize("size", SCREENS)
-def test_a_server_conflict_and_a_stale_edit_are_explained(served, ui, size):
+def test_a_server_conflict_and_a_stale_rename_are_explained_and_recoverable(served, ui, size):
     fx = served
     fx.make(name="Taken name")
     mine = fx.make(name="Mine", image="ghcr.io/acme/mine:1")
 
-    def body(page, label):
+    def body(page, label, context):
         section = _section(page)
         # The same name is taken by someone else meanwhile: the server answer lands beside the field.
         page.get_by_role("button", name="New cloud workspace").click()
@@ -449,26 +618,50 @@ def test_a_server_conflict_and_a_stale_edit_are_explained(served, ui, size):
             "Another cloud workspace already uses this name."
         )
         expect(page.get_by_role("textbox", name="Name", exact=True)).to_be_focused()
-        expect(page.locator("[data-ws-summary]")).to_contain_text("Fix the highlighted field")
+        expect(page.locator("[data-ws-summary]")).to_contain_text("Fix this field")
         _shot(page, f"{label}-16-server-conflict")
-        page.keyboard.press("Escape")
-        # A form opened before the list changed never overwrites the newer saved state.
+        page.keyboard.press("Escape")  # a changed form asks first
+        page.get_by_role("button", name="Leave and lose changes").click()
+        # A rename made elsewhere moves the version even though nothing needs a restart: this form is stale.
         page.get_by_role("button", name="Change settings for Mine").click()
-        page.get_by_role("spinbutton", name="Memory (GiB)").fill("8")
+        page.get_by_role("textbox", name="Name", exact=True).fill("Mine, renamed here")
         fx.store.update_workspace(
-            fx.principal, mine["id"], **fx.auth, expected_revision=1, cpu_cores=8
+            fx.principal, mine["id"], **fx.auth, expected_revision=1, name="Mine, renamed elsewhere"
         )
         page.get_by_role("button", name="Reload inventory").click()
         expect(page.get_by_role("button", name="Reload inventory")).to_be_focused()
+        summary = page.locator("[data-ws-summary]")
+        expect(summary).to_contain_text("was changed by someone else")
+        expect(page.locator("[data-ws-notice]")).to_contain_text("changed while you had it open")
+        expect(summary).to_contain_text("What you typed (copy it if you want to keep it):")
+        expect(summary).to_contain_text("Name: Mine, renamed here")
+        expect(page.get_by_role("button", name="Reload and start over")).to_be_visible()
+        summary.evaluate("el => el.scrollIntoView({block: 'center'})")
+        _shot(page, f"{label}-17-stale-edit")
+        # The submit is disabled while stale and nothing is overwritten.
+        expect(page.get_by_role("button", name="Review the change")).to_have_attribute(
+            "aria-disabled", "true"
+        )
+        page.get_by_role("button", name="Review the change").click(force=True)
+        assert (
+            page.get_by_role("heading", name="Confirm the change to Mine, renamed here").count()
+            == 0
+        )
+        saved = next(item for item in fx.listed() if item["id"] == mine["id"])
+        assert saved["name"] == "Mine, renamed elsewhere", "nothing was overwritten"
+        # Reload and start over: a fresh form on the current values, with a working save.
+        page.get_by_role("button", name="Reload and start over").click()
+        name = page.get_by_role("textbox", name="Name", exact=True)
+        expect(name).to_have_value("Mine, renamed elsewhere")
+        expect(section.get_by_role("button", name="Reload and start over")).to_have_count(0)
+        _shot(page, f"{label}-17b-stale-recovered")
+        name.fill("Mine, final")
         page.get_by_role("button", name="Review the change").click()
         page.get_by_role("button", name="Confirm and save").click()
-        expect(page.locator("[data-ws-summary]")).to_contain_text(
-            "This workspace changed while you were editing"
+        expect(page.locator("[data-ws-notice]")).to_contain_text(
+            "Saved Mine, final in Commonplace."
         )
-        expect(section.locator("[data-ws-summary]")).to_be_focused()
-        _shot(page, f"{label}-17-stale-edit")
-        saved = next(item for item in fx.listed() if item["name"] == "Mine")
-        assert (saved["cpu_cores"], saved["memory_mib"]) == (8, 4096), "nothing was overwritten"
+        assert next(i for i in fx.listed() if i["id"] == mine["id"])["version"] == 3
 
     _run(fx, ui, size, body)
 
@@ -480,10 +673,11 @@ def test_member_sees_the_list_read_only_and_no_machine_names(served, ui, size):
     fx.make(name="Shared box", node_id=fx.node["id"])
     fx.make(name="Unassigned box", image="ghcr.io/acme/other:1")
 
-    def body(page, label):
+    def body(page, label, context):
         section = _section(page)
         expect(section.get_by_role("heading", name="Shared box")).to_be_visible()
         expect(section).to_contain_text("on an assigned machine")
+        expect(section).to_contain_text("Image: ghcr.io/acme/tools:1.2")
         expect(section).not_to_contain_text("Build machine")
         expect(page.locator(".compute")).to_contain_text("requires the current workspace owner")
         for action in ("create", "edit", "bind", "discard"):
@@ -496,6 +690,19 @@ def test_member_sees_the_list_read_only_and_no_machine_names(served, ui, size):
         _shot(page, f"{label}-20-member")
         page.get_by_role("button", name="Close").click()
         expect(page.get_by_role("button", name="Details for Shared box")).to_be_focused()
+        # Reload inventory keeps the member's section on screen all along and does not lose the place.
+        page.get_by_role("button", name="Details for Shared box").click()
+        page.evaluate(
+            "() => { window.__sawSection = []; new MutationObserver(() => window.__sawSection.push("
+            "!!document.querySelector('[data-ws-root]'))).observe(document.querySelector('#content') ||"
+            " document.body, {childList: true, subtree: true}); }"
+        )
+        page.get_by_role("button", name="Reload inventory").click()
+        expect(page.get_by_role("button", name="Reload inventory")).to_be_focused()
+        expect(section.get_by_role("heading", name="Shared box")).to_be_visible()
+        assert all(page.evaluate("window.__sawSection")), (
+            "the section never vanished during the reload"
+        )
         if size == "phone":
             _no_sideways_scroll(page)
 
@@ -503,7 +710,7 @@ def test_member_sees_the_list_read_only_and_no_machine_names(served, ui, size):
 
 
 @pytest.mark.parametrize("size", SCREENS)
-def test_compute_is_reachable_from_the_classic_menu_for_everyone(served, size):
+def test_classic_shows_cloud_workspaces_as_a_first_level_entry(served, size):
     fx = served
     fx.make(name="Reachable box")
     for cookie in (fx.cookie, fx.member_cookie):
@@ -511,28 +718,41 @@ def test_compute_is_reachable_from_the_classic_menu_for_everyone(served, size):
             browser = pw.chromium.launch()
             try:
                 width, height = SIZES[size]
-                context = browser.new_context(viewport={"width": width, "height": height})
+                phone = size == "phone"
+                context = browser.new_context(
+                    viewport={"width": width, "height": height}, has_touch=phone, is_mobile=phone
+                )
                 context.add_cookies([{"name": sessions.COOKIE, "value": cookie, "url": fx.origin}])
                 page = context.new_page()
-                page.set_default_timeout(10000)
+                page.set_default_timeout(20000)
                 page.goto(f"{fx.origin}/app/?ui=classic#/settings")
-                menu = "details.m-menu summary" if size == "phone" else "details.user-menu summary"
-                page.locator(menu).first.wait_for()
-                page.wait_for_load_state("networkidle")  # the shell repaints its menu once loaded
+                bar = "#phone-tabs .m-tabs" if phone else "nav.rail"
+                entry = page.locator(f'{bar} a[data-nav="compute"]')
+                entry.wait_for()
+                page.wait_for_load_state("networkidle")
+                expect(entry).to_have_text("Cloud workspaces")
+                if cookie == fx.cookie:
+                    _shot(page, f"classic-{size}-22-entry-route")
+                # It is in the account menu too (the phone's Menu button, the desktop rail's account menu).
+                menu = "details.m-menu summary" if phone else "details.user-menu summary"
                 page.locator(menu).first.click()
-                page.locator('a[href="#/compute"]:visible').first.click()
+                expect(page.locator('a[href="#/compute"]:visible').first).to_be_visible()
+                page.locator(menu).first.click()
+                entry.click()
                 page.locator("#compute-workspaces").wait_for()
                 expect(_section(page).get_by_role("heading", name="Reachable box")).to_be_visible()
+                expect(entry).to_have_attribute("aria-current", "page")
                 context.close()
             finally:
                 browser.close()
 
 
-def test_deck_control_borders_are_at_least_3_to_1(served):
+def test_deck_control_borders_buttons_and_placeholders_are_readable(served):
     fx = served
 
-    def body(page, label):
+    def body(page, label, context):
         page.get_by_role("button", name="New cloud workspace").click()
+        page.locator('input[name="ws_name"]').fill("")
         for selector in ('input[name="ws_name"]', 'select[name="ws_network"]'):
             style = page.locator(selector).evaluate(
                 "el => { const s = getComputedStyle(el); return {border: s.borderTopColor,"
@@ -540,5 +760,288 @@ def test_deck_control_borders_are_at_least_3_to_1(served):
             )
             ratio = _contrast(_rgb(style["border"]), _rgb(style["background"]))
             assert ratio >= 3, f"{selector} border {style} is {ratio:.2f}:1"
+        # A secondary button has a visible edge against the surface (it had none).
+        edge = page.get_by_role("button", name="Cancel").evaluate(
+            "el => { const s = getComputedStyle(el); return {border: s.borderTopColor,"
+            " width: s.borderTopWidth, background: getComputedStyle(el.closest('.compute-editor')).backgroundColor}; }"
+        )
+        assert (
+            edge["width"] != "0px"
+            and _contrast(_rgb(edge["border"]), _rgb(edge["background"])) >= 3
+        ), edge
+        # Placeholders are readable (4.5:1), not the browser's dim default.
+        page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
+        placeholder = page.locator('input[name="ws_image"]').evaluate(
+            "el => ({color: getComputedStyle(el, '::placeholder').color,"
+            " background: getComputedStyle(el).backgroundColor})"
+        )
+        assert _contrast(_rgb(placeholder["color"]), _rgb(placeholder["background"])) >= 4.5, (
+            placeholder
+        )
+        # The control line is its own token: the global --line-strong is what the rest of Deck uses, unchanged.
+        tokens = page.evaluate(
+            "() => ({root: getComputedStyle(document.documentElement).getPropertyValue('--line-strong').trim(),"
+            " control: getComputedStyle(document.querySelector('.compute')).getPropertyValue('--control-line').trim()})"
+        )
+        assert tokens["control"].lower() == "#6b6b73"
+        assert tokens["root"].lower() != "#6b6b73", tokens
 
     _run(fx, "deck", "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_an_invalid_field_looks_invalid(served, ui, size):
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        page.get_by_role("spinbutton", name="CPU cores").fill("64")
+        page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
+        page.get_by_role("textbox", name="Image address", exact=True).fill("bad image")
+        page.get_by_role("button", name="Review and create").click()
+        # Red edge on inputs, selects included (the generic control rule used to win), red message with an icon.
+        for selector in (
+            'input[name="ws_cpu_cores"]',
+            'input[name="ws_image"]',
+            'input[name="ws_name"]',
+        ):
+            colors = page.locator(selector).evaluate(
+                "el => ({edge: getComputedStyle(el).borderTopColor, error: getComputedStyle("
+                "document.getElementById(el.getAttribute('aria-describedby').split(' ').pop())).color})"
+            )
+            assert colors["edge"] == colors["error"], (selector, colors)
+        normal = page.locator('select[name="ws_network"]').evaluate(
+            "el => getComputedStyle(el).borderTopColor"
+        )
+        assert normal != page.locator('input[name="ws_cpu_cores"]').evaluate(
+            "el => getComputedStyle(el).borderTopColor"
+        )
+        icon = page.locator("#ws-error-cpu_cores").evaluate(
+            "el => getComputedStyle(el, '::before').content"
+        )
+        assert icon not in ("none", "normal", ""), icon
+        # Error text and the edge keep their contrast against the surface.
+        message = page.locator("#ws-error-cpu_cores").evaluate(
+            "el => ({color: getComputedStyle(el).color, background: getComputedStyle(el.closest('.compute-editor')).backgroundColor,"
+            " size: parseFloat(getComputedStyle(el).fontSize)})"
+        )
+        assert _contrast(_rgb(message["color"]), _rgb(message["background"])) >= 4.5, message
+        if size == "phone":
+            assert message["size"] >= 14
+        # A select can be invalid too: choose nothing valid by injecting an unknown network, then check its edge.
+        page.evaluate(
+            "() => { const s = document.querySelector('select[name=\"ws_network\"]'); s.setAttribute('aria-invalid', 'true'); }"
+        )
+        assert (
+            page.locator('select[name="ws_network"]').evaluate(
+                "el => getComputedStyle(el).borderTopColor"
+            )
+            == colors["edge"]
+        )
+        _shot(page, f"{label}-23-invalid-state")
+        # A form-level refusal is the summary's, never pinned on the Name field.
+        page.get_by_role("textbox", name="Name", exact=True).fill("Box")
+        page.get_by_role("textbox", name="Image address", exact=True).fill("ghcr.io/acme/tools:1.2")
+        page.get_by_role("spinbutton", name="CPU cores").fill("2")
+        page.get_by_role("button", name="Review and create").click()
+        page.route(
+            "**/api/compute/workspaces",
+            lambda route: (
+                route.fulfill(
+                    status=409,
+                    content_type="application/json",
+                    body='{"error":"conflict","field":"request_id","reason":"request_reused"}',
+                )
+                if route.request.method == "POST"
+                else route.continue_()
+            ),
+        )
+        page.get_by_role("button", name="Confirm and create").click()
+        expect(page.locator("[data-ws-summary]")).to_contain_text(
+            "already sent with different values"
+        )
+        expect(page.locator("[data-ws-summary]")).to_be_focused()
+        assert page.locator('.compute-ws [aria-invalid="true"]').count() == 0
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("viewport", [(390, 844), (650, 900)])
+def test_the_phone_form_scrolls_by_touch_and_the_action_bar_never_covers_what_matters(
+    served, ui, viewport
+):
+    """A real touch swipe scrolls the form; the sticky bar sits on the tab bar (one offset per look), and the focused
+    field, its error and the review sentence are never under it. 650px is inside Deck's phone range (600-699)."""
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        page.get_by_role("textbox", name="Name", exact=True).wait_for()
+        before = _scrolled(page)
+        _swipe(context, page, viewport[0] // 2, viewport[1] - 220, 120)
+        after = _scrolled(page)
+        assert after != before and max(after) > 200, (
+            "a touch swipe scrolls the page",
+            before,
+            after,
+        )
+        _assert_bar_sits_on_the_tab_bar(page)
+        _shot(page, f"{label}-{viewport[0]}-29-form-after-swipe")
+        # The action bar is one row: Review and Cancel side by side, 44px tall.
+        buttons = page.locator(".compute-ws-actions .btn")
+        boxes = [buttons.nth(i).bounding_box() for i in range(buttons.count())]
+        assert (
+            len(boxes) == 2
+            and abs(boxes[0]["y"] - boxes[1]["y"]) <= 1
+            and min(b["height"] for b in boxes) >= TOUCH
+        )
+        # Tabbing to the last field keeps it (and its hint) above the bar.
+        page.get_by_role("combobox", name="Network", exact=True).focus()
+        page.wait_for_timeout(300)
+        assert not _under_the_bar(page, 'select[name="ws_network"]')
+        page.get_by_role("combobox", name="Machine", exact=True).focus()
+        page.wait_for_timeout(300)
+        assert not _under_the_bar(page, 'select[name="ws_node_id"]')
+        # The first error is brought fully into view, above the bar, with focus on it.
+        page.get_by_role("spinbutton", name="Storage (GiB)").fill("0")
+        page.get_by_role("textbox", name="Name", exact=True).fill("")
+        page.get_by_role("button", name="Review and create").click()
+        name = page.get_by_role("textbox", name="Name", exact=True)
+        expect(name).to_be_focused()
+        assert not _under_the_bar(page, 'input[name="ws_name"]')
+        assert not _under_the_bar(page, "#ws-error-name")
+        _shot(page, f"{label}-{viewport[0]}-30-first-error-in-view")
+        page.get_by_role("textbox", name="Name", exact=True).fill("Phone box")
+        page.get_by_role("spinbutton", name="Storage (GiB)").fill("20")
+        # An error on a field lower down is also in view, not under the bar.
+        page.get_by_role("spinbutton", name="Storage (GiB)").fill("9999")
+        page.get_by_role("button", name="Review and create").click()
+        expect(page.get_by_role("spinbutton", name="Storage (GiB)")).to_be_focused()
+        assert not _under_the_bar(page, 'input[name="ws_storage_gib"]')
+        assert not _under_the_bar(page, "#ws-error-storage_gib")
+        page.get_by_role("spinbutton", name="Storage (GiB)").fill("20")
+        page.get_by_role("button", name="Review and create").click()
+        expect(page.get_by_role("heading", name="Create Phone box?")).to_be_focused()
+        assert not _under_the_bar(page, "[data-ws-honesty]")
+        _assert_bar_sits_on_the_tab_bar(page)
+        # Touch targets hold at this width, including the Reload inventory button on Deck.
+        _assert_touch_targets(page, inputs=False)
+        _no_sideways_scroll(page)
+        _shot(page, f"{label}-{viewport[0]}-24-phone-review")
+
+    _run(fx, ui, "phone", body, viewport=viewport)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_escape_steps_back_and_saving_keeps_focus_on_the_button(served, ui):
+    fx = served
+    fx.make(name="Escape box", node_id=fx.node["id"])
+
+    def body(page, label, context):
+        section = _section(page)
+        page.get_by_role("button", name="Change settings for Escape box").click()
+        page.get_by_role("spinbutton", name="Memory (GiB)").fill("8")
+        page.get_by_role("button", name="Review the change").click()
+        expect(page.locator("#compute-ws-heading")).to_have_text("Confirm the change to Escape box")
+        # Escape from the review goes back to the form, with the typed value.
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("spinbutton", name="Memory (GiB)")).to_have_value("8")
+        # Escape from a changed form asks before throwing the change away; the safe choice has focus.
+        page.keyboard.press("Escape")
+        expect(section).to_contain_text("Leave without saving?")
+        expect(page.get_by_role("button", name="Keep editing")).to_be_focused()
+        _shot(page, f"{label}-25-leave-confirm")
+        page.keyboard.press("Escape")
+        expect(section).not_to_contain_text("Leave without saving?")
+        # Saving keeps focus on the pressed button, marks the section busy and says so in the status line.
+        page.get_by_role("button", name="Review the change").click()
+        page.route(
+            "**/api/compute/workspaces/*",
+            lambda route: (
+                (page.wait_for_timeout(700), route.continue_())
+                if route.request.method == "POST"
+                else route.continue_()
+            ),
+        )
+        confirm = page.get_by_role("button", name="Confirm and save")
+        confirm.click()
+        busy = page.locator(".compute-ws-editor")
+        expect(busy).to_have_attribute("aria-busy", "true")
+        expect(page.get_by_role("button", name="Saving…")).to_be_focused()
+        expect(page.get_by_role("button", name="Saving…")).to_have_attribute(
+            "aria-disabled", "true"
+        )
+        assert page.locator("[data-ws-notice]").inner_text() == "Saving…"
+        notice = page.locator("[data-ws-notice]")
+        expect(notice).to_contain_text("Saved Escape box in Commonplace.")
+        expect(notice).to_be_focused()
+
+    _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_names_that_hide_themselves_are_refused_as_you_type(served, ui):
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        name = page.get_by_role("textbox", name="Name", exact=True)
+        for hidden in ("aㅤb", "abﾠ", "a b", "a　b", "a͏b", "a️b", "ㅤ"):
+            name.fill(hidden)
+            expect(page.locator("#ws-error-name")).to_contain_text("ordinary visible characters")
+        name.fill("Café 2")
+        expect(page.locator("#ws-error-name")).to_have_text("")
+
+    _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_no_machines_enrolled_says_what_to_do(served_empty, ui, size):
+    fx = served_empty
+
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        machine = page.get_by_role("combobox", name="Machine", exact=True)
+        expect(machine).to_contain_text("Choose later")
+        expect(_section(page)).to_contain_text(
+            "No machines are set up yet. You can save now and choose one later."
+        )
+        expect(_section(page)).to_contain_text("added under Advanced, in Targets")
+        _shot(page, f"{label}-26-no-machines")
+        page.get_by_role("textbox", name="Name", exact=True).fill("Machine-less")
+        page.get_by_role("button", name="Review and create").click()
+        page.get_by_role("button", name="Confirm and create").click()
+        expect(page.locator("[data-ws-id]").first).to_contain_text("No machine chosen")
+        page.get_by_role("button", name="Details for Machine-less").click()
+        expect(page.locator(".compute-ws-detail")).to_contain_text(
+            "Choose a machine for it with Change settings."
+        )
+        _shot(page, f"{label}-27-no-machine-detail")
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_the_limit_reached_state_says_why_there_is_no_create_button(served, ui, size):
+    fx = served
+    with fx.store._journal() as conn:
+        for number in range(100):
+            conn.execute(
+                "INSERT INTO cloud_workspaces (id,name,name_key,image_source,image_reference,"
+                "cpu_millicores,memory_mib,storage_gib,network,created_by,created_at,updated_at) "
+                "VALUES (?,?,?,'custom','ghcr.io/acme/tools:1',2000,4096,20,'outbound','u',?,?)",
+                (f"{number:032x}", f"Box {number}", f"box {number}", float(number), float(number)),
+            )
+
+    def body(page, label, context):
+        expect(_section(page)).to_contain_text(
+            "You have reached the limit of 100 cloud workspaces."
+        )
+        expect(page.get_by_role("button", name="New cloud workspace")).to_have_count(0)
+        _shot(page, f"{label}-28-limit-reached")
+
+    _run(fx, ui, size, body)

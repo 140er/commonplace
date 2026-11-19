@@ -138,9 +138,10 @@ test('nested pages belong to their existing Deck section and keep four destinati
     }
   }
 });
-test('classic rail and phone tabs remain exactly Bots and Memory, with the same owner map menu', () => {
-  assert.deepEqual(hrefs(renderRail().split('rail-foot')[0]), ['#/bots', '#/memory']);
-  assert.deepEqual(hrefs(renderPhoneTabs()), ['#/bots', '#/memory']);
+test('classic rail and phone tabs are Bots, Memory and Cloud workspaces, with the same owner map menu', () => {
+  // Cloud workspaces (#614) is a deliberate third first-level entry: the usability review found Compute was not reachable at a glance in Classic.
+  assert.deepEqual(hrefs(renderRail().split('rail-foot')[0]), ['#/bots', '#/memory', '#/compute']);
+  assert.deepEqual(hrefs(renderPhoneTabs()), ['#/bots', '#/memory', '#/compute']);
   for (const render of [renderRail, renderPhoneBar]) {
     assert.equal(hrefs(render({ can_admin: true })).filter(href => href === '#/compute-map').length, 1);
     assert.ok(!hrefs(render({ can_admin: false })).includes('#/compute-map'));

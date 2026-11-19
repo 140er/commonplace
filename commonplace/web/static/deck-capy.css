@@ -29,7 +29,7 @@
   --space-9: 20px; --space-10: 24px; --space-11: 32px; --space-12: 40px;
   --page-top: 36px; --page-side: 40px;
   --bg: var(--ground); --pane: var(--stage); --surface: var(--s1); --well: var(--s2);
-  --line-strong: #6B6B73; --text: var(--ink); --text-2: var(--ink2); --text-3: var(--ink3);
+  --line-strong: var(--line2); --text: var(--ink); --text-2: var(--ink2); --text-3: var(--ink3);
   --accent: var(--ink); --accent-hover: var(--ink2); --accent-weak: var(--s2); --focus: var(--violet);
   --wait: var(--ink3); --wait-bg: var(--s2); --wait-line: var(--line);
   --block: var(--red); --block-bg: var(--s2); --block-line: var(--line2);

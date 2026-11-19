@@ -1,0 +1,4 @@
+- **Owns:** The operator text in `docs/compute/RUNNING.md` names each section of the Compute screen by its on-screen label; the script section is "Scripts" (it was "Workspace scripts", which read like a second kind of workspace next to Cloud workspaces).
+- **Promises:** The words an operator is told to look for are the words on the screen.
+- **How it fails:** A label that drifts from the screen is caught by `tests/compute_ui.mjs`, which pins the section heading.
+- **Tests:** `tests/compute_ui.mjs`.

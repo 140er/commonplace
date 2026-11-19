@@ -1,6 +1,14 @@
 /* Existing Workbench palette and type. Two equal columns plus 16px = canvas;
    one column below 1000px. No independent shell or decorative status totals. */
-.compute { color: var(--text); display: grid; gap: 16px; min-width: 0; }
+/* --control-line is the edge of a form control (input, select, secondary button). It is its own token so the global
+   --line-strong, which the rest of the app uses for dividers and rules, stays as it was in both looks. In Deck the
+   controls need 3:1 against their surface (WCAG 1.4.11). --ws-bar-h and --ws-tab-h are the two phone offsets: the
+   sticky action bar's height, and the height of the tab bar that sits under the page scroller (none in Deck, where
+   the scroller ends above the bar). */
+:root { --ws-bar-h: 68px; --ws-tab-h: calc(57px + max(14px, env(safe-area-inset-bottom))); }
+:root[data-ui="deck"] { --ws-tab-h: 0px; }
+.compute { --control-line: var(--line-strong); color: var(--text); display: grid; gap: 16px; min-width: 0; }
+:root[data-ui="deck"] .compute { --control-line: #6B6B73; }
 .compute h2 { font-size: 16px; line-height: 24px; letter-spacing: 0; font-weight: 600; }
 .compute p { line-height: 1.5; overflow-wrap: anywhere; }
 .compute-intro, .compute-inventory > header, .compute-editor > header, .compute-row > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
@@ -28,7 +36,8 @@
 .compute-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .compute label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
 .compute label small { line-height: 1.5; }
-.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
+.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--control-line); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
+.compute ::placeholder { color: var(--text-2); opacity: 1; }
 .compute input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0; flex: none; accent-color: var(--accent); }
 .compute .compute-check { flex-direction: row; align-items: start; gap: 10px; }
 .compute-wide { grid-column: 1 / -1; }
@@ -38,10 +47,10 @@
 .compute button:disabled { cursor: default; }
 .compute :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 999px) { .compute-inventories { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 599px) {
+@media (max-width: 699px) {
   .compute-fields { grid-template-columns: minmax(0, 1fr); }
   .compute-inventory, .compute-editor, .compute-capabilities { padding: 12px; }
-  .compute .btn, .compute summary, .compute input, .compute select { min-height: 44px; }
+  .compute .btn, .compute summary, .compute input, .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
   .compute-capabilities > div { align-items: start; flex-direction: column; gap: 6px; }
 }
 .compute-advanced { min-width: 0; }
@@ -67,35 +76,61 @@
 .compute-ws-list { max-height: none; overflow: visible; }
 .compute-ws-name { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
 .compute-ws-status[data-tone="ok"] { color: var(--text); }
-.compute-ws-status[data-tone="wait"], .compute-ws-restart { color: var(--ws-warn); font-weight: 600; }
+.compute-ws-status[data-tone="wait"] { color: var(--ws-warn); font-weight: 600; }
 .compute-ws-status[data-tone="bad"] { color: var(--block); font-weight: 600; }
-.compute-ws-restart { margin: 6px 0; font-size: 13px; }
 .compute-ws-statusline { margin: 12px 0 0; font-size: 14px; }
-.compute-ws h2[tabindex="-1"]:focus, .compute-ws h3[tabindex="-1"]:focus, .compute-ws-notice:focus, .compute-ws-summary:focus { outline: none; }
-.compute-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.compute .compute-field > label { display: block; font-size: 13px; font-weight: 600; }
+.compute-ws h2[tabindex="-1"]:focus, .compute-ws h3[tabindex="-1"]:focus, .compute-ws-notice:focus { outline: none; }
+.compute-field { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.compute .compute-field > label, .compute .compute-label { display: block; font-size: 13px; font-weight: 600; }
 .compute-req { color: var(--block); }
-.compute-ws-error { color: var(--block); }
-.compute-ws-error:empty { display: none; }
-.compute-ws-summary { color: var(--block); font-weight: 600; margin: 12px 0 0; }
-.compute-ws-summary:empty { margin: 0; }
+/* An invalid field: red edge on the input or select (this beats the generic control rule above), red message with an
+   icon. An empty message slot stays in the accessibility tree (it is a live region) but takes no room. */
+.compute .compute-ws input[aria-invalid="true"], .compute .compute-ws select[aria-invalid="true"] { border-color: var(--block); box-shadow: inset 0 0 0 1px var(--block); }
+.compute .compute-ws .compute-ws-error { color: var(--block); font-size: 13px; font-weight: 600; }
+.compute .compute-ws .compute-ws-error:not(:empty)::before { content: "!" / ""; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-right: 6px; border-radius: 50%; background: var(--block); color: var(--surface); font-size: 11px; font-weight: 800; line-height: 1; vertical-align: 1px; }
+.compute .compute-ws .compute-ws-error:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.compute-ws-summary { margin: 12px 0 0; padding: 12px; border: 1px solid var(--block); border-radius: var(--r); background: var(--block-bg, transparent); color: var(--text); }
+.compute-ws-summary:empty { display: none; }
+.compute-ws-summary p { margin: 0 0 4px; font-weight: 600; color: var(--block); }
+.compute-ws-summary ul { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.compute-ws-summary a { color: var(--block); text-decoration: underline; text-underline-offset: 3px; }
+.compute-ws-summary .compute-actions { margin-top: 8px; }
+.compute-ws-typed li { padding-left: 14px; position: relative; color: var(--text); }
 .compute-ws-notice { margin-top: 12px; color: var(--text); }
 .compute-ws-notice:empty { display: block; margin: 0; min-height: 0; }
-.compute-ws [aria-invalid="true"] { border-color: var(--block); }
+.compute-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.compute-ws .compute-preset { flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding-block: 8px; text-align: left; }
+.compute-ws .compute-preset[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.compute-preset-size { font-size: 12px; font-weight: 400; color: var(--text-2); }
 .compute-ws-preview { margin-top: 4px; padding: 12px; background: var(--well); border-radius: var(--r); }
 .compute-ws-preview p { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
-.compute-ws-review { margin: 12px 0; padding-left: 20px; display: grid; gap: 4px; }
-.compute-ws-editor { margin: 12px 0 0; }
+.compute-ws-review, .compute-ws-typed { margin: 12px 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.compute-ws-review li { position: relative; padding-left: 16px; }
+.compute-ws-review li::before, .compute-ws-typed li::before { content: "•"; position: absolute; left: 2px; }
 .compute-ws-detail { margin: 12px 0 0; }
 .compute-ws-detail dd { overflow-wrap: anywhere; }
-@media (max-width: 599px) {
-  .compute-ws .compute-actions .btn { flex: 1 1 100%; }
-  .compute-ws .btn, .compute-ws input:not([type="checkbox"]), .compute-ws select, :root[data-ui="deck"] .compute-ws .btn { min-height: 44px; }
+.compute-ws-editor { margin: 12px 0 0; }
+.compute-ws .compute-actions .compute-ws-apart { margin-inline-start: auto; }
+.compute-ws-leave-text { flex: 1 1 100%; margin: 0; }
+.compute .btn.danger.solid { background: var(--block); border-color: var(--block); color: var(--surface); font-weight: 600; }
+:root[data-ui="deck"] .compute .btn:not(.primary):not(.danger) { border: 1px solid var(--control-line); }
+/* Phone (Classic and Deck share the 699px breakpoint): the page scroller is the document in Classic and #content in
+   Deck. The action bar is one 44px row (Review and Cancel side by side) that sticks to the bottom of that scroller,
+   just above the tab bar in Classic and flush with the scroller's end in Deck. Controls scroll clear of the bar. */
+@media (max-width: 699px) {
   .compute-ws input:not([type="checkbox"]), .compute-ws select { font-size: 16px; }
-  /* The tab bar is fixed over the bottom of the page: leave room for it and keep the actions above it. */
-  :root:has(.compute-ws), :root:has(.compute-ws) #content, :root:has(.compute-ws) .deck-workspace { scroll-padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
-  /* The page, not this wrapper, scrolls on the phone; a scrolling wrapper would stop the actions from sticking. */
-  .shell #content.deck-workspace:has(.compute-ws) { overflow: visible; }
-  .compute:has(.compute-ws) { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
-  .compute-ws-actions { position: sticky; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 2; margin: 12px -12px 0; padding: 12px; background: var(--s1-solid, var(--surface)); border-top: 1px solid var(--line); }
+  .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain { font-size: 14px; }
+  .compute-ws .compute-ws-actions { position: sticky; bottom: var(--ws-tab-h); z-index: 2; flex-wrap: nowrap; align-items: center; min-height: var(--ws-bar-h); margin: 12px -12px 0; padding: 12px; background: var(--s1-solid, var(--surface)); border-top: 1px solid var(--line); }
+  .compute-ws .compute-ws-actions .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+  .compute-ws .compute-ws-actions.compute-ws-leave { flex-wrap: wrap; }
+  .compute-ws .compute-preset { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; }
+  /* Classic: the document scrolls, so #content must not be a scroll container of its own (a sticky bar would stick to
+     it, and it never scrolls). Deck: #content is the scroller and keeps touch scrolling; its own bottom padding is
+     moved onto the page so the bar can sit flush with the end of the scroller. */
+  :root:not([data-ui="deck"]) #content.deck-workspace:has(.compute-ws) { overflow: visible; }
+  :root[data-ui="deck"] #content.deck-workspace:has(.compute-ws) { padding-bottom: 0; }
+  .compute:has(.compute-ws) { padding-bottom: 24px; }
+  :root:not([data-ui="deck"]):has(.compute-ws) { scroll-padding-bottom: calc(var(--ws-tab-h) + var(--ws-bar-h) + 16px); }
+  :root[data-ui="deck"] #content.deck-workspace:has(.compute-ws) { scroll-padding-bottom: calc(var(--ws-bar-h) + 16px); }
+  .compute-ws :is(input, select, .compute-presets) { scroll-margin-bottom: calc(var(--ws-bar-h) + 96px); }
 }
