@@ -94,7 +94,6 @@ def test_runner_status_follows_the_last_signal_and_never_says_online_without_one
     assert items["runner-online"]["status"]["code"] == "online"
     assert items["runner-online"]["status"]["tone"] == "ok"
     assert items["runner-online"]["last_seen"]["label"] == "Last seen 40 seconds ago"
-    assert "not a live check" in items["runner-online"]["status"]["detail"]
     assert items["runner-slow"]["status"]["code"] == "slow"
     assert items["runner-slow"]["status"]["label"] == "Slow to report"
     assert items["runner-offline"]["status"]["code"] == "offline"

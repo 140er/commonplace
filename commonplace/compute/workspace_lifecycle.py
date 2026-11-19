@@ -321,7 +321,17 @@ def report(conn, workspace_id, claim_token, phase, now, *, reason=None, applied_
     if phase == "running":
         if type(applied_revision) is not int or not 1 <= applied_revision <= row["revision"]:
             raise conflict("invalid_report")
-        workspaces.set_state(conn, workspace_id, "ready", None, applied_revision=applied_revision)
+        try:
+            workspaces.set_state(
+                conn, workspace_id, "ready", None, applied_revision=applied_revision
+            )
+        except ValueError:
+            # The settings were edited after the machine read them: it runs the older revision, which the
+            # record shows as "restart needed" (an applied revision behind the saved one), never as current.
+            conn.execute(
+                "UPDATE cloud_workspaces SET applied_revision=? WHERE id=?",
+                (applied_revision, workspace_id),
+            )
     elif phase == "failed":
         workspaces.set_state(conn, workspace_id, "failed", reason)
     elif phase == "stopped":

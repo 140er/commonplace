@@ -169,6 +169,16 @@ def _workspaces(h, store, principal, parts, auth):
     raise StoreError("not_found", 404)
 
 
+def _overview(h, store, principal, parts, auth):
+    from . import overview_routes
+
+    return overview_routes.dispatch(h, store, principal, parts, auth, _workspace_body)
+
+
+# Route families that share the cloud workspace rules (members read, a reason on every refusal).
+_FAMILIES = {"workspaces": _workspaces, "overview": _overview}
+
+
 def _with_reason(payload, workspace_route):
     """On a cloud workspace route every refusal carries a reason; others keep their fixed shape."""
     if workspace_route and "reason" not in payload:
@@ -210,12 +220,9 @@ def handle(gateway, handler):
 
             raise workspaces.refuse(None, "query") if workspace_route else StoreError()
         auth = {"session_hash": session_hash}
-        if parts and parts[0] == "workspaces":
-            return _workspaces(h, store, principal, parts[1:], auth)
-        if parts and parts[0] == "overview":
-            from . import overview_routes
-
-            return overview_routes.dispatch(h, store, principal, parts[1:], auth, _workspace_body)
+        family = _FAMILIES.get(parts[0]) if parts else None
+        if family is not None:
+            return family(h, store, principal, parts[1:], auth)
         if h.command == "GET":
             if not parts:
                 return send_json(h, 200, store.inventory(principal, **auth))

@@ -412,3 +412,17 @@ def test_preview_of_a_refused_action_gives_the_reason_and_no_effect_claim(api):
         "reason": "not_started",
         "text": "It has not been started yet. Start it first.",
     }
+
+
+def test_settings_edited_while_a_start_is_under_way_leave_it_running_with_older_settings(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    claim = executor.claim()
+    assert claim["revision"] == 1
+    api.request("POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "cpu_cores": 4})
+    executor.run(claim, "running", revision=claim["revision"])
+    current = item(api, ws)
+    assert current["status"]["code"] == "running" and current["restart_needed"] is True
+    assert "restart it to apply them" in current["status"]["detail"]
+    assert api.request(path=f"/workspaces/{ws['id']}")[1]["workspace"]["status"] == "restart_needed"
