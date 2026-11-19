@@ -59,11 +59,13 @@ function fixture({ list = { workspaces: [], can_manage: true }, config = options
   const dispatch = (kind, event) => listeners.get(kind)?.(event);
   const click = (action, id, extra = {}) => dispatch('click', { target: { closest: selector => selector === '[data-ws-action]' ? { dataset: { wsAction: action, id, ...extra } } : null } });
   const jump = key => { const event = { prevented: false, preventDefault() { this.prevented = true; }, target: { closest: selector => selector === '[data-ws-jump]' ? { dataset: { wsJump: key } } : null } }; dispatch('click', event); return event; };
-  const input = (name, value, type = 'text') => dispatch('input', { target: { name, type, value, checked: value } });
+  const input = (name, value, type = 'text') => dispatch('input', { type: 'input', target: { name, type, value, checked: value } });
+  // A committed value (the browser's change event: blur after typing, or a choice made in a list).
+  const change = (name, value, type = 'text') => dispatch('change', { type: 'change', target: { name, type, value, checked: value } });
   const submit = kind => dispatch('submit', { target: { closest: selector => selector === '[data-ws-form]' ? { dataset: { wsForm: kind } } : null }, preventDefault() {}, stopPropagation() {} });
   const key = (name, inside = true) => { const event = { key: name, target: { closest: selector => inside && selector === '.compute-ws' ? {} : null }, prevented: false, preventDefault() { this.prevented = true; } }; dispatch('keydown', event); return event; };
   const open = async () => { ui.show(); await flush(); };
-  return { ui, host, state, calls, focused, status, click, jump, input, submit, key, open, doc, events, dispatch, setRoute(value) { hash = value; } };
+  return { ui, host, state, calls, focused, status, click, jump, input, change, submit, key, open, doc, events, dispatch, setRoute(value) { hash = value; } };
 }
 const fill = (f, values) => { for (const [name, value] of Object.entries(values)) f.input(name, value); };
 const valid = { ws_name: 'Acceptance', ws_image: 'ghcr.io/acme/tools:1.2', ws_cpu_cores: '2', ws_memory_gib: '4', ws_storage_gib: '20' };
@@ -73,13 +75,13 @@ const alerts = html => (html.match(/role="alert"/g) || []).length;
 const cases = {
   async pure() {
     assert.equal(ws.gib(4096), '4 GiB'); assert.equal(ws.gib(512), '0.5 GiB'); assert.equal(ws.gib(1536), '1.5 GiB'); assert.equal(ws.gib(4608), '4.5 GiB', 'GiB everywhere, never MiB');
-    assert.equal(ws.resourcePreview(2, 4096, 20, 'Fixture machine'), '2 CPU cores, 4 GiB memory, 20 GiB storage on Fixture machine');
-    assert.equal(ws.resourcePreview(1, 4096, 20, null), '1 CPU core, 4 GiB memory, 20 GiB storage. No machine chosen yet');
+    assert.equal(ws.resourcePreview(2, 4096, 20, 'Fixture machine'), '2 CPU cores, 4 GiB memory, 20 GiB storage. Planned machine: Fixture machine');
+    assert.equal(ws.resourcePreview(1, 4096, 20, null), '1 CPU core, 4 GiB memory, 20 GiB storage. Machine: not chosen yet');
     assert.equal(ws.parseImage('ghcr.io/acme/tools@sha256:' + 'a'.repeat(64)).pinned, true);
     assert.equal(ws.parseImage('ubuntu:24.04').pinned, false);
     const base = { ...ws.blankValues(options), ws_name: 'Build box' };
     assert.deepEqual(ws.validate(base, options), {});
-    const limits = [['ws_cpu_cores', '0', /from 0\.5 to 32/], ['ws_cpu_cores', '1.3', /steps of 0\.5/], ['ws_cpu_cores', '', /number of cores/], ['ws_memory_gib', '0.25', /from 0\.5 to 128 GiB/], ['ws_memory_gib', '129', /from 0\.5 to 128 GiB/], ['ws_memory_gib', 'x', /amount of memory/], ['ws_storage_gib', '0', /from 1 to 2048/], ['ws_storage_gib', '2049', /from 1 to 2048/], ['ws_storage_gib', '1.5', /whole number/], ['ws_name', '', /1 to 60/], ['ws_name', ' x', /ordinary visible characters/], ['ws_network', 'host', /network/]];
+    const limits = [['ws_cpu_cores', '0', /from 0\.5 to 32/], ['ws_cpu_cores', '1.3', /steps of 0\.5/], ['ws_cpu_cores', '', /number of cores/], ['ws_memory_gib', '0.25', /from 0\.5 to 128 GiB/], ['ws_memory_gib', '129', /from 0\.5 to 128 GiB/], ['ws_memory_gib', 'x', /amount of memory/], ['ws_storage_gib', '0', /from 1 to 2048/], ['ws_storage_gib', '2049', /from 1 to 2048/], ['ws_storage_gib', '1.5', /whole number/], ['ws_name', '', /1 to 60/], ['ws_name', ' x', /normal spaces/], ['ws_network', 'host', /network/]];
     for (const [field, value, pattern] of limits) assert.match(Object.values(ws.validate({ ...base, [field]: value }, options))[0] || '', pattern, `${field}=${value}`);
     assert.match(ws.validate({ ...base, ws_image_source: 'custom', ws_image: 'bad image' }, options).image, /doesn't look like an image address/);
     assert.deepEqual(ws.workspacePayload({ ...base, ws_name: 'Build box', ws_image_source: 'custom', ws_image: ' ghcr.io/acme/tools:1.2 ', ws_node_id: 'n-one' }), { name: 'Build box', image_source: 'custom', image: 'ghcr.io/acme/tools:1.2', cpu_cores: 2, memory_mib: 4096, storage_gib: 20, network: 'outbound', node_id: 'n-one' });
@@ -103,7 +105,7 @@ const cases = {
     const name = value => ws.validate({ ...base, ws_name: value }, options).name || '';
     // The same names the server suite reads: accepted ones validate, refused ones fail with the server's reason.
     for (const ok of inputs.names.accepted) assert.equal(name(ok), '', JSON.stringify(ok));
-    const words = { length: /1 to 60/, characters: /ordinary visible characters/, no_letter: /at least one letter or digit/ };
+    const words = { length: /1 to 60/, characters: /letters, numbers and normal spaces/, no_letter: /at least one letter or digit/ };
     for (const [value, reason] of Object.entries(inputs.names.refused)) assert.match(name(value), words[reason], `${JSON.stringify(value)} (${reason})`);
     // Code points, not UTF-16 units: 31 code points are 61 units and still fit, as on the server.
     assert.equal(name('a' + '\u{1f600}'.repeat(30)), ''); assert.equal(name('東京 7'), '');
@@ -128,9 +130,15 @@ const cases = {
     // Loading first: the section never renders empty.
     f.ui.show(); assert.match(text(f.host.innerHTML), /Loading Compute inventory/); await flush();
     const t = text(f.host.innerHTML);
-    for (const phrase of ['No machine chosen', 'Private image', 'Not started', 'Restart needed', 'Ready', 'Failed', '2 CPU cores, 4 GiB memory, 20 GiB storage on Fixture machine', '2 CPU cores, 4 GiB memory, 20 GiB storage. No machine chosen yet']) assert.ok(t.includes(phrase), phrase);
+    for (const phrase of ['Saved, not started', 'Private image', 'Changes waiting', 'Up to date', 'Failed', '2 CPU cores, 4 GiB memory, 20 GiB storage', 'Planned machine: Fixture machine', 'Machine: not chosen yet']) assert.ok(t.includes(phrase), phrase);
+    // One vocabulary: nothing says a workspace is ready, running or restarting while no start exists to run it.
+    assert.doesNotMatch(section(f.host.innerHTML).replace(/<[^>]*>/g, ' '), /\bReady\b|Restart needed|Not started\./, 'old status words are gone');
+    assert.doesNotMatch(t, /It will run on/);
+    // A failed record shows its reason in the list row, not only in the details.
+    assert.match(text(f.host.innerHTML.slice(f.host.innerHTML.indexOf('data-ws-id="f"'), f.host.innerHTML.indexOf('data-ws-id="g"'))), /ran out of memory at 4 GiB/);
+    assert.match(text(f.host.innerHTML.slice(f.host.innerHTML.indexOf('data-ws-id="g"'), f.host.innerHTML.indexOf('data-ws-id="h"'))), /Failed for a reason this page does not recognise\. Check the machine, then reload this list\./);
     // Rows are name, status, one resource line and the image; the explanation lives in the detail.
-    assert.equal((f.host.innerHTML.match(/<h3 class="compute-ws-name">/g) || []).length, 10, 'every workspace name is a heading');
+    assert.equal((f.host.innerHTML.match(/<h3 class="compute-ws-name" tabindex="-1">/g) || []).length, 10, 'every workspace name is a heading');
     assert.ok(t.includes('Image: ghcr.io/acme/tools:1.2') && t.includes('Image: Ubuntu 24.04 (docker.io/library/ubuntu:24.04)'), 'rows show the image');
     assert.doesNotMatch(f.host.innerHTML, /Nothing has been sent|publisher can update/);
     assert.equal((f.host.innerHTML.match(/data-ws-action="edit"/g) || []).length, 10 + 1, 'Change settings on every row, plus Change image on the private one');
@@ -144,18 +152,22 @@ const cases = {
       const shown = detailOf(row.id);
       assert.doesNotMatch(shown, /matches the saved settings/, row.name);
       assert.ok(!(shown.includes('has been started') && shown.includes('Not started')), `${row.name}: started and not started never contradict each other`);
-      if (row.status === 'restart_needed') { assert.match(shown, /Restart needed\./); assert.doesNotMatch(shown, /Ready|running with the saved settings/); }
+      if (row.status === 'restart_needed') { assert.match(shown, /Changes waiting\./); assert.doesNotMatch(shown, /Ready|running|Restart needed/); }
+      assert.doesNotMatch(shown, /Saved, not started\. Saved, not started|Not started\. Not started/, `${row.name}: the status is said once`);
     }
     // Statuses say what to do now: nothing is a dead end.
     assert.match(detailOf('b'), /This image is private and Commonplace can't store registry logins yet\. Choose a public image\./);
-    assert.match(detailOf('e'), /Nothing to do now\. Its new settings apply the next time it starts, and starting is not available yet\./);
-    assert.match(detailOf('f'), /ran out of memory at 4 GiB\. Raise the memory limit with Change settings/); assert.match(detailOf('g'), /Failed for a reason this page does not recognise/);
-    assert.match(detailOf('d'), /It is running with the saved settings/);
+    assert.match(detailOf('e'), /The new settings apply the next time it starts\. Starting is not available yet, so there is nothing to do now\./);
+    assert.match(detailOf('f'), /ran out of memory at 4 GiB\. Raise the memory limit with Change settings/); assert.match(detailOf('g'), /Failed for a reason this page does not recognise\. Check the machine, then reload this list\./);
+    assert.match(detailOf('d'), /Up to date\. The machine holds the saved settings\./); assert.match(detailOf('f'), /Its last start failed\./); assert.doesNotMatch(detailOf('f'), /running copy/);
     assert.match(detailOf('h'), /Locked to one exact version/); assert.match(detailOf('i'), /Official image\. The publisher can update its version over time/); assert.match(detailOf('a'), /The publisher can update this version over time/);
-    assert.match(detailOf('c'), new RegExp(`${ws.NOT_STARTED.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} It will run on Fixture machine\\.`), 'the one not-started sentence, reused');
-    assert.match(detailOf('d'), /A started cloud workspace can't be discarded yet\./); assert.match(detailOf('c'), /discard this workspace because it was never started/);
+    assert.match(detailOf('c'), new RegExp(`Saved, not started\\. ${ws.NOT_STARTED_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'the one not-started sentence, reused');
+    assert.match(detailOf('c'), /Machine Fixture machine/);
+    assert.match(detailOf('d'), /A started cloud workspace can't be discarded yet\./); assert.match(detailOf('c'), /discard this workspace because it was never started/); assert.doesNotMatch(detailOf('c'), /can't be discarded yet/, 'a never-started record is not told about started ones');
     assert.doesNotMatch(detailOf('c'), /deleted/, 'one verb: discard');
-    assert.match(detailOf('e'), /Edited once\./); assert.match(detailOf('a'), /Not edited since it was created\./);
+    assert.match(detailOf('e'), /Edited once\. Changes are waiting for the next start\./); assert.match(detailOf('a'), /Not edited since it was created\./);
+    // Every detail button names its workspace.
+    f.click('detail', 'c'); for (const label of ['Change settings for C pending', 'Discard C pending', 'Close details of C pending']) assert.match(f.host.innerHTML, new RegExp(`aria-label="${label}"`)); f.click('close');
     assert.match(detailOf('c'), /Hosted on GitHub Container Registry \(ghcr\.io\)/); assert.match(detailOf('i'), /Hosted on Docker Hub \(docker\.io\)/);
     assert.match(detailOf('j'), /Its last start failed\./, 'a failed first start says so in History');
     // The private-image status offers its fix: Change image opens the form on the image.
@@ -201,13 +213,14 @@ const cases = {
     let t = text(f.host.innerHTML);
     assert.match(f.host.innerHTML, /data-ws-form="create"/);
     assert.ok(t.includes('New cloud workspace') && t.includes('Fields marked * are required') && t.includes('What it will use'));
-    assert.ok(t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage. No machine chosen yet'), 'defaults are previewed');
+    assert.ok(t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage. Machine: not chosen yet'), 'defaults are previewed');
     assert.ok(t.includes('Default 2.') && t.includes('Default 4.') && t.includes('Default 20.'), 'defaults are labelled');
     assert.match(f.host.innerHTML, /<option value="docker\.io\/library\/ubuntu:24\.04" selected>/);
     assert.match(f.host.innerHTML, /<option value="n-one">Fixture machine<\/option>/, 'the machine is named, with no health-like suffix');
     // Each resource says what to choose: a "What do I need?" line with examples.
     for (const key of ['cpu_cores', 'memory_mib', 'storage_gib']) assert.match(f.host.innerHTML, new RegExp(`id="ws-need-${key}"><strong>What do I need\\?</strong>`));
-    assert.ok(t.includes('Examples: 1 for a small web app, 4 for a large test suite.') && t.includes('1 GiB is about 1.07 GB') && t.includes('When it is full, saving files fails.'));
+    assert.ok(t.includes('Examples: 1 for a small web app, 4 for a large test suite.') && (t.match(/1 GiB is about 1\.07 GB/g) || []).length === 2, 'memory and storage both carry the GB note');
+    assert.doesNotMatch(t, /saving files fails|is stopped|enforced/, 'no hint describes enforcement that does not exist');
     // Accessible structure: the label closes before the hint and the error; required is marked; error slots are polite live regions.
     assert.match(f.host.innerHTML, /<label for="ws-field-name">Name <span class="compute-req" aria-hidden="true">\*<\/span><\/label><input name="ws_name" id="ws-field-name" data-ws-control="name" aria-describedby="ws-hint-name ws-error-name" required/);
     assert.doesNotMatch(f.host.innerHTML, /name="ws_name"[^>]*placeholder/, 'the example is in the hint once, not repeated in a placeholder');
@@ -223,16 +236,21 @@ const cases = {
     assert.match(t, /Fix this field, then review again:/); assert.match(t, /Name: Give it a name of 1 to 60 characters\./);
     assert.match(f.host.innerHTML, /<a href="#ws-field-name" data-ws-jump="name">/);
     assert.equal((f.host.innerHTML.match(/aria-invalid="true"/g) || []).length, 1); assert.match(f.host.innerHTML, /data-ws-control="name" aria-describedby="ws-hint-name ws-error-name" aria-invalid="true"/);
-    assert.ok(f.focused.includes('[data-ws-control="name"]'), 'the first invalid field gets focus');
+    assert.ok(f.focused.includes('[data-ws-summary]') && !f.focused.includes('[data-ws-control="name"]'), 'a failed check focuses the summary, whose links jump to the fields');
     assert.equal(f.state.writes.length, 0);
     assert.equal(f.jump('name').prevented, true); assert.equal(f.focused.at(-1), '[data-ws-control="name"]', 'a summary link focuses its field');
-    // Own image: what an image address is, where to copy it, what public means, and a real example.
+    // Own image: the address box is in the form but hidden while a ready-made image is chosen; choosing "My own image" shows it in place.
+    assert.match(f.host.innerHTML, /data-ws-field="image" hidden>/);
     f.input('ws_image_choice', 'custom');
-    assert.match(f.host.innerHTML, /name="ws_image"[^>]*placeholder="ubuntu:24\.04"/);
+    assert.doesNotMatch(f.host.innerHTML, /data-ws-field="image" hidden>/);
+    assert.doesNotMatch(f.host.innerHTML, /name="ws_image"[^>]*placeholder/, 'an empty box is not dressed up as a filled one');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('An image is the ready-made software a workspace starts from.') && t.includes('Copy the address from the image\'s page on its registry') && t.includes('It must be public: anyone can download it without signing in.') && t.includes('Examples: ubuntu:24.04 or ghcr.io/acme/tools:1.2.'));
-    assert.equal((t.match(/Copy the address/g) || []).length, 1, 'the help is said once');
-    assert.doesNotMatch(t, /@sha256:…|Pin it|Only public images work for now/);
+    assert.ok(t.includes('An image is the ready-made software a workspace starts from.') || t.includes('Paste the address of your own image below.'));
+    assert.ok(t.includes('Paste the address your image provider gave you, for example ubuntu:24.04. Not sure? Pick a ready-made image above.') && t.includes('Where do I find it?'));
+    const help = f.host.innerHTML.slice(f.host.innerHTML.indexOf('<details class="compute-ws-help">'), f.host.innerHTML.indexOf('</details>', f.host.innerHTML.indexOf('compute-ws-help')));
+    assert.ok(text(help).includes('docker pull') && text(help).includes('A registry is the website that stores images.') && text(help).includes('anyone must be able to download them without signing in'), 'the jargon lives in the disclosure, with one definition');
+    assert.equal((text(f.host.innerHTML.replace(help, '')).match(/docker pull|registry/gi) || []).length, 0, 'docker pull and registry appear nowhere else on the form');
+    assert.doesNotMatch(t, /@sha256:…|Pin it|Only public images work for now\./);
     // The image control is the one that carries the image error, not the select.
     fill(f, { ws_name: 'Acceptance', ws_image: 'ubuntu; rm -rf /' }); f.submit('create');
     assert.match(text(f.host.innerHTML), /doesn't look like an image address/);
@@ -247,24 +265,24 @@ const cases = {
     fill(f, { ws_cpu_cores: '2', ws_memory_gib: '4', ws_storage_gib: '20', ws_node_id: 'n-one' });
     f.submit('create');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Create Acceptance?') && t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage on Fixture machine'), 'resource preview before confirm');
-    assert.ok(t.includes('the publisher can update its version over time') && t.includes(ws.NOT_STARTED) && t.includes('Nothing has been sent to a machine yet.') && t.includes("A started cloud workspace can't be discarded yet."));
+    assert.ok(t.includes('Create “Acceptance”?') && t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage. Planned machine: Fixture machine'), 'resource preview before confirm');
+    assert.ok(t.includes('the publisher can update its version over time') && t.includes('Confirming saves these settings in Commonplace only. Starting is not available yet, so nothing is sent to a machine.'));
+    assert.doesNotMatch(t, /can't be discarded yet|Saved, not started/, 'the review says what confirming does once, without the long status sentence');
     assert.match(f.host.innerHTML, /<ul class="compute-ws-review" role="list">/);
     assert.ok(f.host.innerHTML.indexOf('data-ws-honesty') < f.host.innerHTML.indexOf('compute-ws-actions'), 'the honesty sentence sits above the action buttons');
     assert.equal(f.state.writes.length, 0, 'nothing is sent before confirm');
     f.click('back'); assert.match(f.host.innerHTML, /data-ws-form="create"/); assert.match(f.host.innerHTML, /value="Acceptance"/);
     // A lost answer then a retry reuses the request id, so the server can recognise the repeat.
     f.submit('create'); f.state.next = [new Error('timeout'), { workspace: created }]; f.click('confirm'); await flush();
-    assert.match(text(f.host.innerHTML), /nothing is confirmed/); assert.match(text(f.host.innerHTML), /Create Acceptance\?/, 'still on the review, so the same request can be sent again');
+    assert.match(text(f.host.innerHTML), /nothing is confirmed/); assert.match(text(f.host.innerHTML), /Create “Acceptance”\?/, 'still on the review, so the same request can be sent again');
     f.click('confirm'); await flush();
     assert.deepEqual(f.state.writes.map(([path]) => path), ['/api/compute/workspaces', '/api/compute/workspaces']);
     assert.deepEqual(f.state.writes[1][1], { name: 'Acceptance', image_source: 'custom', image: 'ghcr.io/acme/tools:1.2', cpu_cores: 2, memory_mib: 4096, storage_gib: 20, network: 'outbound', node_id: 'n-one', request_id: 'r-1' });
     assert.equal(f.state.writes[0][1].request_id, 'r-1');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Saved Acceptance in Commonplace. Nothing has been sent to Fixture machine yet.'), 'one honest confirmation');
-    assert.equal((t.match(/Nothing has been sent/g) || []).length, 1, 'said once');
+    assert.ok(t.includes('Saved “Acceptance”, not started. Starting is not available yet.'), 'one honest confirmation, with the name quoted');
     assert.match(f.host.innerHTML, /data-ws-id="w-new"/); assert.doesNotMatch(f.host.innerHTML, /data-ws-form/);
-    assert.ok(f.focused.includes('[data-ws-notice]'), 'the confirmation gets focus so it is announced'); assert.equal(f.status.text.startsWith('Saved Acceptance'), true);
+    assert.ok(f.focused.includes('[data-ws-id="w-new"] .compute-ws-name') && !f.focused.includes('[data-ws-notice]'), 'focus goes to the saved row, never to the status text'); assert.equal(f.status.text.startsWith('Saved “Acceptance”'), true);
     // The next create form gets a fresh request id.
     f.click('create'); fill(f, valid); f.submit('create'); f.state.next = [{ workspace: onMachine({ id: 'w-2', name: 'Acceptance 2', created_at: clock + 2 }) }]; f.click('confirm'); await flush();
     assert.equal(f.state.writes[2][1].request_id, 'r-2');
@@ -274,6 +292,9 @@ const cases = {
     assert.doesNotMatch(capped.host.innerHTML, /data-ws-action="create"/); assert.match(text(capped.host.innerHTML), /You have reached the limit of 2 cloud workspaces\. Discard one that was never started to make room\./);
     capped.click('create'); assert.doesNotMatch(capped.host.innerHTML, /data-ws-form/);
     capped.ui.stop();
+    // When every one of them has started, the sentence says nothing can be discarded.
+    const allIn = fixture({ list: { workspaces: [startedRow({ id: 'a', name: 'A' }), startedRow({ id: 'b', name: 'B' })], can_manage: true }, config: { ...options, max_workspaces: 2 } }); await allIn.open();
+    assert.match(text(allIn.host.innerHTML), /You have reached the limit of 2 cloud workspaces\. All 2 have started, so none can be discarded yet\./); allIn.ui.stop();
     // More records than the list shows: the count is said, and creation is refused by the total, not the page.
     const many = fixture({ list: { workspaces: [record({ id: 'a', name: 'A' })], total: 100, can_manage: true } }); await many.open();
     assert.match(text(many.host.innerHTML), /Showing the newest 1 of 100 cloud workspaces\./); assert.doesNotMatch(many.host.innerHTML, /data-ws-action="create"/);
@@ -285,12 +306,13 @@ const cases = {
     const html = f.host.innerHTML;
     assert.match(html, /role="group" aria-labelledby="ws-presets-label"><span class="compute-label" id="ws-presets-label">Start from a size/);
     for (const [id, label] of [['small', 'Small'], ['standard', 'Standard'], ['large', 'Large']]) assert.match(html, new RegExp(`data-preset="${id}"[^>]*>${label}<span`));
-    assert.match(html, /data-preset="standard" aria-pressed="true"/, 'the defaults are the Standard size'); assert.match(html, /data-preset="small" aria-pressed="false"/);
+    assert.match(html, /data-preset="standard" aria-current="true"/, 'the defaults are the Standard size, marked as current (not "pressed")'); assert.doesNotMatch(html, /data-preset="small"[^>]*aria-current|aria-pressed/);
+    assert.match(html, /<fieldset><legend class="compute-ws-legend">/, 'the fields are grouped under a legend');
     assert.ok(text(html).includes('1 CPU core, 2 GiB, 10 GiB') && text(html).includes('Fills the three fields below; you can still change any of them.'));
     // Choosing a size fills the fields (still editable); a repaint (a blank name is refused) shows what they now hold.
     f.click('preset', undefined, { preset: 'large' }); f.submit('create');
     for (const [name, value] of [['ws_cpu_cores', '4'], ['ws_memory_gib', '8'], ['ws_storage_gib', '50']]) assert.match(f.host.innerHTML, new RegExp(`name="${name}"[^>]*value="${value}"`), name);
-    assert.match(f.host.innerHTML, /data-preset="large" aria-pressed="true"/);
+    assert.match(f.host.innerHTML, /data-preset="large" aria-current="true"/);
     // A preset stays editable: a typed value moves the pressed size away from it.
     fill(f, { ws_name: 'Sized', ws_cpu_cores: '3' }); f.submit('create'); f.state.next = [{ workspace: onMachine({ id: 'w-t', name: 'Sized', cpu_cores: 3, created_at: clock + 1 }) }]; f.click('confirm'); await flush();
     assert.equal(f.state.writes[0][1].cpu_cores, 3); assert.equal(f.state.writes[0][1].memory_mib, 8192);
@@ -315,7 +337,7 @@ const cases = {
     assert.doesNotMatch(html, /data-ws-summary[^>]*role=/, 'focus announces the summary; a live region would read it twice');
     // Once every field is valid a new attempt shows no summary at all.
     fill(f, { ws_cpu_cores: '2', ws_image: 'ubuntu:24.04' }); f.submit('create');
-    assert.match(f.host.innerHTML, /Create Box\?/); assert.match(f.host.innerHTML, /data-ws-summary tabindex="-1"><\/div>/);
+    assert.match(f.host.innerHTML, /Create “Box”\?/); assert.match(f.host.innerHTML, /data-ws-summary tabindex="-1"><\/div>/);
     f.ui.stop();
   },
 
@@ -325,9 +347,9 @@ const cases = {
     f.state.next = [failure(400, { error: 'invalid_request', field: 'image', reason: 'characters' })]; f.click('confirm'); await flush();
     assert.match(f.host.innerHTML, /data-ws-form="create"/, 'back on the form');
     assert.match(text(f.host.innerHTML), /doesn't look like an image address/); assert.match(text(f.host.innerHTML), /Fix this field, then review again:/);
-    assert.ok(f.focused.includes('[data-ws-control="image"]'));
+    assert.ok(f.focused.at(-1) === '[data-ws-summary]', 'a refusal focuses the summary, which links to the field');
     const again = async (failureValue, pattern) => { f.submit('create'); f.state.next = [failureValue]; f.click('confirm'); await flush(); assert.match(text(f.host.innerHTML), pattern); };
-    await again(failure(409, { error: 'conflict', field: 'name', reason: 'name_taken' }), /Another cloud workspace already uses this name\./);
+    await again(failure(409, { error: 'conflict', field: 'name', reason: 'name_taken' }), /That name is taken\. Choose another, for example Build box 2\./);
     await again(failure(400, { error: 'invalid_request', field: 'name', reason: 'no_letter' }), /Use at least one letter or digit in the name\./);
     await again(failure(400, { error: 'invalid_request', field: 'image', reason: 'registry_private' }), /local or private network/);
     await again(failure(400, { error: 'invalid_request', field: 'image', reason: 'registry_no_path' }), /Add the image name after the registry address/);
@@ -341,7 +363,7 @@ const cases = {
     assert.doesNotMatch(text(f.host.innerHTML), /changed or the request conflicts/);
     await again(failure(400, { error: 'invalid_request', reason: 'unknown_field' }), /server refused these values/);
     await again(new Error('timeout'), /nothing is confirmed/);
-    await again(failure(403, { error: 'owner_required', reason: 'member' }), /Only the workspace owner can change cloud workspaces\./);
+    await again(failure(403, { error: 'owner_required', reason: 'member' }), /You can read this workspace's settings\. Only its owner can change them\./);
     f.ui.stop();
   },
 
@@ -350,26 +372,30 @@ const cases = {
     const f = fixture({ list: { workspaces: [row], can_manage: true } }); await f.open();
     f.click('edit', 'w-one');
     let t = text(f.host.innerHTML);
-    assert.ok(t.includes('Change Build box') && t.includes(ws.STARTED));
+    assert.ok(t.includes('Change “Build box”') && t.includes(ws.STARTED));
     assert.match(f.host.innerHTML, /<select name="ws_node_id"[^>]*disabled/, 'a started workspace cannot move'); assert.ok(t.includes("A started workspace can't move to another machine yet."), 'the reason sits beside the field');
     assert.doesNotMatch(f.host.innerHTML, /data-ws-id="w-one"/, 'the form replaces the row while it is open');
     assert.match(f.host.innerHTML, /value="2"/); assert.match(f.host.innerHTML, /value="4"/);
     f.submit('edit'); assert.match(text(f.host.innerHTML), /You haven't changed anything yet\./); assert.equal(f.state.writes.length, 0, 'an edit with no change sends nothing');
     fill(f, { ws_memory_gib: '8' }); f.submit('edit');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Confirm the change to Build box') && t.includes('Memory: 4 GiB → 8 GiB') && t.includes('2 CPU cores, 8 GiB memory, 20 GiB storage on Fixture machine') && t.includes(ws.STARTED));
+    assert.ok(t.includes('Confirm the change to “Build box”') && t.includes('Memory: 4 GiB → 8 GiB') && t.includes('2 CPU cores, 8 GiB memory, 20 GiB storage. Planned machine: Fixture machine') && t.includes(ws.STARTED));
     f.state.next = [{ workspace: { ...row, memory_mib: 8192, version: 2, revision: 2, restart_needed: true, status: 'restart_needed' } }]; f.click('confirm'); await flush();
     assert.equal(f.state.writes[0][0], '/api/compute/workspaces/w-one');
     assert.deepEqual(f.state.writes[0][1], { memory_mib: 8192, expected_revision: 1 }, 'only the changed field, with the version the form opened at');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Saved Build box in Commonplace. Nothing to do now: the running copy keeps its old settings until it is restarted, which is not available yet.') && t.includes('8 GiB memory'));
-    // A stale version from the server says so, offers a way out inside the message and blocks a second submit.
+    assert.ok(t.includes('Saved “Build box”. Changes waiting: they apply the next time it starts, and starting is not available yet.') && t.includes('8 GiB memory') && t.includes('Changes waiting'));
+    // A stale version from the server says so, keeps what was typed (as typed), disables the real button and offers a way on beside it.
     f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '6' }); f.submit('edit');
     f.state.next = [failure(409, { error: 'conflict', reason: 'stale_revision' })]; f.click('confirm'); await flush();
-    assert.match(text(f.host.innerHTML), /This workspace was changed by someone else \(or in another tab\) while you were editing, so nothing was saved\./); assert.match(f.host.innerHTML, /data-ws-form="edit"/);
-    assert.match(f.host.innerHTML, /data-ws-action="reload-edit">Reload and start over<\/button>/); assert.match(text(f.host.innerHTML), /What you typed \(copy it if you want to keep it\):.*Memory: 6 GiB/);
-    assert.match(f.host.innerHTML, /<button class="btn primary" type="submit" aria-disabled="true">Review the change<\/button>/, 'submit is disabled while the form is stale');
+    assert.match(text(f.host.innerHTML), /Someone else changed this workspace, so nothing was saved\./); assert.match(f.host.innerHTML, /data-ws-form="edit"/);
+    assert.match(f.host.innerHTML, /data-ws-action="reload-edit">Reload to continue<\/button>/); assert.match(text(f.host.innerHTML), /What you typed \(copy it if you want to keep it\):.*Memory \(GiB\): 6/);
+    assert.match(f.host.innerHTML, /<button class="btn primary" type="submit" disabled>Review the change<\/button><button type="button" class="btn" data-ws-action="reload-edit">Reload to continue<\/button>/, 'a really disabled submit, with the way on right beside it');
     f.submit('edit'); assert.doesNotMatch(f.host.innerHTML, /Confirm the change/, 'a stale form cannot go on to review');
+    // What the person typed is shown as typed: an empty field says so, and '4.50' stays '4.50'.
+    f.input('ws_memory_gib', ''); f.input('ws_storage_gib', '25'); f.input('ws_cpu_cores', '3.50');
+    f.state.list = { workspaces: [{ ...row, memory_mib: 8192, version: 3, revision: 3, restart_needed: true, status: 'restart_needed', updated_at: clock + 9 }], can_manage: true }; await f.ui.refresh(); await flush();
+    const typedText = text(f.host.innerHTML); assert.match(typedText, /Memory \(GiB\): \(empty\)/); assert.match(typedText, /CPU cores: 3\.50/); assert.doesNotMatch(typedText, /NaN/);
     f.ui.stop();
     // Never started: the editor says changes apply when it first starts.
     const fresh = fixture({ list: { workspaces: [record()], can_manage: true } }); await fresh.open(); fresh.click('edit', 'w-one');
@@ -385,7 +411,7 @@ const cases = {
     f.state.list = { workspaces: [{ ...mine, cpu_cores: 8, version: 2, revision: 2, updated_at: clock + 5 }], can_manage: true };
     await f.ui.refresh(); await flush();
     // The form says so as soon as the list moved on, not only when the person tries to save.
-    assert.match(text(f.host.innerHTML), /was changed by someone else/); assert.match(f.host.innerHTML, /data-ws-action="reload-edit"/);
+    assert.match(text(f.host.innerHTML), /Someone else changed this workspace/); assert.match(f.host.innerHTML, /data-ws-action="reload-edit"/);
     assert.match(f.status.text, /changed while you had it open/, 'announced once through the status line, in a shorter sentence than the form message');
     f.submit('edit'); f.click('confirm'); await flush();
     assert.equal(f.state.writes.length, 0, 'a form opened before the list changed never sends');
@@ -393,7 +419,10 @@ const cases = {
     f.state.list = { workspaces: [{ ...mine, cpu_cores: 8, version: 2, revision: 2, updated_at: clock + 5 }], can_manage: true };
     f.click('reload-edit'); await flush(); await flush();
     assert.match(f.host.innerHTML, /data-ws-form="edit"/); assert.doesNotMatch(f.host.innerHTML, /data-ws-action="reload-edit"/); assert.match(f.host.innerHTML, /name="ws_cpu_cores"[^>]*value="8"/, 'the form shows the current values');
-    fill(f, { ws_memory_gib: '8' }); f.submit('edit');
+    // What was typed waits behind one button; applying it puts back only the fields that were changed.
+    assert.match(f.host.innerHTML, /data-ws-reapply/); assert.match(text(f.host.innerHTML), /Your earlier changes were not saved:.*Memory \(GiB\): 8/); assert.match(f.host.innerHTML, /name="ws_memory_gib"[^>]*value="4"/);
+    f.click('reapply'); assert.doesNotMatch(f.host.innerHTML, /data-ws-reapply/); assert.match(f.host.innerHTML, /name="ws_memory_gib"[^>]*value="8"/); assert.match(f.host.innerHTML, /name="ws_cpu_cores"[^>]*value="8"/, 'the other person\'s CPU change is kept');
+    f.submit('edit');
     f.state.next = [{ workspace: { ...mine, cpu_cores: 8, memory_mib: 8192, version: 3, revision: 3, updated_at: clock + 6 } }]; f.click('confirm'); await flush();
     assert.deepEqual(f.state.writes[0][1], { memory_mib: 8192, expected_revision: 2 });
     f.ui.stop();
@@ -412,28 +441,38 @@ const cases = {
   async discard() {
     const never = onMachine({ id: 'w-one', name: 'Build box' }), started = startedRow({ id: 'w-two', name: 'Live box' });
     const f = fixture({ list: { workspaces: [never, started], can_manage: true } }); await f.open();
-    f.click('discard', 'w-two'); assert.doesNotMatch(f.host.innerHTML, /Discard Live box\?/, 'a started workspace has no discard');
+    f.click('discard', 'w-two'); assert.doesNotMatch(f.host.innerHTML, /Discard “Live box”\?/, 'a started workspace has no discard');
     f.click('discard', 'w-one');
     let t = text(f.host.innerHTML);
-    assert.ok(t.includes('Discard Build box?') && t.includes('removes the saved settings for Build box from Commonplace') && t.includes('never started, so nothing on a machine is affected') && t.includes("You can't undo this"));
-    assert.match(f.host.innerHTML, /class="btn danger solid" data-ws-action="confirm">Discard Build box<\/button><button type="button" class="btn" data-ws-action="close">Keep Build box<\/button>/, 'a danger-styled confirm and a Keep button that names the workspace');
+    assert.ok(t.includes('Discard “Build box”?') && t.includes('removes the saved settings for “Build box” from Commonplace') && t.includes('never started, so nothing on a machine is affected') && t.includes("You can't undo this"));
+    // The confirmation lives inside the record's own row, with fixed labels (the name is in the sentence) and Keep as strong as Discard.
+    const row = f.host.innerHTML.slice(f.host.innerHTML.indexOf('<li class="compute-row compute-ws-row" data-ws-id="w-one"'), f.host.innerHTML.indexOf('data-ws-id="w-two"'));
+    assert.ok(row.includes('compute-ws-discard') && row.includes('<h3 class="compute-ws-name"'), 'the confirmation is inside the row of the record it is about');
+    assert.match(row, /class="btn danger" data-ws-action="confirm">Discard workspace<\/button><button type="button" class="btn primary" data-ws-action="close">Keep it<\/button>/);
+    assert.doesNotMatch(row, /btn danger solid|Discard Build box|Keep Build box/);
     assert.equal(f.state.writes.length, 0, 'nothing is sent before the confirmation');
     assert.ok(f.focused.includes('.compute-ws-actions [data-ws-action="close"]'), 'the safe choice, Keep, has focus');
-    f.click('close'); assert.doesNotMatch(f.host.innerHTML, /Discard Build box\?/); assert.match(f.host.innerHTML, /data-ws-id="w-one"/);
+    f.click('close'); assert.doesNotMatch(f.host.innerHTML, /Discard “Build box”\?/); assert.match(f.host.innerHTML, /data-ws-id="w-one"/);
     assert.ok(f.focused.includes('[data-ws-id="w-one"] [data-ws-action="discard"]'), 'focus returns to the button that opened it');
-    // The server refuses: the panel stays and says why.
+    // It started after the confirmation opened: the body is replaced by one sentence, Discard is gone and Keep has focus.
     f.click('discard', 'w-one'); f.state.next = [failure(409, { error: 'conflict', reason: 'already_started' })]; f.click('confirm'); await flush();
-    assert.match(text(f.host.innerHTML), /has been started, so it can't be discarded yet/); assert.match(f.host.innerHTML, /Discard Build box\?/);
-    // A discard of a changed record is refused (stale) and offers the reload.
-    f.state.next = [failure(409, { error: 'conflict', reason: 'stale_revision' })]; f.click('confirm'); await flush();
+    t = text(f.host.innerHTML);
+    assert.ok(t.includes('It started after you opened this, so nothing was discarded. Keep it, or reload the list to see its current state.'));
+    assert.doesNotMatch(t, /never started, so nothing on a machine is affected|can't be discarded yet/, 'the refusal never contradicts itself');
+    assert.doesNotMatch(f.host.innerHTML, /data-ws-action="confirm"|Discard workspace/, 'the red button is gone');
+    assert.equal(f.focused.at(-1), '.compute-ws-actions [data-ws-action="close"]', 'focus stays on Keep it');
+    assert.match(f.host.innerHTML, /data-ws-action="reload">Reload the list/);
+    f.click('close');
+    // A discard of a changed record is refused (stale): the button is really disabled, with its reason beside it, and offers the reload.
+    f.click('discard', 'w-one'); f.state.next = [failure(409, { error: 'conflict', reason: 'stale_revision' })]; f.click('confirm'); await flush();
     assert.match(text(f.host.innerHTML), /changed after you opened this, so nothing was discarded/); assert.match(f.host.innerHTML, /data-ws-action="reload">Reload the list/);
-    assert.match(f.host.innerHTML, /class="btn danger solid" data-ws-action="confirm" aria-disabled="true"/, 'the confirm is disabled while the record is stale');
+    assert.match(f.host.innerHTML, /class="btn danger" data-ws-action="confirm" disabled aria-describedby="ws-summary"/, 'the confirm is disabled while the record is stale, and says why');
     f.click('close'); f.click('discard', 'w-one');
     f.state.next = [{ discarded: { id: 'w-one', name: 'Build box' } }]; f.click('confirm'); await flush();
     assert.deepEqual(f.state.writes.at(-1), ['/api/compute/workspaces/w-one/discard', { expected_revision: 1 }]);
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Discarded Build box. Nothing on a machine was affected.')); assert.doesNotMatch(f.host.innerHTML, /data-ws-id="w-one"/); assert.match(f.host.innerHTML, /data-ws-id="w-two"/);
-    assert.ok(f.focused.includes('[data-ws-notice]'));
+    assert.ok(t.includes('Discarded “Build box”. Nothing on a machine was affected.')); assert.doesNotMatch(f.host.innerHTML, /data-ws-id="w-one"/); assert.match(f.host.innerHTML, /data-ws-id="w-two"/);
+    assert.equal(f.focused.at(-1), '[data-ws-action="create"]', 'focus goes to the next sensible control, not to the status text');
     f.ui.stop();
   },
 
@@ -459,14 +498,14 @@ const cases = {
     const row = onMachine({ discardable: false }); row.machine_name = null; row.node_id = null; row.private_registry = true; row.credential_bound = true;
     const f = fixture({ owner: false, list: { workspaces: [row], can_manage: false } }); await f.open();
     const t = text(f.host.innerHTML);
-    assert.ok(t.includes('Compute management requires the current workspace owner. You can still look at the cloud workspaces below.'));
-    assert.ok(t.includes('Build box') && t.includes('Not started') && t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage on an assigned machine'));
+    assert.ok(t.includes("You can read this workspace's settings. Only its owner can change them."));
+    assert.ok(t.includes('Build box') && t.includes('Saved, not started') && t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage') && t.includes('Machine: assigned (name hidden)'));
     assert.ok(!t.includes('Fixture machine'), 'no machine name in the list'); assert.ok(t.includes('Image: ghcr.io/acme/tools:1.2'), 'the image address is shown to members too');
     assert.doesNotMatch(f.host.innerHTML, /data-ws-action="(create|edit|bind|discard)"|role="alert">Compute management/);
     assert.match(f.host.innerHTML, /data-ws-action="detail"/);
     f.click('create'); f.click('edit', 'w-one'); f.click('discard', 'w-one'); assert.doesNotMatch(f.host.innerHTML, /data-ws-form|Discard Build box/, 'a member can never open a form');
     f.click('detail', 'w-one'); const d = text(f.host.innerHTML);
-    assert.ok(d.includes('Only the workspace owner can change cloud workspaces. Ask the owner to change this one') && d.includes('A machine is assigned') && !d.includes('Fixture machine'));
+    assert.ok(d.includes("You can read this workspace's settings. Only its owner can change them.") && d.includes('assigned (name hidden)') && !d.includes('Fixture machine') && !/Compute management requires/.test(d));
     assert.doesNotMatch(f.host.innerHTML, /data-ws-action="(edit|discard)"/);
     f.click('close'); assert.ok(f.focused.includes('[data-ws-id="w-one"] [data-ws-action="detail"]'), 'closing the details returns focus to the row');
     // Reload inventory keeps the member's section on screen all along (it used to vanish until the owner-only read answered).
@@ -488,7 +527,7 @@ const cases = {
     assert.doesNotMatch(down.host.innerHTML, /data-ws-action="create"/);
     down.state.list = { workspaces: [], can_manage: true }; down.click('reload'); await flush();
     assert.match(text(down.host.innerHTML), /No cloud workspaces yet/);
-    assert.equal(down.status.text, 'Cloud workspaces reloaded.'); assert.ok(down.focused.includes('[data-ws-notice]'), 'focus goes to the status line after Reload');
+    assert.equal(down.status.text, 'Cloud workspaces reloaded.'); assert.ok(down.focused.includes('#compute-workspaces') && !down.focused.includes('[data-ws-notice]'), 'focus goes to the section heading after Reload, never to the status text');
     down.ui.stop();
     // The image list failing says why creation is unavailable instead of hiding the button silently.
     const noOptions = fixture({ config: failure(500, { error: 'x' }) }); await noOptions.open();
@@ -527,7 +566,7 @@ const cases = {
   async escape() {
     const f = fixture({ list: { workspaces: [onMachine()], can_manage: true } }); await f.open();
     // From the review, Escape goes back to the form with the typed values, not out of it.
-    f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '8' }); f.submit('edit'); assert.match(text(f.host.innerHTML), /Confirm the change to Build box/);
+    f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '8' }); f.submit('edit'); assert.match(text(f.host.innerHTML), /Confirm the change to “Build box”/);
     f.key('Escape'); assert.match(f.host.innerHTML, /data-ws-form="edit"/); assert.match(f.host.innerHTML, /name="ws_memory_gib"[^>]*value="8"/); assert.equal(f.focused.at(-1), '#compute-ws-heading');
     // From a changed form, Escape (and Cancel) ask before throwing the typed values away; Escape again keeps editing.
     f.key('Escape'); assert.match(f.host.innerHTML, /Leave without saving\?/); assert.match(f.host.innerHTML, /data-ws-form="edit"/, 'the form is still there'); assert.equal(f.focused.at(-1), '[data-ws-action="keep-editing"]', 'the safe choice has focus');
@@ -538,6 +577,36 @@ const cases = {
     f.click('create'); f.key('Escape'); assert.doesNotMatch(f.host.innerHTML, /data-ws-form|Leave without saving/);
     f.click('create'); fill(f, { ws_name: 'x' }); fill(f, { ws_name: '' }); f.key('Escape'); assert.doesNotMatch(f.host.innerHTML, /data-ws-form|Leave without saving/);
     f.click('create'); fill(f, { ws_name: 'Typed' }); f.key('Escape'); assert.match(f.host.innerHTML, /Leave without saving\?/); f.click('leave'); assert.doesNotMatch(f.host.innerHTML, /data-ws-form/);
+    f.ui.stop();
+  },
+
+  async 'validation-timing'() {
+    // A problem is shown when a field is committed (change or blur) or on submit, never while the person is still typing.
+    // (The harness paints the live error slots through stubs, so a full repaint shows what the state holds.)
+    const f = fixture(); await f.open(); f.click('create');
+    const repaint = async () => { await f.ui.refresh(); await flush(); return f.host.innerHTML; };
+    f.input('ws_image_choice', 'custom'); fill(f, { ws_name: 'Box' });
+    for (const half of ['g', 'gh', 'ghcr', 'ghcr.', 'ghcr.i']) { f.input('ws_image', half); assert.doesNotMatch(await repaint(), /aria-invalid="true"/, `half-typed ${half} holds no error`); }
+    f.input('ws_cpu_cores', '64'); assert.doesNotMatch(await repaint(), /aria-invalid="true"/, 'a bad number holds no error while it is typed');
+    f.change('ws_cpu_cores', '64'); assert.match(await repaint(), /aria-invalid="true"/, 'committing the value records its problem'); assert.match(text(f.host.innerHTML), /Enter a number of cores from 0\.5 to 32\./);
+    // Fixing a recorded problem clears it, per keystroke.
+    f.input('ws_cpu_cores', '4'); assert.doesNotMatch(await repaint(), /aria-invalid="true"/);
+    f.change('ws_image', 'ghcr.io'); assert.match(await repaint().then(text), /Add the image name after the registry address/);
+    f.change('ws_image', 'ghcr.io/acme/tools:1.2'); assert.doesNotMatch(await repaint().then(text), /Add the image name/);
+    f.ui.stop();
+  },
+
+  async 'image-choice'() {
+    // The address box is toggled with `hidden`, not repainted: nothing re-centres the page when the choice changes.
+    const f = fixture(); await f.open(); f.click('create');
+    assert.match(f.host.innerHTML, /<div class="compute-field compute-wide" data-ws-field="image" hidden>/);
+    f.focused.length = 0; f.change('ws_image_choice', 'custom');
+    assert.doesNotMatch(f.host.innerHTML, /data-ws-field="image" hidden/); assert.equal(f.focused.length, 0, 'choosing an image moves no focus and scrolls nothing');
+    f.change('ws_image_choice', 'docker.io/library/python:3.12-slim'); assert.match(f.host.innerHTML, /data-ws-field="image" hidden/);
+    assert.match(f.host.innerHTML, /<option value="docker\.io\/library\/python:3\.12-slim" selected>/); assert.ok(text(f.host.innerHTML).includes('Linux with Python 3.12 ready to use.'));
+    // The review names the chosen image first and shows the address second.
+    f.change('ws_image_choice', 'docker.io/library/ubuntu:24.04'); fill(f, { ws_name: 'Box' }); f.submit('create');
+    assert.ok(text(f.host.innerHTML).includes('Image: Ubuntu 24.04 (docker.io/library/ubuntu:24.04)'));
     f.ui.stop();
   },
 
@@ -552,7 +621,7 @@ const cases = {
     assert.equal(f.status.text, 'Saving…', 'the status region says it');
     f.click('confirm'); assert.equal(f.calls.length, original + 1, 'a second press while saving sends nothing');
     resolve(structuredClone({ workspace: record({ id: 'w-b', name: 'Acceptance', created_at: clock + 1 }) })); await flush();
-    assert.match(f.status.text, /^Saved Acceptance/); assert.ok(api.writes.length === 1);
+    assert.match(f.status.text, /^Saved “Acceptance”/); assert.ok(api.writes.length === 1);
     f.ui.stop();
   },
 };

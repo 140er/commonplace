@@ -84,7 +84,10 @@ const cases = {
     // The three technical sections sit inside one closed "Advanced" disclosure, each with a plain one-line explanation.
     assert.match(html, /<details class="compute-advanced compute-wide" data-compute-advanced><summary class="compute-advanced-summary">Advanced<\/summary>/);
     assert.ok(at('data-compute-advanced') < at('id="compute-gateways"') && at('id="compute-gateways"') < at('id="compute-nodes"') && at('id="compute-nodes"') < at('id="compute-scopes"'));
-    assert.match(html, /<\/div><\/details><section class="compute-inventory" aria-labelledby="compute-scripts"/, 'scripts, observations and proposals stay outside');
+    // Scripts, passive observations and execution proposals are technical too: they sit inside the same disclosure, after the other three.
+    assert.ok(at('id="compute-scopes"') < at('id="compute-scripts"') && at('id="compute-scripts"') < at('id="compute-discoveries"') && at('id="compute-discoveries"') < at('id="compute-executions"') && at('id="compute-executions"') < at('</details></div><details class="compute-capabilities"'), 'scripts, observations and proposals are inside Advanced');
+    assert.match(html, /<h2 id="compute-scripts">Scripts<\/h2>/, 'the script section is called Scripts, the word docs/compute/RUNNING.md uses');
+    assert.doesNotMatch(html, /Workspace scripts/);
     for (const sentence of ['A gateway is the door into one project’s network; Coworkers reach your machines through it.', 'A target is one machine behind a gateway that Coworkers may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
     assert.match(html, /Most people never need these\./);
     // What the person chose survives a re-render: open stays open, and it starts closed again on a fresh screen.
@@ -192,7 +195,7 @@ const cases = {
     }
     // 9. The list is advisory: a 403 on it is the same owner boundary as the rest.
     const own = fixture({ credentials: Object.assign(new Error('x'), { status: 403, payload: { error: 'owner_required' } }) }); await own.open(inventory());
-    assert.match(own.host.innerHTML, /requires the current workspace owner/); own.ui.stop();
+    assert.match(own.host.innerHTML, /Only its owner can change them/); own.ui.stop();
   },
 
   async unbound() {
@@ -404,7 +407,7 @@ const cases = {
     late.setUser({ workspace: 'w-two', actor: 'user:u-two' }); late.ui.show(); await late.respond();
     late.click('gateway'); oldPost.reject(failure(403, 'owner_required')); await flush();
     assert.match(late.host.innerHTML, /data-compute-form="gateway"/, 'An old action refusal cannot clear a newer session');
-    assert.doesNotMatch(late.host.innerHTML, /requires the current workspace owner/); late.ui.stop();
+    assert.doesNotMatch(late.host.innerHTML, /Only its owner can change them/); late.ui.stop();
   },
 
   async lifecycle() {
@@ -426,7 +429,7 @@ const cases = {
 
   async failures() {
     const member = fixture(); await member.open(inventory({ can_manage: false }));
-    assert.match(member.host.innerHTML, /requires the current workspace owner/); member.click('gateway'); member.submit('gateway', gatewayValues());
+    assert.match(member.host.innerHTML, /Only its owner can change them/); member.click('gateway'); member.submit('gateway', gatewayValues());
     assert.equal(member.requests.filter(row => row.options.method === 'POST').length, 0); member.ui.stop();
     for (const status of [401, 403, 404]) {
       const f = fixture(); await f.open(); f.click('approve', 'e-one'); f.submit('approve', { expected_digest: execution().digest, expires_minutes: '1' });
@@ -437,7 +440,7 @@ const cases = {
     const posts = () => f.requests.filter(row => row.options.method === 'POST').length;
     f.submit('gateway', gatewayValues()); assert.equal(posts(), 1, 'An ambiguous non-idempotent create is not replayed');
     f.click('close'); f.click('gateway'); f.click('cancel', 'e-one'); assert.equal(posts(), 1);
-    assert.match(f.host.innerHTML, /Reload inventory/); f.click('refresh'); await f.respond(); f.click('gateway'); assert.match(f.host.innerHTML, /data-compute-form="gateway"/); f.ui.stop();
+    assert.match(f.host.innerHTML, /Refresh/); f.click('refresh'); await f.respond(); f.click('gateway'); assert.match(f.host.innerHTML, /data-compute-form="gateway"/); f.ui.stop();
 
     const partial = fixture(); partial.ui.show(); partial.take('/api/compute').resolve(inventory()); partial.take('/api/boards').reject(failure(503, 'unavailable')); await flush();
     assert.match(partial.host.innerHTML, /Fixture target/); assert.match(partial.host.innerHTML, /Projects could not be loaded/);

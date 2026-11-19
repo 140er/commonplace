@@ -69,7 +69,7 @@ test('Management uses the existing controller and restores the shell and phone d
     const ui = mount({ root: f.root, route: '#/compute/management', me: { workspace: 'w', actor: 'u' }, api: () => new Promise(() => {}) });
     assert.deepEqual(hrefs(f.root.innerHTML), [deck ? '#/compute' : '#/compute-map', '#/compute/management']);
     assert.match(f.regions.get('content').innerHTML, /Loading Compute inventory/);
-    assert.match(f.regions.get('content').innerHTML, /<h1>Compute<\/h1>/);
+    assert.match(f.regions.get('content').innerHTML, /<h1>Cloud workspaces<\/h1>/);
     assert.doesNotMatch(f.root.innerHTML, /<p>Management<\/p>/);
     assert.doesNotMatch(f.root.innerHTML + f.regions.get('content').innerHTML, /orchestrator/i);
     assert.equal(header.hidden, true); assert.equal(phone.hidden, !deck); assert.equal(tabs.style.position, 'fixed');
