@@ -384,6 +384,44 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
         page.get_by_role("button", name="Status and activity of Broken box").click()
         expect(page.locator(".compute-ov-panel")).to_contain_text("It ran out of memory")
         _shot(page, f"{label}-22-detail-failed")
+        page.get_by_role("button", name="Close").click()
+        # Busy, draining, requested and a target machine each explain themselves in the detail too.
+        for name, texts, shot in (
+            (
+                "build-runner",
+                [
+                    "It has runs in progress.",
+                    "1 run in progress (up to 2 at once)",
+                    "6.0 GiB memory free",
+                    "2 runs with unknown cost",
+                ],
+                "23-detail-busy",
+            ),
+            (
+                "night-runner",
+                [
+                    "No new runs start here. 1 run in progress will finish.",
+                    "It is draining: no new runs start until you resume it.",
+                ],
+                "24-detail-draining",
+            ),
+            (
+                "Queued box",
+                ["Commonplace saved the request", "You can withdraw the request."],
+                "25-detail-requested",
+            ),
+            (
+                "Build machine",
+                ["Not checked live", "Commonplace does not probe target machines."],
+                "26-detail-machine",
+            ),
+        ):
+            page.get_by_role("button", name=f"Status and activity of {name}").click()
+            for text in texts:
+                expect(page.locator(".compute-ov-panel")).to_contain_text(text)
+            _shot(page, f"{label}-{shot}")
+            page.get_by_role("button", name="Close").click()
+        page.get_by_role("button", name="Status and activity of Broken box").click()
         page.get_by_role("button", name="Change settings in Cloud workspaces").click()
         expect(page.locator("#compute-workspaces")).to_be_focused()
         page.get_by_role("button", name="Close").first.click() if page.locator(
