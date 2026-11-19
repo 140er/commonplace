@@ -17,7 +17,7 @@ from mempalace.sqlite_crypto import connect, row_factory
 from . import contracts, decision_blocks
 from .display import need_for, plan_waiting
 from .goals import GOALS_SCHEMA
-from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name
+from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name, source as priority_source
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
@@ -49,6 +49,7 @@ TASK_COLUMNS = {
     "reviewer": "TEXT",
     "ask_blocks": "TEXT",
     "priority": f"INTEGER NOT NULL DEFAULT {DEFAULT_RANK} CHECK (priority BETWEEN 0 AND {len(PRIORITIES) - 1})",
+    "priority_by": "TEXT NOT NULL DEFAULT '' CHECK (priority_by IN ('', 'person', 'coworker'))",
 }
 
 
@@ -276,12 +277,16 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
                 "pr_repo",
                 "task_type",
                 "priority",
+                "priority_by",
                 "ask_blocks",
                 "claim_session",
             )
         },
         "ask_blocks": decision_blocks.public(row),
         "priority": priority_name(row["priority"] if "priority" in columns else None),
+        "priority_source": priority_source(
+            row["priority_by"] if "priority_by" in columns else None
+        ),
         "labels": json.loads(row["labels"] or "[]"),
         "paths": _paths(row["paths"] if "paths" in columns else None),
         "links": len(BoardStore.links(conn, row["id"], principal)),
@@ -550,6 +555,11 @@ class BoardStore:
                 for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
+                if "priority_by" not in columns:
+                    # Only an owner could set a priority before: a non-default one is a person's.
+                    conn.execute(
+                        "UPDATE tasks SET priority_by='person' WHERE priority!=?", (DEFAULT_RANK,)
+                    )
                 if "restricted_origin" not in columns:
                     # NULL leaves legacy agent backlog pending a policy lookup.
                     conn.execute(

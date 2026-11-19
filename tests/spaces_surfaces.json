@@ -1735,7 +1735,7 @@
                 "type": "array"
               },
               "priority": {
-                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
                 "enum": [
                   "urgent",
                   "high",
@@ -2055,7 +2055,7 @@
           "name": "task_unsnooze"
         },
         {
-          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
+          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority and it always wins; the board's Coworker may rank cards no person ranked, with priority_reason (one line, kept in the card history). Other connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2130,13 +2130,17 @@
                 "type": "string"
               },
               "priority": {
-                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
                 "enum": [
                   "urgent",
                   "high",
                   "normal",
                   "low"
                 ],
+                "type": "string"
+              },
+              "priority_reason": {
+                "description": "One line (max 200 characters) saying why the Coworker set this priority; required for the Coworker, refused for a person.",
                 "type": "string"
               },
               "question": {
@@ -3290,7 +3294,7 @@
                 "type": "array"
               },
               "priority": {
-                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
                 "enum": [
                   "urgent",
                   "high",
@@ -3610,7 +3614,7 @@
           "name": "task_unsnooze"
         },
         {
-          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
+          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority and it always wins; the board's Coworker may rank cards no person ranked, with priority_reason (one line, kept in the card history). Other connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3685,13 +3689,17 @@
                 "type": "string"
               },
               "priority": {
-                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
                 "enum": [
                   "urgent",
                   "high",
                   "normal",
                   "low"
                 ],
+                "type": "string"
+              },
+              "priority_reason": {
+                "description": "One line (max 200 characters) saying why the Coworker set this priority; required for the Coworker, refused for a person.",
                 "type": "string"
               },
               "question": {
@@ -5587,7 +5595,7 @@
                 "type": "array"
               },
               "priority": {
-                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
                 "enum": [
                   "urgent",
                   "high",
@@ -5907,7 +5915,7 @@
           "name": "task_unsnooze"
         },
         {
-          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
+          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority and it always wins; the board's Coworker may rank cards no person ranked, with priority_reason (one line, kept in the card history). Other connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -5982,13 +5990,17 @@
                 "type": "string"
               },
               "priority": {
-                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
                 "enum": [
                   "urgent",
                   "high",
                   "normal",
                   "low"
                 ],
+                "type": "string"
+              },
+              "priority_reason": {
+                "description": "One line (max 200 characters) saying why the Coworker set this priority; required for the Coworker, refused for a person.",
                 "type": "string"
               },
               "question": {

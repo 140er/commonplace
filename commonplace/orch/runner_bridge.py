@@ -146,6 +146,7 @@ class TriggerRef:
     actor: str | None = None
     retry: int = 0  # split reconciliation attempt (``orch_misses`` rows with a negative event)
     redo: int = 0  # transient-refusal retry number of the event (``start_retry``)
+    advance: int | None = None  # cursor value after this start; default the event itself
 
 
 @dataclass
@@ -803,11 +804,17 @@ def _fresh_reason(conn, plan, requested, now):
     return requested or "agent_full"
 
 
+def _advance_to(trigger) -> int:
+    """Where this start leaves the cursor. A sweep that starts cards out of event order
+    (most urgent first) names the highest event whose predecessors are all handled."""
+    return trigger.event if trigger.advance is None else trigger.advance
+
+
 def _advance(conn, plan, trigger) -> None:
     # Same transaction as the job or miss; the in-lock re-check made the pair current.
     conn.execute(
         "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
-        (trigger.event, plan.board, trigger.gen, trigger.cursor),
+        (_advance_to(trigger), plan.board, trigger.gen, trigger.cursor),
     )
 
 
@@ -845,7 +852,7 @@ def trigger_miss(store, board: str, card: int, trigger: TriggerRef, code: str, *
         elif not trigger.retry:
             conn.execute(
                 "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
-                (trigger.event, board, trigger.gen, trigger.cursor),
+                (_advance_to(trigger), board, trigger.gen, trigger.cursor),
             )
     return True
 
