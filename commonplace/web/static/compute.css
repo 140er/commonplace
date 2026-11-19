@@ -167,10 +167,17 @@
 :root[data-ui="deck"] .compute-ov { --ov-warn: var(--amber, #f59e0b); }
 .compute-ov [data-ov-top] > header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .compute-ov-meta { margin: 0; }
-.compute-ov-summary { font-size: 15px; font-weight: 600; margin: 0; }
+.compute-ov-fold > summary { font-size: 15px; font-weight: 600; cursor: pointer; padding: 6px 0; }
+.compute-ov-fold > :not(summary) { margin-top: 12px; }
+.compute-ov-fold > summary + * { margin-top: 4px; }
+.compute-ov [data-ov-slot] { display: grid; gap: 12px; }
+.compute-ov [data-ov-slot]:empty, .compute-ov [data-ov-stale][hidden] { display: none; }
+.compute-ov-next { font-size: 14px; margin: 4px 0; }
+.compute-ov-showing { margin: 0; }
+.compute-ov-eyebrow { margin: 0; font-size: 13px; color: var(--text-2); }
 .compute-ov-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .compute-ov-kinds { display: flex; gap: 8px; flex-wrap: wrap; }
-.compute-ov-kinds .btn[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+.compute-ov .compute-ov-kind[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--well)); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
 .compute-ov-select { display: flex; align-items: center; gap: 8px; }
 .compute-ov .compute-ov-status-filter { font-size: 13px; color: var(--text-2); }
 .compute-ov-group h3 { font-size: 14px; line-height: 20px; margin: 12px 0 0; font-weight: 600; }
@@ -203,7 +210,11 @@
   .compute-ov-select { width: 100%; }
   .compute-ov-select select { flex: 1; font-size: 16px; }
   .compute-ov-row .compute-actions .btn { flex: 1; }
-  .compute-ov [data-ov-top] > header .btn { flex: 1 0 auto; }
 }
-.compute-ov h2[tabindex="-1"]:focus, .compute-ov h3[tabindex="-1"]:focus { outline: none; }
-.compute-ov-panel header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+/* The status list is 16px wherever the pointer is coarse (a tablet is wider than the phone breakpoint). */
+@media (pointer: coarse) { .compute-ov-select select { font-size: 16px; } }
+.compute-ov [data-ov-top] > header .btn { flex: 0 0 auto; width: auto; }
+.compute-ov h2[tabindex="-1"]:focus-visible, .compute-ov h3[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.compute-ov-panel > header { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.compute-ov-panel-title { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.compute-ov-panel-title h3 { margin: 0; }

@@ -693,3 +693,67 @@ def test_a_stale_resource_report_is_called_stale_in_the_row_and_the_offline_limi
     blockers = by_name(read(api))["runner-stale-res"]["health"]["blockers"]
     text = [b["text"] for b in blockers if b["code"] == "offline"]
     assert text and "for over 2 hours" in text[0]
+
+
+# round 1 of the #615 review, UI vocabulary: the overview and the workspaces list describe one record one way
+
+
+def test_a_workspace_without_a_machine_is_saved_not_started_and_never_needs_attention(api):
+    ws = workspace(api, name="Machine-less", node_id=None)
+    result = read(api)
+    item = by_name(result)["Machine-less"]
+    assert (item["status"]["code"], item["status"]["label"], item["status"]["tone"]) == (
+        "not_started",
+        "Saved, not started",
+        "quiet",
+    )
+    assert item["health"]["state"] == "idle" and result["counts"]["attention"] == 0
+    # No machine exists at all: no instruction that cannot be followed.
+    assert item["status"]["detail"] == overview.NO_MACHINES_SENTENCE
+    assert [b["text"] for b in item["health"]["blockers"] if b["code"] == "no_machine"] == [
+        "No machine is set up yet; starting will need one, which is not available yet."
+    ]
+    assert "No machine chosen" not in json.dumps(result)
+    # A machine exists, none is chosen: the instruction is real now.
+    api.enrolled()
+    item = by_name(read(api))["Machine-less"]
+    assert item["status"]["detail"].endswith("Choose a machine for it with Change settings.")
+    assert any(
+        b["text"] == "Machine: not chosen yet. Choose one with Change settings."
+        for b in item["health"]["blockers"]
+    )
+    # A member is told who can choose, with no machine named.
+    status, shown = member(api)(path=BASE)
+    detail = shown["items"][0]["status"]["detail"]
+    assert detail.endswith("The workspace owner can choose a machine.") and ws["id"]
+
+
+def test_a_started_nothing_workspace_with_a_machine_uses_the_same_label(api):
+    _, node = api.enrolled()
+    workspace(api, name="With machine", node_id=node["id"])
+    status = by_name(read(api))["With machine"]["status"]
+    assert (status["code"], status["label"]) == ("not_started", "Saved, not started")
+    assert status["detail"] == overview.NOT_STARTED_NOTE
+
+
+def test_an_unreadable_image_is_an_attention_state_and_a_named_one(api):
+    ws = workspace(api, name="Odd image")
+    with api.env.store._journal() as conn:
+        conn.execute(
+            "UPDATE cloud_workspaces SET image_reference=? WHERE id=?",
+            ("::not an image::", ws["id"]),
+        )
+    result = read(api)
+    item = by_name(result)["Odd image"]
+    assert item["status"]["code"] == "image_unreadable" and item["health"]["state"] == "attention"
+    assert result["counts"]["attention"] == 1
+
+
+def test_the_overview_uses_the_words_of_the_workspaces_list():
+    from pathlib import Path
+
+    script = (
+        Path(overview.__file__).parents[1] / "web" / "static" / "compute-workspaces.js"
+    ).read_text()
+    for text in (overview.NOT_STARTED_NOTE, overview.NO_MACHINES_SENTENCE, overview.SAVED_LABEL):
+        assert text in script, text

@@ -45,7 +45,7 @@ FAILURE_TEXT = {
     "start_failed": "It did not start.",
 }
 REFUSAL_TEXT = {
-    "no_machine": "Choose a machine for it first (Change settings).",
+    "no_machine": "It needs a machine before it can start. Choose one with Change settings once a machine is set up.",
     "needs_credential": "This image is private and Commonplace can't store registry logins yet. Choose a public image first.",
     "request_pending": "A request is already waiting for this workspace. It has to be carried out or expire before another one can be made.",
     "already_running": "It is already running.",
@@ -75,6 +75,12 @@ RUNNER_ACTIONS = ("drain", "resume")
 # Coworker session leases do not read it. Every sentence about drain says this, from this one string.
 DRAIN_SCOPE = "No new card runs start here. Chat and Coworker sessions can still start here."
 NO_RESUME = "Resuming it is not available in this version."
+# The cloud workspace vocabulary of the workspaces list (compute-workspaces.js: NOT_STARTED_NOTE, NO_MACHINES_SENTENCE and
+# the "Saved, not started" label), so the overview and the list never describe one record in two ways. A test compares
+# these strings with the script.
+SAVED_LABEL = "Saved, not started"
+NOT_STARTED_NOTE = "Starting is not available yet, so this only keeps your settings."
+NO_MACHINES_SENTENCE = "No machine is set up yet, so this stays on Choose later. Starting will need one; that is not available yet."
 # The one next step per status, for a status a person has to act on or wait out. Pointers name the place.
 NEXT_STEP = {
     "offline": "Check that the machine is on and the runner program is running there. New card runs wait until it reports again.",
@@ -165,21 +171,42 @@ def effective_phase(row, life):
     return ("stopped", None) if row["applied_revision"] is not None else ("not_started", None)
 
 
-def workspace_status(row, life, now, *, manage, executor):
+def _saved_status(row, *, manage, executor, has_machines):
+    """A record nothing has started: one label and one quiet tone whether or not a machine is chosen (a missing
+    machine is not an attention state: the record can stay on Choose later)."""
+    note = (
+        NOT_STARTED_NOTE
+        if not executor
+        else "It has been saved in Commonplace and has not been started."
+    )
+    if row["node_id"] is not None:
+        return _status("not_started", "quiet", SAVED_LABEL, note)
+    if not manage:
+        detail = f"{note} The workspace owner can choose a machine."
+    elif has_machines is False:
+        detail = NO_MACHINES_SENTENCE
+    else:
+        detail = f"{note} Choose a machine for it with Change settings."
+    return _status("not_started", "quiet", SAVED_LABEL, detail)
+
+
+def workspace_status(row, life, now, *, manage, executor, has_machines=None):
     phase, reason = effective_phase(row, life)
     base, _ = workspaces.status_of(row)
     pending = life["request_action"]
     claimed = life["claimed_at"] is not None
     age = lifecycle.report_age(life, now)
-    if row["node_id"] is None:
+    if workspaces.public(row, manage=manage)["image_unreadable"]:
         return _status(
-            "no_machine",
+            "image_unreadable",
             "wait",
-            "No machine chosen",
-            "Choose a machine with Change settings before it can start."
+            "Image unreadable",
+            "The saved image address can't be read. Choose the image again with Change settings."
             if manage
-            else "The workspace owner has not chosen a machine for it yet.",
+            else "The saved image address can't be read. The workspace owner can choose the image again.",
         )
+    if row["node_id"] is None:
+        return _saved_status(row, manage=manage, executor=executor, has_machines=has_machines)
     if base == "needs_credential":
         return _status(
             "private_image",
@@ -254,12 +281,7 @@ def workspace_status(row, life, now, *, manage, executor):
             reason, "It failed for a reason this page does not recognise. Check the machine."
         )
         return _status("failed", "bad", "Failed", text)
-    return _status(
-        "not_started",
-        "quiet",
-        "Not started",
-        "It has been saved in Commonplace and has not been started.",
-    )
+    return _saved_status(row, manage=manage, executor=executor, has_machines=has_machines)
 
 
 def _trusted(phase, life, now):
@@ -279,16 +301,16 @@ def _machine_verified(row):
     return meta.get("state") == "verified"
 
 
-def _workspace_blockers(row, status, executor, manage):
+def _workspace_blockers(row, status, executor, manage, has_machines):
     blockers = []
     if row["node_id"] is None:
-        blockers.append(
-            {
-                "code": "no_machine",
-                "text": "No machine is chosen for it."
-                + (" Choose one with Change settings." if manage else ""),
-            }
-        )
+        if manage and has_machines is False:
+            text = "No machine is set up yet; starting will need one, which is not available yet."
+        else:
+            text = "Machine: not chosen yet." + (
+                " Choose one with Change settings." if manage else ""
+            )
+        blockers.append({"code": "no_machine", "text": text})
     if row["node_id"] is not None and not _machine_verified(row):
         blockers.append(
             {
@@ -313,14 +335,16 @@ def _workspace_blockers(row, status, executor, manage):
     return blockers
 
 
-def workspace_item(row, life, now, *, manage, executor):
+def workspace_item(row, life, now, *, manage, executor, has_machines=None):
     life = lifecycle.effective(life, now)  # an expired request is not a request
-    status = workspace_status(row, life, now, manage=manage, executor=executor)
+    status = workspace_status(
+        row, life, now, manage=manage, executor=executor, has_machines=has_machines
+    )
     public = workspaces.public(row, manage=manage)
     phase, _ = effective_phase(row, life)
     age = lifecycle.report_age(life, now)
-    attention = status["code"] in ("failed", "unknown")
-    blockers = _workspace_blockers(row, status, executor, manage)
+    attention = status["code"] in ("failed", "unknown", "image_unreadable")
+    blockers = _workspace_blockers(row, status, executor, manage, has_machines)
     health = {
         "state": "attention" if attention else "ok" if status["code"] == "running" else "idle",
         "blockers": blockers,
@@ -1080,7 +1104,16 @@ def read(store, principal, *, session_hash):
     items, truncated = [], {}
     for row in data["workspace_rows"]:
         life = data["lifecycles"].get(row["id"]) or lifecycle.default(now)
-        items.append(workspace_item(row, life, now, manage=manage, executor=executor))
+        items.append(
+            workspace_item(
+                row,
+                life,
+                now,
+                manage=manage,
+                executor=executor,
+                has_machines=data["node_total"] > 0 if manage else None,
+            )
+        )
     if data["workspace_total"] > len(data["workspace_rows"]):
         truncated["workspace"] = data["workspace_total"]
     if manage:
@@ -1229,7 +1262,14 @@ def detail(store, principal, kind, item_id, *, session_hash):
     if kind == "workspace":
         row = data["workspace_row"]
         life = data["lifecycles"].get(item_id) or lifecycle.default(now)
-        item = workspace_item(row, life, now, manage=manage, executor=executor)
+        item = workspace_item(
+            row,
+            life,
+            now,
+            manage=manage,
+            executor=executor,
+            has_machines=data["node_total"] > 0 if manage else None,
+        )
         item["activity"] = _activity_from_audit(data["audit"], now, manage=manage)
         item["facts"] = _workspace_facts(row, life, now, manage)
         return {"item": item, "can_manage": manage}
@@ -1351,7 +1391,9 @@ def preview(store, principal, kind, item_id, action, *, session_hash):
     if kind == "workspace":
         row = data["workspace_row"]
         life = data["lifecycles"].get(item_id) or lifecycle.default(now)
-        item = workspace_item(row, life, now, manage=True, executor=executor)
+        item = workspace_item(
+            row, life, now, manage=True, executor=executor, has_machines=data["node_total"] > 0
+        )
         refusal = lifecycle.decide(row, life, action, now)
         return _workspace_preview(item, row, life, action, refusal, executor)
     items, _ = _runner_items(store, now, only=item_id)

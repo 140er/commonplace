@@ -140,7 +140,12 @@ def test_withdraw_clears_the_request_and_is_audited(api):
 def test_actions_are_refused_without_a_machine_with_a_reason(api):
     ws = make(api, node_id=None)
     conflict(ask(api, ws, "start"), "no_machine")
-    assert item(api, ws)["status"]["code"] == "no_machine"
+    saved = item(api, ws)["status"]
+    assert (saved["code"], saved["label"], saved["tone"]) == (
+        "not_started",
+        "Saved, not started",
+        "quiet",
+    )
 
 
 @pytest.mark.parametrize("action", ["stop", "restart"])
