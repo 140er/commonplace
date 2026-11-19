@@ -60,3 +60,26 @@
 .compute-verification { font-size: 13px; color: var(--text-2); margin: 0; }
 .compute-credential-state { margin: 6px 0; font-size: 13px; color: var(--text-2); }
 .compute-credential-state[data-credential="unbound"], .compute-credential-state[data-credential="unknown"] { color: var(--wait); }
+/* Cloud workspaces (compute-workspaces.js): reuse the inventory/editor cards; only the new pieces are styled here. */
+.compute-ws-list { max-height: none; overflow: visible; }
+.compute-ws-status[data-tone="ok"] { color: var(--text); }
+.compute-ws-status[data-tone="wait"], .compute-ws-restart { color: var(--wait); }
+.compute-ws-status[data-tone="bad"] { color: var(--block); }
+.compute-ws-restart { margin: 6px 0; font-size: 13px; }
+.compute-ws-error { color: var(--block); }
+.compute-ws-error:empty { display: none; }
+.compute [aria-invalid="true"] { border-color: var(--block); }
+.compute-ws-preview { margin-top: 4px; padding: 12px; background: var(--well); border-radius: var(--r); }
+.compute-ws-preview p { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.compute-ws-review { margin: 12px 0; padding-left: 20px; display: grid; gap: 4px; }
+.compute-ws-editor { margin: 12px 0 0; }
+.compute-ws-detail { margin: 12px 0 0; }
+.compute-ws-detail dd { overflow-wrap: anywhere; }
+.compute-ws .compute-notice { margin-top: 12px; }
+@media (max-width: 599px) {
+  .compute-ws .compute-actions .btn { flex: 1 1 100%; }
+  :root[data-ui="deck"] .compute-ws .btn { min-height: 44px; }
+}
+.compute-ws .compute-check input[type="checkbox"] { align-self: start; width: 18px; height: 18px; min-height: 0; margin-top: 3px; }
+.compute-check-text { display: grid; gap: 4px; min-width: 0; }
+@media (max-width: 599px) { .compute-ws .compute-check { min-height: 44px; } }

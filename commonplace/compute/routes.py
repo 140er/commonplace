@@ -19,6 +19,9 @@ from commonplace.http_util import send_json
 from .control import StoreError, open_store
 from .fence import FenceDenied
 
+_WORKSPACE_OPTIONAL = frozenset(
+    "cpu_cores memory_mib storage_gib network node_id private_registry".split()
+)
 _CREATE_FIELDS = {
     "gateways": frozenset(
         "board name address port account host_key credential_id credential_version pin_confirmed".split()
@@ -30,6 +33,7 @@ _CREATE_FIELDS = {
         "gateway_id task_number agent_id cidrs interfaces methods expires_at limits".split()
     ),
     "executions": frozenset("node_id task_number operation arguments request_id".split()),
+    "workspaces": frozenset("name image_source image".split()),
     "scripts": frozenset("node_id task_number request_id source arguments output_paths".split()),
 }
 
@@ -71,6 +75,45 @@ def _body(h, maximum=8192):
         raise StoreError() from None
 
 
+def _workspaces(h, store, principal, parts, auth):
+    """Cloud workspace records: reads for any member, writes for owners (checked by the store)."""
+    from . import workspaces
+
+    if h.command == "GET":
+        if not parts:
+            return send_json(h, 200, store.list_workspaces(principal, **auth))
+        if parts == ["images"]:
+            return send_json(h, 200, workspaces.options())
+        if len(parts) == 1:
+            return send_json(h, 200, store.get_workspace(principal, parts[0], **auth))
+    elif h.command == "POST":
+        if not parts:
+            body = _fields(
+                _body(h),
+                _CREATE_FIELDS["workspaces"] | _WORKSPACE_OPTIONAL,
+                optional=_WORKSPACE_OPTIONAL,
+            )
+            return send_json(
+                h, 201, {"workspace": store.create_workspace(principal, **auth, **body)}
+            )
+        if len(parts) == 1:
+            # Conceal a foreign ID before looking at the body, as for the other actions.
+            store.get_workspace(principal, parts[0], **auth)
+            body = _fields(
+                _body(h),
+                workspaces._EDITABLE | {"expected_revision"},
+                optional=workspaces._EDITABLE,
+            )
+            item = store.update_workspace(principal, parts[0], **auth, **body)
+            return send_json(h, 200, {"workspace": item})
+        if len(parts) == 2 and parts[1] == "credential":
+            store.get_workspace(principal, parts[0], **auth)
+            body = _fields(_body(h), ("credential_id", "credential_version"))
+            item = store.bind_workspace_credential(principal, parts[0], **auth, **body)
+            return send_json(h, 200, {"workspace": item})
+    raise StoreError("not_found", 404)
+
+
 def handle(gateway, handler):
     """Serve only the frozen /api/compute management surface."""
     h = handler
@@ -82,8 +125,13 @@ def handle(gateway, handler):
             raise StoreError("sign_in", 401)
         session_hash = sessions._hash(cookie)
         store = open_store(gateway, principal.workspace_id)
+        path = urlsplit(h.path).path
+        # Cloud workspace records are readable by every current member; all else is owner-only.
+        member_read = h.command == "GET" and (
+            path == "/api/compute/workspaces" or path.startswith("/api/compute/workspaces/")
+        )
         with gateway.db._lock:
-            store._owner(principal, session_hash)
+            (store._member if member_read else store._owner)(principal, session_hash)
         write = h.command != "GET"
         if write:
             _write_boundary(gateway, h)
@@ -102,6 +150,8 @@ def handle(gateway, handler):
         if any(not part or "/" in part for part in parts):
             raise StoreError("not_found", 404)
         auth = {"session_hash": session_hash}
+        if parts and parts[0] == "workspaces":
+            return _workspaces(h, store, principal, parts[1:], auth)
         if h.command == "GET":
             if not parts:
                 return send_json(h, 200, store.inventory(principal, **auth))
@@ -186,7 +236,8 @@ def handle(gateway, handler):
     except StoreError as exc:
         if h.command != "GET":
             h.close_connection = True
-        return send_json(h, exc.status, {"error": exc.code})
+        detail = {"field": exc.field, "reason": exc.reason} if exc.field or exc.reason else {}
+        return send_json(h, exc.status, {"error": exc.code, **detail})
 
 
 def install(gateway):
