@@ -19,11 +19,15 @@ import unicodedata
 import uuid
 
 from .control import StoreError
-from .protocol import identifier, positive_integer
+from .protocol import ProtocolDenied, identifier, positive_integer
 
-# One cap for creation and for the list, so a record can never exist without being listed.
+# One cap for creation and for the list, so a record made through the app is always listed. Records that
+# already exist beyond it (older data, or written directly) are counted: the list shows the newest
+# MAX_LIST and the response carries ``total``, which the app turns into "Showing the newest N of M".
 MAX_WORKSPACES = 100
 MAX_LIST = MAX_WORKSPACES
+# Bumped with every migration step in ``schema``; ``PRAGMA user_version`` records the one already done.
+SCHEMA_VERSION = 2
 NAME_LIMIT = 60  # code points, counted after NFC normalisation (the browser counts the same way)
 
 # Ranges and defaults, served to the form so the browser never hard-codes a second copy.
@@ -34,6 +38,12 @@ LIMITS = {
 }
 NETWORKS = ("outbound", "none")
 DEFAULT_NETWORK = "outbound"
+# Starting points the form offers; each stays editable and sits inside LIMITS (a test pins that).
+PRESETS = (
+    {"id": "small", "label": "Small", "cpu_cores": 1, "memory_mib": 2048, "storage_gib": 10},
+    {"id": "standard", "label": "Standard", "cpu_cores": 2, "memory_mib": 4096, "storage_gib": 20},
+    {"id": "large", "label": "Large", "cpu_cores": 4, "memory_mib": 8192, "storage_gib": 50},
+)
 
 CURATED_IMAGES = (
     {
@@ -98,15 +108,30 @@ _LOCAL_SUFFIXES = (
     ".private",
     ".home.arpa",
 )
-_PRIVATE_FLAG = {True: 1, False: 0}
 # Registry logins need a custody purpose and pull-time use that arrive with the start/stop lifecycle, so no
 # record may claim to need one yet (docs/system/compute-workspaces.md, "Registry logins").
 REGISTRY_LOGINS = False
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
+# Characters that draw nothing (or only change how a neighbour is drawn) but are letters, marks or symbols
+# to Unicode, so the category check above cannot catch them: Hangul and braille fillers, Khmer inherent
+# vowels, the combining grapheme joiner and the variation selectors. Any space but U+0020 is refused too.
+_HIDDEN_NAME = re.compile(
+    "[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180d\ufe00-\ufe0f"
+    "\U000e0100-\U000e01ef]"
+)
 
 
-def _bad(field, reason, code="invalid_request"):
+def refuse(field, reason, code="invalid_request"):
+    """A refusal that names its reason and, when it is about one form field, the field."""
     return StoreError(code, 400 if code == "invalid_request" else 409, field=field, reason=reason)
+
+
+def _hidden(char):
+    return (
+        unicodedata.category(char) in _BAD_NAME_CATEGORIES
+        or _HIDDEN_NAME.match(char) is not None
+        or (char != " " and unicodedata.category(char) == "Zs")
+    )
 
 
 def _conflict(reason, field=None):
@@ -130,40 +155,40 @@ def parse_image(value, *, strict=True):
     off only when describing a record that was stored before those rules.
     """
     if type(value) is not str or not value:
-        raise _bad("image", "empty")
+        raise refuse("image", "empty")
     if len(value) > 255:
-        raise _bad("image", "too_long")
+        raise refuse("image", "too_long")
     if "://" in value:
-        raise _bad("image", "scheme")
+        raise refuse("image", "scheme")
     if not _SAFE.fullmatch(value) or value.startswith(("-", "/", ".")):
-        raise _bad("image", "characters")
+        raise refuse("image", "characters")
     name, at, digest = value.partition("@")
     if at and (not _DIGEST.fullmatch(digest) or "@" in digest):
-        raise _bad("image", "digest")
+        raise refuse("image", "digest")
     if "@" in name:
-        raise _bad("image", "characters")
+        raise refuse("image", "characters")
     tag = None
     last = name.rsplit("/", 1)[-1]
     if ":" in last:
         name, _, tag = name.rpartition(":")
         if not _TAG.fullmatch(tag):
-            raise _bad("image", "tag")
+            raise refuse("image", "tag")
     parts = name.split("/")
     registry = "docker.io"
     first = parts[0]
     if strict and len(parts) == 1 and "." in first:
         # "ghcr.io:443" would otherwise read as an image called ghcr.io with tag 443.
-        raise _bad("image", "registry_no_path")
+        raise refuse("image", "registry_no_path")
     if len(parts) > 1 and ("." in first or ":" in first or first == "localhost"):
         match = _HOST.fullmatch(first)
         if match is None or (match.group(1) is not None and not 1 <= int(match.group(1)) <= 65535):
-            raise _bad("image", "registry")
+            raise refuse("image", "registry")
         if strict and _private_host(first):
-            raise _bad("image", "registry_private")
+            raise refuse("image", "registry_private")
         registry = first
         parts = parts[1:]
     if not parts or any(not _COMPONENT.fullmatch(part) for part in parts):
-        raise _bad("image", "name")
+        raise refuse("image", "name")
     return {
         "reference": value,
         "registry": registry,
@@ -177,18 +202,16 @@ def parse_image(value, *, strict=True):
 def _name(value):
     """The stored name: NFC, 1 to NAME_LIMIT code points, visible, with a letter or digit."""
     if type(value) is not str:
-        raise _bad("name", "length")
+        raise refuse("name", "length")
     value = unicodedata.normalize("NFC", value)
     if not value.strip() or len(value) > NAME_LIMIT:
-        raise _bad("name", "length")
-    # Control, format (zero-width and bidi controls), surrogate, private, unassigned and
-    # line/paragraph separators can hide or reorder text; none belongs in a name.
-    if value != value.strip() or any(
-        unicodedata.category(c) in _BAD_NAME_CATEGORIES for c in value
-    ):
-        raise _bad("name", "characters")
+        raise refuse("name", "length")
+    # Control, format (zero-width and bidi controls), surrogate, private, unassigned, separators and the
+    # fillers and selectors above can hide or reorder text; none belongs in a name.
+    if value != value.strip() or any(_hidden(c) for c in value):
+        raise refuse("name", "characters")
     if not any(unicodedata.category(c)[0] in "LN" for c in value):
-        raise _bad("name", "no_letter")
+        raise refuse("name", "no_letter")
     return value
 
 
@@ -198,7 +221,13 @@ def name_key(name):
 
 
 def schema(conn):
-    """Columns added after slice 1 shipped; the backfill keeps stored names unique by key."""
+    """Columns and tables added after slice 1 shipped; the backfill keeps stored names unique by key.
+
+    Runs once per database: ``PRAGMA user_version`` records the step already done, so an ordinary
+    Compute transaction pays for one read instead of a table scan.
+    """
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
+        return
     columns = {row[1] for row in conn.execute("PRAGMA table_info(cloud_workspaces)")}
     if "name_key" not in columns:
         conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN name_key TEXT")
@@ -206,6 +235,11 @@ def schema(conn):
         conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN request_id TEXT")
     if "request_hash" not in columns:
         conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN request_hash TEXT")
+    if "version" not in columns:
+        # ``version`` counts every accepted edit (a rename too) and is what ``expected_revision`` is checked
+        # against; ``revision`` still counts only the edits that need a restart.
+        conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+        conn.execute("UPDATE cloud_workspaces SET version=revision")
     pending = conn.execute("SELECT id,name FROM cloud_workspaces WHERE name_key IS NULL").fetchall()
     if pending:
         taken = {row[0] for row in conn.execute("SELECT name_key FROM cloud_workspaces") if row[0]}
@@ -222,59 +256,87 @@ def schema(conn):
         "CREATE UNIQUE INDEX IF NOT EXISTS cloud_workspaces_request ON cloud_workspaces(request_id) "
         "WHERE request_id IS NOT NULL"
     )
+    # A discarded record keeps its request id here for good, so replaying the create that made it can
+    # never bring the record back.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cloud_workspace_tombstones ("
+        "request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, discarded_at REAL NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS cloud_workspace_tombstones_no_delete "
+        "BEFORE DELETE ON cloud_workspace_tombstones BEGIN "
+        "SELECT RAISE(ABORT,'workspace tombstones cannot be deleted'); END"
+    )
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS cloud_workspace_tombstones_no_update "
+        "BEFORE UPDATE ON cloud_workspace_tombstones BEGIN "
+        "SELECT RAISE(ABORT,'workspace tombstones cannot be changed'); END"
+    )
+    conn.execute("PRAGMA user_version=2")  # SCHEMA_VERSION; a test pins that they agree
 
 
 def _cpu(value):
     spec = LIMITS["cpu_cores"]
     if type(value) not in (int, float):
-        raise _bad("cpu_cores", "not_a_number")
-    if not math.isfinite(value) or not spec["min"] <= value <= spec["max"]:
-        raise _bad("cpu_cores", "range")
+        raise refuse("cpu_cores", "not_a_number")
+    # Range first: math.isfinite(10**400) raises OverflowError, and a huge integer is simply out of range.
+    if (type(value) is float and not math.isfinite(value)) or not (
+        spec["min"] <= value <= spec["max"]
+    ):
+        raise refuse("cpu_cores", "range")
     if (value * 2) % 1:
-        raise _bad("cpu_cores", "step")
+        raise refuse("cpu_cores", "step")
     return int(round(value * 1000))
 
 
 def _whole(field, value):
     spec = LIMITS[field]
     if type(value) is not int:
-        raise _bad(field, "not_a_number")
+        raise refuse(field, "not_a_number")
     if not spec["min"] <= value <= spec["max"]:
-        raise _bad(field, "range")
+        raise refuse(field, "range")
     if value % spec["step"]:
-        raise _bad(field, "step")
+        raise refuse(field, "step")
     return value
 
 
 def _image(source, reference):
     if source not in ("curated", "custom"):
-        raise _bad("image_source", "choice")
+        raise refuse("image_source", "choice")
     parsed = parse_image(reference)
     if source == "curated" and reference not in _CURATED_BY_REFERENCE:
-        raise _bad("image", "not_curated")
+        raise refuse("image", "not_curated")
     return parsed
 
 
 def _flag(value):
     if type(value) is not bool:
-        raise _bad("private_registry", "choice")
+        raise refuse("private_registry", "choice")
     if value and not REGISTRY_LOGINS:
-        raise _bad("private_registry", "unavailable")
-    return _PRIVATE_FLAG[value]
+        raise refuse("private_registry", "unavailable")
+    return int(value)
 
 
 def _revision(value):
     try:
         return positive_integer(value)
     except Exception:
-        raise _bad("expected_revision", "invalid") from None
+        raise refuse("expected_revision", "invalid") from None
 
 
 def _row(conn, workspace_id):
-    identifier(workspace_id)
-    row = conn.execute("SELECT * FROM cloud_workspaces WHERE id=?", (workspace_id,)).fetchone()
+    """One record with its machine's metadata (one JOIN, no per-row lookup)."""
+    try:
+        identifier(workspace_id)
+    except ProtocolDenied:
+        raise refuse(None, "identifier") from None
+    row = conn.execute(
+        "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
+        "LEFT JOIN nodes n ON n.id=w.node_id WHERE w.id=?",
+        (workspace_id,),
+    ).fetchone()
     if row is None:
-        raise StoreError("not_found", 404)
+        raise StoreError("not_found", 404, reason="record")
     return row
 
 
@@ -284,22 +346,28 @@ def _machine(conn, node_id):
     try:
         identifier(node_id)
     except Exception:
-        raise _bad("node_id", "choice") from None
+        raise refuse("node_id", "choice") from None
     row = conn.execute("SELECT id,metadata FROM nodes WHERE id=?", (node_id,)).fetchone()
     if row is None:
         raise StoreError("not_found", 404, field="node_id", reason="unknown_machine")
     return row
 
 
-def _machine_name(conn, node_id):
-    row = (
-        conn.execute("SELECT metadata FROM nodes WHERE id=?", (node_id,)).fetchone()
-        if node_id
-        else None
-    )
-    if row is None:
-        return None
-    return json.loads(row["metadata"]).get("name")
+def _machine_name(row):
+    return json.loads(row["node_metadata"]).get("name") if row["node_metadata"] else None
+
+
+def has_started(row):
+    """The one meaning of "started": the machine applied a revision, or a start was tried and recorded.
+
+    A start that failed before anything was applied still counts: it may have left a container or a
+    volume behind, so the machine stays locked, the record cannot be discarded and History says so.
+    """
+    return row["applied_revision"] is not None or row["state"] != "pending"
+
+
+def _restart_needed(row):
+    return row["applied_revision"] is not None and row["applied_revision"] < row["revision"]
 
 
 def status_of(row):
@@ -315,19 +383,19 @@ def status_of(row):
         return "needs_credential", None
     if row["state"] == "failed":
         return "failed", row["state_reason"] if row["state_reason"] in FAILURE_REASONS else None
-    if row["applied_revision"] is not None and row["applied_revision"] < row["revision"]:
+    if _restart_needed(row):
         return "restart_needed", None
     if row["state"] == "ready":
         return "ready", None
     return "pending", None
 
 
-def public(conn, row, *, manage):
+def public(row, *, manage):
     """Explicit projection. A member sees neither a machine name nor an id, and nobody gets a
     registry login reference back (none can be stored yet)."""
     parsed = parse_image(row["image_reference"], strict=False)
     status, reason = status_of(row)
-    started = row["applied_revision"] is not None
+    started = has_started(row)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -347,15 +415,16 @@ def public(conn, row, *, manage):
         "storage_gib": row["storage_gib"],
         "network": row["network"],
         "node_id": row["node_id"] if manage else None,
-        "machine_name": _machine_name(conn, row["node_id"]) if manage else None,
+        "machine_name": _machine_name(row) if manage else None,
         "machine_assigned": row["node_id"] is not None,
         "status": status,
         "status_reason": reason,
         "started": started,
+        "version": row["version"],
         "revision": row["revision"],
         "applied_revision": row["applied_revision"],
-        "restart_needed": started and row["applied_revision"] < row["revision"],
-        "discardable": manage and not started and row["state"] == "pending",
+        "restart_needed": _restart_needed(row),
+        "discardable": manage and not started,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -366,6 +435,7 @@ def options():
     return {
         "images": [dict(item) for item in CURATED_IMAGES],
         "limits": {key: dict(value) for key, value in LIMITS.items()},
+        "presets": [dict(item) for item in PRESETS],
         "networks": list(NETWORKS),
         "default_network": DEFAULT_NETWORK,
         "name_limit": NAME_LIMIT,
@@ -378,11 +448,12 @@ def list_workspaces(store, principal, *, session_hash):
     with store._transaction(principal, session_hash, member=True) as (conn, current):
         manage = current.role == "owner"
         rows = conn.execute(
-            "SELECT * FROM cloud_workspaces ORDER BY created_at DESC,id DESC LIMIT ?",
+            "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
+            "LEFT JOIN nodes n ON n.id=w.node_id ORDER BY w.created_at DESC,w.id DESC LIMIT ?",
             (MAX_LIST,),
         ).fetchall()
         return {
-            "workspaces": [public(conn, row, manage=manage) for row in rows],
+            "workspaces": [public(row, manage=manage) for row in rows],
             "total": conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[0],
             "can_manage": manage,
         }
@@ -392,7 +463,7 @@ def get_workspace(store, principal, workspace_id, *, session_hash):
     with store._transaction(principal, session_hash, member=True) as (conn, current):
         row = _row(conn, workspace_id)
         return {
-            "workspace": public(conn, row, manage=current.role == "owner"),
+            "workspace": public(row, manage=current.role == "owner"),
             "can_manage": current.role == "owner",
         }
 
@@ -431,26 +502,33 @@ def create_workspace(
         memory = _whole("memory_mib", memory_mib)
         storage = _whole("storage_gib", storage_gib)
         if network not in NETWORKS:
-            raise _bad("network", "choice")
+            raise refuse("network", "choice")
         private = _flag(private_registry)
         _machine(conn, node_id)
         if request_id is not None and (
             type(request_id) is not str or not _REQUEST_ID.fullmatch(request_id)
         ):
-            raise _bad("request_id", "invalid")
+            raise refuse("request_id", "invalid")
         digest = hashlib.sha256(
             json.dumps(
                 [name, image_source, image, millicores, memory, storage, network, node_id, private]
             ).encode()
         ).hexdigest()
         if request_id is not None:
+            if conn.execute(
+                "SELECT 1 FROM cloud_workspace_tombstones WHERE request_id=?", (request_id,)
+            ).fetchone():
+                # The record this id made was discarded on purpose: a replay must not bring it back.
+                raise _conflict("request_discarded", "request_id")
             prior = conn.execute(
-                "SELECT * FROM cloud_workspaces WHERE request_id=?", (request_id,)
+                "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
+                "LEFT JOIN nodes n ON n.id=w.node_id WHERE w.request_id=?",
+                (request_id,),
             ).fetchone()
             if prior is not None:
                 if prior["request_hash"] != digest:
                     raise _conflict("request_reused", "request_id")
-                return public(conn, prior, manage=True), False
+                return public(prior, manage=True), False
         key = name_key(name)
         _taken(conn, key)
         if conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[0] >= MAX_WORKSPACES:
@@ -461,8 +539,8 @@ def create_workspace(
             "INSERT INTO cloud_workspaces (id,name,name_key,request_id,request_hash,node_id,"
             "image_source,image_reference,private_registry,registry_credential_id,"
             "registry_credential_version,cpu_millicores,memory_mib,storage_gib,network,state,"
-            "state_reason,revision,applied_revision,created_by,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,'pending',NULL,1,NULL,?,?,?)",
+            "state_reason,revision,version,applied_revision,created_by,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,'pending',NULL,1,1,NULL,?,?,?)",
             (
                 workspace_id,
                 name,
@@ -483,10 +561,10 @@ def create_workspace(
             ),
         )
         store._audit(conn, current, workspace_id, "workspace.created")
-        return public(conn, _row(conn, workspace_id), manage=True), True
+        return public(_row(conn, workspace_id), manage=True), True
 
 
-_EDITABLE = frozenset(
+EDITABLE_FIELDS = frozenset(
     "name image_source image cpu_cores memory_mib storage_gib network node_id private_registry".split()
 )
 
@@ -495,11 +573,12 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
     with store._transaction(principal, session_hash) as (conn, current):
         row = _row(conn, workspace_id)
         _revision(expected_revision)
-        if set(changes) - _EDITABLE:
-            raise _bad(None, "unknown_field")
+        if set(changes) - EDITABLE_FIELDS:
+            raise refuse(None, "unknown_field")
         if not changes:
-            raise _bad(None, "no_changes")
-        if expected_revision != row["revision"]:
+            raise refuse(None, "no_changes")
+        # ``expected_revision`` is the record's ``version``: every accepted edit moved it, a rename included.
+        if expected_revision != row["version"]:
             raise _conflict("stale_revision")
         values = dict(row)
         if "name" in changes:
@@ -519,7 +598,7 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
             values["storage_gib"] = _whole("storage_gib", changes["storage_gib"])
         if "network" in changes:
             if changes["network"] not in NETWORKS:
-                raise _bad("network", "choice")
+                raise refuse("network", "choice")
             values["network"] = changes["network"]
         if "private_registry" in changes:
             # A record that already says it needs a login may keep saying so; none can start saying it.
@@ -529,7 +608,7 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
                 values["private_registry"] = _flag(changes["private_registry"])
         if "node_id" in changes:
             _machine(conn, changes["node_id"])
-            if row["applied_revision"] is not None and changes["node_id"] != row["node_id"]:
+            if has_started(row) and changes["node_id"] != row["node_id"]:
                 raise _conflict("machine_locked", "node_id")
             values["node_id"] = changes["node_id"]
         # A registry login belongs to one registry; changing the image or the private flag drops it.
@@ -550,13 +629,13 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
         )
         stored = ("name",) + runtime + ("registry_credential_version",)
         if all(values[key] == row[key] for key in stored):
-            return public(conn, row, manage=True)
+            return public(row, manage=True)
         revision = row["revision"] + (any(values[key] != row[key] for key in runtime))
         conn.execute(
             "UPDATE cloud_workspaces SET name=?,name_key=?,node_id=?,image_source=?,"
             "image_reference=?,private_registry=?,registry_credential_id=?,"
             "registry_credential_version=?,cpu_millicores=?,memory_mib=?,storage_gib=?,network=?,"
-            "revision=?,updated_at=? WHERE id=?",
+            "revision=?,version=?,updated_at=? WHERE id=?",
             (
                 values["name"],
                 values["name_key"] or name_key(values["name"]),
@@ -571,12 +650,13 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
                 values["storage_gib"],
                 values["network"],
                 revision,
+                row["version"] + 1,
                 store._now(),
                 workspace_id,
             ),
         )
         store._audit(conn, current, workspace_id, "workspace.updated")
-        return public(conn, _row(conn, workspace_id), manage=True)
+        return public(_row(conn, workspace_id), manage=True)
 
 
 def bind_registry_credential(store, principal, workspace_id, *, session_hash):
@@ -589,15 +669,22 @@ def bind_registry_credential(store, principal, workspace_id, *, session_hash):
 
 
 def discard_workspace(store, principal, workspace_id, *, session_hash, expected_revision):
-    """Delete a record that never started. A started workspace owns a container and a volume,
-    so removing it waits for the lifecycle card, which confirms and cleans those up."""
+    """Delete a record that never started (``has_started``: a failed start counts). A started workspace
+    owns a container and a volume, so removing it waits for the lifecycle card, which confirms and
+    cleans those up. The create request id outlives the record in a tombstone."""
     with store._transaction(principal, session_hash) as (conn, current):
         row = _row(conn, workspace_id)
         _revision(expected_revision)
-        if row["applied_revision"] is not None or row["state"] != "pending":
+        if has_started(row):
             raise _conflict("already_started")
-        if expected_revision != row["revision"]:
+        if expected_revision != row["version"]:
             raise _conflict("stale_revision")
+        if row["request_id"] is not None:
+            conn.execute(
+                "INSERT OR IGNORE INTO cloud_workspace_tombstones "
+                "(request_id,request_hash,discarded_at) VALUES (?,?,?)",
+                (row["request_id"], row["request_hash"] or "", store._now()),
+            )
         conn.execute("DELETE FROM cloud_workspaces WHERE id=?", (workspace_id,))
         store._audit(conn, current, workspace_id, "workspace.discarded")
         return {"id": workspace_id, "name": row["name"]}
