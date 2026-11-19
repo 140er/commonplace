@@ -1,14 +1,13 @@
 /* Existing Workbench palette and type. Two equal columns plus 16px = canvas;
    one column below 1000px. No independent shell or decorative status totals. */
-/* --control-line is the edge of a form control (input, select, secondary button). It is its own token so the global
-   --line-strong, which the rest of the app uses for dividers and rules, stays as it was in both looks. In Deck the
-   controls need 3:1 against their surface (WCAG 1.4.11). --ws-bar-h and --ws-tab-h are the two phone offsets: the
-   sticky action bar's height, and the height of the tab bar that sits under the page scroller (none in Deck, where
-   the scroller ends above the bar). */
+/* --control-line is the edge of a form control (input, select, secondary button). It is its own token (defined for
+   Deck in deck-capy.css; Classic falls back to --line-strong) so the global --line-strong, which the rest of the app
+   uses for dividers and rules, stays as it was in both looks. In Deck the controls need 3:1 against their surface
+   (WCAG 1.4.11). --ws-bar-h and --ws-tab-h are the two phone offsets: the sticky action bar's height, and the height
+   of the tab bar that sits under the page scroller (none in Deck, where the scroller ends above the bar). */
 :root { --ws-bar-h: 68px; --ws-tab-h: calc(57px + max(14px, env(safe-area-inset-bottom))); }
 :root[data-ui="deck"] { --ws-tab-h: 0px; }
-.compute { --control-line: var(--line-strong); color: var(--text); display: grid; gap: 16px; min-width: 0; }
-:root[data-ui="deck"] .compute { --control-line: #6B6B73; }
+.compute { color: var(--text); display: grid; gap: 16px; min-width: 0; }
 .compute h2 { font-size: 16px; line-height: 24px; letter-spacing: 0; font-weight: 600; }
 .compute p { line-height: 1.5; overflow-wrap: anywhere; }
 .compute-intro, .compute-inventory > header, .compute-editor > header, .compute-row > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
@@ -36,7 +35,7 @@
 .compute-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .compute label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
 .compute label small { line-height: 1.5; }
-.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--control-line); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
+.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--control-line, var(--line-strong)); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
 .compute ::placeholder { color: var(--text-2); opacity: 1; }
 .compute input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0; flex: none; accent-color: var(--accent); }
 .compute .compute-check { flex-direction: row; align-items: start; gap: 10px; }
@@ -44,13 +43,13 @@
 .compute-snapshot { padding: 12px; background: var(--pane); }
 .compute-capabilities > div { display: flex; align-items: baseline; gap: 12px; margin-top: 12px; }
 .compute-capabilities p { font-size: 13px; color: var(--text-2); flex: 1; }
-.compute button:disabled { cursor: default; }
+.compute button:disabled, .compute [aria-disabled="true"] { opacity: .55; cursor: default; }
+.compute [aria-disabled="true"] { cursor: progress; }
 .compute :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 999px) { .compute-inventories { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 699px) {
   .compute-fields { grid-template-columns: minmax(0, 1fr); }
   .compute-inventory, .compute-editor, .compute-capabilities { padding: 12px; }
-  .compute .btn, .compute summary, .compute input, .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
   .compute-capabilities > div { align-items: start; flex-direction: column; gap: 6px; }
 }
 .compute-advanced { min-width: 0; }
@@ -79,7 +78,8 @@
 .compute-ws-status[data-tone="wait"] { color: var(--ws-warn); font-weight: 600; }
 .compute-ws-status[data-tone="bad"] { color: var(--block); font-weight: 600; }
 .compute-ws-statusline { margin: 12px 0 0; font-size: 14px; }
-.compute-ws h2[tabindex="-1"]:focus, .compute-ws h3[tabindex="-1"]:focus, .compute-ws-notice:focus { outline: none; }
+/* Programmatic focus (after opening a panel, saving, a failed submit) draws the same ring as keyboard focus. */
+.compute-ws :is(h2, h3, h4, [data-ws-summary])[tabindex="-1"]:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 .compute-field { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .compute .compute-field > label, .compute .compute-label { display: block; font-size: 13px; font-weight: 600; }
 .compute-req { color: var(--block); }
@@ -92,8 +92,8 @@
 .compute-ws-summary { margin: 12px 0 0; padding: 12px; border: 1px solid var(--block); border-radius: var(--r); background: var(--block-bg, transparent); color: var(--text); }
 .compute-ws-summary:empty { display: none; }
 .compute-ws-summary p { margin: 0 0 4px; font-weight: 600; color: var(--block); }
-.compute-ws-summary ul { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-.compute-ws-summary a { color: var(--block); text-decoration: underline; text-underline-offset: 3px; }
+.compute-ws-summary ul { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 0; }
+.compute-ws-summary li a { display: block; padding: 5px 0; color: var(--block); text-decoration: underline; text-underline-offset: 3px; }
 .compute-ws-summary .compute-actions { margin-top: 8px; }
 .compute-ws-typed li { padding-left: 14px; position: relative; color: var(--text); }
 .compute-ws-notice { margin-top: 12px; color: var(--text); }
@@ -105,9 +105,9 @@
 .compute-ws-legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; padding: 0; }
 .compute-ws-help { margin-top: 4px; font-size: 13px; }
 .compute-ws-help summary { cursor: pointer; min-height: 28px; }
-.compute-ws-reapply { margin: 12px 0 0; padding: 12px; border: 1px solid var(--control-line); border-radius: var(--r); }
+.compute-ws-reapply { margin: 12px 0 0; padding: 12px; border: 1px solid var(--control-line, var(--line-strong)); border-radius: var(--r); }
 .compute-ws-reapply p { margin: 0 0 4px; font-weight: 600; }
-.compute-ws-row .compute-ws-discard { margin: 12px 0 0; background: var(--well); border-color: var(--control-line); }
+.compute-ws-row .compute-ws-discard { margin: 12px 0 0; background: var(--well); border-color: var(--control-line, var(--line-strong)); }
 .compute-ws-discard h4 { margin: 0 0 8px; font-size: 14px; line-height: 22px; font-weight: 600; }
 .compute-ws-reason { margin: 6px 0; font-size: 13px; color: var(--block); }
 .compute-preset-size { font-size: 12px; font-weight: 400; color: var(--text-2); }
@@ -121,17 +121,29 @@
 .compute-ws-editor { margin: 12px 0 0; }
 .compute-ws .compute-actions .compute-ws-apart { margin-inline-start: auto; }
 .compute-ws-leave-text { flex: 1 1 100%; margin: 0; }
-.compute .btn.danger.solid { background: var(--block); border-color: var(--block); color: var(--surface); font-weight: 600; }
-:root[data-ui="deck"] .compute .btn:not(.primary):not(.danger) { border: 1px solid var(--control-line); }
+/* Deck's danger button has a fill that is barely different from the card (1.07:1), so it gets an edge in the danger
+   colour; its label never wraps, so "Discard workspace" stays one line. */
+:root[data-ui="deck"] .compute .btn:not(.primary):not(.danger) { border: 1px solid var(--control-line, var(--line-strong)); }
+:root[data-ui="deck"] .compute .btn.danger { border: 1px solid var(--block); color: var(--block); }
+.compute-ws .btn.danger { white-space: nowrap; }
+.compute-ws-discard .compute-actions { flex-wrap: wrap; }
+.compute-ws-discard .compute-actions .btn { flex: 1 1 auto; justify-content: center; }
+/* Touch targets and text sizes follow the pointer, not only the width: a tablet (700px and up) held in the hand
+   gets the same 44px targets, 16px inputs and 14px text as a phone. */
+@media (pointer: coarse), (max-width: 699px) {
+  .compute .btn, .compute summary, .compute input, .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
+  .compute-ws input:not([type="checkbox"]), .compute-ws select { font-size: 16px; }
+  .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain, .compute .compute-ws .compute-field > label, .compute-ws .compute-preset-size { font-size: 14px; }
+  .compute-ws-summary li a { display: flex; align-items: center; min-height: 44px; }
+}
 /* Phone (Classic and Deck share the 699px breakpoint): the page scroller is the document in Classic and #content in
    Deck. The action bar is one 44px row (Review and Cancel side by side) that sticks to the bottom of that scroller,
    just above the tab bar in Classic and flush with the scroller's end in Deck. Controls scroll clear of the bar. */
 @media (max-width: 699px) {
-  .compute-ws input:not([type="checkbox"]), .compute-ws select { font-size: 16px; }
-  .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain { font-size: 14px; }
   .compute-ws .compute-ws-actions { position: sticky; bottom: var(--ws-tab-h); z-index: 2; flex-wrap: nowrap; align-items: center; min-height: var(--ws-bar-h); margin: 12px -12px 0; padding: 12px; background: var(--s1-solid, var(--surface)); border-top: 1px solid var(--line); }
   .compute-ws .compute-ws-actions .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
   .compute-ws .compute-ws-actions.compute-ws-leave { flex-wrap: wrap; }
+  .compute-ws-discard .compute-ws-actions { position: static; min-height: 0; margin: 12px 0 0; padding: 0; background: none; border: 0; box-shadow: none; flex-wrap: wrap; }
   .compute-ws .compute-preset { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; }
   /* Classic: the document scrolls, so #content must not be a scroll container of its own (a sticky bar would stick to
      it, and it never scrolls). Deck: #content is the scroller and keeps touch scrolling; its own bottom padding is
