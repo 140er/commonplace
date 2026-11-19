@@ -1,0 +1,1 @@
+- **Owns:** `tests/compute_ui.mjs` loads `compute-pairing.js` (and `wing-label.js`) like the other Compute sections, so the production controller resolves its imports, and its submit stub answers `closest` only for the Compute form selector, so the Add a machine section no longer takes a gateway form's submit. No assertion changed.
