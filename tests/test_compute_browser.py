@@ -56,7 +56,7 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(origin + "/app/?ui=deck#/compute/management")
                 heading = page.locator(".compute-title h1")
-                assert heading.inner_text() == "Compute"
+                assert heading.inner_text() == "Cloud workspaces"
                 page.wait_for_function(
                     """() => {
                         const heading = document.querySelector('.compute-title h1');

@@ -3,7 +3,11 @@ import { escape as e, elapsed } from './api.js';
 import { botPage } from './routes.js';
 import { artHTML } from './deck-art.js';
 
-export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
+export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['settings', 'Settings']];
+// A tab on a phone has room for about ten letters: the long name stays its accessible name, the visible text is short.
+const SHORT = { compute: 'Workspaces' };
+const tabLabel = (id, label) => SHORT[id] || label;
+const tabName = (id, label) => SHORT[id] ? ` aria-label="${label}"` : '';
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
 const rows = value => Array.isArray(value) ? value : [];
 const enc = encodeURIComponent;
@@ -80,7 +84,7 @@ export function shellTrees(options = {}) {
   }
   return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
     const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
+    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
       const title = worker.name || worker.title || conversation?.title || 'Coworker';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
@@ -116,7 +120,7 @@ export const renderShellMore = options => `<div class="deck-more" id="deck-more"
 export function renderShellTabs(options) {
   const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
   const more = !section && !['#/', '#/home'].includes(hash);
-  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}<button type="button" class="deck-tab-more" data-deck-shell-action="more" aria-haspopup="dialog" aria-expanded="${options.moreOpen === true}" aria-controls="deck-more"${current(more)}>${icon('more')}More</button>${mic ? micButton('deck-tab-mic') : ''}</nav>`;
+  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}${tabName(id, label)}>${icon(id)}${tabLabel(id, label)}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}<button type="button" class="deck-tab-more" data-deck-shell-action="more" aria-haspopup="dialog" aria-expanded="${options.moreOpen === true}" aria-controls="deck-more"${current(more)}>${icon('more')}More</button>${mic ? micButton('deck-tab-mic') : ''}</nav>`;
 }
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';

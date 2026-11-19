@@ -263,14 +263,14 @@ def test_compute_capy_screen(browser, size):
         assert page.locator(".deck-compute").get_attribute("data-compute-motion") == "reduced"
         page.locator('.dc-actions [data-compute-action="add-machine"]').click()
         assert page.evaluate("window.destination") == "#/admin"
-        show_management = """async () => { await ui.show('#/compute/management'); }"""
-        page.evaluate(show_management)
+        # The route card sits on the Map tab, beside the map it highlights on; showing it re-reads the map in place.
         page.locator("[data-compute-route]").wait_for()
         page.locator("[data-compute-route]").select_option("workspace.example")
         page.get_by_role("button", name="Show on map").click()
-        assert page.evaluate("window.destination") == "#/compute"
-        page.evaluate("async () => { await ui.show('#/compute'); }")
         page.wait_for_selector(".topo-link.on")
+        page.evaluate("async () => { await ui.show('#/compute/management'); }")
+        page.locator('.dw-tabs a[aria-current="page"]', has_text="Management").wait_for()
+        assert page.locator("[data-compute-route]").count() == 0
         assert not errors, errors
     finally:
         page.close()

@@ -95,7 +95,7 @@
 .compute-ws-summary ul { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 0; }
 .compute-ws-summary li a { display: block; padding: 5px 0; color: var(--block); text-decoration: underline; text-underline-offset: 3px; }
 .compute-ws-summary .compute-actions { margin-top: 8px; }
-.compute-ws-typed li { padding-left: 14px; position: relative; color: var(--text); }
+.compute-ws-typed li { color: var(--text); }
 .compute-ws-notice { margin-top: 12px; color: var(--text); }
 .compute-ws-notice:empty { display: block; margin: 0; min-height: 0; }
 .compute-presets { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -113,9 +113,8 @@
 .compute-preset-size { font-size: 12px; font-weight: 400; color: var(--text-2); }
 .compute-ws-preview { margin-top: 4px; padding: 12px; background: var(--well); border-radius: var(--r); }
 .compute-ws-preview p { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
-.compute-ws-review, .compute-ws-typed { margin: 12px 0; padding: 0; list-style: none; display: grid; gap: 4px; }
-.compute-ws-review li { position: relative; padding-left: 16px; }
-.compute-ws-review li::before, .compute-ws-typed li::before { content: "•"; position: absolute; left: 2px; }
+.compute-ws-review, .compute-ws-typed { margin: 12px 0; padding: 0 0 0 20px; list-style: disc; }
+.compute-ws-review li + li, .compute-ws-typed li + li { margin-top: 4px; }
 .compute-ws-detail { margin: 12px 0 0; }
 .compute-ws-detail dd { overflow-wrap: anywhere; }
 .compute-ws-editor { margin: 12px 0 0; }
@@ -142,7 +141,10 @@
 @media (max-width: 699px) {
   .compute-ws .compute-ws-actions { position: sticky; bottom: var(--ws-tab-h); z-index: 2; flex-wrap: nowrap; align-items: center; min-height: var(--ws-bar-h); margin: 12px -12px 0; padding: 12px; background: var(--s1-solid, var(--surface)); border-top: 1px solid var(--line); }
   .compute-ws .compute-ws-actions .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
-  .compute-ws .compute-ws-actions.compute-ws-leave { flex-wrap: wrap; }
+  /* The stale and leave rows carry long labels: they wrap onto further 44px rows (down to one button per row at 320px)
+     instead of clipping, and a label wraps rather than being cut. */
+  .compute-ws .compute-ws-actions.compute-ws-wrap { flex-wrap: wrap; row-gap: 8px; }
+  .compute-ws .compute-ws-actions.compute-ws-wrap .btn { flex: 1 1 140px; height: auto; min-height: 44px; padding-block: 8px; white-space: normal; text-align: center; line-height: 1.25; }
   .compute-ws-discard .compute-ws-actions { position: static; min-height: 0; margin: 12px 0 0; padding: 0; background: none; border: 0; box-shadow: none; flex-wrap: wrap; }
   .compute-ws .compute-preset { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; }
   /* Classic: the document scrolls, so #content must not be a scroll container of its own (a sticky bar would stick to
