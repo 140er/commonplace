@@ -44,6 +44,14 @@ def _fields(body, fields, *, optional=()):
     return body
 
 
+def _check_scope_body(body):
+    if "agent_id" in body and type(body["agent_id"]) is not str:
+        raise StoreError()
+    if body["task_number"] is None:
+        # A scope belongs to a task (the column is NOT NULL): null is a refused body, not a failed insert.
+        raise StoreError()
+
+
 def _pairs(values):
     result = {}
     for key, value in values:
@@ -186,17 +194,34 @@ def _with_reason(payload, workspace_route):
     return payload
 
 
+def _workspace_route(path):
+    """The overview shares the cloud workspace rules: members read it, every refusal carries a reason."""
+    return [unquote(item) for item in path.split("/") if item][:3] in (
+        ["api", "compute", "workspaces"],
+        ["api", "compute", "overview"],
+    )
+
+
 def handle(gateway, handler):
     """Serve only the frozen /api/compute management surface."""
+    try:
+        return _handle(gateway, handler)
+    except (TypeError, OverflowError):
+        # The control journal no longer hides these two. On the older routes a wrong-typed value in a body is
+        # still the fixed refusal; the cloud workspace and overview routes let a bug show as one.
+        if _workspace_route(urlsplit(handler.path).path):
+            raise
+        if handler.command != "GET":
+            handler.close_connection = True
+        return send_json(handler, 400, {"error": "invalid_request"})
+
+
+def _handle(gateway, handler):
     h = handler
     # Cloud workspace routes name a reason on every refusal (``_WORKSPACE_REASON`` fills the gaps).
     path = urlsplit(h.path).path
     parts = _tail_parts(path)
-    # The overview shares the cloud workspace rules: members read it, every refusal carries a reason.
-    workspace_route = [unquote(item) for item in path.split("/") if item][:3] in (
-        ["api", "compute", "workspaces"],
-        ["api", "compute", "overview"],
-    )
+    workspace_route = _workspace_route(path)
     try:
         principal, cookie = _person(gateway, h)
         # Reject ambiguous cookies in a single header too.
@@ -245,8 +270,8 @@ def handle(gateway, handler):
                     if kind in ("gateways", "nodes")
                     else (),
                 )
-                if kind == "scopes" and "agent_id" in body and type(body["agent_id"]) is not str:
-                    raise StoreError()
+                if kind == "scopes":
+                    _check_scope_body(body)
                 if kind == "executions":
                     execution, created = store.propose_execution(principal, **auth, **body)
                     return send_json(h, 201 if created else 200, {"execution": execution})

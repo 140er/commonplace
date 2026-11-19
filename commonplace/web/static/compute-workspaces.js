@@ -104,6 +104,9 @@ const TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const SAFE = /^[A-Za-z0-9._:/@-]+$/;
 const NUMERIC_LABEL = /^(?:0x[0-9a-f]+|[0-9]+)$/;
+const PORT_TAG = /^[0-9]{1,5}$/;
+// The last label of a dotted name that is plainly a website; "node.js" and "my.image" are repositories (as for the server).
+const REGISTRY_SUFFIXES = new Set("com io org net dev cloud co eu uk us de edu gov aws".split(" "));
 const LOCAL_SUFFIX = /\.(?:local|localhost|internal|lan|home|corp|intranet|private|home\.arpa|localdomain|svc|ts\.net|consul)$/;
 const LOCAL_LABEL = /^(?:localhost|localdomain)[0-9]*$/;
 const DOTTED_QUAD = /^(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}$/;
@@ -114,12 +117,20 @@ const quad = parts => parts.reduce((sum, part) => sum * 256 + part, 0) * 256 ** 
 // Any other numeric notation (0x7f.0.0.1, 8.8.8) could hide a private address and counts as private.
 function hostRefusal(host) {
   const name = host.split(":")[0];
-  if (!name.includes(".") || LOCAL_SUFFIX.test(name) || name.split(".").some(label => LOCAL_LABEL.test(label))) return "registry_private";
+  // The dot goes in front so the bare suffix ("home.arpa") is refused too.
+  if (!name.includes(".") || LOCAL_SUFFIX.test("." + name) || name.split(".").some(label => LOCAL_LABEL.test(label))) return "registry_private";
   if (!NUMERIC_LABEL.test(name.split(".").pop())) return "";
   const octets = name.split(".").map(Number);
   if (!DOTTED_QUAD.test(name) || octets.some(octet => octet > 255)) return "registry_private";
   const address = quad(octets);
   return NON_PUBLIC.some(([base, bits]) => Math.floor(address / 2 ** (32 - bits)) === Math.floor(quad([].concat(base)) / 2 ** (32 - bits))) ? "registry_private" : "registry_ip";
+}
+
+// A lone dotted component that is a website name with the image name left out ("ghcr.io:443", "ghcr.io"), not a repository.
+function looksLikeHost(name, tag) {
+  if (!name.includes(".") || !HOST.test(name)) return false;
+  if (tag !== null) return PORT_TAG.test(tag);
+  return REGISTRY_SUFFIXES.has(name.split(".").pop()) || hostRefusal(name) !== "";
 }
 
 /** Same grammar as the server: returns { reason } when refused, or the parts of a valid reference. */
@@ -131,14 +142,14 @@ export function parseImage(value) {
   const at = value.indexOf("@");
   let name = at < 0 ? value : value.slice(0, at);
   const digest = at < 0 ? null : value.slice(at + 1);
-  if (digest !== null && (digest.includes("/") || digest.includes("."))) return { reason: "user_info" };
+  if (digest !== null && (digest.includes("/") || digest.includes(".") || (digest !== "" && !digest.includes(":")))) return { reason: "user_info" };
   if (digest !== null && !DIGEST.test(digest)) return { reason: "digest" };
   if (name.includes("@")) return { reason: "characters" };
   let tag = null;
   const slash = name.lastIndexOf("/"), colon = name.lastIndexOf(":");
   if (colon > slash) { tag = name.slice(colon + 1); name = name.slice(0, colon); if (!TAG.test(tag)) return { reason: "tag" }; }
   let parts = name.split("/"), registry = "docker.io";
-  if (parts.length === 1 && parts[0].includes(".")) return { reason: "registry_no_path" };
+  if (parts.length === 1 && looksLikeHost(parts[0], tag)) return { reason: "registry_no_path" };
   if (parts.length > 1 && (/[.:]/.test(parts[0]) || parts[0] === "localhost")) {
     const match = HOST.exec(parts[0]);
     if (!match || (match[1] !== undefined && !(Number(match[1]) >= 1 && Number(match[1]) <= 65535))) return { reason: "registry" };
@@ -151,8 +162,8 @@ export function parseImage(value) {
 }
 
 // Names: NFC, counted in code points, nothing hidden or direction-changing (control and format characters,
-// Hangul and braille fillers, combining joiner and variation selectors, any space but U+0020), a letter or digit.
-const BAD_NAME = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]|[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180f\ufe00-\ufe0f\u{E0100}-\u{E01EF}]|(?! )\p{Zs}/u;
+// Hangul and braille fillers, combining joiner, variation selectors, the object replacement character, any space but U+0020), a letter or digit.
+const BAD_NAME = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]|[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180f\ufe00-\ufe0f\u{E0100}-\u{E01EF}\ufffc]|(?! )\p{Zs}/u;
 const nameOf = value => String(value ?? "").normalize("NFC");
 
 export const blankValues = (options, row = null) => row ? {

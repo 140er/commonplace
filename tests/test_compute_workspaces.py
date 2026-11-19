@@ -1251,3 +1251,33 @@ def test_the_control_journal_only_turns_protocol_denials_into_a_store_error(api)
     with pytest.raises(StoreError):
         with api.env.store._journal():
             raise ProtocolDenied("bad")
+
+
+def test_a_stored_image_reference_that_cannot_be_read_does_not_block_edits(api):
+    item = create(api, name="Old", image="ghcr.io/a/b:1")
+    url = f"{BASE}/{item['id']}"
+    with api.env.store._journal() as conn:
+        conn.execute(
+            "UPDATE cloud_workspaces SET image_reference='ftp://broken host' WHERE id=?",
+            (item["id"],),
+        )
+    # A rename, then a limit change: neither touches the image, so neither is refused because of it.
+    status, result = api.request("POST", url, {"expected_revision": 1, "name": "Renamed"})
+    assert status == 200, result
+    assert result["workspace"]["name"] == "Renamed" and result["workspace"]["image_unreadable"]
+    status, result = api.request("POST", url, {"expected_revision": 2, "memory_mib": 8192})
+    assert status == 200, result
+    assert result["workspace"]["memory_mib"] == 8192 and result["workspace"]["image_unreadable"]
+    # Choosing an image repairs the record; an invalid new one is still refused with its own reason.
+    status, result = api.request(
+        "POST", url, {"expected_revision": 3, "image_source": "custom", "image": "ftp://x"}
+    )
+    assert (status, result["field"], result["reason"]) == (400, "image", "scheme")
+    status, result = api.request(
+        "POST",
+        url,
+        {"expected_revision": 3, "image_source": "custom", "image": "ghcr.io/acme/tools:2"},
+    )
+    assert status == 200, result
+    assert result["workspace"]["image"] == "ghcr.io/acme/tools:2"
+    assert result["workspace"]["image_unreadable"] is False
