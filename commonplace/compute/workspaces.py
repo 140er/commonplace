@@ -401,8 +401,9 @@ def _revision(value):
 
 # The one query every read goes through: a record with its machine's metadata (a JOIN, never a lookup per row).
 _SELECT = (
-    "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
-    "LEFT JOIN nodes n ON n.id=w.node_id"
+    "SELECT w.*, n.metadata AS node_metadata, l.phase AS lifecycle_phase FROM cloud_workspaces w "
+    "LEFT JOIN nodes n ON n.id=w.node_id "
+    "LEFT JOIN cloud_workspace_lifecycle l ON l.workspace_id=w.id"
 )
 
 
@@ -447,7 +448,17 @@ def has_started(row):
     A start that failed before anything was applied still counts: it may have left a container or a
     volume behind, so the machine stays locked, the record cannot be discarded and History says so.
     """
-    return row["applied_revision"] is not None or row["state"] != "pending"
+    # A lifecycle phase other than ``not_started`` (a start under way, a stop, a stopped workspace) counts too.
+    # A row built without the lifecycle join simply has none.
+    try:
+        phase = row["lifecycle_phase"]
+    except (KeyError, IndexError):
+        phase = None
+    return (
+        row["applied_revision"] is not None
+        or row["state"] != "pending"
+        or phase not in (None, "not_started")
+    )
 
 
 def _restart_needed(row):
