@@ -879,10 +879,7 @@ def test_the_page_says_where_to_run_the_command_and_what_approval_grants(served,
         expect(approve).not_to_have_attribute("aria-disabled", "true")
         text = section.locator(".compute-pr-detail").inner_text()
         assert "Approving lets this machine use the access listed above." in text
-        assert (
-            "does not connect a provider" in text
-            and "attests it under Runner machines in Admin" in text
-        )
+        assert "does not connect a provider" in text and "an owner attests it" in text
         grants = page.evaluate(
             "() => document.querySelector('[data-pr-grants]').getBoundingClientRect().bottom"
             " <= document.querySelector('[data-pr-action=approve]').getBoundingClientRect().top"
@@ -1002,5 +999,132 @@ def test_a_check_that_finds_nothing_new_keeps_the_commands_focus_and_selection(s
             page.evaluate("document.activeElement && document.activeElement.id")
             == "compute-pr-command"
         )
+
+    _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_the_copy_fallback_keeps_its_selection_through_a_poll(served, ui):
+    """F: with no clipboard, Copy selects the command; a check that finds nothing new must not wipe that selection."""
+    fx = served
+
+    def body(page, label, context):
+        page.evaluate(
+            "Object.defineProperty(navigator, 'clipboard', {value: {writeText: () => Promise.reject(new Error('no'))}})"
+        )
+        page.get_by_role("button", name="Add a machine").click()
+        _fill_form(page)
+        page.get_by_role("button", name="Create the command").click()
+        page.get_by_role("button", name="Copy the command").click()
+        note = page.locator("[data-pr-copy-note]")
+        expect(note).to_have_text(
+            "Copying is not available here. Select the command above and copy it yourself."
+        )
+        page.evaluate(
+            "() => { window.__pre = document.querySelector('#compute-pr-command');"
+            " window.__note = document.querySelector('[data-pr-copy-note]'); }"
+        )
+        clock = page.locator("[data-pr-checked]")
+        # Three checks come back with nothing new (the clock line changes each time; nothing waits a fixed time).
+        for _ in range(3):
+            before = clock.inner_text()
+            expect(clock).not_to_have_text(before, timeout=20000)
+        command = page.locator("#compute-pr-command")
+        assert page.evaluate("document.querySelector('#compute-pr-command') === window.__pre"), (
+            "rebuilt"
+        )
+        assert (
+            page.evaluate("document.activeElement && document.activeElement.id")
+            == "compute-pr-command"
+        )
+        assert page.evaluate("getSelection().toString().trim()") == command.inner_text().strip()
+        assert page.evaluate("document.querySelector('[data-pr-copy-note]') === window.__note"), (
+            "the status region was not re-inserted"
+        )
+        expect(note).to_have_text(
+            "Copying is not available here. Select the command above and copy it yourself."
+        )
+        _shot(page, f"{label}-copy-fallback-selected")
+
+    _run(fx, ui, "desktop", body, clipboard=False)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_successful_copy_does_not_rebuild_the_status_region(served, ui):
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="Add a machine").click()
+        _fill_form(page)
+        page.get_by_role("button", name="Create the command").click()
+        page.get_by_role("button", name="Copy the command").click()
+        note = page.locator("[data-pr-copy-note]")
+        expect(note).to_have_text("Copied. Paste it on the machine.")
+        page.evaluate("() => { window.__note = document.querySelector('[data-pr-copy-note]'); }")
+        clock = page.locator("[data-pr-checked]")
+        before = clock.inner_text()
+        expect(clock).not_to_have_text(before, timeout=20000)
+        assert page.evaluate("document.querySelector('[data-pr-copy-note]') === window.__note")
+        expect(note).to_have_text("Copied. Paste it on the machine.")
+
+    _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_the_run_steps_have_numerals_and_the_command_is_a_named_region(served, ui):
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="Add a machine").click()
+        _fill_form(page)
+        page.get_by_role("button", name="Create the command").click()
+        expect(page.locator(".compute-pr-run")).to_be_visible()
+        style = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.compute-pr-run')).listStyleType"
+        )
+        assert style == "decimal", "the numbered lines show their numbers"
+        region = page.get_by_role("region", name="Run this on the machine")
+        expect(region).to_have_count(1)
+        expect(region).to_have_attribute("id", "compute-pr-command")
+        _shot(page, f"{label}-run-steps-numerals")
+
+    _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_the_form_fits_between_700_and_999_pixels(served, ui):
+    """R3-4: the long "What it may do without asking" label and its list are not clipped on a tablet width."""
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="Add a machine").click()
+        select = page.locator("#pr_mode")
+        expect(select).to_be_visible()
+        clipped = page.evaluate(
+            "() => { const s = document.querySelector('#pr_mode'); const l = document.querySelector('label[for=pr_mode]');"
+            " return s.getBoundingClientRect().width < 280 || l.scrollWidth > l.clientWidth + 1; }"
+        )
+        assert not clipped
+        _no_sideways_scroll(page)
+        _shot(page, f"{label}-form-tablet")
+
+    _run(fx, ui, "desktop", body, viewport=(820, 1000), touch=True)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_check_that_cannot_reach_the_server_is_said_once_and_cleared_when_it_recovers(served, ui):
+    fx = served
+    fx.add()
+
+    def body(page, label, context):
+        _open_pairing(page)
+        notice = page.locator("[data-pr-notice]")
+        page.route("**/api/compute/pairings/pair_*", lambda route: route.abort())
+        expect(notice).to_contain_text("Could not check just now", timeout=20000)
+        said = notice.inner_text()
+        expect(page.locator("[data-pr-checked]")).to_contain_text("Could not check just now")
+        page.unroute("**/api/compute/pairings/pair_*")
+        expect(notice).to_have_text("", timeout=20000)
+        assert said.startswith("Could not check just now")
 
     _run(fx, ui, "desktop", body)
