@@ -192,8 +192,8 @@ def workspace_status(row, life, now, *, manage, executor):
             detail = f"Nothing has reported on it, so Commonplace does not know whether it is {said.lower()}."
         else:
             detail = (
-                f"Last reported {said} {ago(age)} and nothing newer since. "
-                f"It may not be {said.lower()} any more."
+                f"Its last report said {said} and nothing newer has arrived, "
+                f"so it may not be {said.lower()} any more."
             )
         return _status("unknown", "quiet", "Unknown", detail)
     if phase == "running":
@@ -202,30 +202,20 @@ def workspace_status(row, life, now, *, manage, executor):
             "running",
             "ok",
             "Running",
-            f"Reported running {ago(age)}."
-            + (
-                " It runs with the settings from before your last change; restart it to apply them."
-                if stale_settings
-                else " It runs with the saved settings."
-            ),
+            "It runs with the settings from before your last change; restart it to apply them."
+            if stale_settings
+            else "It runs with the saved settings.",
         )
     if phase == "starting":
-        return _status(
-            "starting", "wait", "Starting", f"The machine is starting it (reported {ago(age)})."
-        )
+        return _status("starting", "wait", "Starting", "The machine is starting it.")
     if phase == "stopping":
-        return _status(
-            "stopping", "wait", "Stopping", f"The machine is stopping it (reported {ago(age)})."
-        )
+        return _status("stopping", "wait", "Stopping", "The machine is stopping it.")
     if phase == "stopped":
-        since = max(0, int(now - life["phase_at"])) if life["reported_at"] is not None else None
         return _status(
             "stopped",
             "quiet",
             "Stopped",
-            "It is stopped"
-            + (f" ({ago(since)})" if since is not None else "")
-            + ". Its saved files are kept."
+            "It is stopped and its saved files are kept."
             + (
                 " It starts again with the latest settings."
                 if workspaces._restart_needed(row)
@@ -290,7 +280,7 @@ def workspace_item(row, life, now, *, manage, executor):
     health = {
         "state": "attention" if attention else "ok" if status["code"] == "running" else "idle",
         "blockers": blockers,
-        "issues": [status["detail"]] if attention else [],
+        "issues": [],
     }
     item = {
         "kind": "workspace",
@@ -305,6 +295,7 @@ def workspace_item(row, life, now, *, manage, executor):
             "age_s": age,
             "source": "report",
             "label": f"Last reported {ago(age)}",
+            "when": ago(age),
         },
         "health": health,
         "usage": {
@@ -549,8 +540,7 @@ def _recent_runs(gateway, workspace_id, machine_id):
 
 def runner_status(machine, record, facts, now):
     """The one status of a runner machine: ``record`` is ``topology.status.machine_status``."""
-    age = record["age_s"]
-    seen = f" Last seen {ago(age)}." if age is not None else ""
+    # The age of the last signal is the health line's job (``last_seen``); a sentence here says what it means.
     running = facts["running"]
     drain = facts["drain"]
     note = " It is also set to drain: no new runs start on it." if drain["draining"] else ""
@@ -560,14 +550,14 @@ def runner_status(machine, record, facts, now):
             "revoked",
             "bad",
             "Revoked",
-            "The owner removed this runner and its access is cancelled." + seen,
+            "The owner removed this runner and its access is cancelled.",
         )
     if reason == "disabled":
         return _status(
             "disabled",
             "wait",
             "Disabled",
-            "The owner turned this runner off. It starts no runs." + seen,
+            "The owner turned this runner off. It starts no runs.",
         )
     if reason == "never_reported":
         return _status(
@@ -581,15 +571,15 @@ def runner_status(machine, record, facts, now):
             "offline",
             "bad",
             "Offline",
-            f"Not heard from for {span(age)}. Runs it already started may still be going; new runs wait "
-            f"until it is back.{note}",
+            "Nothing has been heard from it for a long time. Runs it already started may still be going; "
+            f"new runs wait until it is back.{note}",
         )
     if reason == "late_heartbeat":
         return _status(
             "slow",
             "wait",
             "Slow to report",
-            f"Later than usual.{seen} It may be busy or have a poor connection.{note}",
+            f"Later than usual. It may be busy or have a poor connection.{note}",
         )
     if drain["draining"]:
         if running:
@@ -597,23 +587,17 @@ def runner_status(machine, record, facts, now):
                 "draining",
                 "wait",
                 "Draining",
-                f"No new runs start here. {_runs(running)} in progress will finish.{seen}",
+                f"No new runs start here. {_runs(running)} in progress will finish.",
             )
         return _status(
             "drained",
             "wait",
             "Drained",
-            f"No new runs start here and none is in progress. Resume to use it again.{seen}",
+            "No new runs start here and none is in progress. Resume to use it again.",
         )
-    live = " That is its last contact with Commonplace, not a live check."
     if running:
-        return _status(
-            "busy",
-            "ok",
-            "Busy",
-            f"{running} of {machine['max_in_flight']} runs in progress.{seen}{live}",
-        )
-    return _status("online", "ok", "Online", f"Waiting for work.{seen}{live}")
+        return _status("busy", "ok", "Busy", "It has runs in progress.")
+    return _status("online", "ok", "Online", "Waiting for work.")
 
 
 def runner_blockers(machine, record, facts):
@@ -678,8 +662,9 @@ def _runner_usage(machine, facts, now):
             "queued": facts["queued"],
             "starts_last_hour": facts["starts_hour"],
             "max_starts_per_hour": machine["max_starts_per_hour"],
-            "text": f"{running} of {machine['max_in_flight']} runs in progress, {facts['queued']} waiting, "
-            f"{facts['starts_hour']} of {machine['max_starts_per_hour']} hourly starts used",
+            "text": f"{_runs(running)} in progress (up to {machine['max_in_flight']} at once), "
+            f"{facts['queued']} waiting, {facts['starts_hour']} of {machine['max_starts_per_hour']} "
+            "starts used this hour",
         }
     }
     resources = facts["resources"]
@@ -741,8 +726,26 @@ def _runner_usage(machine, facts, now):
             "runs": facts["runs"],
             "text": text,
         }
-    usage["summary"] = "; ".join(
-        [usage["runs"]["text"], usage["resources"]["text"], usage["spend"]["text"]]
+    # One short line for the list row; the detail view has the long texts above.
+    memory = usage["resources"].get("memory_available_mb")
+    resources = (
+        "Resources not reported"
+        if not usage["resources"]["known"]
+        else f"{_gib(memory)} memory free"
+        if memory is not None
+        else "CPU free reported"
+    )
+    spend = usage["spend"]
+    if not spend["runs"]:
+        spend_line = f"No runs in {SPEND_DAYS} days"
+    else:
+        spend_line = f"{SPEND_DAYS}-day spend " + (
+            " + ".join(t["text"] for t in totals) if totals else "unknown"
+        )
+        if spend["unknown_runs"]:
+            spend_line += f" (and {_runs(spend['unknown_runs'])} of unknown cost)"
+    usage["summary"] = (
+        f"{_runs(running)} in progress (up to {machine['max_in_flight']} at once) · {resources} · {spend_line}"
     )
     return usage
 
@@ -763,6 +766,7 @@ def runner_item(machine, record, facts, now):
             "age_s": record["age_s"],
             "source": record["last_signal_source"],
             "label": f"Last seen {ago(record['age_s'])}",
+            "when": ago(record["age_s"]),
         }
     attention = status["code"] in ("offline", "slow", "revoked", "disabled") or bool(issues)
     item = {
@@ -943,8 +947,15 @@ def read(store, principal, *, session_hash):
         items.extend(runners)
         if total > len(runners):
             truncated["runner"] = total
+    # By kind, then what needs a person first, then by name, so a problem is at the top of its group.
     order = {"runner": 0, "machine": 1, "workspace": 2}
-    items.sort(key=lambda item: order[item["kind"]])
+    items.sort(
+        key=lambda item: (
+            order[item["kind"]],
+            item["health"]["state"] != "attention",
+            item["name"].casefold(),
+        )
+    )
     return {
         "as_of": _dt(now).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "refresh_seconds": REFRESH_SECONDS,

@@ -162,7 +162,7 @@ def test_full_path_start_run_stop_restart_with_a_fake_executor(api):
     executor.run(claim, "running")
     running = item(api, ws)
     assert running["status"]["code"] == "running" and running["request"] is None
-    assert "Reported running" in running["status"]["detail"]
+    assert running["status"]["detail"] == "It runs with the saved settings."
     # The older record agrees: ready, with the applied revision.
     assert api.request(path=f"/workspaces/{ws['id']}")[1]["workspace"]["status"] == "ready"
     allowed = {a["action"]: a["allowed"] for a in running["actions"]}
@@ -244,7 +244,7 @@ def test_a_picked_up_request_cannot_be_withdrawn_while_the_machine_reports(api):
     api.env.clock.now += lifecycle.REPORT_STALE_S + 5
     unknown = item(api, ws)
     assert unknown["status"]["code"] == "unknown"
-    assert "nothing newer" in unknown["status"]["detail"]
+    assert "nothing newer has arrived" in unknown["status"]["detail"]
     status, result = ask(api, ws, "withdraw")
     assert status == 200 and result["request"] is None
 
@@ -304,7 +304,8 @@ def test_running_is_never_shown_on_a_stale_report(api):
     api.env.clock.now += 2
     stale = item(api, ws)
     assert stale["status"]["code"] == "unknown"
-    assert "Running" in stale["status"]["detail"] and "nothing newer" in stale["status"]["detail"]
+    assert "last report said Running" in stale["status"]["detail"]
+    assert "nothing newer has arrived" in stale["status"]["detail"]
     assert stale["health"]["state"] == "attention"
 
 

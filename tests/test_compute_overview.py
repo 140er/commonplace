@@ -99,7 +99,7 @@ def test_runner_status_follows_the_last_signal_and_never_says_online_without_one
     assert items["runner-slow"]["status"]["label"] == "Slow to report"
     assert items["runner-offline"]["status"]["code"] == "offline"
     assert items["runner-offline"]["status"]["tone"] == "bad"
-    assert "25 minutes" in items["runner-offline"]["status"]["detail"]
+    assert "heard from it for a long time" in items["runner-offline"]["status"]["detail"]
     assert items["runner-never"]["status"]["code"] == "never_connected"
     assert items["runner-never"]["last_seen"] is None
     assert items["runner-never"]["health"]["state"] == "unknown"
@@ -152,7 +152,8 @@ def test_busy_runner_shows_runs_in_progress_the_age_and_a_full_blocker(api, flee
     fleet.job(made, "queued", task=2)
     busy = by_name(read(api))["runner-busy"]
     assert busy["status"]["code"] == "busy"
-    assert busy["status"]["detail"].startswith("1 of 1 runs in progress. Last seen 20 seconds ago")
+    assert busy["status"]["detail"] == "It has runs in progress."
+    assert busy["last_seen"]["label"] == "Last seen 20 seconds ago"
     assert busy["usage"]["runs"]["running"] == 1 and busy["usage"]["runs"]["queued"] == 1
     assert [b["code"] for b in busy["health"]["blockers"]] == ["full"]
 
