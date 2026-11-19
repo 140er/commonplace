@@ -33,6 +33,7 @@ REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
 PAIRING_ID = re.compile(r"pair_[0-9a-f]{16}")
 HUB = re.compile(r"https?://[A-Za-z0-9.\-]{1,253}(?::[0-9]{1,5})?")
 STEPS = ("prerequisites", "files", "service", "check")
+HEARTBEAT = "heartbeat"
 DEFAULTS = {"max_runtime_mode": "approval-required", "max_in_flight": 1, "max_starts_per_hour": 6}
 LISTS = ("projects", "topics", "wings", "requesters")
 COPIED = LISTS + tuple(DEFAULTS)
@@ -79,13 +80,13 @@ STATES = {
     ),
     "ready": (
         "Set up and checked",
-        "The machine passed its setup checks and was heard from recently.",
+        "The machine passed its setup checks.",
         "Coworkers can run here only after a provider is connected and the machine is attested on the Runners screen.",
         "This machine is set up. Coworkers can run on it after the owner connects a provider.",
     ),
     "offline": (
         "Offline",
-        "Nothing has been heard from this machine for over 15 minutes.",
+        "This machine sent signs of life before, and nothing has been heard for over 15 minutes.",
         "Check that the machine is on and online. It returns to Set up and checked by itself.",
         "This machine has not been heard from for over 15 minutes. The owner can check it.",
     ),
@@ -122,6 +123,10 @@ STATES = {
 }
 # Fixed causes a machine may report for a failed step: (what happened, what to do).
 CAUSES = {
+    "run_as_root": (
+        "The command was run as root.",
+        "Run it again as the normal account that should own the runner, without sudo.",
+    ),
     "unsupported_os": (
         "This system is not supported. Ubuntu 24.04 and Debian 12 or later are.",
         "Use a supported system.",
@@ -133,6 +138,10 @@ CAUSES = {
     "missing_prerequisite": (
         "A required program is missing.",
         "Install what the machine printed, then run the command again.",
+    ),
+    "missing_runner_program": (
+        "The runner program is not installed on this machine, and this command does not install it yet.",
+        "Install the runner program first (see the runner guide), then run the command again.",
     ),
     "missing_privilege": (
         "The account is not allowed to set up its background service.",
@@ -336,8 +345,8 @@ def derive(row, steps, now_stamp):
     if row["accepted_at"]:
         if not all(s in steps and steps[s]["state"] == "ok" for s in STEPS):
             return "approved", None
-        last = row["last_report_at"]
-        if last is None or _age(last, now_stamp) > OFFLINE_SECONDS:
+        beat = steps.get(HEARTBEAT)
+        if beat is not None and _age(beat["reported_at"], now_stamp) > OFFLINE_SECONDS:
             return "offline", None
         return "ready", None
     if row["consumed_at"]:
@@ -348,9 +357,9 @@ def derive(row, steps, now_stamp):
 
 
 def fingerprint(row):
-    """Groups of the machine key digest, as the installer prints them; None before connecting."""
+    """The machine key digest in groups of eight, exactly as the installer prints it."""
     digest = row["machine_key_digest"]
-    return None if not digest else " ".join(digest[i : i + 4] for i in range(0, 24, 4))
+    return None if not digest else " ".join(re.findall(".{8}", digest))
 
 
 def identity_digest(row):
@@ -880,8 +889,9 @@ def report(db, principal, data):
             raise enrollment.Refused(404)
         if row["closed_reason"] or row["code_revoked_at"]:
             raise refuse(None, "closed", "conflict")
-        if step != "heartbeat":
-            _store_step(db, row, step, state, cause, stamp)
+        _store_step(
+            db, row, HEARTBEAT if step == "heartbeat" else step, state or "ok", cause, stamp
+        )
         db._conn.execute(
             "UPDATE machine_pairings SET last_report_at=?, updated_at=? WHERE id=?",
             (stamp, stamp, row["id"]),

@@ -28,6 +28,8 @@ PIN_PUBLIC = {
     ("POST", "/api/runner-enrollment/recover"),
     # Pairing check: the pairing id and one-time code are the only credential.
     ("POST", "/api/runner-pairing/check"),
+    # The machine setup launcher: one text for every caller, no secret in it.
+    ("GET", "/machine-setup.sh"),
     ("POST", "/app/auth/"),
     ("POST", "/app/auth/email"),
     ("POST", "/app/auth/email/verify"),

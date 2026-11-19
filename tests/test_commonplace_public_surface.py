@@ -82,6 +82,8 @@ EXACT = {
     ("POST", "/api/runner-enrollment/recover"): "bootstrap",
     # Guided pairing: the code and pairing id authenticate the check; the status report is the machine's own.
     ("POST", "/api/runner-pairing/check"): "bootstrap",
+    # The setup launcher is the same text for every caller and holds no secret or tenant data.
+    ("GET", "/machine-setup.sh"): "public",
     ("POST", "/api/runner/pairing-status"): "authenticated",
     # Machine runner (commonplace/runner), inert until an owner attests.
     ("GET", "/api/runners"): "authenticated",
