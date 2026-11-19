@@ -65,13 +65,13 @@ STATES = {
     "waiting": (
         "Waiting for the machine",
         "The code is ready. Nothing has connected yet.",
-        "Run the command on the machine. The code stops working after 15 minutes.",
+        "Run the command on the machine (Ubuntu 24.04 or later, or Debian 12 or later). The code stops working after 15 minutes.",
         "The owner has started adding this machine. It has not connected yet.",
     ),
     "connected": (
         "Machine connected, waiting for your approval",
         "The machine used the code and connected. It cannot do anything until you approve it.",
-        "Compare the machine's name and fingerprint, then approve or choose This is not my machine.",
+        "Wait for the machine to finish its setup, compare its fingerprint with the line 'Machine fingerprint:' in its window, then approve or choose This is not my machine.",
         "Waiting for the owner's approval.",
     ),
     "approved": (
@@ -83,7 +83,7 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "Coworkers can run here only after a provider is connected and the machine is attested under Runner machines in Admin.",
+        "Coworkers can run here only after a provider is connected (sign in from Needs me) and the machine is attested under Runner machines in Admin.",
         "This machine is set up. Coworkers can run on it after the owner connects a provider.",
     ),
     "offline": (
@@ -116,6 +116,12 @@ STATES = {
         "Choose Set up again if you want to add a machine with the same settings.",
         "The owner did not approve this machine.",
     ),
+    "abandoned": (
+        "Setup removed",
+        "This setup was removed before it finished. Its access was removed.",
+        "Choose Set up again to add the machine with the same settings.",
+        "The owner removed this setup before it finished.",
+    ),
     "revoked": (
         "Access removed",
         "This machine's access was removed.",
@@ -125,10 +131,13 @@ STATES = {
 }
 # Where the sentence says "you", a member reads the same fact about the owner.
 MEMBER_SENTENCE = {
+    "waiting": "The owner has started adding this machine. Nothing has connected yet.",
     "connected": "The machine connected and is waiting for the owner's approval. It cannot do anything until then.",
     "approved": "The owner approved this machine. It is finishing its setup.",
     "declined": "The owner did not approve this machine. Its access was removed.",
 }
+# A member reads the same state names with the owner's decision in the third person.
+MEMBER_LABEL = {"connected": "Machine connected, waiting for the owner's approval"}
 STALLED = (
     "This setup has not finished.",
     "Remove this machine and set it up again.",
@@ -154,7 +163,7 @@ CAUSES = {
     ),
     "missing_runner_program": (
         "The runner program is not installed on this machine, and this command does not install it yet.",
-        "Install the runner program first (see the runner guide), then open Compute in the app and choose Set up again.",
+        "Ask the person who runs this site for the runner program, then open Compute in the app and choose Set up again.",
     ),
     "missing_privilege": (
         "The account is not allowed to set up its background service.",
@@ -232,6 +241,14 @@ REASONS = {
     "step_failed": (
         "A setup step failed on the machine.",
         "Fix it first, or choose This is not my machine.",
+    ),
+    "not_finished": (
+        "The machine has not finished its setup yet.",
+        "Wait for all four steps to turn to Done, then approve.",
+    ),
+    "stalled": (
+        "This setup has not finished and will not.",
+        "Remove this machine and set it up again.",
     ),
     "already_approved": ("This machine was already approved.", "Reload to see where it is now."),
     "already_closed": ("This setup was already closed.", "Reload to see where it is now."),
@@ -344,6 +361,23 @@ def _age(stamp, now_stamp):
     return max(0, int((now - then).total_seconds()))
 
 
+CLOSED_STATES = ("expired", "cancelled", "declined", "abandoned", "revoked")
+
+
+def finished(steps):
+    return all(s in steps and steps[s]["state"] == "ok" for s in STEPS)
+
+
+def stalled(state, row, steps, now_stamp):
+    """Connected and never finished all four steps within 15 minutes: nothing more will come."""
+    return (
+        state in ("connected", "approved")
+        and row["consumed_at"] is not None
+        and not finished(steps)
+        and _age(row["consumed_at"], now_stamp) > OFFLINE_SECONDS
+    )
+
+
 def derive(row, steps, now_stamp):
     """The one state of a pairing: ``(state, failed_step_or_None)``. Pure."""
     if row["closed_reason"]:
@@ -424,14 +458,10 @@ def view(db, row, now_stamp, *, owner):
     label, sentence, next_owner, next_member = STATES[state]
     if not owner:
         sentence = MEMBER_SENTENCE.get(state, sentence)
+        label = MEMBER_LABEL.get(state, label)
     cause = _cause(steps, failed)
-    stalled = (
-        state in ("connected", "approved")
-        and row["consumed_at"] is not None
-        and not all(s in steps and steps[s]["state"] == "ok" for s in STEPS)
-        and _age(row["consumed_at"], now_stamp) > OFFLINE_SECONDS
-    )
-    if stalled:
+    stuck = stalled(state, row, steps, now_stamp)
+    if stuck:
         sentence, next_owner, next_member = STALLED
     result = {
         "id": row["id"],
@@ -441,7 +471,7 @@ def view(db, row, now_stamp, *, owner):
         "state_label": label,
         "sentence": sentence,
         "next": next_owner if owner else next_member,
-        "stalled": stalled,
+        "stalled": stuck,
         "cause": cause,
         "steps": _step_view(steps),
         "last_report_at": row["last_report_at"],
@@ -459,7 +489,7 @@ def view(db, row, now_stamp, *, owner):
             "SELECT enabled, binding_state, revoked_at FROM runner_machines WHERE id=?",
             (row["machine_id"],),
         ).fetchone()
-    closed = state in ("expired", "cancelled", "declined", "revoked")
+    closed = state in CLOSED_STATES
     result.update(
         version=row["version"],
         fingerprint=fingerprint(row),
@@ -467,9 +497,9 @@ def view(db, row, now_stamp, *, owner):
         identity_digest=identity_digest(row) if row["consumed_at"] else None,
         accepted_at=row["accepted_at"],
         binding_state=machine["binding_state"] if machine and not machine["revoked_at"] else None,
-        can_accept=state == "connected" and not stalled,
+        can_accept=state == "connected" and not stuck and finished(steps),
         can_close=state in ("waiting", "connected", "approved", "ready", "offline", "failed"),
-        retry=_retry(row) if closed or state == "failed" else None,
+        retry=_retry(row) if closed or state == "failed" or stuck else None,
     )
     return result
 
@@ -540,7 +570,7 @@ def options(db, gateway, principal, *, owner):
         "offline_after_seconds": OFFLINE_SECONDS,
         "states": {
             key: {
-                "label": v[0],
+                "label": v[0] if owner else MEMBER_LABEL.get(key, v[0]),
                 "sentence": v[1] if owner else MEMBER_SENTENCE.get(key, v[1]),
                 "next": v[2 if owner else 3],
             }
@@ -670,7 +700,7 @@ def render_command(hub, envelope, code):
     use or expiry.
     """
     return (
-        f" S=$(curl -fsSL '{hub}/machine-setup.sh') && printf '%s' '{code}' | "
+        f" S=$(curl -fsS '{hub}/machine-setup.sh') && printf '%s' '{code}' | "
         f"sh -c \"$S\" machine-setup '{envelope}'"
     )
 
@@ -809,6 +839,12 @@ def accept(db, principal, pairing_id, body):
         if state != "connected":
             reason = "not_connected" if state == "waiting" else state
             raise refuse(None, reason if reason in REASONS else "closed", "conflict")
+        # Authority lives here, not in the page: the machine prints its fingerprint only as it finishes, so an
+        # approval before all four steps are done would be a comparison with nothing.
+        if stalled(state, row, steps, stamp):
+            raise refuse(None, "stalled", "conflict")
+        if not finished(steps):
+            raise refuse(None, "not_finished", "conflict")
         if body["identity_digest"] != identity_digest(row):
             raise refuse("identity_digest", "identity_changed", "conflict")
         machine = registry.get_machine(db, owner.workspace_id, row["machine_id"])
@@ -836,18 +872,22 @@ def close(db, principal, pairing_id, body):
         if row["closed_reason"] and row["close_request_id"] == body["request_id"]:
             return view(db, row, stamp, owner=True)
         _expect(row, body["expected_version"])
-        state, _failed = derive(row, _steps(db, row["id"]), stamp)
+        steps = _steps(db, row["id"])
+        state, _failed = derive(row, steps, stamp)
         if row["closed_reason"]:
             raise refuse(None, "already_closed", "conflict")
-        if state in ("expired", "cancelled", "declined", "revoked"):
+        if state in CLOSED_STATES:
             raise refuse(None, "nothing_to_close", "conflict")
-        reason = (
-            "cancelled"
-            if not row["consumed_at"]
-            else "revoked"
-            if row["accepted_at"]
-            else "declined"
-        )
+        # "Declined" means the owner looked at a healthy connected machine and said it is not theirs. A setup that
+        # failed or never finished is removed, not declined, and the page must not say the owner refused it.
+        if not row["consumed_at"]:
+            reason = "cancelled"
+        elif row["accepted_at"]:
+            reason = "revoked"
+        elif state == "failed" or stalled(state, row, steps, stamp):
+            reason = "abandoned"
+        else:
+            reason = "declined"
         enrollment_row = db._conn.execute(
             "SELECT * FROM runner_enrollments WHERE id=?", (row["enrollment_id"],)
         ).fetchone()
@@ -891,14 +931,16 @@ def _step_report(report, *, allowed):
     if not isinstance(report, dict) or set(report) - {"step", "state", "cause"}:
         raise ValueError("invalid report")
     step = report.get("step")
-    if step == "heartbeat":
+    if step in ("heartbeat", "probe"):
         if set(report) != {"step"}:
             raise ValueError("invalid report")
         return step, None, None
     state, cause = report.get("state"), report.get("cause")
     if step not in allowed or state not in ("ok", "failed"):
         raise ValueError("invalid report")
-    if (state == "failed") != (cause is not None) or (cause is not None and cause not in CAUSES):
+    if (state == "failed") != (cause is not None) or (
+        cause is not None and (not isinstance(cause, str) or cause not in CAUSES)
+    ):
         raise ValueError("invalid report")
     return step, state, cause
 
@@ -921,14 +963,16 @@ def report(db, principal, data):
             raise enrollment.Refused(404)
         if row["closed_reason"] or row["code_revoked_at"]:
             raise refuse(None, "closed", "conflict")
-        _store_step(
-            db, row, HEARTBEAT if step == "heartbeat" else step, state or "ok", cause, stamp
-        )
-        db._conn.execute(
-            "UPDATE machine_pairings SET last_report_at=?, updated_at=? WHERE id=?",
-            (stamp, stamp, row["id"]),
-        )
-        row = db._conn.execute(_SELECT + "WHERE p.id=?", (row["id"],)).fetchone()
+        # A probe only asks whether this setup is still open (a closed one answers "closed" above): it writes nothing.
+        if step != "probe":
+            _store_step(
+                db, row, HEARTBEAT if step == "heartbeat" else step, state or "ok", cause, stamp
+            )
+            db._conn.execute(
+                "UPDATE machine_pairings SET last_report_at=?, updated_at=? WHERE id=?",
+                (stamp, stamp, row["id"]),
+            )
+            row = db._conn.execute(_SELECT + "WHERE p.id=?", (row["id"],)).fetchone()
         return {"ok": True, "state": derive(row, _steps(db, row["id"]), stamp)[0]}
 
 
@@ -950,7 +994,7 @@ def check(db, data):
     step = state = cause = None
     if "report" in data:
         step, state, cause = _step_report(data["report"], allowed=("prerequisites", "files"))
-        if step == "heartbeat":
+        if step in ("heartbeat", "probe"):
             raise ValueError("invalid check")
     workspace = data["workspace_id"]
     with db._tx():
@@ -959,6 +1003,9 @@ def check(db, data):
         if PAIRING_ID.fullmatch(data["pairing_id"]):
             row = db._conn.execute(_SELECT + "WHERE p.id=?", (data["pairing_id"],)).fetchone()
         reason = _check_reason(db, row, workspace, data["code"], stamp)
+        if reason is not None and row is not None and row["workspace_id"] == workspace:
+            # A refusal is a fact the owner's audit trail keeps (the rate limit bounds how many).
+            _audit(db, workspace, "check", decision="deny", ids=(row["id"],), reason=reason)
         if reason is None:
             if step:
                 _store_step(db, row, step, state, cause, stamp)
@@ -990,7 +1037,7 @@ def _check_reason(db, row, workspace, code, stamp):
         return "used"
     if state in ("expired", "cancelled", "revoked"):
         return state
-    if state == "declined":
+    if state in ("declined", "abandoned"):
         return "revoked"
     if row["consumed_at"]:
         return "used"

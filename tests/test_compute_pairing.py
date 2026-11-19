@@ -46,6 +46,7 @@ class Pairing:
     def __init__(self, hub, owner, key):
         self.hub, self.owner, self.key = hub, owner, key
         self.count = 0
+        self.credentials = {}
 
     def call(self, method, path="", body=None, *, who=None, **extra):
         who = who or self.owner
@@ -97,14 +98,20 @@ class Pairing:
             },
         )
         assert status == 201, (status, envelope)
-        return decrypt(self.key, envelope)
+        credentials = decrypt(self.key, envelope)
+        self.credentials[made["pairing"]["id"]] = credentials
+        return credentials
 
     def report(self, credentials, body, token="machine_token"):
         return http(
             self.hub.port, "POST", STATUS, token=credentials[token], body=body, origin=False
         )
 
-    def accept(self, made, **changes):
+    def accept(self, made, finish=True, **changes):
+        """The owner's approval. The machine finishes its four steps first, as it must (finish=False: not yet)."""
+        credentials = self.credentials.get(made["pairing"]["id"])
+        if finish and credentials and not all(s["state"] == "ok" for s in self.get(made)["steps"]):
+            self.finish_steps(credentials)
         item = self.get(made)
         body = {
             "request_id": "accept-1",
@@ -188,7 +195,7 @@ def test_create_returns_the_code_once_and_stores_only_its_hash(flow):
     assert code not in json.dumps(values) and code in made["setup"]["command"]
     # The launcher is fetched first and the rest runs only if that worked (a failed download is not an empty script).
     assert made["setup"]["command"].startswith(
-        " S=$(curl -fsSL '" + pairing.urls.APP_URL + "/machine-setup.sh') && printf '%s' '"
+        " S=$(curl -fsS '" + pairing.urls.APP_URL + "/machine-setup.sh') && printf '%s' '"
     )
     assert (
         "machine-setup.sh" in made["setup"]["command"]
@@ -472,8 +479,13 @@ def test_the_machine_appears_as_it_connects_with_identity_and_grants_in_words(fl
     assert re.fullmatch(r"(?:[0-9a-f]{8} ){7}[0-9a-f]{8}", item["fingerprint"])
     assert item["grant"]["wings"] == ["shared"] and item["grant"]["projects"] == ["demo"]
     assert item["grant"]["max_runtime_mode"] == "auto-accept-edits"
-    assert item["can_accept"] is True and item["binding_state"] == "unbound"
+    assert item["can_accept"] is False, (
+        "approval needs all four steps done: the machine prints its fingerprint last"
+    )
+    assert item["binding_state"] == "unbound"
     assert re.fullmatch(r"[0-9a-f]{64}", item["identity_digest"])
+    flow.finish_steps(credentials)
+    assert flow.get(made)["can_accept"] is True
     with flow.hub.db._lock:
         machine = registry.get_machine(
             flow.hub.db, flow.owner["workspace"], credentials["machine_id"]
@@ -489,9 +501,24 @@ def test_accept_needs_a_connected_machine_and_the_identity_that_was_shown(flow):
         {"request_id": "a", "expected_version": 1, "identity_digest": "a" * 64},
     )
     assert (status, result["reason"]) == (409, "not_connected")
-    flow.connect(made)
+    credentials = flow.connect(made)
     item = flow.get(made)
     path = f"/{item['id']}/accept"
+    # The authority is the server's: before all four steps are done an approval is refused, whatever the page does.
+    early = {
+        "request_id": "early",
+        "expected_version": item["version"],
+        "identity_digest": item["identity_digest"],
+    }
+    status, result = flow.call("POST", path, early)
+    assert (status, result["reason"]) == (409, "not_finished")
+    assert result["reason"] in pairing.REASONS
+    flow.report(credentials, {"step": "files", "state": "ok"})
+    assert flow.call("POST", path, early)[1]["reason"] == "not_finished", (
+        "one step of four is not enough"
+    )
+    flow.finish_steps(credentials)
+    item = flow.get(made)
     base = {
         "request_id": "a",
         "expected_version": item["version"],
@@ -517,7 +544,7 @@ def test_accept_enables_the_machine_but_never_attests_it(flow):
     status, result = flow.accept(made)
     assert status == 200, result
     item = result["pairing"]
-    assert item["state"] == "approved" and item["accepted_at"] and item["version"] == 2
+    assert item["state"] == "ready" and item["accepted_at"] and item["version"] == 2
     with flow.hub.db._lock:
         machine = registry.get_machine(
             flow.hub.db, flow.owner["workspace"], credentials["machine_id"]
@@ -558,7 +585,7 @@ def test_accept_replays_by_request_id_and_refuses_a_second_decision(flow):
 
 def test_accept_is_refused_when_the_grant_changed_after_it_was_shown(flow):
     made = flow.made()
-    flow.connect(made)
+    flow.finish_steps(flow.connect(made))
     item = flow.get(made)
     with flow.hub.db._lock:
         flow.hub.db._conn.execute(
@@ -580,7 +607,7 @@ def test_two_accepts_race_and_one_wins(flow):
     from concurrent.futures import ThreadPoolExecutor
 
     made = flow.made()
-    flow.connect(made)
+    flow.finish_steps(flow.connect(made))
     item = flow.get(made)
 
     def attempt(index):
@@ -607,12 +634,13 @@ def test_steps_report_to_ready_and_back_through_offline(flow, monkeypatch):
     at = clock(monkeypatch)
     made = flow.made()
     credentials = flow.connect(made)
-    flow.accept(made)
     assert [s["state"] for s in flow.get(made)["steps"]] == ["pending"] * 4
-    for index, step in enumerate(pairing.STEPS):
+    for step in pairing.STEPS:
         status, result = flow.report(credentials, {"step": step, "state": "ok"})
-        assert status == 200
-        assert result["state"] == ("ready" if index == 3 else "approved")
+        assert status == 200 and result["state"] == "connected", (
+            "finished, but still waiting for the owner"
+        )
+    flow.accept(made)
     item = flow.get(made)
     assert item["state"] == "ready" and item["state_label"] == "Set up and checked"
     assert all(s["state"] == "ok" for s in item["steps"])
@@ -644,7 +672,7 @@ def test_a_failed_step_shows_its_cause_and_next_step_and_recovers(flow):
         "text": pairing.CAUSES["service_failed"][0],
         "next": pairing.CAUSES["service_failed"][1],
     }
-    status, result = flow.accept(made)
+    status, result = flow.accept(made, finish=False)
     assert (status, result["reason"]) == (409, "step_failed")
     assert flow.report(credentials, {"step": "service", "state": "ok"})[0] == 200
     assert flow.get(made)["state"] == "connected"
@@ -923,6 +951,7 @@ def test_create_and_its_audit_commit_together(flow, monkeypatch):
 def test_accept_and_its_audit_commit_together(flow, monkeypatch):
     made = flow.made()
     credentials = flow.connect(made)
+    flow.finish_steps(credentials)
     item = flow.get(made)
     real = flow.hub.db.audit
 
@@ -932,7 +961,7 @@ def test_accept_and_its_audit_commit_together(flow, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(flow.hub.db, "audit", broken)
-    status, _ = flow.accept(made)
+    status, _ = flow.accept(made, finish=False)
     assert status >= 500
     monkeypatch.undo()
     assert flow.get(made)["state"] == "connected" and flow.get(made)["version"] == item["version"]
@@ -1085,9 +1114,15 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
     one, two = flow.made(), flow.made(label="second-box")
     flow.connect(one)
     flow.connect(two)
-    accepted = flow.accept(two)[1]["pairing"]
-    assert accepted["state"] == "approved"
-    assert flow.get(one)["stalled"] is False and flow.get(one)["can_accept"] is True
+    # A record approved before the server required four finished steps (the only way an approved setup has
+    # unfinished steps now) is written directly.
+    with flow.hub.db._lock:
+        flow.hub.db._conn.execute(
+            "UPDATE machine_pairings SET accepted_at=?, accepted_by=? WHERE id=?",
+            (control_db._iso(control_db._now()), flow.owner["user_id"], two["pairing"]["id"]),
+        )
+    assert flow.get(two)["state"] == "approved"
+    assert flow.get(one)["stalled"] is False and flow.get(one)["can_accept"] is False
     at(seconds=pairing.OFFLINE_SECONDS + 1)
     for made, state in ((one, "connected"), (two, "approved")):
         item = flow.get(made)
@@ -1096,6 +1131,10 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
         assert item["can_accept"] is False
         seen = flow.get(made, who=colleague)
         assert (seen["sentence"], seen["next"]) == (pairing.STALLED[0], pairing.STALLED[2])
+    # The server refuses an approval of a stalled setup, with its own reason.
+    refused = flow.accept(one, finish=False)
+    assert (refused[0], refused[1]["reason"]) == (409, "stalled")
+    assert refused[1]["reason"] in pairing.REASONS
     # A machine that did finish is never stalled.
     credentials = flow.connect(flow.made(label="third-box"))
     at(seconds=0)
@@ -1121,3 +1160,85 @@ def test_no_failed_next_step_points_at_a_command_the_page_does_not_hold():
         assert "Set up again" in then, code
     assert "same command" not in pairing.STATES["failed"][2]
     assert "Set up again" in pairing.STATES["failed"][2]
+
+
+# ---- review round 2: closing a failed setup, probes, member words, denials in the audit ---------------------
+
+
+def test_removing_a_failed_or_stalled_setup_is_never_called_a_decline(flow, monkeypatch):
+    at = clock(monkeypatch)
+    failed = flow.made()
+    credentials = flow.connect(failed)
+    flow.report(credentials, {"step": "service", "state": "failed", "cause": "service_failed"})
+    status, result = flow.close(failed)
+    item = result["pairing"]
+    assert status == 200 and item["state"] == "abandoned"
+    assert item["state_label"] == "Setup removed"
+    for text in (item["sentence"], item["next"], item["state_label"]):
+        assert "not your machine" not in text.lower() and "did not approve" not in text.lower(), (
+            text
+        )
+    assert item["retry"]["label"] == "build-box" and item["can_close"] is False
+    assert flow.hub.db.authenticate_token(credentials["machine_token"]) is None
+    # A setup that connected and never finished is removed the same way.
+    stuck = flow.made(label="stuck-box")
+    flow.connect(stuck)
+    at(seconds=pairing.OFFLINE_SECONDS + 1)
+    assert flow.close(stuck)[1]["pairing"]["state"] == "abandoned"
+    # The words "Not approved" are only for the owner's own refusal of a healthy connected machine.
+    fine = flow.made(label="fine-box")
+    flow.finish_steps(flow.connect(fine))
+    refused = flow.close(fine)[1]["pairing"]
+    assert refused["state"] == "declined" and refused["sentence"] == pairing.STATES["declined"][1]
+    assert flow.check(fine)[1]["reason"] == "revoked"
+
+
+def test_a_member_reads_the_owners_approval_in_the_third_person(people):
+    flow, _, colleague = people
+    waiting = flow.made()
+    assert "ready" not in flow.get(waiting, who=colleague)["sentence"].lower()
+    flow.connect(waiting)
+    item = flow.get(waiting, who=colleague)
+    assert item["state_label"] == "Machine connected, waiting for the owner's approval"
+    assert item["next"] == "Waiting for the owner's approval."
+    options = flow.call("GET", "/options", who=colleague)[1]["states"]["connected"]
+    assert options["label"] == item["state_label"]
+    owner = flow.get(waiting)
+    assert owner["state_label"] == "Machine connected, waiting for your approval"
+    assert "fingerprint" in owner["next"].lower() and "Machine fingerprint:" in owner["next"]
+
+
+def test_a_probe_only_asks_whether_the_setup_is_still_open(flow):
+    made = flow.made()
+    credentials = flow.connect(made)
+    before = flow.get(made)
+    answer = flow.report(credentials, {"step": "probe"})
+    assert answer[0] == 200 and answer[1]["ok"] is True
+    after = flow.get(made)
+    assert after["last_report_at"] == before["last_report_at"] and after["steps"] == before["steps"]
+    with flow.hub.db._lock:
+        assert (
+            flow.hub.db._conn.execute("SELECT count(*) FROM machine_pairing_steps").fetchone()[0]
+            == 0
+        )
+    assert flow.check(made, report={"step": "probe"})[0] == 400
+    flow.close(made)
+    status, result = flow.report(credentials, {"step": "probe"})
+    assert status != 200 or result.get("ok") is not True, "a closed setup does not answer ok"
+
+
+def test_a_refused_check_is_in_the_audit_trail_and_a_wrong_typed_cause_is_a_bad_request(flow):
+    made = flow.made()
+    assert flow.check(made, code="x" * 43)[1]["reason"] == "code_mismatch"
+    denied = [r for r in audit_rows(flow.hub) if r["action"] == "runner.pairing.check"]
+    assert (
+        len(denied) == 1
+        and denied[0]["decision"] == "deny"
+        and denied[0]["reason"] == "code_mismatch"
+    )
+    assert made["setup"]["code"] not in json.dumps([dict(r) for r in denied])
+    for cause in (["disk_full"], {"x": 1}, 7):
+        status, result = flow.check(
+            made, report={"step": "files", "state": "failed", "cause": cause}
+        )
+        assert status == 400, cause
