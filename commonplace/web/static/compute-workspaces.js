@@ -501,17 +501,20 @@ export function createWorkspaces(ctx) {
     const unavailable = configError ? '<div class="compute-actions"><button type="button" class="btn" data-ws-action="reload">Reload</button></div>' : "";
     return `${unavailable}${panel}${list}`;
   }
+  // One outage, one alert: when the overview already has its own failure to say, this line is a polite status, not a second alert.
+  const problemRole = () => (ctx.outage?.() ? "status" : "alert");
   function html() {
     shownTop = topHTML();
     return `<section class="compute-inventory compute-wide compute-ws" aria-labelledby="compute-workspaces"><div data-ws-top>${shownTop}</div>`
       + `<p class="compute-notice compute-ws-notice" data-ws-notice role="status">${e(notice)}</p>`
-      + `<p class="compute-error compute-ws-problem" data-ws-problem role="alert">${e(problem())}</p><div data-ws-root>${inner()}</div></section>`;
+      + `<p class="compute-error compute-ws-problem" data-ws-problem role="${problemRole()}">${e(problem())}</p><div data-ws-root>${inner()}</div></section>`;
   }
   // A failed load is one static alert node that is written only when its text changes, so a repaint never
   // re-announces it (and the status line says nothing about it: one voice, not two).
   const problem = () => rows === null ? loadError : configError;
   function writeProblem() {
     const node = ctx.host()?.querySelector?.("[data-ws-problem]"), text = problem();
+    if (node && node.getAttribute?.("role") !== problemRole()) node.setAttribute?.("role", problemRole());
     if (node && node.textContent !== text) node.textContent = text;
   }
 

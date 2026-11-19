@@ -134,8 +134,9 @@
 /* Touch targets and text sizes follow the pointer, not only the width: a tablet (700px and up) held in the hand
    gets the same 44px targets, 16px inputs and 14px text as a phone. */
 @media (pointer: coarse), (max-width: 699px) {
-  .compute .btn, .compute summary, .compute input, .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
-  .compute-ws input:not([type="checkbox"]), .compute-ws select { font-size: 16px; }
+  .compute .btn, .compute summary, .compute input:not([type="checkbox"]), .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
+  /* Every text control on the screen (the Advanced settings included) is 16px where the pointer is coarse, so a phone does not zoom in. */
+  .compute input:not([type="checkbox"]), .compute textarea, .compute select { font-size: 16px; }
   .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain, .compute .compute-ws .compute-field > label, .compute-ws .compute-preset-size { font-size: 14px; }
   .compute-ws-summary li a { display: flex; align-items: center; min-height: 44px; }
 }

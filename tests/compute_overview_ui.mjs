@@ -129,7 +129,8 @@ const cases = {
     assert.match(rowOffline, /Last seen 25 minutes ago · 1 thing blocks new work: offline/);
     // Blockers are named, not only counted; one with no short name is counted without a made-up one.
     const two = item('workspace', 'w_n', 'Two blockers', { code: 'not_started', tone: 'quiet', label: 'Saved, not started' }, { blockers: [{ code: 'machine_not_verified', text: 'x' }, { code: 'not_available', text: 'y' }] });
-    assert.match(text(ov.rowHTML(two)), /2 things block new work: its machine is not verified, starting is not available yet/);
+    assert.match(text(ov.rowHTML(two)), /1 thing blocks new work: its machine is not verified/, 'starting is not available is said once for the page, not on every row');
+    assert.doesNotMatch(text(ov.rowHTML(two)), /starting is not available/);
     const odd = item('workspace', 'w_o', 'Odd', { code: 'not_started', tone: 'quiet', label: 'Saved, not started' }, { blockers: [{ code: 'brand_new', text: 'z' }] });
     assert.match(text(ov.rowHTML(odd)), /1 thing blocks new work Usage line\./);
     const next = item('runner', 'mach_8', 'slow-runner', { code: 'slow', tone: 'wait', label: 'Slow to report' });
@@ -188,7 +189,7 @@ const cases = {
     assert.doesNotMatch(f.ui.html(), /Update overview|data-ov-action="refresh"/);
     // The empty state tells the owner what to do and a member who to ask.
     const empty = fixture({ data: overviewOf([]) }); await empty.ui.load();
-    assert.match(empty.shown(), /Nothing here yet\. Create a cloud workspace below\. A machine can be chosen later\./);
+    assert.match(empty.shown(), /Nothing here yet\. No machine is set up yet\. You can still create a cloud workspace below; it waits for a machine\./, 'the headline first, then the one next step');
     assert.doesNotMatch(empty.shown(), /runner machine|Advanced/, 'no jargon in the first-run copy');
     // Never "Nothing here yet" while the workspaces list holds records: the overview says it is catching up.
     const behind = fixture({ data: overviewOf([]), signature: () => 'w_1:1' }); await behind.ui.load();
@@ -201,13 +202,16 @@ const cases = {
     const loading = fixture(); const pending = loading.ui.load(); assert.equal((loading.shown().match(/Loading the overview/g) || []).length, 1); await pending;
     // A closed fold: on a phone, above five items, and open for an empty or failed overview.
     const phone = fixture({ narrow: true }); await phone.ui.load();
-    assert.doesNotMatch(phone.ui.html(), /data-ov-fold open>/, 'a phone folds');
+    assert.match(phone.ui.html(), /data-ov-fold open>/, 'a phone opens a short list (five items or fewer)');
     const broken = fixture({ narrow: true }); broken.state.answers.set('/api/compute/overview', failure(500, { error: 'boom' })); await broken.ui.load();
-    assert.match(broken.ui.html(), /data-ov-fold open>/, 'a failed first read opens the fold so Try again is reachable');
+    assert.doesNotMatch(broken.ui.html(), /data-ov-fold open>/, 'a failed first read is plain text with no disclosure and nothing in a fold');
+    assert.match(broken.ui.html(), /data-ov-fold data-plain>/);
     const small = fixture({ data: overviewOf(fleet().slice(0, 3)) }); await small.ui.load();
     assert.match(small.ui.html(), /data-ov-fold open>/, 'a handful of items stays open on a desktop');
     const many = fixture({ data: overviewOf([...fleet(), ...fleet().map(i => ({ ...i, id: i.id + 'x' }))]) }); await many.ui.load();
-    assert.doesNotMatch(many.ui.html(), /data-ov-fold open>/, 'above five items the overview is folded to its summary');
+    assert.match(many.ui.html(), /data-ov-fold open>/, 'a desktop opens it whatever the count');
+    const manyPhone = fixture({ narrow: true, data: overviewOf([...fleet(), ...fleet().map(i => ({ ...i, id: i.id + 'x' }))]) }); await manyPhone.ui.load();
+    assert.doesNotMatch(manyPhone.ui.html(), /data-ov-fold open>/, 'on a phone, above five items, it is folded to its summary');
   },
 
   async failure() {
@@ -615,7 +619,7 @@ const cases = {
     // A draining or drained runner that went quiet does not keep its label: the age override covers every status that
     // claims a recent signal, and it still says the runner is draining.
     const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
-    for (const code of ['draining', 'drained', 'busy', 'online']) {
+    for (const code of ['draining', 'drained', 'busy', 'online', 'slow']) {
       const runner = item('runner', 'r', 'night-runner', { code, label: code }, { more: { draining: code === 'draining' || code === 'drained' } });
       const quiet = ov.viewOf(runner, { nowS: clock + 1000, thresholds: th });
       assert.equal(quiet.status.code, 'offline', code);
@@ -638,10 +642,10 @@ const cases = {
     // nothing to fold the summary has no disclosure marker.
     const phone = fixture({ narrow: true, data: overviewOf([]) });
     const before = phone.ui.html();
-    assert.ok(before.indexOf('data-ov-slot="state"') < before.indexOf('<details'), 'the state slot comes before the fold');
+    assert.ok(before.indexOf('data-ov-slot="state"') > before.indexOf('</details>'), 'the headline comes first and the state sentence after it');
     assert.match(before, /data-ov-fold data-plain>/);
     await phone.ui.load();
-    assert.match(phone.nodes.state.html, /Create a cloud workspace below\./, 'the empty-state next step is outside the fold');
+    assert.match(phone.nodes.state.html, /You can still create a cloud workspace below/, 'the empty-state next step is outside the fold');
     // Pressing "Try again" visibly does something: a headline while it runs, and a count when it fails again.
     const broken = fixture({ narrow: true });
     broken.state.answers.set('/api/compute/overview', failure(500, { error: 'boom' }));
@@ -653,6 +657,25 @@ const cases = {
     release(failure(500, { error: 'boom' })); await again;
     assert.match(broken.nodes.state.html, /Tried 2 times\./);
     assert.equal(broken.nodes.summary.textContent, 'Overview not loaded.');
+  },
+
+  async 'rows-patched-in-place'() {
+    // A refresh moves ages every second; the list is rewritten only when a row, a status or a name changed, and the ages are
+    // patched in the rows that stay (so a focused row is not rebuilt under the person).
+    const f = fixture();
+    f.ui.start();
+    await f.ui.load();
+    assert.match(f.html(), /Last seen 40 seconds ago/);
+    const writes = f.nodes.list.writes;
+    f.bump(50 * 1000);
+    await f.ui.load({ quiet: true });
+    assert.equal(f.nodes.list.writes, writes, 'only ages moved: the list is not rewritten');
+    await f.fire(10000);
+    assert.equal(f.nodes.list.writes, writes);
+    const changed = fleet(); changed[0] = item('runner', 'mach_1', 'build-runner', { code: 'offline', tone: 'bad', label: 'Offline' }, { attention: true });
+    f.state.answers.set('/api/compute/overview', overviewOf(changed));
+    await f.ui.load({ quiet: true });
+    assert.ok(f.nodes.list.writes > writes, 'a changed status is rewritten');
   },
 
   async member() {

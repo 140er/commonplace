@@ -56,6 +56,14 @@ def _shot(page, name):
         page.screenshot(path=str(Path(target) / f"{name}.png"))
 
 
+def _shot_of(locator, name):
+    """A capture of one element at its full height (a row, a whole panel), not of the viewport."""
+    target = os.environ.get("COMPUTE_OVERVIEW_SHOTS")
+    if target:
+        Path(target).mkdir(parents=True, exist_ok=True)
+        locator.screenshot(path=str(Path(target) / f"{name}.png"))
+
+
 class _Clock:
     now = property(lambda self: time.time())
 
@@ -664,12 +672,14 @@ def test_the_deck_map_tab_stops_saying_checking_when_there_is_nothing_to_check(s
 def test_expired_slow_and_unverified_states_explain_themselves(served, ui, size):
     fx = served
     fx.names = _populate(fx)
+    # Created and asked 25 hours ago, audit trail included (it is append-only): the timeline reads in order and nothing
+    # says "just now" beside "expired".
+    fx.store._now = lambda: time.time() - (lifecycle.REQUEST_TTL_S + 7200)
     stale = fx.make(name="Lapsed box", node_id=fx.node["id"])["id"]
+    fx.store._now = lambda: time.time() - (lifecycle.REQUEST_TTL_S + 3600)
     with fx.store._journal() as conn:
         life = lifecycle.life_of(conn, stale, time.time())
         row = conn.execute("SELECT version FROM cloud_workspaces WHERE id=?", (stale,)).fetchone()
-    # Asked 25 hours ago, audit trail included (it is append-only): nothing says "just now" beside "expired".
-    fx.store._now = lambda: time.time() - (lifecycle.REQUEST_TTL_S + 3600)
     lifecycle.request(
         fx.store,
         fx.principal,
@@ -803,8 +813,9 @@ def test_a_folded_phone_overview_still_shows_a_failed_refresh_and_opens_for_a_fa
                 ),
             )
             _visit(page, fx, ui)
-            # A failed first read opens the fold so "Try again" is reachable without a tap.
-            expect(page.locator("details[data-ov-fold]")).to_have_attribute("open", "")
+            # A failed first read is plain text (no disclosure, nothing in a fold) and "Try again" is outside it.
+            expect(page.locator("details[data-ov-fold]")).to_have_attribute("data-plain", "")
+            assert page.locator("details[data-ov-fold]").get_attribute("open") is None
             expect(page.get_by_role("button", name="Try again")).to_be_visible()
             expect(page.locator("[data-ov-summary]")).to_have_text("Overview not loaded.")
             _shot(page, f"{ui}-phone-67-failed-first-read")
@@ -854,6 +865,8 @@ def test_a_skewed_browser_clock_does_not_change_what_the_overview_says(served, u
             expect(page.locator(".compute-ov-meta")).to_contain_text("Updated just now")
             assert "Slow to report" not in build.inner_text()
             page.get_by_role("button", name="Status and activity of build-runner").click()
+            expect(page.locator(".compute-ov-panel")).not_to_have_attribute("aria-busy", "true")
+            expect(page.locator(".compute-ov-panel")).to_contain_text("Recent activity")
             expect(page.locator(".compute-ov-panel")).not_to_contain_text("Offline")
             _shot(page, f"{ui}-desktop-46-skew-{skew}")
             context.close()
@@ -979,6 +992,64 @@ def test_one_outage_has_one_alert_on_the_page(served):
     _run(fx, "classic", "desktop", body, expect_errors=True)
 
 
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_fleet_rows_paused_no_match_and_a_whole_runner_detail_are_captured(served, ui, size):
+    fx = served
+
+    def body(page, label, context):
+        _go(page, fx, ui)
+        # The rows a reviewer has to read: busy, draining (and busy) and drained, one capture each.
+        for name, number in (("build-runner", 90), ("night-runner", 91), ("idle-runner", 92)):
+            row = _row(page, name)
+            row.scroll_into_view_if_needed()
+            _shot_of(row, f"{label}-{number}-row-{name}")
+        expect(_row(page, "night-runner").locator("[data-ov-chip]")).to_have_text("Draining")
+        expect(_row(page, "night-runner")).not_to_contain_text("Full")
+        expect(_row(page, "idle-runner").locator("[data-ov-chip]")).to_have_text("Drained")
+        # The finished run (reported ended, card moved on) is not Busy: the fixture's build-runner shows only the live one.
+        expect(_row(page, "build-runner")).to_contain_text("1 of 2 runs at once is in progress")
+        # Paused: the button and the line say what it stops and what keeps counting.
+        page.get_by_role("button", name="Pause automatic updates").click()
+        expect(page.locator(".compute-ov-meta")).to_contain_text("statuses and ages keep counting")
+        page.locator("[data-ov-top]").scroll_into_view_if_needed()
+        _shot(page, f"{label}-93-paused")
+        page.get_by_role("button", name="Resume automatic updates").click()
+        # No match: the status filter holds a status that no longer exists after the next read.
+        page.get_by_role("button", name=re.compile(r"need attention$")).click()
+        page.route(
+            f"**{OVERVIEW}",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=_without_attention(route.fetch().json()),
+            ),
+        )
+        page.get_by_role("button", **REFRESH).click()
+        expect(page.locator(ROOT)).to_contain_text("match these filters")
+        _shot(page, f"{label}-94-no-match")
+        page.unroute(f"**{OVERVIEW}")
+        page.get_by_role("button", name="Clear filters").click()
+        # The whole of a runner's detail, end to end, in one capture.
+        page.get_by_role("button", name="Status and activity of build-runner").click()
+        panel = page.locator(".compute-ov-panel")
+        expect(panel).not_to_have_attribute("aria-busy", "true")
+        expect(panel).to_contain_text("Recent activity")
+        expect(panel).to_contain_text("Finished: demo card")  # the run that ended is not "Started"
+        _shot_of(panel, f"{label}-95-detail-whole")
+
+    _run(fx, ui, size, body)
+
+
+def _without_attention(payload):
+    import json
+
+    for item in payload["items"]:
+        item["health"]["state"] = "ok"
+    payload["counts"]["attention"] = 0
+    return json.dumps(payload)
+
+
 def _count_reads(page):
     seen = []
     page.on("request", lambda r: seen.append(r.url) if r.url.endswith(OVERVIEW) else None)
@@ -1020,7 +1091,7 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         # The next step is outside the fold (a folded phone must not hide the one thing to do) and the summary has no
         # disclosure marker, since there is nothing to fold.
         expect(page.locator("[data-ov-slot=state]")).to_contain_text(
-            "Create a cloud workspace below. A machine can be chosen later."
+            "No machine is set up yet. You can still create a cloud workspace below; it waits for a machine."
         )
         expect(page.locator("details[data-ov-fold]")).to_have_attribute("data-plain", "")
         assert "Nothing here yet" not in page.locator("[data-ov-slot=state]").inner_text(), (

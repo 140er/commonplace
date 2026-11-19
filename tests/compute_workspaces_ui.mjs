@@ -736,7 +736,7 @@ const cases = {
     // A failed load is one alert with the sentence, and a failed reload does not say it a second time through the status line.
     const down = fixture({ list: failure(500, { error: 'x' }) }); await down.open();
     assert.equal((detail.match(/data-ws-action="close"/g) || []).length, 1, "one Close, in the header"); g.ui.stop();
-    down.click('reload'); await flush(); assert.equal(alerts(section(down.host.innerHTML)), 1); assert.equal(down.status.text, '', 'the alert speaks; the status line stays silent'); down.ui.stop();
+    down.click('reload'); await flush(); assert.equal(alerts(down.host.innerHTML), 1, 'one outage, one alert on the page (the overview owns it when it is down too)'); assert.equal(down.status.text, '', 'the alert speaks; the status line stays silent'); down.ui.stop();
     // Server refusal while a request waits has its own sentence.
     const pending = fixture({ list: { workspaces: [onMachine({ id: 'w-q', name: 'Q box' })], can_manage: true } }); await pending.open();
     pending.click('edit', 'w-q'); fill(pending, { ws_memory_gib: '8' }); pending.submit('edit');
