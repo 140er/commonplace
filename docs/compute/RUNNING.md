@@ -276,7 +276,7 @@ before pytest, whose fixtures isolate HOME.
 They use real app/gateway/storage with synthetic providers and public enrollment
 fixtures, not real endpoints, operator keys or paid model calls.
 
-## Workspace scripts
+## Scripts
 
 The owner Scripts section (on the Compute screen) saves immutable Python source, arguments and
 relative output paths, then exposes source/manifest inspection and a separate

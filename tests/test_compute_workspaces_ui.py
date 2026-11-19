@@ -30,6 +30,8 @@ import pytest
         "focus",
         "escape",
         "busy",
+        "validation-timing",
+        "image-choice",
     ],
 )
 def test_compute_workspaces_ui(case):

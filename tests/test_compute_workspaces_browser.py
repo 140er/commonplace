@@ -177,7 +177,7 @@ def _open(browser, fx, ui, size, cookie=None, viewport=None):
     page.goto(f"{fx.origin}/app/?ui={ui}{route}")
     page.locator("#compute-workspaces").wait_for()
     # The screen repaints once the inventory has loaded; interact only after it has settled.
-    expect(page.get_by_role("button", name="Reload inventory")).to_be_enabled()
+    expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
     return context, page, errors
 
 
@@ -298,7 +298,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(page.locator("#compute-ws-heading")).to_be_focused()
         expect(section).not_to_contain_text("No cloud workspaces yet")
         expect(page.locator("[data-ws-preview]")).to_contain_text(
-            "2 CPU cores, 4 GiB memory, 20 GiB storage. No machine chosen yet"
+            "2 CPU cores, 4 GiB memory, 20 GiB storage. Machine: not chosen yet"
         )
         expect(page.get_by_role("textbox", name="Name", exact=True)).to_have_attribute(
             "required", ""
@@ -325,7 +325,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         assert section.locator('[role="alert"]').count() == 0
         name = page.get_by_role("textbox", name="Name", exact=True)
         expect(name).to_have_attribute("aria-invalid", "true")
-        expect(name).to_be_focused()
+        expect(summary).to_be_focused()  # the summary takes focus; its links jump to the fields
         assert section.locator('[aria-invalid="true"]').count() == 1
         expect(page.locator("#ws-error-name")).to_contain_text("Give it a name of 1 to 60")
         summary.get_by_role("link", name="Name:").click()
@@ -334,30 +334,38 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         # Own image: example, definition, and the error lands on the address control, not the select.
         page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
         address = page.get_by_role("textbox", name="Image address", exact=True)
-        expect(address).to_have_attribute("placeholder", "ubuntu:24.04")
+        assert address.get_attribute("placeholder") is None  # an empty box does not read as filled
         expect(section).to_contain_text(
-            "An image is the ready-made software a workspace starts from."
+            "Paste the address your image provider gave you, for example ubuntu:24.04."
         )
-        expect(section).to_contain_text(
-            "It must be public: anyone can download it without signing in."
-        )
+        # The jargon sits behind one disclosure with one definition.
+        help_box = section.locator(".compute-ws-help")
+        expect(help_box).not_to_have_attribute("open", "")
+        help_box.locator("summary").click()
+        expect(help_box).to_contain_text("A registry is the website that stores images.")
+        assert section.get_by_text("docker pull").count() == 1
+        help_box.locator("summary").click()
         name.fill("Acceptance box")
         page.get_by_role("button", name="Review and create").click()
         expect(address).to_have_attribute("aria-invalid", "true")
-        expect(address).to_be_focused()
+        expect(summary).to_be_focused()
         expect(page.get_by_role("combobox", name="Image", exact=True)).not_to_have_attribute(
             "aria-invalid", "true"
         )
         expect(page.locator("#ws-error-image")).to_contain_text("enter your own address")
         _shot(page, f"{label}-04-blank-image")
         # Invalid values: highlighted, never previewed as the plan, and the preview keeps GiB.
+        # (A problem shows when the field is committed, not while it is typed.)
         address.fill("ubuntu; rm -rf /")
+        address.blur()
         expect(page.locator("#ws-error-image")).to_contain_text(
             "doesn't look like an image address"
         )
         page.get_by_role("spinbutton", name="CPU cores").fill("64")
+        page.get_by_role("spinbutton", name="CPU cores").blur()
         expect(page.locator("#ws-error-cpu_cores")).to_contain_text("from 0.5 to 32")
         page.get_by_role("spinbutton", name="Memory (GiB)").fill("0.1")
+        page.get_by_role("spinbutton", name="Memory (GiB)").blur()
         expect(page.locator("#ws-error-memory_mib")).to_contain_text("from 0.5 to 128 GiB")
         expect(page.locator("[data-ws-preview]")).to_contain_text(
             "Fix the highlighted fields to see what this will use."
@@ -366,6 +374,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         page.get_by_role("button", name="Review and create").click()
         assert page.locator("[data-ws-form]").count() == 1, "invalid values do not reach review"
         expect(summary).to_contain_text("Fix these 3 fields, then review again:")
+        expect(summary).to_be_focused()
         _shot(page, f"{label}-05-validation-errors")
         # Fix everything: the errors clear on their own controls, the summary goes away and the preview follows.
         address.fill("ghcr.io/acme/tools:1.2")
@@ -375,7 +384,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(summary).to_be_hidden()
         page.get_by_role("combobox", name="Machine", exact=True).select_option(fx.node["id"])
         expect(page.locator("[data-ws-preview]")).to_contain_text(
-            "2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine"
+            "2 CPU cores, 4 GiB memory, 20 GiB storage. Planned machine: Build machine"
         )
         expect(page.get_by_role("combobox", name="Machine", exact=True)).not_to_contain_text(
             "not checked yet"
@@ -385,13 +394,15 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
             page.locator(".compute-ws-actions").scroll_into_view_if_needed()
         _shot(page, f"{label}-06-machine-chosen")
         page.get_by_role("button", name="Review and create").click()
-        expect(page.get_by_role("heading", name="Create Acceptance box?")).to_be_focused()
+        expect(page.get_by_role("heading", name="Create “Acceptance box”?")).to_be_focused()
         assert fx.listed() == []
         review = page.locator(".compute-ws-review")
-        expect(review).to_contain_text("2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine")
+        expect(review).to_contain_text(
+            "2 CPU cores, 4 GiB memory, 20 GiB storage. Planned machine: Build machine"
+        )
         assert review.get_attribute("role") == "list"
         expect(page.locator("[data-ws-honesty]")).to_contain_text(
-            "Nothing has been sent to a machine"
+            "Starting is not available yet, so nothing is sent to a machine."
         )
         if size == "phone":
             # The honesty sentence is fully above the action bar, never under it.
@@ -401,15 +412,16 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         page.get_by_role("button", name="Confirm and create").click()
         row = page.locator("[data-ws-id]").first
         row.wait_for()
-        # The confirmation is a status line that takes focus, so it is announced, and says it once.
+        # The confirmation is a status line (announced, never focused); focus goes to the saved row's heading.
         notice = page.locator("[data-ws-notice]")
         expect(notice).to_have_text(
-            "Saved Acceptance box in Commonplace. Nothing has been sent to Build machine yet."
+            "Saved “Acceptance box”, not started. Starting is not available yet."
         )
-        expect(notice).to_be_focused()
-        expect(row).to_contain_text("Not started")
+        expect(row.get_by_role("heading", name="Acceptance box")).to_be_focused()
+        expect(row).to_contain_text("Saved, not started")
         expect(row.get_by_role("heading", name="Acceptance box")).to_be_visible()
-        expect(row).to_contain_text("2 CPU cores, 4 GiB memory, 20 GiB storage on Build machine")
+        expect(row).to_contain_text("2 CPU cores, 4 GiB memory, 20 GiB storage")
+        expect(row).to_contain_text("Planned machine: Build machine")
         expect(row).to_contain_text("Image: ghcr.io/acme/tools:1.2")
         created = fx.listed()
         assert created[0]["image"] == "ghcr.io/acme/tools:1.2" and created[0]["cpu_cores"] == 2
@@ -418,14 +430,15 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         # Edit the limits: the review names exactly what changes, and only that is saved.
         row.get_by_role("button", name="Change settings for Acceptance box").click()
         expect(page.locator("[data-ws-id]")).to_have_count(0)  # the form replaces the row
-        expect(section).to_contain_text("Not started. Starting is not available yet")
+        expect(section).to_contain_text("Saved, not started. Starting is not available yet")
         _shot(page, f"{label}-09-edit-never-started")
         page.get_by_role("spinbutton", name="Memory (GiB)").fill("8")
         page.get_by_role("button", name="Review the change").click()
         expect(section.locator(".compute-ws-review")).to_contain_text("Memory: 4 GiB → 8 GiB")
+        _shot(page, f"{label}-09b-edit-review")
         page.get_by_role("button", name="Confirm and save").click()
-        expect(notice).to_contain_text("Saved Acceptance box in Commonplace.")
-        expect(notice).to_be_focused()
+        expect(notice).to_contain_text("Saved “Acceptance box”, not started.")
+        expect(row.get_by_role("heading", name="Acceptance box")).to_be_focused()
         assert fx.listed()[0]["memory_mib"] == 8192
         assert (fx.listed()[0]["revision"], fx.listed()[0]["version"]) == (2, 2)
         # Details, with a plain way out: Escape closes and focus returns to the row's button.
@@ -435,7 +448,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(detail).to_contain_text("Edited once")
         expect(detail).to_contain_text("Hosted on")
         expect(detail).to_contain_text("GitHub Container Registry (ghcr.io)")
-        expect(detail).to_contain_text("can't be discarded yet")
+        expect(detail).to_contain_text("discard this workspace because it was never started")
         _shot(page, f"{label}-10-detail")
         page.keyboard.press("Escape")
         expect(detail).to_have_count(0)
@@ -492,15 +505,20 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
             )
             for name in names
         }
-        expect(rows["No machine yet box"]).to_contain_text("No machine chosen")
+        expect(rows["No machine yet box"]).to_contain_text("Saved, not started")
+        expect(rows["No machine yet box"]).to_contain_text("Machine: not chosen yet")
         expect(rows["Private box"]).to_contain_text("Private image")
-        expect(rows["Pending box"]).to_contain_text("Not started")
+        expect(rows["Pending box"]).to_contain_text("Saved, not started")
         expect(rows["Pending box"]).to_contain_text("Image: Python 3.12 (slim)")
-        expect(rows["Ready box"]).to_contain_text("Ready")
+        expect(rows["Ready box"]).to_contain_text("Up to date")
         expect(rows["Failed box"]).to_contain_text("Failed")
-        # One plain status per row: a restart is its own status and is never also "Ready".
-        expect(rows["Restart box"]).to_contain_text("Restart needed")
-        expect(rows["Restart box"]).not_to_contain_text("Ready")
+        # A failed row shows its reason in the list, not only in the details.
+        expect(rows["Failed box"]).to_contain_text("It ran out of memory at 2 GiB")
+        expect(rows["Failed first box"]).to_contain_text("could not download the image")
+        # One vocabulary: "Changes waiting" for settings saved after a start; no Ready, Restart needed or running.
+        expect(rows["Restart box"]).to_contain_text("Changes waiting")
+        expect(section).not_to_contain_text("Restart needed")
+        expect(section).not_to_contain_text("running")
         expect(section).not_to_contain_text("matches the saved settings")
         assert section.get_by_role("button", name="Bind a registry login").count() == 0
         # Row actions name their workspace; a started workspace, or one whose start failed, cannot be discarded.
@@ -532,9 +550,8 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
         page.keyboard.press("Escape")
         rows["Restart box"].get_by_role("button", name="Details for Restart box").click()
         detail = page.locator(".compute-ws-detail")
-        expect(detail).to_contain_text(
-            "Nothing to do now. Its new settings apply the next time it starts"
-        )
+        expect(detail).to_contain_text("The new settings apply the next time it starts")
+        expect(detail).to_contain_text("Changes are waiting for the next start.")
         expect(detail).not_to_contain_text("matches the saved")
         expect(detail).to_contain_text("can't be discarded yet")
         _shot(page, f"{label}-12-restart-needed-detail")
@@ -559,39 +576,44 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
         expect(section).to_contain_text("A started workspace can't move to another machine yet.")
         _shot(page, f"{label}-13-edit-started")
         page.keyboard.press("Escape")
-        # Discard: a danger-styled confirmation, Keep focused by default, then a plain confirmation.
+        # Discard: a confirmation inside the record's own row with fixed labels, Keep focused by default and as strong as Discard.
         rows["Pending box"].get_by_role("button", name="Discard Pending box").click()
-        expect(page.locator("#compute-ws-heading")).to_have_text("Discard Pending box?")
+        expect(page.locator("#compute-ws-heading")).to_have_text("Discard “Pending box”?")
+        assert rows["Pending box"].locator("#compute-ws-heading").count() == 1, "inside its own row"
         expect(section).to_contain_text("nothing on a machine is affected")
-        keep = page.get_by_role("button", name="Keep Pending box")
+        keep = page.get_by_role("button", name="Keep it")
         expect(keep).to_be_focused()
-        confirm = page.get_by_role("button", name="Discard Pending box", exact=True)
+        confirm = page.get_by_role("button", name="Discard workspace", exact=True)
         assert "danger" in confirm.get_attribute("class")
+        assert confirm.bounding_box()["height"] >= 32 and keep.bounding_box()["height"] >= 32
         assert len(fx.listed()) == 7
         _shot(page, f"{label}-14-discard-confirm")
         keep.click()
         expect(page.get_by_role("button", name="Discard Pending box")).to_be_focused()
         page.get_by_role("button", name="Discard Pending box").click()
-        # The record starts behind the page's back: the server refuses the discard and the panel says why.
+        # The record starts behind the page's back: the body is replaced by the refusal, Discard goes and Keep it has focus.
         fx.state(
             next(item["id"] for item in fx.listed() if item["name"] == "Pending box"),
             "ready",
             applied_revision=1,
         )
-        page.get_by_role("button", name="Discard Pending box", exact=True).click()
-        expect(page.locator("[data-ws-summary]")).to_contain_text(
-            "has been started, so it can't be discarded yet"
+        page.get_by_role("button", name="Discard workspace", exact=True).click()
+        refused = rows["Pending box"]
+        expect(refused).to_contain_text(
+            "It started after you opened this, so nothing was discarded."
         )
-        expect(page.locator("[data-ws-summary]")).to_be_focused()
+        expect(refused).not_to_contain_text("nothing on a machine is affected")
+        expect(page.get_by_role("button", name="Discard workspace")).to_have_count(0)
+        expect(page.get_by_role("button", name="Keep it")).to_be_focused()
         _shot(page, f"{label}-21-discard-refused")
         page.keyboard.press("Escape")
         rows["No machine yet box"].get_by_role("button", name="Discard No machine yet box").click()
-        page.get_by_role("button", name="Discard No machine yet box", exact=True).click()
+        page.get_by_role("button", name="Discard workspace", exact=True).click()
         notice = page.locator("[data-ws-notice]")
         expect(notice).to_have_text(
-            "Discarded No machine yet box. Nothing on a machine was affected."
+            "Discarded “No machine yet box”. Nothing on a machine was affected."
         )
-        expect(notice).to_be_focused()
+        expect(page.get_by_role("button", name="New cloud workspace")).to_be_focused()
         assert [item["name"] for item in fx.listed()].count("No machine yet box") == 0
         _shot(page, f"{label}-15-discarded")
         if size == "phone":
@@ -615,9 +637,9 @@ def test_a_server_conflict_and_a_stale_rename_are_explained_and_recoverable(serv
         page.get_by_role("button", name="Review and create").click()
         page.get_by_role("button", name="Confirm and create").click()
         expect(page.locator("#ws-error-name")).to_have_text(
-            "Another cloud workspace already uses this name."
+            "That name is taken. Choose another, for example Build box 2."
         )
-        expect(page.get_by_role("textbox", name="Name", exact=True)).to_be_focused()
+        expect(page.locator("[data-ws-summary]")).to_be_focused()
         expect(page.locator("[data-ws-summary]")).to_contain_text("Fix this field")
         _shot(page, f"{label}-16-server-conflict")
         page.keyboard.press("Escape")  # a changed form asks first
@@ -628,39 +650,45 @@ def test_a_server_conflict_and_a_stale_rename_are_explained_and_recoverable(serv
         fx.store.update_workspace(
             fx.principal, mine["id"], **fx.auth, expected_revision=1, name="Mine, renamed elsewhere"
         )
-        page.get_by_role("button", name="Reload inventory").click()
-        expect(page.get_by_role("button", name="Reload inventory")).to_be_focused()
+        page.get_by_role("button", name="Refresh").click()
+        expect(page.get_by_role("button", name="Refresh")).to_be_focused()
         summary = page.locator("[data-ws-summary]")
-        expect(summary).to_contain_text("was changed by someone else")
+        expect(summary).to_contain_text(
+            "Someone else changed this workspace, so nothing was saved."
+        )
         expect(page.locator("[data-ws-notice]")).to_contain_text("changed while you had it open")
         expect(summary).to_contain_text("What you typed (copy it if you want to keep it):")
         expect(summary).to_contain_text("Name: Mine, renamed here")
-        expect(page.get_by_role("button", name="Reload and start over")).to_be_visible()
+        reload_button = page.get_by_role("button", name="Reload to continue")
+        expect(reload_button).to_be_visible()
         summary.evaluate("el => el.scrollIntoView({block: 'center'})")
         _shot(page, f"{label}-17-stale-edit")
-        # The submit is disabled while stale and nothing is overwritten.
-        expect(page.get_by_role("button", name="Review the change")).to_have_attribute(
-            "aria-disabled", "true"
-        )
-        page.get_by_role("button", name="Review the change").click(force=True)
+        # The submit is really disabled (not just styled) while stale, with the way on beside it; nothing is overwritten.
+        review = page.get_by_role("button", name="Review the change")
+        expect(review).to_be_disabled()
+        review.click(force=True)
         assert (
-            page.get_by_role("heading", name="Confirm the change to Mine, renamed here").count()
+            page.get_by_role("heading", name="Confirm the change to “Mine, renamed here”").count()
             == 0
         )
         saved = next(item for item in fx.listed() if item["id"] == mine["id"])
         assert saved["name"] == "Mine, renamed elsewhere", "nothing was overwritten"
-        # Reload and start over: a fresh form on the current values, with a working save.
-        page.get_by_role("button", name="Reload and start over").click()
+        # Reload to continue: a fresh form on the current values; what was typed waits behind "Apply my changes again".
+        reload_button.click()
         name = page.get_by_role("textbox", name="Name", exact=True)
         expect(name).to_have_value("Mine, renamed elsewhere")
-        expect(section.get_by_role("button", name="Reload and start over")).to_have_count(0)
+        expect(section.get_by_role("button", name="Reload to continue")).to_have_count(0)
+        reapply = page.get_by_role("button", name="Apply my changes again")
+        expect(reapply).to_be_visible()
+        expect(section.locator("[data-ws-reapply]")).to_contain_text("Name: Mine, renamed here")
         _shot(page, f"{label}-17b-stale-recovered")
+        reapply.click()
+        expect(name).to_have_value("Mine, renamed here")
+        expect(reapply).to_have_count(0)
         name.fill("Mine, final")
         page.get_by_role("button", name="Review the change").click()
         page.get_by_role("button", name="Confirm and save").click()
-        expect(page.locator("[data-ws-notice]")).to_contain_text(
-            "Saved Mine, final in Commonplace."
-        )
+        expect(page.locator("[data-ws-notice]")).to_contain_text("Saved “Mine, final”")
         assert next(i for i in fx.listed() if i["id"] == mine["id"])["version"] == 3
 
     _run(fx, ui, size, body)
@@ -676,29 +704,32 @@ def test_member_sees_the_list_read_only_and_no_machine_names(served, ui, size):
     def body(page, label, context):
         section = _section(page)
         expect(section.get_by_role("heading", name="Shared box")).to_be_visible()
-        expect(section).to_contain_text("on an assigned machine")
+        expect(section).to_contain_text("Machine: assigned (name hidden)")
         expect(section).to_contain_text("Image: ghcr.io/acme/tools:1.2")
         expect(section).not_to_contain_text("Build machine")
-        expect(page.locator(".compute")).to_contain_text("requires the current workspace owner")
+        expect(page.locator(".compute")).to_contain_text(
+            "You can read this workspace's settings. Only its owner can change them."
+        )
+        expect(page.locator(".compute")).not_to_contain_text("requires the current workspace owner")
         for action in ("create", "edit", "bind", "discard"):
             assert page.locator(f'[data-ws-action="{action}"]').count() == 0
         page.get_by_role("button", name="Details for Shared box").click()
         detail = page.locator(".compute-ws-detail")
-        expect(detail).to_contain_text("Only the workspace owner can change cloud workspaces.")
-        expect(detail).to_contain_text("A machine is assigned")
+        expect(detail).to_contain_text("You can read this workspace's settings.")
+        expect(detail).to_contain_text("assigned (name hidden)")
         expect(detail).not_to_contain_text("Build machine")
         _shot(page, f"{label}-20-member")
         page.get_by_role("button", name="Close").click()
         expect(page.get_by_role("button", name="Details for Shared box")).to_be_focused()
-        # Reload inventory keeps the member's section on screen all along and does not lose the place.
+        # Refresh keeps the member's section on screen all along and does not lose the place.
         page.get_by_role("button", name="Details for Shared box").click()
         page.evaluate(
             "() => { window.__sawSection = []; new MutationObserver(() => window.__sawSection.push("
             "!!document.querySelector('[data-ws-root]'))).observe(document.querySelector('#content') ||"
             " document.body, {childList: true, subtree: true}); }"
         )
-        page.get_by_role("button", name="Reload inventory").click()
-        expect(page.get_by_role("button", name="Reload inventory")).to_be_focused()
+        page.get_by_role("button", name="Refresh").click()
+        expect(page.get_by_role("button", name="Refresh")).to_be_focused()
         expect(section.get_by_role("heading", name="Shared box")).to_be_visible()
         assert all(page.evaluate("window.__sawSection")), (
             "the section never vanished during the reload"
@@ -909,6 +940,8 @@ def test_the_phone_form_scrolls_by_touch_and_the_action_bar_never_covers_what_ma
         page.get_by_role("textbox", name="Name", exact=True).fill("")
         page.get_by_role("button", name="Review and create").click()
         name = page.get_by_role("textbox", name="Name", exact=True)
+        expect(page.locator("[data-ws-summary]")).to_be_focused()
+        page.locator("[data-ws-summary]").get_by_role("link", name="Name:").click()
         expect(name).to_be_focused()
         assert not _under_the_bar(page, 'input[name="ws_name"]')
         assert not _under_the_bar(page, "#ws-error-name")
@@ -918,15 +951,17 @@ def test_the_phone_form_scrolls_by_touch_and_the_action_bar_never_covers_what_ma
         # An error on a field lower down is also in view, not under the bar.
         page.get_by_role("spinbutton", name="Storage (GiB)").fill("9999")
         page.get_by_role("button", name="Review and create").click()
+        expect(page.locator("[data-ws-summary]")).to_be_focused()
+        page.locator("[data-ws-summary]").get_by_role("link", name="Storage:").click()
         expect(page.get_by_role("spinbutton", name="Storage (GiB)")).to_be_focused()
         assert not _under_the_bar(page, 'input[name="ws_storage_gib"]')
         assert not _under_the_bar(page, "#ws-error-storage_gib")
         page.get_by_role("spinbutton", name="Storage (GiB)").fill("20")
         page.get_by_role("button", name="Review and create").click()
-        expect(page.get_by_role("heading", name="Create Phone box?")).to_be_focused()
+        expect(page.get_by_role("heading", name="Create “Phone box”?")).to_be_focused()
         assert not _under_the_bar(page, "[data-ws-honesty]")
         _assert_bar_sits_on_the_tab_bar(page)
-        # Touch targets hold at this width, including the Reload inventory button on Deck.
+        # Touch targets hold at this width, including the Refresh button on Deck.
         _assert_touch_targets(page, inputs=False)
         _no_sideways_scroll(page)
         _shot(page, f"{label}-{viewport[0]}-24-phone-review")
@@ -944,7 +979,9 @@ def test_escape_steps_back_and_saving_keeps_focus_on_the_button(served, ui):
         page.get_by_role("button", name="Change settings for Escape box").click()
         page.get_by_role("spinbutton", name="Memory (GiB)").fill("8")
         page.get_by_role("button", name="Review the change").click()
-        expect(page.locator("#compute-ws-heading")).to_have_text("Confirm the change to Escape box")
+        expect(page.locator("#compute-ws-heading")).to_have_text(
+            "Confirm the change to “Escape box”"
+        )
         # Escape from the review goes back to the form, with the typed value.
         page.keyboard.press("Escape")
         expect(page.get_by_role("spinbutton", name="Memory (GiB)")).to_have_value("8")
@@ -975,26 +1012,85 @@ def test_escape_steps_back_and_saving_keeps_focus_on_the_button(served, ui):
         )
         assert page.locator("[data-ws-notice]").inner_text() == "Saving…"
         notice = page.locator("[data-ws-notice]")
-        expect(notice).to_contain_text("Saved Escape box in Commonplace.")
-        expect(notice).to_be_focused()
+        expect(notice).to_contain_text("Saved “Escape box”")
+        expect(page.get_by_role("heading", name="Escape box", exact=True)).to_be_focused()
 
     _run(fx, ui, "desktop", body)
 
 
 @pytest.mark.parametrize("ui", UIS)
-def test_names_that_hide_themselves_are_refused_as_you_type(served, ui):
+def test_names_that_hide_themselves_are_refused_when_the_field_is_committed(served, ui):
     fx = served
 
     def body(page, label, context):
         page.get_by_role("button", name="New cloud workspace").click()
         name = page.get_by_role("textbox", name="Name", exact=True)
-        for hidden in ("aㅤb", "abﾠ", "a b", "a　b", "a͏b", "a️b", "ㅤ"):
+        for hidden in (
+            "a\u3164b",
+            "ab\uffa0",
+            "a\u00a0b",
+            "a\u3000b",
+            "a\u034fb",
+            "a\ufe0fb",
+            "\u3164",
+            "a\u180fb",
+        ):
             name.fill(hidden)
-            expect(page.locator("#ws-error-name")).to_contain_text("ordinary visible characters")
+            name.blur()
+            expect(page.locator("#ws-error-name")).to_contain_text(
+                "Use letters, numbers and normal spaces."
+            )
         name.fill("Café 2")
         expect(page.locator("#ws-error-name")).to_have_text("")
 
     _run(fx, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_typing_is_silent_and_choosing_an_image_does_not_move_the_page(served, ui, size):
+    """Errors are written when a field is committed or the form is submitted, never per keystroke (a polite live
+    region would announce each one), and changing the image choice shows the address box without scrolling."""
+    fx = served
+
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
+        address = page.get_by_role("textbox", name="Image address", exact=True)
+        page.evaluate(
+            "() => { window.__slotWrites = 0; document.querySelectorAll('[data-ws-error]').forEach(slot =>"
+            " new MutationObserver(list => { window.__slotWrites += list.length; }).observe(slot,"
+            " {childList: true, characterData: true, subtree: true})); }"
+        )
+        address.click()
+        address.press_sequentially("ghcr.", delay=30)
+        page.wait_for_timeout(200)
+        assert page.evaluate("() => window.__slotWrites") == 0, "no error is written while typing"
+        expect(address).not_to_have_attribute("aria-invalid", "true")
+        address.press("Tab")  # committing the field is when its problem is shown
+        expect(page.locator("#ws-error-image")).to_contain_text("Add the image name")
+        expect(address).to_have_attribute("aria-invalid", "true")
+        # Switching between a ready-made image and "My own image" toggles the box in place: no scroll, no focus move.
+        choice = page.get_by_role("combobox", name="Image", exact=True)
+        choice.select_option("docker.io/library/ubuntu:24.04")
+        expect(address).to_be_hidden()
+        choice.focus()
+        top = page.evaluate(
+            "() => { const s = document.querySelector('#content') || document.scrollingElement;"
+            " return [s.scrollTop, window.scrollY]; }"
+        )
+        choice.select_option("custom")
+        expect(address).to_be_visible()
+        assert (
+            page.evaluate(
+                "() => { const s = document.querySelector('#content') || document.scrollingElement;"
+                " return [s.scrollTop, window.scrollY]; }"
+            )
+            == top
+        ), "choosing an image does not scroll the page"
+        expect(choice).to_be_focused()
+
+    _run(fx, ui, size, body)
 
 
 @pytest.mark.parametrize("ui", UIS)
@@ -1014,7 +1110,8 @@ def test_no_machines_enrolled_says_what_to_do(served_empty, ui, size):
         page.get_by_role("textbox", name="Name", exact=True).fill("Machine-less")
         page.get_by_role("button", name="Review and create").click()
         page.get_by_role("button", name="Confirm and create").click()
-        expect(page.locator("[data-ws-id]").first).to_contain_text("No machine chosen")
+        expect(page.locator("[data-ws-id]").first).to_contain_text("Saved, not started")
+        expect(page.locator("[data-ws-id]").first).to_contain_text("Machine: not chosen yet")
         page.get_by_role("button", name="Details for Machine-less").click()
         expect(page.locator(".compute-ws-detail")).to_contain_text(
             "Choose a machine for it with Change settings."
