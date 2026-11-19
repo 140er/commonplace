@@ -172,7 +172,7 @@ export function runnerGraph(rows) {
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** One sentence about what the read holds. */
 export function summaryText({ mode, rows, payload }) {
-  if (mode === 'runners') return `${rows.filter(m => machineState(m) === 'ready').length} of ${plural(rows.length, 'machine')} ready.`;
+  if (mode === 'runners') return rows.length ? `${rows.filter(m => machineState(m) === 'ready').length} of ${plural(rows.length, 'machine')} ready.` : ''; // nothing to count with no machine
   const nodes = mapModel(payload).nodes, machines = nodes.filter(n => MACHINE_KINDS.has(n.kind)), sites = nodes.filter(n => n.kind === 'website');
   const count = status => machines.filter(n => n.status === status).length;
   const text = machines.length ? `${count('up')} of ${plural(machines.length, 'machine')} up.` : '';
@@ -269,7 +269,7 @@ export function mount(context) {
   function frame() {
     if (tabs && !tabsHome) tabsHome = { parent: tabs.parentNode, next: tabs.nextSibling };
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
-    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. You can still save a cloud workspace without one (Management tab); add a machine when you want it to run somewhere.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
+    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add one to see it here. A cloud workspace can still be saved without one (Management tab).</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
     topAdd ??= mountComputeTopAction(shell, hash=>ctx.go(hash));
     placeActions(); framed = true; actions();

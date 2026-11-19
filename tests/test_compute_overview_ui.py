@@ -29,6 +29,7 @@ import pytest
         "pause",
         "workspaces-sync",
         "fold",
+        "skew",
         "member",
         "in-compute",
         "isolation",

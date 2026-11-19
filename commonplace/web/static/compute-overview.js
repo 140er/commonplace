@@ -17,7 +17,8 @@ const KIND_ORDER = ["runner", "machine", "workspace"];
 const esc = value => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
 const LOAD_ERROR = "The overview could not be loaded. Nothing is shown rather than a guess.";
 const DETAIL_ERROR = "The details could not be loaded.";
-const FIRST_RUN = "Nothing here yet. Create a cloud workspace below. A machine can be chosen later.";
+const FIRST_RUN = "Create a cloud workspace below. A machine can be chosen later.";
+const MORE_THAN = 5; // above this many items the overview starts folded to its summary, so what follows it is within reach
 const DEFAULT_REFRESH = 30;
 const CLOCK_SECONDS = 10;
 const NARROW = "(max-width: 699px)";
@@ -25,7 +26,7 @@ const NARROW = "(max-width: 699px)";
 const BLOCK_SHORT = {
   no_machine: "no machine chosen", machine_not_verified: "its machine is not verified", private_image: "private image", not_available: "starting is not available yet",
   revoked: "removed", disabled: "turned off", not_approved: "not approved", draining: "draining", never_connected: "never connected", offline: "offline", full: "may be full",
-  hourly_cap: "hourly limit reached", not_verified: "not verified", verification_expired: "verification expired",
+  hourly_cap: "hourly limit reached", not_verified: "not verified", verification_expired: "verification expired", unknown: "not known until the next report",
 };
 
 const epochOf = at => {
@@ -50,7 +51,7 @@ const timeOf = iso => {
  */
 export function viewOf(item, clock = {}) {
   const { nowS = null, thresholds = {}, failedAt = "" } = clock;
-  let status = item.status, health = item.health;
+  let status = item.status, health = item.health, blockers = item.health?.blockers || [];
   const last = item.last_seen;
   let seen = last?.label || "", age = null;
   const at = last ? epochOf(last.at) : null;
@@ -63,14 +64,15 @@ export function viewOf(item, clock = {}) {
     if (item.kind === "workspace" && ["running", "starting", "stopping"].includes(status.code) && age > (thresholds.report_stale_s || 600)) {
       const word = status.label;
       status = { code: "unknown", tone: "quiet", label: "Unknown", detail: `Its last report said ${word} ${agoText(age)} and nothing newer has arrived, so it may not be ${word.toLowerCase()} any more.`, next: "Nothing newer has been reported. Check the machine that carries it." };
+      blockers = [...blockers, { code: "unknown", text: "Not known until the next report: its last report is too old to trust." }];
       overridden = true;
     } else if (item.kind === "runner" && ["online", "busy"].includes(status.code)) {
       const was = status.label;
-      if (age > (thresholds.red_after_s || 900)) { status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.`, next: status.next }; overridden = true; }
+      if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.`, next: status.next }; overridden = true; }
       else if (age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.`, next: status.next }; overridden = true; }
     }
   }
-  if (overridden) health = { ...health, state: "attention" };
+  if (overridden) health = { ...health, state: "attention", blockers };
   const stale = Boolean(failedAt) && !overridden;
   if (stale) status = { ...status, label: status.code === "unknown" ? status.label : `Last known: ${status.label}`, detail: `As of ${failedAt}: ${status.detail}` };
   return { status, health, seen, stale };
@@ -108,7 +110,10 @@ export function summaryText(items) {
   const names = items.filter(item => item.health?.state === "attention").map(item => item.name);
   const named = names.length > NAMES_SHOWN ? `${names.slice(0, NAMES_SHOWN).join(", ")} and ${names.length - NAMES_SHOWN} more` : names.join(", ");
   const need = attention ? ` ${attention} ${attention === 1 ? "needs" : "need"} attention: ${named}.` : " Nothing needs attention.";
-  return `${parts.join(", ")}.${need}`;
+  // A workspace with no machine needs nothing from anyone, but the sentence says what it is waiting for.
+  const waiting = items.filter(item => item.kind === "workspace" && item.placement?.assigned === false).length;
+  const wait = waiting ? ` ${plural(waiting, "cloud workspace is", "cloud workspaces are")} waiting for a machine.` : "";
+  return `${parts.join(", ")}.${need}${wait}`;
 }
 
 const healthLine = (item, seen) => {
@@ -174,7 +179,7 @@ export function detailBody(item, { loading = false, failed = false, manage = fal
   return `<p class="compute-ov-sentence">${e(v.status.detail)}</p>`
     + (v.status.next ? `<p class="compute-ov-next">Next step: ${e(v.status.next)}</p>` : "")
     + (failed ? `<p class="compute-error compute-ov-stale">${e(DETAIL_ERROR)} Showing what the list knew.</p>` : "")
-    + `<h4 class="compute-ov-sub-h">Health</h4>${dl([[seenLabel, `<span data-ov-seen>${e(seenValue)}</span>`], ["Blocking new work", blocks], ["Needs a person", issues]])}`
+    + `<h4 class="compute-ov-sub-h">Health</h4>${dl([[seenLabel, `<span data-ov-seen>${e(seenValue)}</span>`], ["Blocking new work", blocks], [v.health?.issue_label || "Needs a person", issues]])}`
     + `<h4 class="compute-ov-sub-h">Usage</h4>${dl(usageRows(item))}`
     + `<h4 class="compute-ov-sub-h">Recent activity</h4>${activity}`
     + ((item.facts || []).length ? `<h4 class="compute-ov-sub-h">More about it</h4>${dl(item.facts.map(f => [f.label, e(f.value)]))}` : "")
@@ -198,13 +203,22 @@ export function createOverview(ctx) {
   const live = () => ctx.host()?.querySelector?.("[data-ov-announce]");
   const announce = text => { announced = text; const node = live(); if (node) node.textContent = text; };
   const interval = () => Math.max(15, Number(data?.refresh_seconds) || DEFAULT_REFRESH);
-  const clock = () => ({ nowS: ctx.now() / 1000, thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "" });
+  // "Now" is the SERVER's time at the last read plus the time that has passed here since: every timestamp on screen is the
+  // server's, so comparing it with this browser's own clock would make a skewed clock read a healthy runner as Offline
+  // (or a stale one as fresh). Only the elapsed time is taken from the browser.
+  const sinceRead = () => Math.max(0, (ctx.now() - fetchedAt) / 1000);
+  const serverNow = () => { const read = data ? epochOf(data.as_of) : null; return read === null ? null : read + sinceRead(); };
+  const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "" });
   const items = () => (data?.items || []).map(item => withView(item, clock()));
   const narrow = () => ctx.doc?.defaultView?.matchMedia?.(NARROW)?.matches === true;
-  const folded = () => foldOpen === null ? !narrow() : foldOpen;
+  // Closed on a phone and above a handful of items (the summary names what needs attention); open for the person's own choice,
+  // and while a failed first read has a "Try again" inside it.
+  const folded = () => foldOpen !== null ? foldOpen : data === null ? Boolean(loadError) : !narrow() && data.items.length <= MORE_THAN;
 
   function filtersHTML(all) {
-    const { kinds, statuses, attention } = filterCounts(all);
+    const { kinds } = filterCounts(all);
+    // Statuses are those of the chosen kind, so no combination can match nothing ("Cloud workspaces" and "Offline").
+    const { statuses, attention } = filterCounts(all.filter(item => kind === "all" || item.kind === kind));
     const shownKinds = KIND_ORDER.filter(k => kinds[k]);
     const kindButtons = shownKinds.length > 1
       ? `<div class="compute-ov-kinds" role="group" aria-label="Filter by kind">${[["all", `All (${all.length})`], ...shownKinds.map(k => [k, `${KIND_WORDS[k][1]} (${kinds[k]})`])].map(([value, label]) => `<button type="button" class="btn compute-ov-kind" data-ov-kind-filter="${value}" aria-pressed="${kind === value}">${e(label)}</button>`).join("")}</div>` : "";
@@ -226,14 +240,15 @@ export function createOverview(ctx) {
     }).join("");
   }
 
+  // The headline (summary line) says what state this is; the body says only what to do next, never the same words twice.
   function emptyHTML() {
-    if (!data.can_manage) return '<p class="compute-empty">There are no cloud workspaces yet. The workspace owner can create one.</p>';
+    if (!data.can_manage) return '<p class="compute-empty">The workspace owner can create one.</p>';
     // The workspaces list is the source of truth for cloud workspaces: while it holds records this overview has not caught up.
-    return ctx.workspaceSignature?.() ? '<p class="compute-empty">Your cloud workspaces are listed below. The overview is catching up.</p>' : `<p class="compute-empty">${FIRST_RUN}</p>`;
+    return ctx.workspaceSignature?.() ? '<p class="compute-empty">Your cloud workspaces are listed below.</p>' : `<p class="compute-empty">${FIRST_RUN}</p>`;
   }
 
   const stateHTML = () => data === null
-    ? (loadError ? `<p class="compute-error" role="alert">${e(loadError)}</p><div class="compute-actions"><button type="button" class="btn" data-ov-action="refresh">Try again</button></div>` : '<p class="compute-empty">Loading the overview…</p>')
+    ? (loadError ? `<p class="compute-error" role="alert">${e(loadError)}</p><div class="compute-actions"><button type="button" class="btn" data-ov-action="refresh">Try again</button></div>` : "")
     : (!data.items.length ? emptyHTML() : "");
 
   function noteText() {
@@ -245,20 +260,23 @@ export function createOverview(ctx) {
   const notesHTML = () => noteText().split("\n").filter(Boolean).map(text => `<p class="compute-quiet">${e(text)}</p>`).join("");
 
   function summaryLine() {
-    if (data === null) return loadError ? "The overview could not be loaded." : "Loading the overview…";
-    return summaryText(items()) || (ctx.workspaceSignature?.() ? "The overview is catching up." : data.can_manage ? "Nothing here yet." : "No cloud workspaces yet.");
+    if (data === null) return loadError ? "Overview not loaded." : "Loading the overview…";
+    const said = summaryText(items()) || (ctx.workspaceSignature?.() ? "The overview is catching up." : data.can_manage ? "Nothing here yet." : "No cloud workspaces yet.");
+    // A closed fold must not read as current after a failed refresh.
+    return refreshFailed ? `${said} Could not refresh: data from ${timeOf(data.as_of)}.` : said;
   }
 
   function metaText() {
     if (data === null) return "";
     const as = epochOf(data.as_of);
-    const age = as === null ? "" : `Updated ${agoText(Math.max(0, ctx.now() / 1000 - as))} (as of ${timeOf(data.as_of)}). `;
-    return paused ? `${age}Updates are paused. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
+    if (refreshFailed) return `Last updated ${timeOf(data.as_of)}; the last refresh failed.`;
+    const age = as === null ? "" : `Updated ${agoText(sinceRead())} (as of ${timeOf(data.as_of)}). `;
+    return paused ? `${age}Automatic refresh is paused; ages count on from the last read. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
   }
 
   const staleText = () => refreshFailed && data ? `Could not refresh. Showing the data from ${timeOf(data.as_of)}; it may be out of date.` : "";
-  const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn compute-ov-pause" data-ov-action="pause">${paused ? "Resume updates" : "Pause updates"}</button></header>`
-    + '<p class="compute-plain">Every machine, runner and cloud workspace Compute knows about. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
+  const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn compute-ov-pause" data-ov-action="pause">${paused ? "Resume automatic updates" : "Pause automatic updates"}</button></header>`
+    + '<p class="compute-plain">Every machine, runner and cloud workspace Compute knows about. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
 
   function panelKey() { return detail ? `${detail.kind}:${detail.id}` : ""; }
   function slots() {
@@ -278,8 +296,7 @@ export function createOverview(ctx) {
     const opts = { loading: detailBusy, failed: detailFailed, manage: data?.can_manage, clock: clock() };
     const panel = detail && data ? detailHTML(detail.item, opts) : "";
     if (detail && data) { painted.chip = chipHTML(viewOf(detail.item, opts.clock).status); painted.body = detailBody(detail.item, opts); }
-    return `<p class="compute-error compute-ov-stale" role="alert" data-ov-stale${values.stale ? "" : " hidden"}>${e(values.stale)}</p>`
-      + `<div data-ov-slot="state">${values.state}</div><div data-ov-slot="notes">${values.notes}</div>`
+    return `<div data-ov-slot="state">${values.state}</div><div data-ov-slot="notes">${values.notes}</div>`
       + `<div data-ov-slot="panel">${panel}</div><div data-ov-slot="filters">${values.filters}</div><div data-ov-slot="list">${values.list}</div>`;
   }
 
@@ -305,8 +322,12 @@ export function createOverview(ctx) {
 
   function html() {
     return `<section class="compute-inventory compute-wide compute-ov" aria-labelledby="compute-overview" data-ov><div data-ov-top>${topHTML()}</div>`
+      // The refresh state sits above the fold, so a closed fold (a phone) cannot hide a failed refresh.
+      + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p>`
+      + `<p class="compute-error compute-ov-stale" role="alert" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
+      + `<p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p>`
       + `<details class="compute-ov-fold" data-ov-fold${folded() ? " open" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary>`
-      + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p><p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p><div data-ov-root>${inner()}</div></details></section>`;
+      + `<div data-ov-root>${inner()}</div></details></section>`;
   }
 
   const setText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
@@ -345,6 +366,8 @@ export function createOverview(ctx) {
     const values = slots();
     setText(host.querySelector("[data-ov-summary]"), summaryLine());
     setText(host.querySelector("[data-ov-meta]"), metaText());
+    // Until the person chooses, the fold follows what it holds: closed above a handful of items, open for a failed first read.
+    if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = folded(); if (fold && fold.open !== want) fold.open = want; }
     const top = host.querySelector("[data-ov-top]");
     if (top && painted.top !== topHTML()) { painted.top = topHTML(); top.innerHTML = topHTML(); }
     const banner = host.querySelector("[data-ov-stale]");
@@ -421,7 +444,8 @@ export function createOverview(ctx) {
     } else if (data !== null) {
       refreshFailed = true; paint();
       // Said once when the failure starts, not at every poll while it lasts.
-      if (!failedSaid) { failedSaid = true; announce("The overview could not be refreshed. The rows now say when they were last read."); }
+      // The alert above the fold says it (once, when its text appears); a second spoken line would be the same news twice.
+      failedSaid = true;
     } else {
       loadError = LOAD_ERROR; paint();
     }
@@ -439,7 +463,11 @@ export function createOverview(ctx) {
     detailBusy = false;
     if (!failure && result?.item) { detail = { kind: detailKind, id, item: result.item }; detailFailed = false; }
     else if (failure?.status === 404) { detail = null; paint("opener"); announce("That item is no longer available."); return; }
-    else detailFailed = true;
+    else {
+      // Said once when it starts failing, not at every poll while it lasts.
+      if (!detailFailed) announce(DETAIL_ERROR);
+      detailFailed = true;
+    }
     paintDetail();
   }
 
@@ -508,7 +536,13 @@ export function createOverview(ctx) {
     const summary = event.target?.closest?.("[data-ov-fold-summary]");
     if (summary && summary.closest?.(".compute-ov")) { foldOpen = !folded(); return true; }
     const filter = event.target?.closest?.("[data-ov-kind-filter]");
-    if (filter) { kind = filter.dataset.ovKindFilter; paint(); showing(); return true; }
+    if (filter) {
+      kind = filter.dataset.ovKindFilter;
+      // A status that does not exist for this kind would show nothing: back to all statuses.
+      const here = items().filter(item => kind === "all" || item.kind === kind);
+      if (status !== "all" && !here.some(item => status === "attention" ? item.health?.state === "attention" : item.status.code === status)) status = "all";
+      paint(); showing(); return true;
+    }
     const target = event.target?.closest?.("[data-ov-action]");
     if (!target || !target.closest?.(".compute-ov")) return false;
     if (target.getAttribute?.("aria-disabled") === "true") return true;

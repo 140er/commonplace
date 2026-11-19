@@ -38,9 +38,9 @@ const overviewOf = (items = fleet(), extra = {}) => ({
 });
 const detailOf = (base, extra = {}) => ({ item: { ...base, activity: [{ at: 1, age_s: 60, text: 'Created by the owner' }], facts: [{ label: 'Image', value: 'ghcr.io/acme/tools:1.2' }], ...extra }, can_manage: true });
 
-function fixture({ data = overviewOf(), hidden = false, narrow = false, signature = () => '' } = {}) {
+function fixture({ data = overviewOf(), hidden = false, narrow = false, signature = () => '', skew = 0 } = {}) {
   const slot = () => { const n = { writes: 0, html: '' }; Object.defineProperty(n, 'innerHTML', { get() { return n.html; }, set(v) { n.html = v; n.writes++; } }); return n; };
-  const nodes = { root: slot(), top: slot(), meta: { textContent: '' }, announce: { textContent: '' }, summary: { textContent: '' }, stale: { textContent: '', hidden: true }, state: slot(), notes: slot(), panel: slot(), filters: slot(), list: slot() };
+  const nodes = { root: slot(), top: slot(), meta: { textContent: '' }, announce: { textContent: '' }, summary: { textContent: '' }, stale: (() => { const n = { text: '', hidden: true, writes: 0 }; Object.defineProperty(n, 'textContent', { get() { return n.text; }, set(v) { n.text = v; n.writes++; } }); return n; })(), state: slot(), notes: slot(), panel: slot(), filters: slot(), list: slot() };
   const focused = [], timers = [], calls = [], docListeners = new Map(), flags = { statusFocused: false };
   let epoch = 1, timerId = 0;
   const state = { answers: new Map(), delay: new Map(), denied: [], signature };
@@ -71,7 +71,7 @@ function fixture({ data = overviewOf(), hidden = false, narrow = false, signatur
   };
   const doc = { hidden, defaultView: { matchMedia: () => ({ matches: narrow }) }, addEventListener(kind, fn) { docListeners.set(kind, fn); }, removeEventListener(kind) { docListeners.delete(kind); } };
   const fake = { setTimeout(fn, ms) { const id = ++timerId; timers.push({ id, fn, ms, live: true }); return id; }, clearTimeout(id) { const t = timers.find(x => x.id === id); if (t) t.live = false; } };
-  let now = clock * 1000;
+  let now = (clock + skew) * 1000; // the browser's clock, skewed from the server's by ``skew`` seconds
   const request = path => {
     calls.push(path);
     const answer = state.answers.get(path) ?? (path === '/api/compute/overview' ? data : failure(404, { error: 'not_found' }));
@@ -107,6 +107,10 @@ const cases = {
     const many = ['a', 'b', 'c', 'd', 'e'].map(n => item('runner', n, `Runner ${n}`, { code: 'offline', label: 'Offline' }, { attention: true }));
     assert.match(ov.summaryText(many), /5 need attention: Runner a, Runner b, Runner c and 2 more\.$/);
     assert.equal(ov.summaryText([]), '');
+    // A workspace waiting for a machine needs nothing from anyone, and the sentence says what it waits for.
+    const waiting = item('workspace', 'w_m', 'Machine-less', { code: 'not_started', tone: 'quiet', label: 'Saved, not started' }, { last_seen: null, more: { placement: { assigned: false } } });
+    assert.equal(ov.summaryText([waiting]), '1 cloud workspace. Nothing needs attention. 1 cloud workspace is waiting for a machine.');
+    assert.match(ov.summaryText([waiting, { ...waiting, id: 'w_n' }]), /2 cloud workspaces are waiting for a machine\.$/);
   },
 
   async rows() {
@@ -184,10 +188,22 @@ const cases = {
     assert.doesNotMatch(empty.shown(), /runner machine|Advanced/, 'no jargon in the first-run copy');
     // Never "Nothing here yet" while the workspaces list holds records: the overview says it is catching up.
     const behind = fixture({ data: overviewOf([]), signature: () => 'w_1:1' }); await behind.ui.load();
-    assert.match(behind.shown(), /Your cloud workspaces are listed below\. The overview is catching up\./);
+    assert.match(behind.shown(), /The overview is catching up\. Your cloud workspaces are listed below\./);
     assert.doesNotMatch(behind.shown(), /Nothing here yet/);
     const noMember = fixture({ data: overviewOf([], { can_manage: false }) }); await noMember.ui.load();
-    assert.match(noMember.shown(), /There are no cloud workspaces yet\. The workspace owner can create one\./);
+    assert.match(noMember.shown(), /No cloud workspaces yet\. The workspace owner can create one\./);
+    // The headline says the state and the body only what to do: loading and empty never say one thing twice.
+    assert.equal((empty.shown().match(/Nothing here yet/g) || []).length, 1);
+    const loading = fixture(); const pending = loading.ui.load(); assert.equal((loading.shown().match(/Loading the overview/g) || []).length, 1); await pending;
+    // A closed fold: on a phone, above five items, and open for an empty or failed overview.
+    const phone = fixture({ narrow: true }); await phone.ui.load();
+    assert.doesNotMatch(phone.ui.html(), /data-ov-fold open>/, 'a phone folds');
+    const broken = fixture({ narrow: true }); broken.state.answers.set('/api/compute/overview', failure(500, { error: 'boom' })); await broken.ui.load();
+    assert.match(broken.ui.html(), /data-ov-fold open>/, 'a failed first read opens the fold so Try again is reachable');
+    const small = fixture({ data: overviewOf(fleet().slice(0, 3)) }); await small.ui.load();
+    assert.match(small.ui.html(), /data-ov-fold open>/, 'a handful of items stays open on a desktop');
+    const many = fixture({ data: overviewOf([...fleet(), ...fleet().map(i => ({ ...i, id: i.id + 'x' }))]) }); await many.ui.load();
+    assert.doesNotMatch(many.ui.html(), /data-ov-fold open>/, 'above five items the overview is folded to its summary');
   },
 
   async failure() {
@@ -201,28 +217,35 @@ const cases = {
     await f.click('refresh'); await flush();
     assert.match(f.shown(), /2 runners/); assert.doesNotMatch(f.html(), /role="alert"/);
     // A failed refresh keeps the old data, marks it out of date and says so politely.
+    const spoken = f.nodes.announce.textContent;
     f.state.answers.set('/api/compute/overview', failure(503, { error: 'authority_unavailable' }));
     await f.ui.load({ quiet: true });
+    // It is said above the fold (an alert, the meta line and the summary), so a closed fold cannot hide it.
+    assert.match(f.nodes.stale.textContent, /^Could not refresh\. Showing the data from \d{1,2}:\d\d:\d\d.*; it may be out of date\.$/);
+    assert.match(f.nodes.meta.textContent, /^Last updated \d{1,2}:\d\d:\d\d.*; the last refresh failed\.$/);
+    assert.match(f.nodes.summary.textContent, /Could not refresh: data from \d{1,2}:\d\d:\d\d/);
+    assert.doesNotMatch(f.nodes.meta.textContent, /Updated just now/);
+    assert.equal(f.nodes.announce.textContent, spoken, 'the alert speaks; the status line adds nothing');
     assert.match(f.shown(), /Could not refresh\. Showing the data from \d{1,2}:\d\d:\d\d.*; it may be out of date\./);
     assert.match(f.shown(), /2 runners/);
-    assert.match(f.nodes.announce.textContent, /could not be refreshed\. The rows now say when they were last read\./);
     assert.equal(f.ui.state.refreshFailed, true);
     // Every row says it is old: "Last known: Online", "As of HH:MM:SS: ..." and never a bare "Online".
     assert.match(f.html(), /data-tone="ok" data-ov-chip>Last known: Online<\/span>/);
     assert.match(f.shown(), /As of \d{1,2}:\d\d:\d\d.*: Waiting for work\./);
     assert.doesNotMatch(f.html(), />Online<\/span>/);
-    // A failure that lasts is announced once, not at every poll, and the alert node text is written once.
-    f.nodes.announce.textContent = '';
+    // A failure that lasts writes its alert once, not at every poll (writing the same text again would speak it again).
+    const writes = f.nodes.stale.writes;
     await f.ui.load({ quiet: true });
-    assert.equal(f.nodes.announce.textContent, '', 'the second failed poll says nothing more');
+    assert.equal(f.nodes.stale.writes, writes, 'the second failed poll says nothing more');
     assert.equal(f.nodes.stale.hidden, false);
-    // When it recovers the rows read as current again.
+    // When it recovers the rows read as current again and the alert goes.
     f.state.answers.delete('/api/compute/overview');
     await f.ui.load({ quiet: true });
-    assert.match(f.html(), /data-ov-chip>Online<\/span>/); assert.equal(f.nodes.stale.hidden, true);
+    assert.match(f.html(), /data-ov-chip>Online<\/span>/); assert.equal(f.nodes.stale.hidden, true); assert.equal(f.nodes.stale.textContent, '');
+    assert.match(f.nodes.meta.textContent, /^Updated just now/);
     f.state.answers.set('/api/compute/overview', failure(503, { error: 'authority_unavailable' }));
     await f.ui.load({ quiet: true });
-    assert.notEqual(f.nodes.announce.textContent, '', 'a new failure is announced again');
+    assert.notEqual(f.nodes.stale.textContent, '', 'a new failure is said again');
     // A sign-out is handed to the screen, not shown as an error.
     f.state.answers.set('/api/compute/overview', failure(401, { error: 'sign_in' }));
     await f.ui.load({ quiet: true }); assert.deepEqual(f.state.denied, [401]);
@@ -295,8 +318,11 @@ const cases = {
     f.select('offline');
     assert.deepEqual([...f.html().matchAll(/data-ov-id="([^"]+)"/g)].map(m => m[1]), ['mach_2']);
     assert.match(f.html(), /<option value="offline" selected>Offline \(1\)<\/option>/);
-    f.kindFilter('workspace'); // offline runners are not workspaces
-    assert.match(f.shown(), /No machines, runners or cloud workspaces match these filters\./);
+    f.kindFilter('workspace'); // offline runners are not workspaces: the status falls back to all, never to an empty list
+    assert.equal(f.ui.state.status, 'all');
+    assert.deepEqual([...f.html().matchAll(/data-ov-id="([^"]+)"/g)].map(m => m[1]), ['w_1', 'w_2']);
+    assert.doesNotMatch(f.html(), /<option value="offline"/, 'only the statuses that exist for the chosen kind are offered');
+    assert.match(f.html(), /<option value="running">Running \(1\)<\/option>/);
     assert.equal((f.html().match(/data-ov-action="clear"/g) || []).length, 1, 'one Clear filters, in the filter row');
     f.click('clear');
     assert.equal(f.ui.state.kind, 'all'); assert.equal(f.ui.state.status, 'all');
@@ -355,6 +381,7 @@ const cases = {
     await f.ui.load();
     f.state.answers.set('/api/compute/overview/runner/mach_1', failure(500, { error: 'boom' }));
     f.click('detail', { id: 'mach_1', kind: 'runner' }); await flush();
+    assert.equal(f.nodes.announce.textContent, 'The details could not be loaded.', 'a failed detail load is said, not silent');
     assert.match(f.ui.state.detail ? 'open' : 'closed', /open/);
     assert.match(f.html(), /compute-ov-panel/);
     // The item is gone (404): the panel closes, focus returns, and the person is told.
@@ -481,8 +508,8 @@ const cases = {
     f.click('pause');
     assert.equal(f.ui.state.paused, true);
     assert.equal(f.liveTimers(30000).length, 0, 'no automatic read while paused');
-    assert.match(f.nodes.meta.textContent, /Updates are paused\. Use Refresh above to read again\./);
-    assert.match(f.nodes.top.html, />Resume updates</);
+    assert.match(f.nodes.meta.textContent, /Automatic refresh is paused; ages count on from the last read\. Use Refresh above to read again\./);
+    assert.match(f.nodes.top.html, />Resume automatic updates</);
     assert.equal(f.nodes.announce.textContent, 'Automatic updates paused.');
     // A visibility change does not read either; pressing the page's Refresh (load) still does.
     f.bump(60000); f.docListeners.get('visibilitychange')(); await flush();
@@ -492,7 +519,7 @@ const cases = {
     f.click('pause'); await flush();
     assert.equal(f.ui.state.paused, false); assert.equal(f.calls.length, 3, 'resuming reads at once');
     assert.equal(f.liveTimers(30000).length, 1);
-    assert.match(f.nodes.top.html, />Pause updates</);
+    assert.match(f.nodes.top.html, />Pause automatic updates</);
   },
 
   async 'workspaces-sync'() {
@@ -517,7 +544,9 @@ const cases = {
   async fold() {
     // The summary sentence is the fold's summary: open on a desktop, closed on a phone, and the person's choice is kept.
     const desktop = fixture();
-    assert.match(desktop.ui.html(), /<details class="compute-ov-fold" data-ov-fold open>/);
+    assert.match(desktop.ui.html(), /<details class="compute-ov-fold" data-ov-fold>/, 'while the first read is under way the fold is closed (the headline says it is loading)');
+    await desktop.ui.load();
+    assert.match(desktop.ui.html(), /<details class="compute-ov-fold" data-ov-fold open>/, 'five items on a desktop: open');
     const phone = fixture({ narrow: true });
     assert.match(phone.ui.html(), /<details class="compute-ov-fold" data-ov-fold>/);
     assert.doesNotMatch(phone.ui.html(), /data-ov-fold open/);
@@ -526,6 +555,35 @@ const cases = {
     assert.match(phone.ui.html(), /data-ov-fold open>/, 'opened by the person, kept across a re-render');
     toggle(phone);
     assert.doesNotMatch(phone.ui.html(), /data-ov-fold open/);
+  },
+
+  async skew() {
+    // Every timestamp on screen is the server's: a browser clock that is minutes or hours off must not turn a healthy runner
+    // Offline or a fresh workspace Unknown, nor hide a stale one. "Now" is the server time at the read plus the time since.
+    for (const skew of [1000, -1000, 200, -200, 86400]) {
+      const f = fixture({ skew });
+      f.ui.start();
+      await f.ui.load();
+      assert.match(f.html(), /data-status="online"/, `skew ${skew}: the healthy runner stays Online`);
+      assert.match(f.html(), /data-status="running"/, `skew ${skew}: the fresh workspace stays Running`);
+      assert.doesNotMatch(f.html(), /Slow to report|data-status="offline"[\s\S]*build-runner/, `skew ${skew}`);
+      assert.match(f.nodes.meta.textContent, /^Updated just now/, `skew ${skew}: the age counts from the read`);
+      assert.match(f.html(), /Last seen 40 seconds ago/);
+      // Time that really passes still ages it: 200 s later the runner is slow, whatever the browser clock says.
+      f.bump(200 * 1000);
+      await f.fire(10000);
+      assert.match(f.html(), /data-status="slow"[\s\S]{0,400}build-runner|build-runner[\s\S]{0,400}data-status="slow"/, `skew ${skew}: elapsed time is honoured`);
+      assert.match(f.nodes.meta.textContent, /^Updated 3 minutes ago/);
+    }
+    // The overrides do not leave "Nothing is blocking" beside Offline or Unknown: they name what they are.
+    const [online, , , running] = fleet();
+    const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
+    const off = ov.viewOf(online, { nowS: clock + 1000, thresholds: th });
+    assert.equal(off.status.code, 'offline'); assert.match(off.health.blockers.at(-1).text, /^Offline: nothing heard for 17 minutes, so new card runs would wait\./);
+    const quiet = ov.viewOf(running, { nowS: clock + 660, thresholds: th });
+    assert.equal(quiet.status.code, 'unknown'); assert.equal(quiet.health.blockers.at(-1).code, 'unknown');
+    assert.match(text(ov.detailHTML({ ...online, activity: [], facts: [] }, { clock: { nowS: clock + 1000, thresholds: th } })), /Blocking new work.*Offline: nothing heard for 17 minutes/);
+    assert.doesNotMatch(text(ov.detailHTML({ ...online, activity: [], facts: [] }, { clock: { nowS: clock + 1000, thresholds: th } })), /Nothing is blocking new work/);
   },
 
   async member() {
