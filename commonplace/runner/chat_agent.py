@@ -1,5 +1,7 @@
 """Opt-in chat answers through the owner's configured local CLI and login."""
 
+import json
+import math
 import os
 import re
 import subprocess
@@ -29,6 +31,10 @@ CHAT_KEYS = frozenset({"default_cli", "context", "relay_always", "clis"})
 CLI_KEYS = frozenset({"argv", "default_model", "tools"})
 POLL_S = 3
 CLI_TIMEOUT_S = 60
+# Usage is read from the CLI's JSON result (claude --output-format json); a CLI that prints plain
+# text reports none, and the hub then records an explicit unknown cost, never zero.
+USAGE_INPUT_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+MAX_USAGE = 10**15
 CHAT_CHILD_KEYS = _CHILD_KEYS + ("XDG_CONFIG_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR")
 SAFE_ARGV = {
     "claude": {
@@ -222,6 +228,42 @@ def _post_result(hub, action, body, deadline):
                 raise
 
 
+def _count(value):
+    return value if type(value) is int and 0 <= value <= MAX_USAGE else None
+
+
+def _unwrap(text: str) -> tuple[str, dict]:
+    """Split a CLI JSON result into its answer and whitelisted usage.
+
+    Only the answer text and token and cost numbers leave this function: never the prompt,
+    paths, session ids or any other field of the result. Anything else is plain text, no usage.
+    """
+    if not text.startswith("{"):
+        return text, {}
+    try:
+        result = json.loads(text)
+    except (ValueError, RecursionError):
+        return text, {}
+    if not (
+        isinstance(result, dict)
+        and result.get("type") == "result"
+        and isinstance(result.get("result"), str)
+    ):
+        return text, {}
+    usage = {}
+    raw = result.get("usage")
+    if isinstance(raw, dict):
+        inputs = [_count(raw[key]) for key in USAGE_INPUT_KEYS if key in raw]
+        if inputs and None not in inputs:
+            usage["input_tokens"] = sum(inputs)
+        if _count(raw.get("output_tokens")) is not None:
+            usage["output_tokens"] = raw["output_tokens"]
+    cost = result.get("total_cost_usd")
+    if type(cost) in (int, float) and math.isfinite(cost) and 0 < cost * 1_000_000 <= MAX_USAGE:
+        usage.update(cost_micros=round(cost * 1_000_000), currency="USD")
+    return result["result"].strip(), usage
+
+
 def _reply(hub, config, job):
     deadline = time.monotonic() + job.get("expires_in", 0) if isinstance(job, dict) else 0
     if not (
@@ -254,19 +296,28 @@ def _reply(hub, config, job):
     # The frozen CLI seam takes the chat block, so carry the credential name in
     # an in-memory copy, outside the owner-written configuration schema.
     local_chat = {**chat, "_token_env": config["token_env"]}
-    outcome, value = _ask_cli(local_chat, cli, model, job["system"], job["prompt"])
+    usage = {}
+    outcome, value = _ask_cli(local_chat, cli, model, job["system"], job["prompt"], usage)
     if outcome == "ok":
         _post_result(
             hub,
             "answer",
-            {**body, "text": value, "cli": cli, "model": model},
+            {**body, "text": value, "cli": cli, "model": model, **usage},
             deadline,
         )
     else:
-        _post_result(hub, "fail", {**body, "code": value}, deadline)
+        _post_result(hub, "fail", {**body, "code": value, **usage}, deadline)
 
 
-def _ask_cli(chat: dict, cli: str, model: str | None, system: str, prompt: str) -> tuple[str, str]:
+def _ask_cli(
+    chat: dict,
+    cli: str,
+    model: str | None,
+    system: str,
+    prompt: str,
+    usage: dict | None = None,
+) -> tuple[str, str]:
+    """Run the CLI once. ``usage``, when given, is filled with what the CLI reported."""
     entry = chat["clis"][cli]
     model = model or entry["default_model"]
     argv = [model if arg == "{model}" else arg for arg in entry["argv"]]
@@ -330,12 +381,15 @@ def _ask_cli(chat: dict, cli: str, model: str | None, system: str, prompt: str) 
         return "fail", "cli_failed"
     except UnicodeError:
         return "fail", "bad_output"
-    if returncode != 0:
-        return "fail", "cli_failed"
     try:
-        text = output.decode("utf-8").strip()
+        text, reported = _unwrap(output.decode("utf-8").strip())
     except UnicodeError:
         return "fail", "bad_output"
+    if usage is not None:
+        # Tokens were spent even when the CLI then failed.
+        usage.update(reported)
+    if returncode != 0:
+        return "fail", "cli_failed"
     if not text:
         return "fail", "bad_output"
     return "ok", text[:MAX_REPLY_CHARS]
