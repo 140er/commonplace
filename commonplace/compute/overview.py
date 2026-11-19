@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from datetime import datetime, timezone
 
 from . import workspace_lifecycle as lifecycle, workspaces
@@ -432,6 +433,7 @@ def _table(conn, name):
 def blank_facts():
     return {
         "running": 0,
+        "older_started": 0,
         "uncertain": 0,
         "queued": 0,
         "starts_hour": 0,
@@ -475,6 +477,14 @@ def _runner_facts(gateway, workspace_id, now):
             (recent_limit,),
         ):
             of(row["machine_id"])["running"] += row["n"]
+        # Started rows nobody has updated for hours are not counted as in progress, but they are not
+        # dropped either: the machine says how many may still be open (``older_started``).
+        for row in conn.execute(
+            "SELECT machine_id,count(*) AS n FROM runner_jobs WHERE state='started' AND updated_at<=? "
+            "GROUP BY machine_id",
+            (recent_limit,),
+        ):
+            of(row["machine_id"])["older_started"] = row["n"]
         for row in conn.execute(
             "SELECT machine_id,count(*) AS n FROM runner_jobs WHERE starting_at>? GROUP BY machine_id",
             (stamp(now - 3600),),
@@ -589,11 +599,19 @@ def runner_status(machine, record, facts, now):
                 "Draining",
                 f"No new runs start here. {_runs(running)} in progress will finish.",
             )
+        older = facts["older_started"]
         return _status(
             "drained",
             "wait",
             "Drained",
-            "No new runs start here and none is in progress. Resume to use it again.",
+            "No new runs start here"
+            + (
+                f" and none is known to be in progress; {_runs(older)} recorded as started "
+                "long ago may still be open."
+                if older
+                else " and none is in progress."
+            )
+            + " Resume to use it again.",
         )
     if running:
         return _status("busy", "ok", "Busy", "It has runs in progress.")
@@ -662,9 +680,15 @@ def _runner_usage(machine, facts, now):
             "queued": facts["queued"],
             "starts_last_hour": facts["starts_hour"],
             "max_starts_per_hour": machine["max_starts_per_hour"],
+            "older_started": facts["older_started"],
             "text": f"{_runs(running)} in progress (up to {machine['max_in_flight']} at once), "
             f"{facts['queued']} waiting, {facts['starts_hour']} of {machine['max_starts_per_hour']} "
-            "starts used this hour",
+            "starts used this hour"
+            + (
+                f", plus {_runs(facts['older_started'])} recorded as started long ago that may still be open"
+                if facts["older_started"]
+                else ""
+            ),
         }
     }
     resources = facts["resources"]
@@ -812,24 +836,35 @@ def _dt(now):
     return datetime.fromtimestamp(now, timezone.utc)
 
 
+def _marks(values):
+    """``?`` placeholders for a bounded id list (the values still go in as parameters)."""
+    return ",".join("?" for _ in values)
+
+
 def _read_compute(store, principal, session_hash, *, workspace_id=None, node_id=None):
-    """Compute rows under one transaction; ``(rows, current)``."""
+    """Compute rows under one transaction, bounded by what is shown: the newest ``MAX_ITEMS`` of each kind, or
+    the one record asked for (found by id, so an item beyond the cap is still reachable)."""
     with store._transaction(principal, session_hash, member=True) as (conn, current):
         manage = current.role == "owner"
         now = store._now()
         data = {"manage": manage, "now": now}
-        lifecycles = {
+        data["workspace_rows"] = workspaces._rows(
+            conn, tail="ORDER BY w.created_at DESC,w.id DESC LIMIT ?", params=(MAX_ITEMS,)
+        )
+        if workspace_id is not None:
+            data["workspace_row"] = workspaces._row(conn, workspace_id)
+        shown = [row["id"] for row in data["workspace_rows"]] + (
+            [workspace_id] if workspace_id else []
+        )
+        data["lifecycles"] = {
             row["workspace_id"]: dict(row)
-            for row in conn.execute("SELECT * FROM cloud_workspace_lifecycle")
+            for row in conn.execute(
+                "SELECT * FROM cloud_workspace_lifecycle WHERE workspace_id IN ("
+                + _marks(shown)
+                + ")",
+                shown,
+            )
         }
-        data["lifecycles"] = lifecycles
-        data["workspace_rows"] = conn.execute(
-            "SELECT w.*, n.metadata AS node_metadata, l.phase AS lifecycle_phase FROM cloud_workspaces w "
-            "LEFT JOIN nodes n ON n.id=w.node_id "
-            "LEFT JOIN cloud_workspace_lifecycle l ON l.workspace_id=w.id "
-            "ORDER BY w.created_at DESC,w.id DESC LIMIT ?",
-            (MAX_ITEMS,),
-        ).fetchall()
         data["workspace_total"] = conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[
             0
         ]
@@ -837,68 +872,77 @@ def _read_compute(store, principal, session_hash, *, workspace_id=None, node_id=
             data["node_rows"] = conn.execute(
                 "SELECT * FROM nodes ORDER BY created_at DESC,id DESC LIMIT ?", (MAX_ITEMS,)
             ).fetchall()
+            if node_id is not None:
+                data["node_row"] = conn.execute(
+                    "SELECT * FROM nodes WHERE id=?", (node_id,)
+                ).fetchone()
             data["node_total"] = conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+            ids = [row["id"] for row in data["node_rows"]] + ([node_id] if node_id else [])
             data["verifications"] = {
                 row["node_id"]: dict(row)
                 for row in conn.execute(
-                    "SELECT node_id,verified_at,expires_at FROM enrollment_verifications"
+                    "SELECT node_id,verified_at,expires_at FROM enrollment_verifications "
+                    "WHERE node_id IN (" + _marks(ids) + ")",
+                    ids,
                 )
             }
-            data["placed"] = {}
-            for row in conn.execute(
-                "SELECT node_id,name FROM cloud_workspaces WHERE node_id IS NOT NULL ORDER BY name"
-            ):
-                entry = data["placed"].setdefault(row["node_id"], {"count": 0, "names": []})
-                entry["count"] += 1
-                if len(entry["names"]) < 5:
-                    entry["names"].append(row["name"])
-        if workspace_id is not None:
-            data["audit"] = [
-                dict(row)
+            data["placed"] = {
+                row["node_id"]: {"count": row["n"], "names": []}
                 for row in conn.execute(
-                    "SELECT action,user_id,created_at FROM audit WHERE object_id=? ORDER BY id DESC LIMIT ?",
-                    (workspace_id, ACTIVITY_LIMIT),
+                    "SELECT node_id,count(*) AS n FROM cloud_workspaces WHERE node_id IN ("
+                    + _marks(ids)
+                    + ") GROUP BY node_id",
+                    ids,
                 )
-            ]
-        if node_id is not None and manage:
+            }
+            for row in conn.execute(
+                "SELECT node_id,name FROM cloud_workspaces WHERE node_id IN ("
+                + _marks(ids)
+                + ") ORDER BY name LIMIT ?",
+                [*ids, MAX_ITEMS * 5],
+            ):
+                names = data["placed"][row["node_id"]]["names"]
+                if len(names) < 5:
+                    names.append(row["name"])
+        audit_id = workspace_id if workspace_id is not None else node_id if manage else None
+        if audit_id is not None:
             data["audit"] = [
                 dict(row)
                 for row in conn.execute(
                     "SELECT action,user_id,created_at FROM audit WHERE object_id=? ORDER BY id DESC LIMIT ?",
-                    (node_id, ACTIVITY_LIMIT),
+                    (audit_id, ACTIVITY_LIMIT),
                 )
             ]
         return data
 
 
-def _runners_installed(db):
-    """The registry table exists only where the runner is installed; reading never creates it."""
-    with db._lock:
-        return (
-            db._conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_machines'"
-            ).fetchone()
-            is not None
-        )
-
-
-def _runner_items(store, now):
-    """``(items, total)`` for the workspace's runner machines, owner only."""
+def _registry_machines(db, workspace_id):
+    """The workspace's runner machines; a hub without the runner installed has none (reading never creates it)."""
     from commonplace.runner import registry
+
+    try:
+        return registry.machines(db, workspace_id)
+    except sqlite3.OperationalError:
+        return []
+
+
+def _runner_items(store, now, only=None):
+    """``(items, total)`` for the workspace's runner machines, owner only: the first ``MAX_ITEMS``, or just
+    the machine ``only`` names (found among all of them, so one beyond the cap is still reachable)."""
     from commonplace.topology import status as topo
 
     gateway, ws = store.gateway, store.workspace_id
-    if not _runners_installed(gateway.db):
-        return [], 0
-    machines = registry.machines(gateway.db, ws)
+    machines = _registry_machines(gateway.db, ws)
+    total = len(machines)
+    machines = [m for m in machines if m["id"] == only] if only else machines[:MAX_ITEMS]
     if not machines:
-        return [], 0
+        return [], total
     when = _dt(now)
     config = topo.StatusConfig.from_env()
     signals = topo.collect_signals(gateway, ws, now=when)
     facts = _runner_facts(gateway, ws, now)
     items = []
-    for machine in machines[:MAX_ITEMS]:
+    for machine in machines:
         sig = signals.get(machine["id"]) or topo.MachineSignals(
             machine_id=machine["id"],
             enabled=bool(machine["enabled"]),
@@ -906,7 +950,7 @@ def _runner_items(store, now):
         )
         record = topo.machine_status(sig, now=when, config=config)
         items.append(runner_item(machine, record, facts.get(machine["id"]) or blank_facts(), now))
-    return items, len(machines)
+    return items, total
 
 
 def _summary(items):
@@ -1060,16 +1104,14 @@ def detail(store, principal, kind, item_id, *, session_hash):
         raise StoreError("owner_required", 403, reason="member")
     executor = lifecycle.executor_available(store.gateway)
     if kind == "workspace":
-        row = next((r for r in data["workspace_rows"] if r["id"] == item_id), None)
-        if row is None:
-            row = _one_workspace(store, principal, session_hash, item_id)
+        row = data["workspace_row"]
         life = data["lifecycles"].get(item_id) or lifecycle.default(now)
         item = workspace_item(row, life, now, manage=manage, executor=executor)
         item["activity"] = _activity_from_audit(data["audit"], now, manage=manage)
         item["facts"] = _workspace_facts(row, life, now, manage)
         return {"item": item, "can_manage": manage}
     if kind == "machine":
-        row = next((r for r in data["node_rows"] if r["id"] == item_id), None)
+        row = data["node_row"]
         if row is None:
             raise not_found()
         placed = data["placed"].get(item_id, {"count": 0, "names": []})
@@ -1086,8 +1128,8 @@ def detail(store, principal, kind, item_id, *, session_hash):
             },
         ]
         return {"item": item, "can_manage": True}
-    items, _ = _runner_items(store, now)
-    item = next((i for i in items if i["id"] == item_id), None)
+    items, _ = _runner_items(store, now, only=item_id)
+    item = items[0] if items else None
     if item is None:
         raise not_found()
     item["activity"] = _runs_activity(_recent_runs(store.gateway, store.workspace_id, item_id), now)
@@ -1124,11 +1166,14 @@ def _one_workspace(store, principal, session_hash, workspace_id):
 
 
 def _machine_row(store, machine_id):
-    from commonplace.runner import registry
-
-    if not _runners_installed(store.gateway.db):
-        raise not_found()
-    row = registry.get_machine(store.gateway.db, store.workspace_id, machine_id)
+    row = next(
+        (
+            m
+            for m in _registry_machines(store.gateway.db, store.workspace_id)
+            if m["id"] == machine_id
+        ),
+        None,
+    )
     if row is None:
         raise not_found()
     return row
@@ -1171,21 +1216,21 @@ def preview(store, principal, kind, item_id, action, *, session_hash):
     ):
         raise not_found("route")
     _ident(item_id)
-    data = _read_compute(store, principal, session_hash)
+    data = _read_compute(
+        store, principal, session_hash, workspace_id=item_id if kind == "workspace" else None
+    )
     if not data["manage"]:
         raise StoreError("owner_required", 403, reason="member")
     now = data["now"]
     executor = lifecycle.executor_available(store.gateway)
     if kind == "workspace":
-        row = next(
-            (r for r in data["workspace_rows"] if r["id"] == item_id), None
-        ) or _one_workspace(store, principal, session_hash, item_id)
+        row = data["workspace_row"]
         life = data["lifecycles"].get(item_id) or lifecycle.default(now)
         item = workspace_item(row, life, now, manage=True, executor=executor)
         refusal = lifecycle.decide(row, life, action, now)
         return _workspace_preview(item, row, life, action, refusal, executor)
-    items, _ = _runner_items(store, now)
-    item = next((i for i in items if i["id"] == item_id), None)
+    items, _ = _runner_items(store, now, only=item_id)
+    item = items[0] if items else None
     if item is None:
         raise not_found()
     machine = _machine_row(store, item_id)
@@ -1266,8 +1311,15 @@ def _workspace_preview(item, row, life, action, refusal, executor):
     else:
         base.update(
             title="Withdraw the request?",
-            effect=["Cancels the request that is waiting. Nothing had been sent to a machine."],
-            running_work="No work is affected.",
+            effect=[
+                "Clears the request, which a machine had picked up and then stopped reporting on. "
+                "This does not undo what the machine did: the workspace may still be starting or running."
+                if life["claimed_at"] is not None
+                else "Cancels the request that is waiting. Nothing had been sent to a machine."
+            ],
+            running_work="Work that may already be running is not touched."
+            if life["claimed_at"] is not None
+            else "No work is affected.",
             will_not=["It does not stop or start anything."],
             confirm_label="Withdraw request",
             danger=False,

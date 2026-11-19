@@ -426,3 +426,18 @@ def test_settings_edited_while_a_start_is_under_way_leave_it_running_with_older_
     assert current["status"]["code"] == "running" and current["restart_needed"] is True
     assert "restart it to apply them" in current["status"]["detail"]
     assert api.request(path=f"/workspaces/{ws['id']}")[1]["workspace"]["status"] == "restart_needed"
+
+
+def test_withdrawing_a_request_a_machine_picked_up_does_not_say_nothing_was_sent(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    _, before = api.request(path=f"{OVERVIEW}/workspace/{ws['id']}/preview/withdraw")
+    assert "Nothing had been sent to a machine" in before["effect"][0]
+    executor.claim()
+    api.env.clock.now += lifecycle.REPORT_STALE_S + 5
+    _, after = api.request(path=f"{OVERVIEW}/workspace/{ws['id']}/preview/withdraw")
+    assert after["allowed"] is True
+    text = " ".join(after["effect"])
+    assert "Nothing had been sent" not in text
+    assert "may still be starting or running" in text

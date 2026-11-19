@@ -379,9 +379,41 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("DELETE", "/api/webhooks/1"),
         ("POST", "/api/compute/gateways/g1/credential"),
         ("POST", "/api/compute/nodes/n1/credential"),
+        # The Compute overview: reads and owner actions all sit under the authenticated /api/compute/ prefix.
+        ("GET", "/api/compute/overview"),
+        ("GET", "/api/compute/overview/workspace/w1"),
+        ("GET", "/api/compute/overview/workspace/w1/preview/start"),
+        ("POST", "/api/compute/overview/workspace/w1/start"),
+        ("POST", "/api/compute/overview/runner/mach_1/drain"),
     ]
     for method, path in paths:
         assert hardened(request(surface, method, path, body=b"invalid")) == 401
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/api/compute/overview"),
+        ("GET", "/api/compute/overview/runner/mach_1"),
+        ("GET", "/api/compute/overview/workspace/w1/preview/stop"),
+        ("POST", "/api/compute/overview/workspace/w1/start"),
+        ("POST", "/api/compute/overview/runner/mach_1/resume"),
+    ],
+)
+def test_compute_overview_refuses_every_token_even_a_full_one(surface, method, path):
+    """The overview is read by a signed-in member and acted on by the owner person; no token (full or
+    read-only) is a person, so none reaches it, and nothing is served or changed."""
+    for untrusted in (False, True):
+        _cid, _value, auth = token(surface, f"overview-{untrusted}", untrusted=untrusted)
+        status, _headers, body = request(
+            surface,
+            method,
+            path,
+            headers={**auth, "Content-Type": "application/json", "Origin": "http://127.0.0.1"},
+            body=b"{}" if method == "POST" else None,
+        )
+        assert status in (401, 403, 421), (method, path, status)
+        assert b'"items"' not in body and b'"workspaces"' not in body
 
 
 @pytest.mark.parametrize("header", [None, "Bearer bad", "Basic secret"])

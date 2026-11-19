@@ -5,7 +5,7 @@ the way a real machine would, so every state-machine path is exercised without a
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from commonplace import control_db
 from commonplace.compute import workspace_lifecycle as lifecycle
@@ -93,6 +93,8 @@ class Fleet:
         """Say the machine's own credential was last used ``seconds_ago`` seconds before the fixture clock."""
         at = iso(self.env.clock.now - seconds_ago)
         key = "worker_connection_id" if worker else "machine_connection_id"
+        # There is no public setter for a credential's last use (it is stamped by authenticating); a test
+        # that needs a past value writes the column directly, here and nowhere else.
         with self.env.db._lock:
             self.env.db._conn.execute(
                 "UPDATE connections SET last_used_at=? WHERE id=?", (at, made[key])
@@ -133,7 +135,7 @@ class Fleet:
         return values["id"]
 
     def resources(self, made, *, seconds_ago=30, memory_mb=6144, cpu_free=3.5):
-        from commonplace.runner import capacity, headroom  # noqa: F401
+        from commonplace.runner import capacity
 
         with self.store().transaction() as conn:
             conn.execute(capacity.SCHEMA)
@@ -212,6 +214,5 @@ __all__ = [
     "after",
     "iso",
     "revoke_machine",
-    "timedelta",
     "workspace_body",
 ]

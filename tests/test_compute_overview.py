@@ -157,11 +157,53 @@ def test_busy_runner_shows_runs_in_progress_the_age_and_a_full_blocker(api, flee
     assert [b["code"] for b in busy["health"]["blockers"]] == ["full"]
 
 
-def test_old_started_rows_are_not_counted_as_running_forever(api, fleet):
+def test_old_started_rows_are_not_counted_as_running_but_are_not_dropped_either(api, fleet):
     made = fleet.enroll("runner-old")
     fleet.seen(made, 20)
     fleet.job(made, "started", minutes_ago=60 * 8, task=1)
-    assert by_name(read(api))["runner-old"]["usage"]["runs"]["running"] == 0
+    runs = by_name(read(api))["runner-old"]["usage"]["runs"]
+    assert runs["running"] == 0 and runs["older_started"] == 1
+    assert "plus 1 run recorded as started long ago that may still be open" in runs["text"]
+
+
+def test_a_drained_runner_with_an_old_open_run_never_claims_none_is_in_progress(api, fleet):
+    made = fleet.enroll("runner-old-drain")
+    fleet.seen(made, 20)
+    fleet.job(made, "started", minutes_ago=60 * 8, task=1)
+    status, _ = api.request(
+        "POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0}
+    )
+    assert status == 200
+    item = by_name(read(api))["runner-old-drain"]
+    assert item["status"]["code"] == "drained"
+    assert "none is known to be in progress" in item["status"]["detail"]
+    assert "may still be open" in item["status"]["detail"]
+
+
+def test_an_item_beyond_the_cap_is_still_reachable_by_id(api, fleet, monkeypatch):
+    monkeypatch.setattr(overview, "MAX_ITEMS", 1)
+    made = [fleet.enroll("runner-c"), fleet.enroll("runner-d")]
+    _, node = api.enrolled()
+    first = workspace(api, name="Aaa", node_id=node["id"])
+    workspace(api, name="Bbb")
+    listed = read(api)["items"]
+    shown_runners = {i["id"] for i in listed if i["kind"] == "runner"}
+    assert len(shown_runners) == 1 and "Aaa" not in {i["name"] for i in listed}
+    for one in made:
+        status, result = api.request(path=f"{BASE}/runner/{one['machine_id']}")
+        assert status == 200 and result["item"]["id"] == one["machine_id"]
+    status, result = api.request(path=f"{BASE}/workspace/{first['id']}")
+    assert status == 200 and result["item"]["name"] == "Aaa"
+    status, result = api.request(path=f"{BASE}/machine/{node['id']}")
+    assert status == 200 and result["item"]["placement"]["workspaces"] == 1
+
+
+def test_has_started_reads_a_row_built_without_the_lifecycle_join(api):
+    from commonplace.compute import workspaces as ws
+
+    row = {"applied_revision": None, "state": "pending"}
+    assert ws.has_started(row) is False
+    assert ws.has_started({**row, "lifecycle_phase": "starting"}) is True
 
 
 def test_uncertain_runs_are_an_issue_that_needs_the_owner(api, fleet):

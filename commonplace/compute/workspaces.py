@@ -449,10 +449,15 @@ def has_started(row):
     volume behind, so the machine stays locked, the record cannot be discarded and History says so.
     """
     # A lifecycle phase other than ``not_started`` (a start under way, a stop, a stopped workspace) counts too.
+    # A row built without the lifecycle join simply has none.
+    try:
+        phase = row["lifecycle_phase"]
+    except (KeyError, IndexError):
+        phase = None
     return (
         row["applied_revision"] is not None
         or row["state"] != "pending"
-        or row["lifecycle_phase"] not in (None, "not_started")
+        or phase not in (None, "not_started")
     )
 
 
