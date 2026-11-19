@@ -7,7 +7,10 @@ const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toStr
 const apiURL = moduleURL(source('api'));
 const workspacesURL = moduleURL(source('compute-workspaces').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
 const overviewURL = moduleURL(source('compute-overview').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
-const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/compute-workspaces\.js\1/g, JSON.stringify(workspacesURL)).replace(/(['"])\.\/compute-overview\.js\1/g, JSON.stringify(overviewURL))));
+// Add a machine is part of the same controller: its module (and the label helper it imports) is loaded like the other sections.
+const wingURL = moduleURL(source('wing-label'));
+const pairingURL = moduleURL(source('compute-pairing').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/wing-label\.js\1/g, JSON.stringify(wingURL)));
+const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/compute-workspaces\.js\1/g, JSON.stringify(workspacesURL)).replace(/(['"])\.\/compute-overview\.js\1/g, JSON.stringify(overviewURL)).replace(/(['"])\.\/compute-pairing\.js\1/g, JSON.stringify(pairingURL))));
 const { createCompute, computePayload, computeExecutionHTML, provisionCommand } = await load('compute');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const clock = 1800000000;
@@ -53,7 +56,7 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
   const toggleAdvanced = () => listeners.get('click')?.({ target: { closest: selector => selector === '[data-compute-advanced] > summary' ? {} : null } });
   const submit = (kind, values) => {
     const form = { dataset: { computeForm: kind }, entries: Object.entries(values) };
-    listeners.get('submit')?.({ target: { closest: () => form }, preventDefault() {}, stopPropagation() {} });
+    listeners.get('submit')?.({ target: { closest: selector => selector === '[data-compute-form]' ? form : null }, preventDefault() {}, stopPropagation() {} });
   };
   const input = (name, value, type = 'text') => listeners.get('input')?.({ target: { name, type, value, checked: value } });
   const respond = async (data = inventory(), boards = [{ slug: 'demo', name: 'Fixture project' }]) => {
