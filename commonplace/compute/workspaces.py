@@ -728,7 +728,14 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
         stored = ("name",) + runtime + ("registry_credential_version",)
         if all(values[key] == row[key] for key in stored):
             return public(row, manage=True)
-        revision = row["revision"] + (any(values[key] != row[key] for key in runtime))
+        runtime_changed = any(values[key] != row[key] for key in runtime)
+        if runtime_changed:
+            from .workspace_lifecycle import request_waiting
+
+            # A start, stop or restart request names this machine and these settings: they stay as asked.
+            if request_waiting(conn, workspace_id, store._now()):
+                raise _conflict("request_pending")
+        revision = row["revision"] + runtime_changed
         try:
             conn.execute(
                 "UPDATE cloud_workspaces SET name=?,name_key=?,node_id=?,image_source=?,"

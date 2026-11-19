@@ -500,3 +500,96 @@ def test_the_lifecycle_table_is_created_once_inside_its_own_transaction(api):
     assert not plain.in_transaction
     lifecycle.schema(plain)
     assert plain.execute("SELECT count(*) FROM cloud_workspace_lifecycle").fetchone()[0] == 0
+
+
+# round 1 of the #615 review
+
+
+def test_a_waiting_request_pins_the_machine_and_the_settings_it_names(api):
+    ws = make(api)
+    ask(api, ws, "start")
+    _, other = api.enrolled()
+    refused = api.request(
+        "POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "cpu_cores": 4}
+    )
+    assert refused == (409, {"error": "conflict", "reason": "request_pending"})
+    refused = api.request(
+        "POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "node_id": other["id"]}
+    )
+    assert refused[1]["reason"] == "request_pending"
+    # A rename does not change what the request would start, so it still goes through.
+    status, _ = api.request(
+        "POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "name": "Renamed"}
+    )
+    assert status == 200
+    # Once the request is gone (withdrawn) the settings are editable again.
+    ask(api, ws, "withdraw")
+    status, _ = api.request(
+        "POST", f"/workspaces/{ws['id']}", {"expected_revision": 2, "cpu_cores": 4}
+    )
+    assert status == 200
+
+
+def test_withdrawing_a_request_a_machine_picked_up_ends_in_failed_machine_unreachable(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    executor.claim()
+    api.env.clock.now += lifecycle.REPORT_STALE_S + 5
+    assert item(api, ws)["status"]["code"] == "unknown"
+    status, result = ask(api, ws, "withdraw")
+    assert status == 200 and result["request"] is None
+    after = result["item"]
+    # Not "starting" forever: the phase ends, with the reason, and the owner has a way forward.
+    assert after["status"]["code"] == "failed"
+    assert after["status"]["detail"] == "The machine could not be reached."
+    allowed = {a["action"]: a["allowed"] for a in after["actions"]}
+    assert allowed == {"start": True, "stop": True, "restart": True, "withdraw": False}
+    assert api.request(path=f"/workspaces/{ws['id']}")[1]["workspace"]["status"] == "failed"
+    with api.env.store._journal() as conn:
+        life = conn.execute("SELECT * FROM cloud_workspace_lifecycle").fetchone()
+    assert (life["phase"], life["reason"], life["request_action"]) == (
+        "failed",
+        "machine_unreachable",
+        None,
+    )
+    ask(api, ws, "start")
+    assert item(api, ws)["status"]["code"] == "start_requested"
+
+
+def test_the_expiry_record_survives_a_refused_request(api):
+    env = api.env
+    ws = make(api, node_id=None)
+    with env.store._journal() as conn:
+        conn.execute(
+            "INSERT INTO cloud_workspace_lifecycle(workspace_id,phase_at,request_action,requested_by,"
+            "requested_at) VALUES (?,?,?,?,?)",
+            (ws["id"], env.clock.now, "start", "someone", env.clock.now),
+        )
+    env.clock.now += lifecycle.REQUEST_TTL_S + 60
+    # No machine: the request below is refused, and its transaction is rolled back.
+    conflict(ask(api, ws, "start", token={"seq": 0, "version": 1}), "no_machine")
+    with env.store._journal() as conn:
+        actions = [
+            r["action"]
+            for r in conn.execute("SELECT action FROM audit WHERE object_id=?", (ws["id"],))
+        ]
+        row = conn.execute("SELECT request_action FROM cloud_workspace_lifecycle").fetchone()
+    assert "workspace.request_expired" in actions
+    assert row["request_action"] is None
+
+
+def test_a_claim_token_is_not_the_counter_plus_one(api):
+    executor = FakeExecutor(api.env)
+    tokens = []
+    for n in range(2):
+        ws = make(api, name=f"Token box {n}")
+        ask(api, ws, "start")
+        claim = executor.claim()
+        with api.env.store._journal() as conn:
+            seq = conn.execute(
+                "SELECT seq FROM cloud_workspace_lifecycle WHERE workspace_id=?", (ws["id"],)
+            ).fetchone()[0]
+        assert claim["claim_token"] != seq and isinstance(claim["claim_token"], int)
+        tokens.append(claim["claim_token"])
+    assert tokens[0] != tokens[1]
