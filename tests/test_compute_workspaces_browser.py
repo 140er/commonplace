@@ -1168,8 +1168,8 @@ def test_typing_is_silent_and_choosing_an_image_does_not_move_the_page(served, u
             " {childList: true, characterData: true, subtree: true})); }"
         )
         address.click()
-        address.press_sequentially("ghcr.", delay=30)
-        expect(address).to_have_value("ghcr.")
+        address.press_sequentially("ghcr.io", delay=30)
+        expect(address).to_have_value("ghcr.io")
         assert page.evaluate("() => window.__slotWrites") == 0, "no error is written while typing"
         expect(address).not_to_have_attribute("aria-invalid", "true")
         address.press("Tab")  # committing the field is when its problem is shown

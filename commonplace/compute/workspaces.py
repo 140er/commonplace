@@ -100,6 +100,10 @@ _DIGEST = re.compile(r"sha256:[a-f0-9]{64}", re.ASCII)
 _SAFE = re.compile(r"[A-Za-z0-9._:/@-]+", re.ASCII)
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
 _NUMERIC_LABEL = re.compile(r"(?:0x[0-9a-f]+|[0-9]+)", re.ASCII)
+_PORT_TAG = re.compile(r"[0-9]{1,5}", re.ASCII)
+# The last label of a dotted name that is plainly a website (``ghcr.io``, ``registry.example.com``). A name
+# such as ``node.js`` or ``my.image`` is a repository: Docker reads a lone component as one.
+_REGISTRY_SUFFIXES = frozenset("com io org net dev cloud co eu uk us de edu gov aws".split())
 _LOCAL_SUFFIXES = (
     ".local",
     ".localhost",
@@ -144,10 +148,11 @@ REGISTRY_LOGINS = False
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
 # Characters that draw nothing (or only change how a neighbour is drawn) but are letters, marks or symbols
 # to Unicode, so the category check above cannot catch them: Hangul and braille fillers, Khmer inherent
-# vowels, the combining grapheme joiner and the variation selectors. Any space but U+0020 is refused too.
+# vowels, the combining grapheme joiner, the variation selectors and the object replacement character
+# (a placeholder box). Any space but U+0020 is refused too.
 _HIDDEN_NAME = re.compile(
     "[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180f\ufe00-\ufe0f"
-    "\U000e0100-\U000e01ef]"
+    "\U000e0100-\U000e01ef\ufffc]"
 )
 
 
@@ -179,7 +184,8 @@ def _host_refusal(host):
     name = host.partition(":")[0]
     if (
         "." not in name
-        or name.endswith(_LOCAL_SUFFIXES)
+        # The dot goes in front so the bare suffix is refused too: "home.arpa" is a local name, not a host.
+        or ("." + name).endswith(_LOCAL_SUFFIXES)
         or any(_LOCAL_LABEL.fullmatch(label) for label in name.split("."))
     ):
         return "registry_private"
@@ -189,6 +195,19 @@ def _host_refusal(host):
         return "registry_private"
     address = ipaddress.IPv4Address(name)
     return "registry_private" if any(address in net for net in _NON_PUBLIC) else "registry_ip"
+
+
+def _looks_like_host(name, tag):
+    """A lone dotted component that is a website name with the image name left out, not a repository.
+
+    ``ghcr.io:443`` (a port after it), ``ghcr.io`` and ``registry.example.com`` (a common website ending),
+    a local name or an address are; ``my.image``, ``node.js`` and ``my.app:1.0`` are repositories.
+    """
+    if "." not in name or _HOST.fullmatch(name) is None:
+        return False
+    if tag is not None:
+        return _PORT_TAG.fullmatch(tag) is not None
+    return name.rsplit(".", 1)[-1] in _REGISTRY_SUFFIXES or _host_refusal(name) is not None
 
 
 def parse_image(value, *, strict=True):
@@ -208,8 +227,9 @@ def parse_image(value, *, strict=True):
     if not _SAFE.fullmatch(value) or value.startswith(("-", "/", ".")):
         raise refuse("image", "characters")
     name, at, digest = value.partition("@")
-    if at and ("/" in digest or "." in digest):
-        # "user:pass@ghcr.io/app": a login in the address is not a digest, and it must never be stored.
+    if at and ("/" in digest or "." in digest or (digest and ":" not in digest)):
+        # "user:pass@ghcr.io/app", "pass@ubuntu": a login in the address is not a digest, and it must never
+        # be stored. A digest always reads algorithm:hex, so text after "@" without a colon is a login.
         raise refuse("image", "user_info")
     if at and (not _DIGEST.fullmatch(digest) or "@" in digest):
         raise refuse("image", "digest")
@@ -224,7 +244,7 @@ def parse_image(value, *, strict=True):
     parts = name.split("/")
     registry = "docker.io"
     first = parts[0]
-    if strict and len(parts) == 1 and "." in first:
+    if strict and len(parts) == 1 and _looks_like_host(first, tag):
         # "ghcr.io:443" would otherwise read as an image called ghcr.io with tag 443.
         raise refuse("image", "registry_no_path")
     if len(parts) > 1 and ("." in first or ":" in first or first == "localhost"):
@@ -437,6 +457,14 @@ def _machine(conn, node_id):
     if row is None:
         raise StoreError("not_found", 404, field="node_id", reason="unknown_machine")
     return row
+
+
+def _stored_registry(reference):
+    """The registry of a stored reference, or None when it cannot be read (``public`` shows such a row)."""
+    try:
+        return parse_image(reference, strict=False)["registry"]
+    except StoreError:
+        return None
 
 
 def _machine_name(row):
@@ -709,9 +737,10 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
             if has_started(row) and changes["node_id"] != row["node_id"]:
                 raise _conflict("machine_locked", "node_id")
             values["node_id"] = changes["node_id"]
-        # A registry login belongs to one registry; changing the image or the private flag drops it.
-        before = parse_image(row["image_reference"], strict=False)["registry"]
-        after = parse_image(reference, strict=False)["registry"]
+        # A registry login belongs to one registry; changing the image or the private flag drops it. A stored
+        # reference that cannot be read has no registry: it never blocks an edit of something else.
+        before = _stored_registry(row["image_reference"])
+        after = _stored_registry(reference)
         if not values["private_registry"] or before != after:
             values["registry_credential_id"] = values["registry_credential_version"] = None
         runtime = (

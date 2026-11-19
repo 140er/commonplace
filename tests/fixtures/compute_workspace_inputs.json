@@ -12,7 +12,13 @@
    "registry.example.com:5000/team/app/sub-name_x:v1.0-rc1",
    "127.0.0.1.nip.io/app:1",
    "svc.example.com/app:1",
-   "localhosting.example.com/app:1"
+   "localhosting.example.com/app:1",
+   "my.image",
+   "node.js",
+   "my.app:1.0",
+   "my.app",
+   "home.arpa.example.com/app:1",
+   "ts.net.example.com/app:1"
   ],
   "refused": {
    "": "empty",
@@ -79,7 +85,13 @@
    "224.0.0.1/app": "registry_private",
    "255.255.255.255/app": "registry_private",
    "01.2.3.4/app": "registry_private",
-   "8.8.8/app": "registry_private"
+   "8.8.8/app": "registry_private",
+   "home.arpa/app": "registry_private",
+   "home.arpa:5000/app": "registry_private",
+   "ts.net/app": "registry_private",
+   "pass@ubuntu": "user_info",
+   "user:pass@ubuntu": "user_info",
+   "ubuntu@": "digest"
   }
  },
  "names": {
@@ -135,7 +147,10 @@
    "\u2800\u2800": "characters",
    "---": "no_letter",
    "!!! ???": "no_letter",
-   "a\u180fb": "characters"
+   "a\u180fb": "characters",
+   "a\ufffcb": "characters",
+   "\ufffc": "characters",
+   "\ufffcx": "characters"
   }
  }
 }
