@@ -51,6 +51,11 @@ class FakeExecutor:
                 conn, claim["workspace_id"], claim["claim_token"], phase, self._now(), **kwargs
             )
 
+    def fail(self, workspace_id, reason="out_of_memory"):
+        """The machine reports that a workspace it was running failed, with no request waiting."""
+        with self.env.store._journal() as conn:
+            lifecycle.fail(conn, workspace_id, reason, self._now())
+
     def run(self, claim, *phases, revision=None):
         """Report each phase in order; ``running`` carries the revision the claim saw."""
         for phase in phases:

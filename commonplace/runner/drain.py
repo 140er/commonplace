@@ -3,7 +3,7 @@
 The hub enforces it itself: ``capacity.available`` answers 0 for a drained machine, so ``jobs.lease``
 hands it nothing and queued runs stay queued (none is cancelled). Runs already started are not
 touched. The runner program is not stopped: the hub has no channel that could stop it, and chat and
-orchestrator sessions do not read this flag. One row per machine in the workspace runner store,
+Coworker sessions do not read this flag. One row per machine in the workspace runner store,
 read only when the table exists. A counter (``seq``) makes a stale confirmation a conflict.
 
 Docs: docs/system/compute-overview.md.

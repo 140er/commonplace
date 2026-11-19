@@ -585,7 +585,12 @@ def test_an_unverified_or_expired_machine_names_what_it_blocks(api):
     assert machine["health"]["blockers"][0]["text"] == (
         "Not verified: cloud workspaces placed here cannot start until it is verified."
     )
-    assert machine["status"]["next"].startswith("Verify it under Advanced")
+    # No control verifies a machine in this version: the step says what is true, not where to click.
+    assert machine["status"]["next"] == (
+        "Verification is not available in this version of the app. "
+        "Until a machine is verified, cloud workspaces placed on it cannot start."
+    )
+    assert "Advanced" not in machine["status"]["next"]
     env = api.env
     with env.store._journal() as conn:
         meta = json.loads(
@@ -757,3 +762,170 @@ def test_the_overview_uses_the_words_of_the_workspaces_list():
     ).read_text()
     for text in (overview.NOT_STARTED_NOTE, overview.NO_MACHINES_SENTENCE, overview.SAVED_LABEL):
         assert text in script, text
+
+
+# round 2 of the #615 review
+
+
+def test_the_expired_verification_step_does_not_point_at_a_control_either(api):
+    _, node = api.enrolled()
+    env = api.env
+    with env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+        conn.execute(
+            "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,receipt_digest,verified_at,expires_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (node["id"], "g", "e", "d" * 64, env.clock.now - 60, env.clock.now + 600),
+        )
+    after(env, 1200)
+    status = by_name(read(api))[node["name"]]["status"]
+    assert status["code"] == "verification_expired"
+    assert "Advanced" not in status["next"] and "not available in this version" in status["next"]
+
+
+def test_a_member_is_never_told_to_use_a_control_only_the_owner_has(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Failing box")
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    claim = executor.claim()
+    executor.report(claim, "failed", reason="out_of_memory")
+    owner = by_name(read(api))["Failing box"]["status"]["detail"]
+    assert "Raise the memory limit in Change settings" in owner
+    status, shown = member(api)(path=BASE)
+    detail = shown["items"][0]["status"]["detail"]
+    assert detail == "It ran out of memory. Ask the workspace owner to raise the memory limit."
+    assert "Change settings" not in json.dumps(shown)
+
+
+def test_a_workspace_the_clock_made_unknown_tells_a_member_to_ask_the_owner(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Quiet box")
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor.run(executor.claim(), "running")
+    after(api.env, 1000)
+    owner = by_name(read(api))["Quiet box"]["status"]
+    assert owner["code"] == "unknown" and owner["next"].endswith(
+        "Check the machine that carries it."
+    )
+    _, shown = member(api)(path=BASE)
+    assert shown["items"][0]["status"]["next"].endswith(
+        "Ask the workspace owner to check the machine that carries it."
+    )
+
+
+def test_blockers_name_themselves_and_a_drained_runner_is_called_drained(api, fleet):
+    offline = fleet.enroll("runner-off")
+    fleet.seen(offline, 4000)
+    never = fleet.enroll("runner-never")
+    drained = fleet.enroll("runner-drained")
+    fleet.seen(drained, 10)
+    api.request("POST", f"{BASE}/runner/{drained['machine_id']}/drain", {"expected_seq": 0})
+    items = by_name(read(api))
+    text = {
+        name: {b["code"]: b["text"] for b in item["health"]["blockers"]}
+        for name, item in items.items()
+    }
+    assert text["runner-off"]["offline"].startswith("Offline: nothing heard for over 15 minutes")
+    assert text["runner-never"]["never_connected"].startswith("Never connected:")
+    assert items["runner-drained"]["status"]["label"] == "Drained"
+    assert text["runner-drained"]["draining"].startswith("Drained: no new card runs start on it.")
+    assert never is not None
+
+
+def test_a_removed_runner_is_informational_not_something_that_needs_attention(api, fleet):
+    made = fleet.enroll("runner-removed")
+    fleet.seen(made, 30)
+    revoke_machine(api.env, made)
+    result = read(api)
+    item = by_name(result)["runner-removed"]
+    assert item["status"]["code"] == "revoked" and item["health"]["state"] == "idle"
+    assert result["counts"]["attention"] == 0
+    assert item["health"]["blockers"][0]["text"].startswith("Removed:")
+
+
+def test_an_expired_request_is_not_carried_out_and_says_there_is_nothing_to_do(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Lapsed box")
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    after(api.env, 25 * 3600)
+    health = by_name(read(api))["Lapsed box"]["health"]
+    assert health["issue_label"] == "Not carried out"
+    assert health["issues"][0].endswith(
+        "Starting is not available in this version, so there is nothing to do yet."
+    )
+
+
+def test_the_page_says_once_that_starting_is_not_available_and_mentions_no_requests(api):
+    result = read(api)
+    assert result["executor"]["text"] == (
+        "Starting and stopping cloud workspaces on a machine is not available in this version."
+    )
+    _, node = api.enrolled()
+    workspace(api, node_id=node["id"], name="Boxed")
+    blockers = by_name(read(api))["Boxed"]["health"]["blockers"]
+    assert [b["text"] for b in blockers if b["code"] == "not_available"] == [
+        "No machine can carry out a start yet."
+    ]
+
+
+def test_one_unreadable_machine_row_does_not_fail_a_list_that_has_a_workspace_on_it(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="On the bad row")
+    with api.env.store._journal() as conn:
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", ("{not json", node["id"]))
+    result = read(api)
+    row = by_name(result)["On the bad row"]
+    assert row["placement"]["machine_name"] is None and row["placement"]["assigned"] is True
+    status, listed = api.request(path="/workspaces")
+    assert status == 200 and [w["id"] for w in listed["workspaces"]] == [ws["id"]]
+    status, detail = api.request(path=f"{BASE}/workspace/{ws['id']}")
+    assert status == 200 and detail["item"]["name"] == "On the bad row"
+
+
+def test_a_locked_runner_registry_is_not_an_empty_runner_list(api, fleet, monkeypatch):
+    import sqlite3
+
+    fleet.enroll("runner-registry")
+    real = registry.machines
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(registry, "machines", locked)
+    assert api.request(path=BASE) == (
+        503,
+        {"error": "authority_unavailable", "reason": "busy"},
+    )
+
+    # A hub where the runner was never installed has no runner machines: that is the one empty answer.
+    def absent(*args, **kwargs):
+        raise sqlite3.OperationalError("no such table: runner_machines")
+
+    monkeypatch.setattr(registry, "machines", absent)
+    assert read(api)["items"] == []
+    monkeypatch.setattr(registry, "machines", real)
+
+
+def test_the_audit_and_the_poll_read_by_index(api):
+    with api.env.store._journal() as conn:
+        plan = " ".join(
+            row[3]
+            for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT action,user_id,created_at FROM audit WHERE object_id=? "
+                "ORDER BY id DESC LIMIT 10",
+                ("x",),
+            )
+        )
+    assert "SEARCH" in plan and "audit_object" in plan and "SCAN" not in plan, plan
