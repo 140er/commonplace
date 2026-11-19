@@ -367,7 +367,11 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         expect(page.locator("[data-pr-command]")).to_contain_text("machine-setup.sh")
         expect(section).to_contain_text("Waiting for the machine")
         command = page.locator("[data-pr-command]").inner_text()
-        assert command.startswith(" printf '%s' '") and "| sh -c" in command
+        assert (
+            command.startswith(" S=$(curl -fsSL '")
+            and "&& printf '%s' '" in command
+            and "| sh -c" in command
+        )
         _shot(page, f"{label}-04-waiting-command")
         page.get_by_role("button", name="Copy the command").click()
         expect(page.locator("[data-pr-copy-note]")).to_have_text("Copied. Paste it on the machine.")
@@ -488,7 +492,7 @@ def test_member_reads_every_state_without_codes_fingerprints_or_controls(served,
     def body(page, label, context):
         section = _section(page)
         expect(section.locator(".compute-pr-row")).to_have_count(2)
-        expect(section).to_contain_text("The machine connected. The owner has to approve it.")
+        expect(section).to_contain_text(pairing.STATES["connected"][3])
         for name in (
             "Add a machine",
             "Approve this machine",
@@ -506,9 +510,7 @@ def test_member_reads_every_state_without_codes_fingerprints_or_controls(served,
             assert hidden not in text, hidden
         fx.report(credentials, "service", "failed", "service_failed")
         try:
-            expect(section).to_contain_text(
-                "A setup step failed on this machine. The owner can retry it.", timeout=20000
-            )
+            expect(section).to_contain_text(pairing.STATES["failed"][3], timeout=20000)
         except AssertionError as failure:
             seen = fx.call("GET", "/api/compute/pairings", cookie=fx.member_cookie)
             raise AssertionError(f"member read: {seen[0]} {str(seen[1])[:300]}") from failure
@@ -537,9 +539,7 @@ def test_a_failed_step_shows_its_cause_and_next_step_and_recovers(served, ui, si
         expect(section).to_contain_text(
             "Background service started failed. The background service did not start."
         )
-        expect(section).to_contain_text(
-            "Run the command again. If it fails again, set the machine up again."
-        )
+        expect(section).to_contain_text(pairing.CAUSES["service_failed"][1])
         expect(section.get_by_role("button", name="Approve this machine")).to_have_count(0)
         _shot(page, f"{label}-failed")
         _no_sideways_scroll(page)

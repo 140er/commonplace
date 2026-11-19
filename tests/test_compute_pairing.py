@@ -186,7 +186,10 @@ def test_create_returns_the_code_once_and_stores_only_its_hash(flow):
     assert values["label"] == "build-box" and values["kind"] == "runner" and values["v"] == 1
     assert values["workspace_id"] == flow.owner["workspace"]
     assert code not in json.dumps(values) and code in made["setup"]["command"]
-    assert made["setup"]["command"].startswith(" printf '%s' ")
+    # The launcher is fetched first and the rest runs only if that worked (a failed download is not an empty script).
+    assert made["setup"]["command"].startswith(
+        " S=$(curl -fsSL '" + pairing.urls.APP_URL + "/machine-setup.sh') && printf '%s' '"
+    )
     assert (
         "machine-setup.sh" in made["setup"]["command"]
         and made["setup"]["envelope"] in made["setup"]["command"]
@@ -318,7 +321,10 @@ def test_a_member_reads_a_view_without_secrets_and_cannot_write(people):
     assert set(item) == set(pairing.MEMBER_VIEW)
     assert "fingerprint" not in item and "grant" not in item and "version" not in item
     assert made["setup"]["code"] not in json.dumps(listing)
-    assert item["next"].startswith("The machine connected")
+    assert item["next"] == "Waiting for the owner's approval."
+    assert "you" not in item["sentence"].lower().split(), (
+        "a member reads the owner's decision, not their own"
+    )
     assert flow.call("GET", "/" + item["id"], who=colleague)[0] == 200
     assert flow.call("GET", "/options", who=colleague)[1].keys().isdisjoint({"wings", "copy_from"})
     for method, path, body in (
@@ -443,7 +449,7 @@ def test_only_a_live_code_can_write_a_prerequisite_report(flow):
     assert flow.get(made)["steps"][0]["state"] == "pending"
     other = flow.made(label="live-box")
     for bad in (
-        {"step": "files", "state": "ok"},
+        {"step": "service", "state": "ok"},
         {"step": "heartbeat"},
         {"step": "prerequisites", "state": "failed", "cause": "made-up"},
     ):
@@ -1027,3 +1033,91 @@ def test_every_route_reads_the_shared_connection_only_under_the_control_lock(flo
         db._conn = db._conn._real
         pairing_routes.send_json = real_send
     assert [status for status, _ in sent] == [200, 200, 200]
+
+
+# ---- review round 1: expiry beats an old report, files before the code is spent, stalled, https --------------
+
+
+def test_a_failed_check_never_outlives_the_code(flow, monkeypatch):
+    """Minute 16 of a 15-minute code: the owner and the machine both read expired, not the stale failure."""
+    made = flow.made()
+    report = {"step": "prerequisites", "state": "failed", "cause": "disk_full"}
+    assert flow.check(made, report=report)[1]["usable"] is True
+    assert flow.get(made)["state"] == "failed"
+    freeze(monkeypatch, minutes=pairing.CODE_MINUTES + 1)
+    answer = flow.check(made)[1]
+    assert (answer["usable"], answer["reason"]) == (False, "expired")
+    item = flow.get(made)
+    assert item["state"] == "expired" and item["cause"] is None
+    assert item["retry"]["label"] == "build-box"
+    # An expired code takes no report either, so a stale cause cannot come back.
+    assert flow.check(made, report=report)[1]["reason"] == "expired"
+    assert flow.get(made)["state"] == "expired"
+
+
+def test_a_step_that_failed_after_the_code_was_spent_stays_failed_past_the_codes_lifetime(
+    flow, monkeypatch
+):
+    made = flow.made()
+    credentials = flow.connect(made)
+    flow.report(credentials, {"step": "service", "state": "failed", "cause": "service_failed"})
+    freeze(monkeypatch, minutes=pairing.CODE_MINUTES + 5)
+    assert flow.get(made)["state"] == "failed"
+
+
+def test_a_files_failure_before_the_code_is_spent_is_shown_and_the_code_stays_usable(flow):
+    made = flow.made()
+    report = {"step": "files", "state": "failed", "cause": "disk_full"}
+    assert flow.check(made, report=report)[1]["usable"] is True
+    item = flow.get(made)
+    assert item["state"] == "failed" and item["cause"]["step"] == "files"
+    assert item["cause"]["text"] == pairing.CAUSES["disk_full"][0]
+    assert flow.connect(made)["machine_id"], "the code was never spent"
+    # Spent now: the same report is refused and stores nothing new.
+    assert flow.check(made, report={"step": "files", "state": "ok"})[1]["reason"] == "used"
+
+
+def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and_member(
+    people, monkeypatch
+):
+    flow, _, colleague = people
+    at = clock(monkeypatch)
+    one, two = flow.made(), flow.made(label="second-box")
+    flow.connect(one)
+    flow.connect(two)
+    accepted = flow.accept(two)[1]["pairing"]
+    assert accepted["state"] == "approved"
+    assert flow.get(one)["stalled"] is False and flow.get(one)["can_accept"] is True
+    at(seconds=pairing.OFFLINE_SECONDS + 1)
+    for made, state in ((one, "connected"), (two, "approved")):
+        item = flow.get(made)
+        assert item["stalled"] is True and item["state"] == state
+        assert (item["sentence"], item["next"]) == (pairing.STALLED[0], pairing.STALLED[1])
+        assert item["can_accept"] is False
+        seen = flow.get(made, who=colleague)
+        assert (seen["sentence"], seen["next"]) == (pairing.STALLED[0], pairing.STALLED[2])
+    # A machine that did finish is never stalled.
+    credentials = flow.connect(flow.made(label="third-box"))
+    at(seconds=0)
+    flow.finish_steps(credentials)
+    at(seconds=pairing.OFFLINE_SECONDS * 3)
+    assert not any(
+        row["stalled"] for row in flow.call("GET")[1]["pairings"] if row["label"] == "third-box"
+    )
+
+
+def test_the_command_is_https_unless_it_points_at_this_machine(flow, monkeypatch):
+    monkeypatch.setattr(pairing.urls, "APP_URL", "http://hub.example.test")
+    status, result = flow.create()
+    assert (status, result["reason"]) == (503, "hub_unavailable")
+    monkeypatch.setattr(pairing.urls, "APP_URL", "http://127.0.0.1:8765")
+    assert flow.create()[0] == 201
+
+
+def test_no_failed_next_step_points_at_a_command_the_page_does_not_hold():
+    """One next step for a failed machine: choose Set up again. The page cannot reissue a command."""
+    for code, (_, then) in pairing.CAUSES.items():
+        assert "run the command again" not in then.lower(), code
+        assert "Set up again" in then, code
+    assert "same command" not in pairing.STATES["failed"][2]
+    assert "Set up again" in pairing.STATES["failed"][2]

@@ -20,6 +20,7 @@ Nothing here prints, logs or stores the code, and nothing touches SSH.
 """
 
 import base64
+import errno
 import importlib.util
 import json
 import os
@@ -228,7 +229,7 @@ def prerequisites(probe):
         raise Failure(
             "run_as_root",
             "This command was run as root (or with sudo).",
-            "Run it again as the normal account that should own the runner, without sudo.",
+            "Open a terminal as the normal account that should own the runner (do not type sudo), then open Compute in the app and choose Set up again.",
         )
     system, ident, version = probe.system()
     if system != "Linux" or ident not in SUPPORTED or _version(version) < SUPPORTED[ident]:
@@ -236,52 +237,48 @@ def prerequisites(probe):
         raise Failure(
             "unsupported_os",
             "This system is not supported (found " + found + ").",
-            "Use Ubuntu 24.04 or later, or Debian 12 or later.",
+            "Use Ubuntu 24.04 or later, or Debian 12 or later, then open Compute in the app and choose Set up again.",
         )
     if tuple(probe.python()) < MIN_PYTHON:
         raise Failure(
             "missing_python",
             "Python 3.10 or later is required.",
-            "Install it (sudo apt install python3), then run the command again.",
+            "Install it (sudo apt install python3), then open Compute in the app and choose Set up again.",
         )
     if not probe.can_import("cryptography"):
         raise Failure(
             "missing_prerequisite",
             "The Python package 'cryptography' is missing.",
-            "Install it (sudo apt install python3-cryptography), then run the command again.",
+            "Install it (sudo apt install python3-cryptography), then open Compute in the app and choose Set up again.",
         )
     if not probe.can_import("commonplace.runner.installer"):
         raise Failure(
             "missing_runner_program",
             "The runner program is not installed on this machine.",
             "This command does not install it yet. Install it first (see the runner guide), "
-            "then run the command again.",
+            "then open Compute in the app and choose Set up again.",
         )
     if not probe.user_manager():
         raise Failure(
             "no_service_manager",
             "There is no running user service manager.",
-            "Log in on the machine with a normal session (not su or sudo), then run the "
-            "command again.",
+            "Log in on the machine with a normal session (not su or sudo), then open Compute "
+            "in the app and choose Set up again.",
         )
     if probe.free_bytes(probe.home()) < MIN_FREE_BYTES:
         raise Failure(
             "disk_full",
             "There is less than 256 MB free in your home folder.",
-            "Free some space, then run the command again.",
+            "Free some space, then open Compute in the app and choose Set up again.",
         )
 
 
-def _phase_failure(installer):
-    """Which step an interrupted install reached, from its own journal.
+AGAIN = "Open Compute in the app and choose Set up again."
 
-    The installer's phase reads ``credentials`` once every private file is written; a failure
-    after that point can only be the user service (unit, linger, enable, start).
-    """
-    journal = getattr(installer, "journal", None) or {}
-    if journal.get("phase") == "credentials":
-        return "service", "service_failed"
-    return "files", "unknown"
+
+def _phase(installer):
+    """The phase an interrupted install reached, from its own journal (None before it has one)."""
+    return (getattr(installer, "journal", None) or {}).get("phase")
 
 
 def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out=print):
@@ -337,8 +334,11 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
             ask({"step": "prerequisites", "state": "failed", "cause": "missing_privilege"})
             out("The confirmation was not given, so nothing was installed.")
             out(
-                "Run the command again and confirm, or ask an administrator to run: "
-                "sudo loginctl enable-linger " + probe.account()
+                "Ask an administrator to run: sudo loginctl enable-linger "
+                + probe.account()
+                + ". Then "
+                + AGAIN[0].lower()
+                + AGAIN[1:]
             )
             return 1
     out(
@@ -356,48 +356,40 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     def collect(line):
         lines.append(str(line))
 
-    try:
-        if make_installer is None:
-            from types import SimpleNamespace
+    installer = None
 
-            from commonplace.runner import installer as inst
+    def build():
+        if make_installer is not None:
+            return make_installer(envelope, collect)
+        from types import SimpleNamespace
 
-            intent = inst.intent_from(
-                SimpleNamespace(
-                    hub=envelope["hub"],
-                    workspace=envelope["workspace_id"],
-                    label=envelope["label"],
-                    manifest_digest=envelope["manifest_digest"],
-                    enrollment_id=envelope["enrollment_id"],
-                )
+        from commonplace.runner import installer as inst
+
+        intent = inst.intent_from(
+            SimpleNamespace(
+                hub=envelope["hub"],
+                workspace=envelope["workspace_id"],
+                label=envelope["label"],
+                manifest_digest=envelope["manifest_digest"],
+                enrollment_id=envelope["enrollment_id"],
             )
-            installer = inst.Installer(home, out=collect)
-        else:
-            intent, installer = make_installer(envelope, collect)
+        )
+        return intent, inst.Installer(home, out=collect)
+
+    try:
+        intent, installer = build()
+        if _other_installation(home, envelope):
+            # Set up again cancelled that earlier enrollment, so what it left here is dead; the installer
+            # refuses a different one on top of it, which would be a dead end.
+            out("Removing the earlier unfinished setup on this machine ...")
+            if installer.uninstall() != 0:
+                raise RuntimeError("earlier setup could not be removed")
+            intent, installer = (
+                build()
+            )  # a fresh one: the old object still remembers what it removed
         installer.install(intent, accepted=True, code_source=lambda: code)
     except Exception as exc:
-        step, cause = _phase_failure(locals().get("installer"))
-        token = _token(home)
-        reported = False
-        if token:
-            reported = _report(hub, token, {"step": step, "state": "failed", "cause": cause})
-        else:
-            transport = "delivery unavailable" in str(exc)
-            ask(
-                {
-                    "step": "prerequisites",
-                    "state": "failed",
-                    "cause": "cannot_reach_hub" if transport else "unknown",
-                }
-            )
-            reported = True
-        out("Setup did not finish on this machine.")
-        out(
-            "Run the same command again: it continues from where it stopped."
-            if reported
-            else "Run the same command again."
-        )
-        return 1
+        return _failed(exc, installer, home, hub, out, ask)
     token = _token(home)
     state = installer.host.state()
     results = [("files", True), ("service", bool(state["enabled"] and state["active"]))]
@@ -407,6 +399,10 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     except Exception:
         results.append(("check", False))
     causes = {"files": "unknown", "service": "service_failed", "check": "check_failed"}
+    # The fingerprint is on the screen before the app can show the last step as done, so the person can compare.
+    for line in lines:
+        if line.startswith("Machine fingerprint:"):
+            out(line)
     for step, ok in results:
         body = (
             {"step": step, "state": "ok"}
@@ -415,15 +411,52 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
         )
         if token and not _report(hub, token, body):
             out("Could not tell the app about the " + step + " step. It will show it as waiting.")
-    for line in lines:
-        if line.startswith("Machine fingerprint:"):
-            out(line)
     if not all(ok for _, ok in results):
         out("The machine was installed, but one check failed. The app shows which.")
+        out(AGAIN)
         return 1
     out("Done on this machine. Go back to Compute in the app: it shows this machine and")
     out("asks you to approve it. Compare the fingerprint above with the one on that screen.")
     return 0
+
+
+def _failed(exc, installer, home, hub, out, ask):
+    """Say what happened, tell the app the step it reached, and give the one next step."""
+    try:
+        from commonplace.runner.installer import EnrollmentRefused
+    except ImportError:  # pragma: no cover - the program only gets here with the runner program
+        EnrollmentRefused = ()
+    phase, token = _phase(installer), _token(home)
+    if isinstance(exc, EnrollmentRefused):
+        # The site answered and said no: ask it why, in the app's own words, instead of calling it a lost connection.
+        answer = ask()
+        if answer is not None:
+            out(str(answer.get("text") or "The site did not accept the code."))
+            out(str(answer.get("next") or AGAIN))
+        return 1
+    if token:
+        # The machine's own credential exists: the step it reached is reported with it.
+        step, cause = (
+            ("service", "service_failed") if phase == "credentials" else ("files", "unknown")
+        )
+        _report(hub, token, {"step": step, "state": "failed", "cause": cause})
+        out("Setup did not finish on this machine.")
+        out(AGAIN)
+        return 1
+    unreachable = "delivery unavailable" in str(exc)
+    if unreachable:
+        report = {"step": "prerequisites", "state": "failed", "cause": "cannot_reach_hub"}
+    else:
+        disk = getattr(exc, "errno", None) == errno.ENOSPC
+        report = {"step": "files", "state": "failed", "cause": "disk_full" if disk else "unknown"}
+    # Before the code is spent this is shown in the app; after it, the app refuses a report and nothing changes.
+    answer = ask(report)
+    spent = answer is not None and answer.get("reason") == "used"
+    out("Setup did not finish on this machine.")
+    if spent:
+        out("The one-time code was used, but this machine could not save what it needs.")
+    out(AGAIN)
+    return 1
 
 
 def _resumable(home, envelope):
@@ -443,6 +476,14 @@ def _resumable(home, envelope):
         )
     except (OSError, ValueError, KeyError, TypeError):
         return False
+
+
+def _other_installation(home, envelope):
+    """A private installation here that belongs to a different enrollment than this command's."""
+    path = Path(home) / ".commonplace-runner" / "manifest.json"
+    if not path.exists():
+        return False
+    return not _resumable(home, envelope)
 
 
 def _token(home):
