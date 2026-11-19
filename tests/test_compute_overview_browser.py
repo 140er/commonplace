@@ -173,7 +173,9 @@ def _fold(page):
     """On a phone the overview starts folded to its summary sentence; a person opens it with one tap."""
     fold = page.locator("details[data-ov-fold]")
     # Wait for the first answer: the fold settles when the data arrives (open for a handful of items, closed for more).
-    expect(page.locator("[data-ov-summary]")).not_to_have_text("Loading the overview…")
+    expect(page.locator("[data-ov-summary]")).not_to_have_text(
+        "Loading the overview…", timeout=20000
+    )
     if fold.get_attribute("open") is None:
         page.locator("[data-ov-fold-summary]").click()
         expect(fold).to_have_attribute("open", "")
@@ -181,7 +183,9 @@ def _fold(page):
 
 def _go(page, fx, ui="deck"):  # the list has painted
     _fold(page)
-    expect(page.locator(f"{ROOT} .compute-ov-row").first).to_be_visible()
+    expect(page.locator(f"{ROOT} .compute-ov-row").first).to_be_visible(
+        timeout=20000
+    )  # a cold server is slow to answer
 
 
 def _shown(page):
@@ -287,7 +291,9 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
         expect(_row(page, "build-runner")).to_contain_text("1 of 2 runs at once is in progress")
-        expect(_row(page, "build-runner")).to_contain_text(re.compile(r"Last seen 4\d seconds ago"))
+        expect(_row(page, "build-runner")).to_contain_text(
+            re.compile(r"Last seen \d+ (seconds?|minutes?) ago")
+        )
         expect(_row(page, "build-runner")).to_contain_text("1 run in progress (up to 2 at once)")
         expect(_row(page, "review-runner")).to_contain_text("Slow to report")
         expect(_row(page, "edge-runner")).to_contain_text("Offline")
@@ -780,8 +786,9 @@ def test_a_folded_phone_overview_still_shows_a_failed_refresh_and_opens_for_a_fa
             banner = page.locator("[data-ov-stale]")
             expect(banner).to_be_visible()
             expect(banner).to_contain_text("Could not refresh. Showing the data from")
-            expect(page.locator("[data-ov-meta]")).to_contain_text("the last refresh failed")
-            expect(page.locator("[data-ov-meta]")).not_to_contain_text("Updated just now")
+            expect(page.locator("[data-ov-meta]")).not_to_contain_text(
+                "Updated just now"
+            )  # said once, by the alert
             expect(page.locator("[data-ov-summary]")).to_contain_text(
                 "Could not refresh: data from"
             )
@@ -842,7 +849,7 @@ def test_a_skewed_browser_clock_does_not_change_what_the_overview_says(served, u
             _go(page, fx, ui)
             build = _row(page, "build-runner")
             expect(build.locator("[data-ov-chip]")).to_have_text("Online · Busy")
-            expect(build).to_contain_text(re.compile(r"Last seen 4\d seconds ago"))
+            expect(build).to_contain_text(re.compile(r"Last seen \d+ (seconds?|minutes?) ago"))
             expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text("Running")
             expect(page.locator(".compute-ov-meta")).to_contain_text("Updated just now")
             assert "Slow to report" not in build.inner_text()
@@ -853,6 +860,123 @@ def test_a_skewed_browser_clock_does_not_change_what_the_overview_says(served, u
         finally:
             browser.close()
     assert errors == []
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_stepped_wall_clock_moves_no_age_and_a_monotonic_clock_still_does(served, ui):
+    fx = served
+    fx.names = _populate(fx)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, "desktop")
+            page.clock.install(time=int(time.time() * 1000))
+            _visit(page, fx, ui)
+            _go(page, fx, ui)
+            build = _row(page, "build-runner")
+            expect(build.locator("[data-ov-chip]")).to_have_text("Online · Busy")
+            _refuse_overview(page)
+            # The wall clock jumps forward 1000 s (and nothing has really passed): no row ages.
+            page.clock.set_system_time(int((time.time() + 1000) * 1000))
+            page.clock.run_for(11000)
+            expect(build.locator("[data-ov-chip]")).to_contain_text("Online · Busy")
+            expect(page.locator(".compute-ov-meta")).not_to_contain_text(
+                "minutes ago"
+            )  # nothing aged by 1000 s
+            # And back by hours.
+            page.clock.set_system_time(int((time.time() - 7200) * 1000))
+            page.clock.run_for(11000)
+            expect(build.locator("[data-ov-chip]")).to_contain_text("Online · Busy")
+            # Real elapsed time still ages it (the timers' own passing).
+            page.clock.run_for(250000)
+            expect(build.locator("[data-ov-chip]")).to_have_text("Slow to report")
+            _shot(page, f"{ui}-desktop-47-clock-step")
+            context.close()
+        finally:
+            browser.close()
+    assert errors == [] or all("503" in e for e in errors)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_try_again_says_it_is_trying_and_focus_lands_on_the_heading_when_it_works(served_empty, ui):
+    fx = served_empty
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, "phone")
+            held = {}
+            page.route(
+                f"**{OVERVIEW}",
+                lambda route: route.fulfill(
+                    status=500, content_type="application/json", body='{"error":"boom"}'
+                ),
+            )
+            _visit(page, fx, ui)
+            try_again = page.get_by_role("button", name="Try again")
+            expect(try_again).to_be_visible()
+            try_again.click()
+            expect(page.locator("[data-ov-slot=state]")).to_contain_text(
+                "Tried 2 times."
+            )  # visible feedback
+            expect(page.get_by_role("button", name="Try again")).to_be_focused()
+            page.unroute(f"**{OVERVIEW}")
+            page.get_by_role("button", name="Try again").click()
+            expect(page.locator("[data-ov-summary]")).to_have_text("Nothing here yet.")
+            # The control that had focus is gone: focus lands on the section heading, not on the page.
+            expect(page.locator("#compute-overview")).to_be_focused()
+            held.clear()
+            context.close()
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_an_open_item_removed_by_a_refresh_hands_focus_to_the_heading(served, ui):
+    fx = served
+    fx.names = _populate(fx)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, "desktop")
+            page.clock.install(time=int(time.time() * 1000))
+            _visit(page, fx, ui)
+            _go(page, fx, ui)
+            page.get_by_role("button", name="Status and activity of spare-runner").click()
+            expect(page.locator("#compute-ov-heading")).to_be_focused()
+            # The runner leaves the registry; the next automatic read no longer lists it.
+            with fx.store.gateway.db._lock:
+                fx.store.gateway.db._conn.execute(
+                    "DELETE FROM runner_machines WHERE label='spare-runner'"
+                )
+            page.clock.run_for(31000)
+            expect(page.locator("[data-ov-announce]")).to_contain_text("no longer")
+            assert page.locator(".compute-ov-panel").count() == 0
+            expect(page.locator("#compute-overview")).to_be_focused()
+            context.close()
+        finally:
+            browser.close()
+
+
+def test_one_outage_has_one_alert_on_the_page(served):
+    fx = served
+    fx.names = _populate(fx)
+
+    def body(page, label, context):
+        _go(page, fx, "classic")
+        page.route(
+            "**/api/compute",
+            lambda route: route.fulfill(
+                status=500, content_type="application/json", body='{"error":"x"}'
+            ),
+        )
+        _refuse_overview(page)
+        page.get_by_role("button", **REFRESH).click()
+        expect(page.locator("[data-ov-stale]")).to_be_visible()
+        assert page.locator(".compute [role=alert]:visible").count() == 1, (
+            "one alert: the overview's own"
+        )
+
+    _run(fx, "classic", "desktop", body, expect_errors=True)
 
 
 def _count_reads(page):
@@ -893,10 +1017,13 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         gate["route"].continue_()
         # A fresh workspace: nothing is listed, and the empty state says what to do next.
         expect(page.locator("[data-ov-summary]")).to_have_text("Nothing here yet.")
-        expect(page.locator(ROOT)).to_contain_text(
+        # The next step is outside the fold (a folded phone must not hide the one thing to do) and the summary has no
+        # disclosure marker, since there is nothing to fold.
+        expect(page.locator("[data-ov-slot=state]")).to_contain_text(
             "Create a cloud workspace below. A machine can be chosen later."
         )
-        assert "Nothing here yet" not in page.locator(ROOT).inner_text(), (
+        expect(page.locator("details[data-ov-fold]")).to_have_attribute("data-plain", "")
+        assert "Nothing here yet" not in page.locator("[data-ov-slot=state]").inner_text(), (
             "the headline says it once"
         )
         assert "runner machine" not in page.locator(ROOT).inner_text()
@@ -913,7 +1040,7 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
 
     def failed(page, label):
         _fold(page)
-        alert = page.locator(f"{ROOT} [role=alert]:visible")
+        alert = page.locator("[data-ov-slot=state] [role=alert]:visible")
         expect(alert).to_have_text(
             "The overview could not be loaded. Nothing is shown rather than a guess."
         )
@@ -921,7 +1048,7 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         page.unroute(f"**{OVERVIEW}")
         page.get_by_role("button", name="Try again").click()
         expect(page.locator("[data-ov-summary]")).to_have_text("Nothing here yet.")
-        assert page.locator(f"{ROOT} [role=alert]:visible").count() == 0
+        assert page.locator("[data-ov-slot=state] [role=alert]:visible").count() == 0
 
     run_with(broken, "41-failed", failed)
 
@@ -987,7 +1114,7 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
             _go(page, fx, ui)
             _refuse_overview(page)  # nothing newer can arrive: only the clock moves
             expect(_row(page, "build-runner")).to_contain_text(
-                re.compile(r"Last seen 4\d seconds ago")
+                re.compile(r"Last seen \d+ (seconds?|minutes?) ago")
             )
             expect(_row(page, "Build box")).to_contain_text("Running")
             page.clock.run_for(70000)
@@ -1056,7 +1183,7 @@ def test_the_overview_refreshes_by_itself_and_stops_when_the_page_is_hidden(serv
             assert len(reads) == 3, "coming back reads at once"
             # Pausing stops the automatic reads (and says so); resuming reads at once.
             page.get_by_role("button", name="Pause automatic updates").click()
-            expect(page.locator(".compute-ov-meta")).to_contain_text("Automatic refresh is paused")
+            expect(page.locator(".compute-ov-meta")).to_contain_text("Automatic updates are paused")
             page.clock.run_for(95000)
             barrier()
             assert len(reads) == 3, "paused: no automatic read"

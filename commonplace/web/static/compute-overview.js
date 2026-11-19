@@ -20,11 +20,12 @@ const DETAIL_ERROR = "The details could not be loaded.";
 const FIRST_RUN = "Create a cloud workspace below. A machine can be chosen later.";
 const MORE_THAN = 5; // above this many items the overview starts folded to its summary, so what follows it is within reach
 const DEFAULT_REFRESH = 30;
+const UNKNOWN_STEP = "Nothing to do yet; this clears when the machine reports again."
 const CLOCK_SECONDS = 10;
 const NARROW = "(max-width: 699px)";
 // One short name per blocker code, so a row names what blocks new work instead of only counting it.
 const BLOCK_SHORT = {
-  no_machine: "no machine chosen", machine_not_verified: "its machine is not verified", private_image: "private image", not_available: "starting is not available yet",
+  no_machine: "machine not chosen yet", machine_not_verified: "its machine is not verified", private_image: "private image", not_available: "starting is not available yet",
   revoked: "removed", disabled: "turned off", not_approved: "not approved", draining: "draining", never_connected: "never connected", offline: "offline", full: "may be full",
   hourly_cap: "hourly limit reached", not_verified: "not verified", verification_expired: "verification expired", unknown: "not known until the next report",
 };
@@ -63,13 +64,13 @@ export function viewOf(item, clock = {}) {
   if (age !== null) {
     if (item.kind === "workspace" && ["running", "starting", "stopping"].includes(status.code) && age > (thresholds.report_stale_s || 600)) {
       const word = status.label;
-      status = { code: "unknown", tone: "quiet", label: "Unknown", detail: `Its last report said ${word} ${agoText(age)} and nothing newer has arrived, so it may not be ${word.toLowerCase()} any more.`, next: "Nothing newer has been reported. Check the machine that carries it." };
+      status = { code: "unknown", tone: "quiet", label: "Unknown", detail: `Its last report said ${word} ${agoText(age)} and nothing newer has arrived, so it may not be ${word.toLowerCase()} any more.`, next: UNKNOWN_STEP };
       blockers = [...blockers, { code: "unknown", text: "Not known until the next report: its last report is too old to trust." }];
       overridden = true;
-    } else if (item.kind === "runner" && ["online", "busy"].includes(status.code)) {
-      const was = status.label;
-      if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.`, next: status.next }; overridden = true; }
-      else if (age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.`, next: status.next }; overridden = true; }
+    } else if (item.kind === "runner" && ["online", "busy", "draining", "drained"].includes(status.code)) {
+      const was = status.label, drain = item.draining ? " It is also set to drain: no new card runs start on it." : "";
+      if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.${drain}`, next: status.next }; overridden = true; }
+      else if (age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: status.next }; overridden = true; }
     }
   }
   if (overridden) health = { ...health, state: "attention", blockers };
@@ -169,7 +170,7 @@ export function detailBody(item, { loading = false, failed = false, manage = fal
   if (loading) return '<p class="compute-quiet">Loading details…</p>';
   const v = clock === undefined ? { status: item.status, health: item.health, seen: item.last_seen?.label || "" } : viewOf(item, clock);
   const blockers = v.health?.blockers || [];
-  const blocks = blockers.length ? `<ul class="compute-ov-list" role="list">${blockers.map(b => `<li>${e(b.text)}</li>`).join("")}</ul>` : "Nothing is blocking new work.";
+  const blocks = blockers.length ? `<ul class="compute-ov-list" role="list">${blockers.map(b => `<li>${e(b.text)}</li>`).join("")}</ul>` : item.kind === "machine" ? "Nothing known to block new work (not checked live)." : "Nothing is blocking new work.";
   const issues = (v.health?.issues || []).length ? `<ul class="compute-ov-list" role="list">${v.health.issues.map(text => `<li>${e(text)}</li>`).join("")}</ul>` : "";
   const activity = (item.activity || []).length
     ? `<ul class="compute-ov-list compute-ov-activity" role="list">${item.activity.map(a => `<li>${e(a.text)}${a.age_s == null ? "" : ` <span class="compute-quiet">(${e(agoText(a.age_s))})</span>`}</li>`).join("")}</ul>`
@@ -193,7 +194,7 @@ export function detailBody(item, { loading = false, failed = false, manage = fal
  */
 export function createOverview(ctx) {
   const timers = ctx.timers || globalThis;
-  let data = null, loadError = "", loading = false, fetchedAt = 0, refreshFailed = false, failedSaid = false, paused = false, foldOpen = null;
+  let data = null, loadError = "", loading = false, fetchedAt = 0, fetchedMono = 0, tries = 0, refreshFailed = false, failedSaid = false, paused = false, foldOpen = null;
   let kind = "all", status = "all", detail = null, detailBusy = false, detailFailed = false, opener = "", timer = null, clockTimer = null, previous = null, seenSignature = "";
   // What each slot of the section holds right now, so a repaint writes only what changed.
   let painted = {}, announced = "";
@@ -206,7 +207,10 @@ export function createOverview(ctx) {
   // "Now" is the SERVER's time at the last read plus the time that has passed here since: every timestamp on screen is the
   // server's, so comparing it with this browser's own clock would make a skewed clock read a healthy runner as Offline
   // (or a stale one as fresh). Only the elapsed time is taken from the browser.
-  const sinceRead = () => Math.max(0, (ctx.now() - fetchedAt) / 1000);
+  // Elapsed time comes from the monotonic clock (``performance.now``), not the wall clock: a clock that is stepped (an
+  // NTP correction, a laptop waking, a person changing the time) between two reads must not move any age.
+  const mono = () => (typeof ctx.mono === "function" ? ctx.mono() : ctx.now());
+  const sinceRead = () => Math.max(0, (mono() - fetchedMono) / 1000);
   const serverNow = () => { const read = data ? epochOf(data.as_of) : null; return read === null ? null : read + sinceRead(); };
   const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "" });
   const items = () => (data?.items || []).map(item => withView(item, clock()));
@@ -222,7 +226,9 @@ export function createOverview(ctx) {
     const shownKinds = KIND_ORDER.filter(k => kinds[k]);
     const kindButtons = shownKinds.length > 1
       ? `<div class="compute-ov-kinds" role="group" aria-label="Filter by kind">${[["all", `All (${all.length})`], ...shownKinds.map(k => [k, `${KIND_WORDS[k][1]} (${kinds[k]})`])].map(([value, label]) => `<button type="button" class="btn compute-ov-kind" data-ov-kind-filter="${value}" aria-pressed="${kind === value}">${e(label)}</button>`).join("")}</div>` : "";
-    const needs = attention ? `<button type="button" class="btn compute-ov-kind" data-ov-action="attention" aria-pressed="${status === "attention"}">${attention} ${attention === 1 ? "needs" : "need"} attention</button>` : "";
+    // The count follows the kind filter, so it names its scope ("2 runners need attention") instead of changing meaning.
+    const scope = kind === "all" ? "" : `${KIND_WORDS[kind][attention === 1 ? 0 : 1].toLowerCase()} `;
+    const needs = attention ? `<button type="button" class="btn compute-ov-kind" data-ov-action="attention" aria-pressed="${status === "attention"}">${attention} ${scope}${attention === 1 ? "needs" : "need"} attention</button>` : "";
     const options = [["all", "All statuses"], ...(attention ? [["attention", `Needs attention (${attention})`]] : []), ...Object.entries(statuses).map(([code, v]) => [code, `${v.label} (${v.count})`])];
     const select = `<label class="compute-ov-status-filter" for="compute-ov-status">Filter by status</label><select id="compute-ov-status" data-ov-status>${options.map(([value, label]) => `<option value="${e(value)}"${status === value ? " selected" : ""}>${e(label)}</option>`).join("")}</select>`;
     const active = kind !== "all" || status !== "all";
@@ -260,7 +266,7 @@ export function createOverview(ctx) {
   const notesHTML = () => noteText().split("\n").filter(Boolean).map(text => `<p class="compute-quiet">${e(text)}</p>`).join("");
 
   function summaryLine() {
-    if (data === null) return loadError ? "Overview not loaded." : "Loading the overview…";
+    if (data === null) return loadError ? (loading ? "Trying again…" : "Overview not loaded.") : "Loading the overview…";
     const said = summaryText(items()) || (ctx.workspaceSignature?.() ? "The overview is catching up." : data.can_manage ? "Nothing here yet." : "No cloud workspaces yet.");
     // A closed fold must not read as current after a failed refresh.
     return refreshFailed ? `${said} Could not refresh: data from ${timeOf(data.as_of)}.` : said;
@@ -269,14 +275,14 @@ export function createOverview(ctx) {
   function metaText() {
     if (data === null) return "";
     const as = epochOf(data.as_of);
-    if (refreshFailed) return `Last updated ${timeOf(data.as_of)}; the last refresh failed.`;
+    if (refreshFailed) return ""; // the alert above says it once (and the rows say "as of"); a second sentence is the same news
     const age = as === null ? "" : `Updated ${agoText(sinceRead())} (as of ${timeOf(data.as_of)}). `;
-    return paused ? `${age}Automatic refresh is paused; ages count on from the last read. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
+    return paused ? `${age}Automatic updates are paused; statuses and ages keep counting from the last read. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
   }
 
   const staleText = () => refreshFailed && data ? `Could not refresh. Showing the data from ${timeOf(data.as_of)}; it may be out of date.` : "";
   const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn compute-ov-pause" data-ov-action="pause">${paused ? "Resume automatic updates" : "Pause automatic updates"}</button></header>`
-    + '<p class="compute-plain">Every machine, runner and cloud workspace Compute knows about. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
+    + '<p class="compute-plain">Every machine, runner and cloud workspace in this workspace. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
 
   function panelKey() { return detail ? `${detail.kind}:${detail.id}` : ""; }
   function slots() {
@@ -291,12 +297,15 @@ export function createOverview(ctx) {
       list: data && all.length && !open ? listHTML(all) : "",
     };
   }
+  // The state sentence (loading, failed with "Try again", empty with what to do) sits outside the fold: on a phone a closed
+  // fold must not hide the one thing the person can do. While there is nothing to fold the summary shows no disclosure marker.
+  const plain = () => data === null ? !loadError : !data.items.length;
   function inner(values = slots()) {
     painted = { ...values, panelKey: panelKey() };
     const opts = { loading: detailBusy, failed: detailFailed, manage: data?.can_manage, clock: clock() };
     const panel = detail && data ? detailHTML(detail.item, opts) : "";
     if (detail && data) { painted.chip = chipHTML(viewOf(detail.item, opts.clock).status); painted.body = detailBody(detail.item, opts); }
-    return `<div data-ov-slot="state">${values.state}</div><div data-ov-slot="notes">${values.notes}</div>`
+    return `<div data-ov-slot="notes">${values.notes}</div>`
       + `<div data-ov-slot="panel">${panel}</div><div data-ov-slot="filters">${values.filters}</div><div data-ov-slot="list">${values.list}</div>`;
   }
 
@@ -326,7 +335,8 @@ export function createOverview(ctx) {
       + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p>`
       + `<p class="compute-error compute-ov-stale" role="alert" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
       + `<p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p>`
-      + `<details class="compute-ov-fold" data-ov-fold${folded() ? " open" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary>`
+      + `<div data-ov-slot="state">${slots().state}</div>`
+      + `<details class="compute-ov-fold" data-ov-fold${folded() ? " open" : ""}${plain() ? " data-plain" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary>`
       + `<div data-ov-root>${inner()}</div></details></section>`;
   }
 
@@ -368,6 +378,8 @@ export function createOverview(ctx) {
     setText(host.querySelector("[data-ov-meta]"), metaText());
     // Until the person chooses, the fold follows what it holds: closed above a handful of items, open for a failed first read.
     if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = folded(); if (fold && fold.open !== want) fold.open = want; }
+    const fold = host.querySelector("[data-ov-fold]");
+    if (fold?.toggleAttribute) fold.toggleAttribute("data-plain", plain());
     const top = host.querySelector("[data-ov-top]");
     if (top && painted.top !== topHTML()) { painted.top = topHTML(); top.innerHTML = topHTML(); }
     const banner = host.querySelector("[data-ov-stale]");
@@ -386,7 +398,9 @@ export function createOverview(ctx) {
     const selectOpen = host.querySelector?.("#compute-ov-status")?.matches?.(":focus") === true;
     if (!selectOpen || focus) setHTML("filters", values.filters);
     setHTML("list", values.list);
-    const target = focus ? focusTarget(host, focus) : key ? host.querySelector(key) : null;
+    let target = focus ? focusTarget(host, focus) : key ? host.querySelector(key) : null;
+    // The focused control went away (a "Try again" that worked): focus lands on the section's heading, not on the page.
+    if (!target && key) target = host.querySelector("#compute-overview");
     if (target && target !== host.ownerDocument?.activeElement) target.focus?.({ preventScroll: !focus });
   }
   // Repaint only the open panel's body and chip, and only when what they say changed, so a focused heading or Close button keeps its node.
@@ -423,7 +437,7 @@ export function createOverview(ctx) {
   // refresh after every app event) must not turn into a read each; a button press never passes it.
   async function load({ quiet = false, say = false, within = 0 } = {}) {
     const page = ctx.epoch();
-    if (loading || (within && data && (ctx.now() - fetchedAt < within || ctx.doc?.hidden))) return; // the screen's own reloads never read for a hidden tab
+    if (loading || (within && data && (mono() - fetchedMono < within || ctx.doc?.hidden))) return; // the screen's own reloads never read for a hidden tab
     loading = true;
     if (!quiet) paint();
     let result = null, failure = null;
@@ -433,13 +447,14 @@ export function createOverview(ctx) {
     if (failure?.status === 401 && ctx.denied(failure)) return;
     if (!failure && Array.isArray(result?.items)) {
       const said = changes(result);
-      data = result; fetchedAt = ctx.now(); refreshFailed = false; failedSaid = false; loadError = "";
+      data = result; fetchedAt = ctx.now(); fetchedMono = mono(); tries = 0; refreshFailed = false; failedSaid = false; loadError = "";
       seenSignature = ctx.workspaceSignature?.() || "";
       previous = new Map(result.items.map(item => [`${item.kind}:${item.id}`, item.status.code]));
       if (kind !== "all" && !result.items.some(item => item.kind === kind)) kind = "all";
       if (status !== "all" && status !== "attention" && !result.items.some(item => item.status.code === status)) status = "all";
-      if (detail && !find(detail.id)) { announce("That item is no longer in the overview."); detail = null; detailBusy = false; }
-      paint();
+      const gone = detail && !find(detail.id);
+      if (gone) { announce("That item is no longer in the overview."); detail = null; detailBusy = false; }
+      paint(gone ? "opener" : "");
       if (said) announce(said); else if (say) announce(`Overview updated. ${summaryText(items()) || "Nothing here yet."}`);
     } else if (data !== null) {
       refreshFailed = true; paint();
@@ -447,7 +462,9 @@ export function createOverview(ctx) {
       // The alert above the fold says it (once, when its text appears); a second spoken line would be the same news twice.
       failedSaid = true;
     } else {
-      loadError = LOAD_ERROR; paint();
+      tries++;
+      // Said again each time, so pressing "Try again" visibly does something even when it fails again.
+      loadError = tries > 1 ? `${LOAD_ERROR} Tried ${tries} times.` : LOAD_ERROR; paint();
     }
     if (detail && data && !detailBusy && !failure) void loadDetail(detail.kind, detail.id, { quiet: true });
     schedule();
@@ -516,7 +533,7 @@ export function createOverview(ctx) {
   }
   function visibility() {
     if (ctx.doc?.hidden || !data || loading || paused) return;
-    if (ctx.now() - fetchedAt >= interval() * 1000) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } void load({ quiet: true }); }
+    if (mono() - fetchedMono >= interval() * 1000) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } void load({ quiet: true }); }
   }
 
   function open(id, itemKind) {
@@ -555,7 +572,7 @@ export function createOverview(ctx) {
     if (action === "pause") {
       paused = !paused;
       paint();
-      if (paused) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } announce("Automatic updates paused."); }
+      if (paused) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } announce("Automatic updates paused. Statuses and ages keep counting from the last read."); }
       else { announce("Automatic updates resumed."); void load({ quiet: true }); }
       return true;
     }
@@ -590,7 +607,7 @@ export function createOverview(ctx) {
     if (timer !== null) { timers.clearTimeout(timer); timer = null; }
     if (clockTimer !== null) { timers.clearTimeout(clockTimer); clockTimer = null; }
     ctx.doc?.removeEventListener?.("visibilitychange", visibility);
-    data = null; loadError = ""; loading = false; fetchedAt = 0; refreshFailed = false; failedSaid = false; paused = false; foldOpen = null; kind = "all"; status = "all"; detail = null; detailBusy = false; detailFailed = false; opener = ""; previous = null; seenSignature = ""; painted = {}; announced = "";
+    data = null; loadError = ""; loading = false; fetchedAt = 0; fetchedMono = 0; tries = 0; refreshFailed = false; failedSaid = false; paused = false; foldOpen = null; kind = "all"; status = "all"; detail = null; detailBusy = false; detailFailed = false; opener = ""; previous = null; seenSignature = ""; painted = {}; announced = "";
   }
   return { html, holdFocus, carry, load, start, click, change, keydown, reset, get state() { return { data, loadError, loading, kind, status, detail, refreshFailed, paused, timer }; } };
 }
