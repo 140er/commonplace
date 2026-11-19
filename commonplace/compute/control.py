@@ -359,8 +359,10 @@ class Store:
                     if "operator_note" not in columns:
                         conn.execute("ALTER TABLE execution_runs ADD COLUMN operator_note TEXT")
                     from .script_control import schema
+                    from .workspaces import schema as workspace_schema
 
                     schema(conn)
+                    workspace_schema(conn)
                     _attach_connection(conn, str(path), "compute")
                     conn.execute("BEGIN IMMEDIATE")
                     try:
@@ -1186,6 +1188,7 @@ class Store:
         return get_workspace(self, principal, workspace_id, session_hash=session_hash)
 
     def create_workspace(self, principal, **kwargs):
+        """Create a cloud workspace record; returns ``(item, created)`` like ``create_script``."""
         from .workspaces import create_workspace
 
         return create_workspace(self, principal, **kwargs)
@@ -1199,6 +1202,11 @@ class Store:
         from .workspaces import bind_registry_credential
 
         return bind_registry_credential(self, principal, workspace_id, **kwargs)
+
+    def discard_workspace(self, principal, workspace_id, **kwargs):
+        from .workspaces import discard_workspace
+
+        return discard_workspace(self, principal, workspace_id, **kwargs)
 
     def _set_workspace_state(self, conn, workspace_id, state, reason=None, **kwargs):
         """Lifecycle seam for the later start/stop code (no REST path)."""

@@ -20,7 +20,7 @@ from .control import StoreError, open_store
 from .fence import FenceDenied
 
 _WORKSPACE_OPTIONAL = frozenset(
-    "cpu_cores memory_mib storage_gib network node_id private_registry".split()
+    "cpu_cores memory_mib storage_gib network node_id private_registry request_id".split()
 )
 _CREATE_FIELDS = {
     "gateways": frozenset(
@@ -75,8 +75,28 @@ def _body(h, maximum=8192):
         raise StoreError() from None
 
 
+def _workspace_body(h, allowed, optional):
+    """Parse a workspace write body; every refusal names a reason (and the field, when it is one)."""
+    from . import workspaces
+
+    try:
+        body = _body(h)
+    except StoreError:
+        raise workspaces._bad(None, "body") from None
+    if set(body) - set(allowed):
+        raise workspaces._bad(None, "unknown_field")
+    missing = sorted(set(allowed) - set(optional) - set(body))
+    if missing:
+        raise workspaces._bad(missing[0], "required")
+    return body
+
+
 def _workspaces(h, store, principal, parts, auth):
-    """Cloud workspace records: reads for any member, writes for owners (checked by the store)."""
+    """Cloud workspace records: reads for any member, writes for owners.
+
+    The owner check runs before any body is read (``handle`` does it for every write), and a
+    record of another workspace is concealed before the body of an action on it is read.
+    """
     from . import workspaces
 
     if h.command == "GET":
@@ -88,28 +108,27 @@ def _workspaces(h, store, principal, parts, auth):
             return send_json(h, 200, store.get_workspace(principal, parts[0], **auth))
     elif h.command == "POST":
         if not parts:
-            body = _fields(
-                _body(h),
-                _CREATE_FIELDS["workspaces"] | _WORKSPACE_OPTIONAL,
-                optional=_WORKSPACE_OPTIONAL,
+            body = _workspace_body(
+                h, _CREATE_FIELDS["workspaces"] | _WORKSPACE_OPTIONAL, _WORKSPACE_OPTIONAL
             )
-            return send_json(
-                h, 201, {"workspace": store.create_workspace(principal, **auth, **body)}
-            )
+            item, created = store.create_workspace(principal, **auth, **body)
+            return send_json(h, 201 if created else 200, {"workspace": item})
         if len(parts) == 1:
-            # Conceal a foreign ID before looking at the body, as for the other actions.
             store.get_workspace(principal, parts[0], **auth)
-            body = _fields(
-                _body(h),
-                workspaces._EDITABLE | {"expected_revision"},
-                optional=workspaces._EDITABLE,
+            body = _workspace_body(
+                h, workspaces._EDITABLE | {"expected_revision"}, workspaces._EDITABLE
             )
             item = store.update_workspace(principal, parts[0], **auth, **body)
             return send_json(h, 200, {"workspace": item})
-        if len(parts) == 2 and parts[1] == "credential":
+        if len(parts) == 2 and parts[1] == "discard":
             store.get_workspace(principal, parts[0], **auth)
-            body = _fields(_body(h), ("credential_id", "credential_version"))
-            item = store.bind_workspace_credential(principal, parts[0], **auth, **body)
+            body = _workspace_body(h, {"expected_revision"}, ())
+            item = store.discard_workspace(principal, parts[0], **auth, **body)
+            return send_json(h, 200, {"discarded": item})
+        if len(parts) == 2 and parts[1] == "credential":
+            # Registry logins cannot be stored yet; the store refuses after the same checks.
+            store.get_workspace(principal, parts[0], **auth)
+            item = store.bind_workspace_credential(principal, parts[0], **auth)
             return send_json(h, 200, {"workspace": item})
     raise StoreError("not_found", 404)
 
@@ -236,7 +255,9 @@ def handle(gateway, handler):
     except StoreError as exc:
         if h.command != "GET":
             h.close_connection = True
-        detail = {"field": exc.field, "reason": exc.reason} if exc.field or exc.reason else {}
+        detail = {
+            key: value for key, value in (("field", exc.field), ("reason", exc.reason)) if value
+        }
         return send_json(h, exc.status, {"error": exc.code, **detail})
 
 

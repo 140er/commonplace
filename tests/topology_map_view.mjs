@@ -587,8 +587,9 @@ test("wiring: the app mounts the map in one place and the account menu links to 
   const rail = await import("../commonplace/web/static/rail.js");
   // Under Workspace in the account menu, on the desktop rail and in the phone's menu alike.
   for (const render of [rail.renderRail, rail.renderPhoneBar]) {
-    assert.match(render({ can_admin: true }), /<a href="#\/console">Console<\/a><a href="#\/compute-map">Compute map<\/a><\/div>/);
+    assert.match(render({ can_admin: true }), /<a href="#\/console">Console<\/a><a href="#\/compute">Compute<\/a><a href="#\/compute-map">Compute map<\/a><\/div>/);
     assert.doesNotMatch(render({ can_admin: false }), /compute-map/);
+    assert.match(render({ can_admin: false }), /<a href="#\/compute">Compute<\/a>/, 'Compute (cloud workspaces) is for every member');
   }
   assert.match(app, /state\.base === "#\/compute-map" \? "map"/);
   const css = await read("topology.css");

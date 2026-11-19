@@ -11,17 +11,20 @@ Docs: docs/system/compute-workspaces.md.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
+import unicodedata
 import uuid
 
 from .control import StoreError
 from .protocol import identifier, positive_integer
 
-MAX_WORKSPACES = 200
-MAX_LIST = 100
-NAME_LIMIT = 60
+# One cap for creation and for the list, so a record can never exist without being listed.
+MAX_WORKSPACES = 100
+MAX_LIST = MAX_WORKSPACES
+NAME_LIMIT = 60  # code points, counted after NFC normalisation (the browser counts the same way)
 
 # Ranges and defaults, served to the form so the browser never hard-codes a second copy.
 LIMITS = {
@@ -37,25 +40,25 @@ CURATED_IMAGES = (
         "id": "ubuntu-24-04",
         "label": "Ubuntu 24.04",
         "reference": "docker.io/library/ubuntu:24.04",
-        "description": "General-purpose Linux with a familiar package manager.",
+        "description": "A general-purpose Linux system. A good default for most work.",
     },
     {
         "id": "debian-12-slim",
         "label": "Debian 12 (slim)",
         "reference": "docker.io/library/debian:12-slim",
-        "description": "Small Linux base for lean workspaces.",
+        "description": "A smaller Linux system with fewer tools preinstalled, so it downloads faster.",
     },
     {
         "id": "python-3-12-slim",
         "label": "Python 3.12 (slim)",
         "reference": "docker.io/library/python:3.12-slim",
-        "description": "Python 3.12 with pip, on a small Debian base.",
+        "description": "Linux with Python 3.12 ready to use. Good for Python projects.",
     },
     {
         "id": "node-22-slim",
         "label": "Node.js 22 (slim)",
         "reference": "docker.io/library/node:22-slim",
-        "description": "Node.js 22 with npm, on a small Debian base.",
+        "description": "Linux with Node.js 22 ready to use. Good for JavaScript projects.",
     },
 )
 _CURATED_BY_REFERENCE = {item["reference"]: item for item in CURATED_IMAGES}
@@ -82,18 +85,49 @@ _COMPONENT = re.compile(r"[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*", re.ASCII)
 _TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", re.ASCII)
 _DIGEST = re.compile(r"sha256:[a-f0-9]{64}", re.ASCII)
 _SAFE = re.compile(r"[A-Za-z0-9._:/@-]+", re.ASCII)
+_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
+_NUMERIC_LABEL = re.compile(r"(?:0x[0-9a-f]+|[0-9]+)", re.ASCII)
+_LOCAL_SUFFIXES = (
+    ".local",
+    ".localhost",
+    ".internal",
+    ".lan",
+    ".home",
+    ".corp",
+    ".intranet",
+    ".private",
+    ".home.arpa",
+)
 _PRIVATE_FLAG = {True: 1, False: 0}
+# Registry logins need a custody purpose and pull-time use that arrive with the start/stop lifecycle, so no
+# record may claim to need one yet (docs/system/compute-workspaces.md, "Registry logins").
+REGISTRY_LOGINS = False
+_BAD_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
 
 
 def _bad(field, reason, code="invalid_request"):
     return StoreError(code, 400 if code == "invalid_request" else 409, field=field, reason=reason)
 
 
-def parse_image(value):
+def _conflict(reason, field=None):
+    return StoreError("conflict", 409, field=field, reason=reason)
+
+
+def _private_host(host):
+    """True for hosts that name a local or private network, or an IP address in any notation."""
+    name = host.partition(":")[0]
+    if "." not in name or name.endswith(_LOCAL_SUFFIXES):
+        return True
+    return _NUMERIC_LABEL.fullmatch(name.rsplit(".", 1)[-1]) is not None
+
+
+def parse_image(value, *, strict=True):
     """Validate a container image reference and return its parts, or raise StoreError.
 
     Accepts ``[registry[:port]/]path[:tag][@sha256:<64 hex>]``. Anything that could act as
-    an option, a shell word, a URL or user info is refused before it can be stored.
+    an option, a shell word, a URL or user info is refused before it can be stored. ``strict``
+    also refuses registries on local or private networks and a registry without a path; it is
+    off only when describing a record that was stored before those rules.
     """
     if type(value) is not str or not value:
         raise _bad("image", "empty")
@@ -117,10 +151,15 @@ def parse_image(value):
     parts = name.split("/")
     registry = "docker.io"
     first = parts[0]
+    if strict and len(parts) == 1 and "." in first:
+        # "ghcr.io:443" would otherwise read as an image called ghcr.io with tag 443.
+        raise _bad("image", "registry_no_path")
     if len(parts) > 1 and ("." in first or ":" in first or first == "localhost"):
         match = _HOST.fullmatch(first)
         if match is None or (match.group(1) is not None and not 1 <= int(match.group(1)) <= 65535):
             raise _bad("image", "registry")
+        if strict and _private_host(first):
+            raise _bad("image", "registry_private")
         registry = first
         parts = parts[1:]
     if not parts or any(not _COMPONENT.fullmatch(part) for part in parts):
@@ -136,15 +175,53 @@ def parse_image(value):
 
 
 def _name(value):
-    if type(value) is not str or not value.strip() or len(value) > NAME_LIMIT:
+    """The stored name: NFC, 1 to NAME_LIMIT code points, visible, with a letter or digit."""
+    if type(value) is not str:
         raise _bad("name", "length")
-    if value != value.strip() or any(ord(c) < 32 or ord(c) == 127 for c in value):
+    value = unicodedata.normalize("NFC", value)
+    if not value.strip() or len(value) > NAME_LIMIT:
+        raise _bad("name", "length")
+    # Control, format (zero-width and bidi controls), surrogate, private, unassigned and
+    # line/paragraph separators can hide or reorder text; none belongs in a name.
+    if value != value.strip() or any(
+        unicodedata.category(c) in _BAD_NAME_CATEGORIES for c in value
+    ):
         raise _bad("name", "characters")
-    try:
-        value.encode("utf-8")
-    except UnicodeError:
-        raise _bad("name", "characters") from None
+    if not any(unicodedata.category(c)[0] in "LN" for c in value):
+        raise _bad("name", "no_letter")
     return value
+
+
+def name_key(name):
+    """The uniqueness key: case-folded and NFC, so 'Straße' and 'STRASSE' are one name."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
+
+
+def schema(conn):
+    """Columns added after slice 1 shipped; the backfill keeps stored names unique by key."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(cloud_workspaces)")}
+    if "name_key" not in columns:
+        conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN name_key TEXT")
+    if "request_id" not in columns:
+        conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN request_id TEXT")
+    if "request_hash" not in columns:
+        conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN request_hash TEXT")
+    pending = conn.execute("SELECT id,name FROM cloud_workspaces WHERE name_key IS NULL").fetchall()
+    if pending:
+        taken = {row[0] for row in conn.execute("SELECT name_key FROM cloud_workspaces") if row[0]}
+        for row in pending:
+            key = name_key(row["name"])
+            if key in taken:
+                key = f"{key}\x00{row['id']}"
+            taken.add(key)
+            conn.execute("UPDATE cloud_workspaces SET name_key=? WHERE id=?", (key, row["id"]))
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS cloud_workspaces_name_key ON cloud_workspaces(name_key)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS cloud_workspaces_request ON cloud_workspaces(request_id) "
+        "WHERE request_id IS NOT NULL"
+    )
 
 
 def _cpu(value):
@@ -181,7 +258,16 @@ def _image(source, reference):
 def _flag(value):
     if type(value) is not bool:
         raise _bad("private_registry", "choice")
+    if value and not REGISTRY_LOGINS:
+        raise _bad("private_registry", "unavailable")
     return _PRIVATE_FLAG[value]
+
+
+def _revision(value):
+    try:
+        return positive_integer(value)
+    except Exception:
+        raise _bad("expected_revision", "invalid") from None
 
 
 def _row(conn, workspace_id):
@@ -217,7 +303,11 @@ def _machine_name(conn, node_id):
 
 
 def status_of(row):
-    """The one status code and reason the record shows; never blank."""
+    """The one status code and reason the record shows; never blank.
+
+    ``restart_needed`` is its own status so a started workspace whose saved settings moved
+    on is never described as matching them; ``ready`` means the applied revision is current.
+    """
     private = bool(row["private_registry"])
     if row["node_id"] is None:
         return "no_machine", None
@@ -225,17 +315,20 @@ def status_of(row):
         return "needs_credential", None
     if row["state"] == "failed":
         return "failed", row["state_reason"] if row["state_reason"] in FAILURE_REASONS else None
+    if row["applied_revision"] is not None and row["applied_revision"] < row["revision"]:
+        return "restart_needed", None
     if row["state"] == "ready":
         return "ready", None
     return "pending", None
 
 
 def public(conn, row, *, manage):
-    """Explicit projection. A member never sees the registry reference."""
-    parsed = parse_image(row["image_reference"])
+    """Explicit projection. A member sees neither a machine name nor an id, and nobody gets a
+    registry login reference back (none can be stored yet)."""
+    parsed = parse_image(row["image_reference"], strict=False)
     status, reason = status_of(row)
     started = row["applied_revision"] is not None
-    result = {
+    return {
         "id": row["id"],
         "name": row["name"],
         "image_source": row["image_source"],
@@ -244,38 +337,40 @@ def public(conn, row, *, manage):
         "image_tag": parsed["tag"],
         "image_digest": parsed["digest"],
         "image_pinned": parsed["pinned"],
-        "curated_label": (_CURATED_BY_REFERENCE.get(row["image_reference"]) or {}).get("label"),
+        "curated_label": (_CURATED_BY_REFERENCE.get(row["image_reference"]) or {}).get("label")
+        if row["image_source"] == "curated"
+        else None,
         "private_registry": bool(row["private_registry"]),
         "credential_bound": row["registry_credential_id"] is not None,
         "cpu_cores": row["cpu_millicores"] / 1000,
         "memory_mib": row["memory_mib"],
         "storage_gib": row["storage_gib"],
         "network": row["network"],
-        "node_id": row["node_id"],
-        "machine_name": _machine_name(conn, row["node_id"]),
+        "node_id": row["node_id"] if manage else None,
+        "machine_name": _machine_name(conn, row["node_id"]) if manage else None,
+        "machine_assigned": row["node_id"] is not None,
         "status": status,
         "status_reason": reason,
         "started": started,
         "revision": row["revision"],
         "applied_revision": row["applied_revision"],
         "restart_needed": started and row["applied_revision"] < row["revision"],
+        "discardable": manage and not started and row["state"] == "pending",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
-    if manage:
-        result["registry_credential_id"] = row["registry_credential_id"]
-        result["registry_credential_version"] = row["registry_credential_version"]
-    return result
 
 
 def options():
-    """Static form facts: curated images, ranges, defaults, networks."""
+    """Static form facts: curated images, ranges, defaults, networks, caps."""
     return {
         "images": [dict(item) for item in CURATED_IMAGES],
         "limits": {key: dict(value) for key, value in LIMITS.items()},
         "networks": list(NETWORKS),
         "default_network": DEFAULT_NETWORK,
         "name_limit": NAME_LIMIT,
+        "max_workspaces": MAX_WORKSPACES,
+        "registry_logins": REGISTRY_LOGINS,
     }
 
 
@@ -288,6 +383,7 @@ def list_workspaces(store, principal, *, session_hash):
         ).fetchall()
         return {
             "workspaces": [public(conn, row, manage=manage) for row in rows],
+            "total": conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[0],
             "can_manage": manage,
         }
 
@@ -301,12 +397,12 @@ def get_workspace(store, principal, workspace_id, *, session_hash):
         }
 
 
-def _taken(conn, name, except_id=""):
+def _taken(conn, key, except_id=""):
     found = conn.execute(
-        "SELECT 1 FROM cloud_workspaces WHERE name=? COLLATE NOCASE AND id<>?", (name, except_id)
+        "SELECT 1 FROM cloud_workspaces WHERE name_key=? AND id<>?", (key, except_id)
     ).fetchone()
     if found is not None:
-        raise StoreError("conflict", 409, field="name", reason="name_taken")
+        raise _conflict("name_taken", "name")
 
 
 def create_workspace(
@@ -323,7 +419,11 @@ def create_workspace(
     network=DEFAULT_NETWORK,
     node_id=None,
     private_registry=False,
+    request_id=None,
 ):
+    """Create a record; returns ``(item, created)``. A replayed ``request_id`` with the same
+    values returns the earlier record (``created`` False), so a retry after a lost answer
+    never trips over its own name."""
     with store._transaction(principal, session_hash) as (conn, current):
         name = _name(name)
         _image(image_source, image)
@@ -334,20 +434,41 @@ def create_workspace(
             raise _bad("network", "choice")
         private = _flag(private_registry)
         _machine(conn, node_id)
-        _taken(conn, name)
+        if request_id is not None and (
+            type(request_id) is not str or not _REQUEST_ID.fullmatch(request_id)
+        ):
+            raise _bad("request_id", "invalid")
+        digest = hashlib.sha256(
+            json.dumps(
+                [name, image_source, image, millicores, memory, storage, network, node_id, private]
+            ).encode()
+        ).hexdigest()
+        if request_id is not None:
+            prior = conn.execute(
+                "SELECT * FROM cloud_workspaces WHERE request_id=?", (request_id,)
+            ).fetchone()
+            if prior is not None:
+                if prior["request_hash"] != digest:
+                    raise _conflict("request_reused", "request_id")
+                return public(conn, prior, manage=True), False
+        key = name_key(name)
+        _taken(conn, key)
         if conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[0] >= MAX_WORKSPACES:
-            raise StoreError("conflict", 409, field=None, reason="limit_reached")
+            raise _conflict("limit_reached")
         workspace_id = uuid.uuid4().hex
         now = store._now()
         conn.execute(
-            "INSERT INTO cloud_workspaces (id,name,node_id,image_source,image_reference,"
-            "private_registry,registry_credential_id,registry_credential_version,"
-            "cpu_millicores,memory_mib,storage_gib,network,state,state_reason,revision,"
-            "applied_revision,created_by,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,NULL,NULL,?,?,?,?,'pending',NULL,1,NULL,?,?,?)",
+            "INSERT INTO cloud_workspaces (id,name,name_key,request_id,request_hash,node_id,"
+            "image_source,image_reference,private_registry,registry_credential_id,"
+            "registry_credential_version,cpu_millicores,memory_mib,storage_gib,network,state,"
+            "state_reason,revision,applied_revision,created_by,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,'pending',NULL,1,NULL,?,?,?)",
             (
                 workspace_id,
                 name,
+                key,
+                request_id,
+                digest,
                 node_id,
                 image_source,
                 image,
@@ -362,7 +483,7 @@ def create_workspace(
             ),
         )
         store._audit(conn, current, workspace_id, "workspace.created")
-        return public(conn, _row(conn, workspace_id), manage=True)
+        return public(conn, _row(conn, workspace_id), manage=True), True
 
 
 _EDITABLE = frozenset(
@@ -373,15 +494,18 @@ _EDITABLE = frozenset(
 def update_workspace(store, principal, workspace_id, *, session_hash, expected_revision, **changes):
     with store._transaction(principal, session_hash) as (conn, current):
         row = _row(conn, workspace_id)
-        positive_integer(expected_revision)
-        if not changes or set(changes) - _EDITABLE:
-            raise StoreError()
+        _revision(expected_revision)
+        if set(changes) - _EDITABLE:
+            raise _bad(None, "unknown_field")
+        if not changes:
+            raise _bad(None, "no_changes")
         if expected_revision != row["revision"]:
-            raise StoreError("conflict", 409, field=None, reason="stale_revision")
+            raise _conflict("stale_revision")
         values = dict(row)
         if "name" in changes:
             values["name"] = _name(changes["name"])
-            _taken(conn, values["name"], workspace_id)
+            values["name_key"] = name_key(values["name"])
+            _taken(conn, values["name_key"], workspace_id)
         source = changes.get("image_source", row["image_source"])
         reference = changes.get("image", row["image_reference"])
         if {"image_source", "image"} & set(changes):
@@ -398,15 +522,19 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
                 raise _bad("network", "choice")
             values["network"] = changes["network"]
         if "private_registry" in changes:
-            values["private_registry"] = _flag(changes["private_registry"])
+            # A record that already says it needs a login may keep saying so; none can start saying it.
+            if changes["private_registry"] is True and row["private_registry"]:
+                values["private_registry"] = 1
+            else:
+                values["private_registry"] = _flag(changes["private_registry"])
         if "node_id" in changes:
             _machine(conn, changes["node_id"])
             if row["applied_revision"] is not None and changes["node_id"] != row["node_id"]:
-                raise StoreError("conflict", 409, field="node_id", reason="machine_locked")
+                raise _conflict("machine_locked", "node_id")
             values["node_id"] = changes["node_id"]
         # A registry login belongs to one registry; changing the image or the private flag drops it.
-        before = parse_image(row["image_reference"])["registry"]
-        after = parse_image(reference)["registry"]
+        before = parse_image(row["image_reference"], strict=False)["registry"]
+        after = parse_image(reference, strict=False)["registry"]
         if not values["private_registry"] or before != after:
             values["registry_credential_id"] = values["registry_credential_version"] = None
         runtime = (
@@ -425,12 +553,13 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
             return public(conn, row, manage=True)
         revision = row["revision"] + (any(values[key] != row[key] for key in runtime))
         conn.execute(
-            "UPDATE cloud_workspaces SET name=?,node_id=?,image_source=?,image_reference=?,"
-            "private_registry=?,registry_credential_id=?,registry_credential_version=?,"
-            "cpu_millicores=?,memory_mib=?,storage_gib=?,network=?,revision=?,updated_at=? "
-            "WHERE id=?",
+            "UPDATE cloud_workspaces SET name=?,name_key=?,node_id=?,image_source=?,"
+            "image_reference=?,private_registry=?,registry_credential_id=?,"
+            "registry_credential_version=?,cpu_millicores=?,memory_mib=?,storage_gib=?,network=?,"
+            "revision=?,updated_at=? WHERE id=?",
             (
                 values["name"],
+                values["name_key"] or name_key(values["name"]),
                 values["node_id"],
                 values["image_source"],
                 values["image_reference"],
@@ -450,28 +579,28 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
         return public(conn, _row(conn, workspace_id), manage=True)
 
 
-def bind_registry_credential(
-    store, principal, workspace_id, *, session_hash, credential_id, credential_version
-):
-    """Record a registry login reference, once, on a workspace that says it needs one."""
+def bind_registry_credential(store, principal, workspace_id, *, session_hash):
+    """Registry logins cannot be stored yet: no custody purpose exists for them, and nothing
+    would use one before the lifecycle exists. Refused after the owner and concealment checks, writing nothing,
+    so a gateway or target credential can never be filed here as a registry login."""
+    with store._transaction(principal, session_hash) as (conn, current):
+        _row(conn, workspace_id)
+        raise _conflict("registry_logins_unavailable")
+
+
+def discard_workspace(store, principal, workspace_id, *, session_hash, expected_revision):
+    """Delete a record that never started. A started workspace owns a container and a volume,
+    so removing it waits for the lifecycle card, which confirms and cleans those up."""
     with store._transaction(principal, session_hash) as (conn, current):
         row = _row(conn, workspace_id)
-        if not row["private_registry"]:
-            raise StoreError("conflict", 409, field=None, reason="registry_not_private")
-        if row["registry_credential_id"] is not None:
-            raise StoreError("credential_already_bound", 409)
-        try:
-            identifier(credential_id)
-            positive_integer(credential_version)
-        except Exception:
-            raise StoreError() from None
-        conn.execute(
-            "UPDATE cloud_workspaces SET registry_credential_id=?,registry_credential_version=?,"
-            "updated_at=? WHERE id=?",
-            (credential_id, credential_version, store._now(), workspace_id),
-        )
-        store._audit(conn, current, workspace_id, "workspace.credential_bound")
-        return public(conn, _row(conn, workspace_id), manage=True)
+        _revision(expected_revision)
+        if row["applied_revision"] is not None or row["state"] != "pending":
+            raise _conflict("already_started")
+        if expected_revision != row["revision"]:
+            raise _conflict("stale_revision")
+        conn.execute("DELETE FROM cloud_workspaces WHERE id=?", (workspace_id,))
+        store._audit(conn, current, workspace_id, "workspace.discarded")
+        return {"id": workspace_id, "name": row["name"]}
 
 
 def set_state(conn, workspace_id, state, reason=None, *, applied_revision=None):
