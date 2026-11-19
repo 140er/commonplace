@@ -182,20 +182,25 @@ def test_a_drained_runner_with_an_old_open_run_never_claims_none_is_in_progress(
 
 def test_an_item_beyond_the_cap_is_still_reachable_by_id(api, fleet, monkeypatch):
     monkeypatch.setattr(overview, "MAX_ITEMS", 1)
-    made = [fleet.enroll("runner-c"), fleet.enroll("runner-d")]
+    runners = {fleet.enroll(name)["machine_id"]: name for name in ("runner-c", "runner-d")}
     _, node = api.enrolled()
-    first = workspace(api, name="Aaa", node_id=node["id"])
-    workspace(api, name="Bbb")
-    listed = read(api)["items"]
-    shown_runners = {i["id"] for i in listed if i["kind"] == "runner"}
-    assert len(shown_runners) == 1 and "Aaa" not in {i["name"] for i in listed}
-    for one in made:
-        status, result = api.request(path=f"{BASE}/runner/{one['machine_id']}")
-        assert status == 200 and result["item"]["id"] == one["machine_id"]
-    status, result = api.request(path=f"{BASE}/workspace/{first['id']}")
-    assert status == 200 and result["item"]["name"] == "Aaa"
-    status, result = api.request(path=f"{BASE}/machine/{node['id']}")
-    assert status == 200 and result["item"]["placement"]["workspaces"] == 1
+    workspaces_made = {workspace(api, name=n, node_id=node["id"])["id"]: n for n in ("Aaa", "Bbb")}
+    listed = {(i["kind"], i["id"]) for i in read(api)["items"]}
+    assert len([k for k in listed if k[0] == "runner"]) == 1
+    assert len([k for k in listed if k[0] == "workspace"]) == 1
+    # Every id the capped list left out is still found directly, with its own data.
+    hidden_runners = [i for i in runners if ("runner", i) not in listed]
+    hidden_workspaces = [i for i in workspaces_made if ("workspace", i) not in listed]
+    assert len(hidden_runners) == 1 and len(hidden_workspaces) == 1
+    status, result = api.request(path=f"{BASE}/runner/{hidden_runners[0]}")
+    assert status == 200 and result["item"]["name"] == runners[hidden_runners[0]]
+    status, result = api.request(path=f"{BASE}/workspace/{hidden_workspaces[0]}")
+    assert status == 200 and result["item"]["name"] == workspaces_made[hidden_workspaces[0]]
+    assert result["item"]["status"]["code"] == "not_started"
+    status, result = api.request(path=f"{BASE}/workspace/{hidden_workspaces[0]}/preview/start")
+    assert status == 200 and result["allowed"] is True
+    status, result = api.request(path=f"{BASE}/runner/{hidden_runners[0]}/preview/drain")
+    assert status == 200 and result["allowed"] is True
 
 
 def test_has_started_reads_a_row_built_without_the_lifecycle_join(api):

@@ -1354,7 +1354,7 @@ def _runner_preview(item, facts, action, refusal):
             ],
             running_work=f"{_runs(running)} in progress will finish normally; none is cancelled.",
             will_not=[
-                "Chat and orchestrator sessions are not affected in this version.",
+                "Chat and Coworker sessions are not affected in this version.",
                 "The runner program keeps running: this does not shut the machine down.",
             ],
         )

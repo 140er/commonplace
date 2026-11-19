@@ -99,7 +99,7 @@ def test_preview_states_what_happens_to_running_work_before_the_confirm(api, fle
     assert preview["running_work"] == "1 run in progress will finish normally; none is cancelled."
     assert "Queued runs (1) wait in the queue" in preview["effect"][0]
     assert any(
-        "Chat and orchestrator sessions are not affected" in line for line in preview["will_not"]
+        "Chat and Coworker sessions are not affected" in line for line in preview["will_not"]
     )
     assert any("does not shut the machine down" in line for line in preview["will_not"])
     assert preview["basis"] == {"seq": 0}
