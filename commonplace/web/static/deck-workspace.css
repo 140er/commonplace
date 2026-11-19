@@ -55,4 +55,4 @@
 }
 
 /* Tablet touch (wider than the phone breakpoint) gets the same 44px targets as a phone. */
-@media (pointer: coarse) { .dw-tabs a, .dw-crumbs a, .dw-switch a, .dw-switch span { min-height: 44px; display: inline-flex; align-items: center; } }
+@media (pointer: coarse) { .dw-tabs a, .dw-crumbs a, .dw-switch a, .dw-switch span { min-height: 44px; } }
