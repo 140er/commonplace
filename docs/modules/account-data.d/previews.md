@@ -1,0 +1,1 @@
+- **Owns:** `account/tables.py` classifies the preview tables (`previews`, `preview_revisions`, `preview_events`, `preview_rules`) as workspace data that stays with the workspace when a person leaves it, so account export and deletion no longer stop on them as unsupported data.
