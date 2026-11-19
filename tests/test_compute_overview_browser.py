@@ -173,7 +173,9 @@ def _fold(page):
     """On a phone the overview starts folded to its summary sentence; a person opens it with one tap."""
     fold = page.locator("details[data-ov-fold]")
     # Wait for the first answer: the fold settles when the data arrives (open for a handful of items, closed for more).
-    expect(page.locator("[data-ov-summary]")).not_to_have_text("Loading the overview…")
+    expect(page.locator("[data-ov-summary]")).not_to_have_text(
+        "Loading the overview…", timeout=20000
+    )
     if fold.get_attribute("open") is None:
         page.locator("[data-ov-fold-summary]").click()
         expect(fold).to_have_attribute("open", "")
@@ -181,7 +183,9 @@ def _fold(page):
 
 def _go(page, fx, ui="deck"):  # the list has painted
     _fold(page)
-    expect(page.locator(f"{ROOT} .compute-ov-row").first).to_be_visible()
+    expect(page.locator(f"{ROOT} .compute-ov-row").first).to_be_visible(
+        timeout=20000
+    )  # a cold server is slow to answer
 
 
 def _shown(page):
