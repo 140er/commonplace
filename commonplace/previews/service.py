@@ -23,6 +23,11 @@ from .store import Forbidden, NotFound
 log = logging.getLogger("commonplace.previews")
 
 
+def _remove_tree(path) -> None:
+    """The one place files are removed; callers look at the result instead of trusting it."""
+    shutil.rmtree(path, ignore_errors=True)
+
+
 def _service(gateway, principal):
     return BoardService(ToolContext(principal=principal, gateway=gateway))
 
@@ -234,9 +239,13 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
             if keep:
                 pass  # it was ready and still serves its current revision
             elif before is not None and before[2] > 0:
+                # A stale building row is put back as what it reads as: an unfinished publish.
+                state, why = (
+                    ("failed", "publish_interrupted") if before[0] == "building" else before[:2]
+                )
                 conn.execute(
                     "UPDATE previews SET state=?,reason=?,updated_at=? WHERE id=?",
-                    (before[0], before[1], now, identity),
+                    (state, why, now, identity),
                 )
             else:
                 conn.execute(
@@ -272,7 +281,7 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
             final = store.revision_dir(gateway, workspace, identity, revision)
             store.place(tmp, final)
         except Refused as exc:
-            shutil.rmtree(tmp, ignore_errors=True)
+            _remove_tree(tmp)
             failed = exc
         if failed is None:
             try:
@@ -300,7 +309,7 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                 shown = store.view(conn, store.row_by_id(conn, workspace, identity))
             except Exception:
                 # The row rolls back with the transaction; the placed files must not outlive it.
-                shutil.rmtree(final, ignore_errors=True)
+                _remove_tree(final)
                 raise
     if failed is not None:
         settle(failed)
@@ -452,7 +461,7 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
         store.event(conn, workspace, row["id"], row["card"], "files_deleted", principal.actor)
         shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]), revisions=True)
     folder = store.root(gateway, workspace) / row["id"]
-    shutil.rmtree(folder, ignore_errors=True)
+    _remove_tree(folder)
     if folder.exists():
         # The rows say deleted but some files remain: record it and say so; asking again retries.
         log.warning("preview files could not be fully removed for %s", row["id"])

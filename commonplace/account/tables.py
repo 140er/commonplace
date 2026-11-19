@@ -179,8 +179,19 @@ RULES = {
 
 # A purge handles these itself: tombstones, the append-only audit log and the
 # rows that must go last because others point at them.
+# ``preview_events`` is append-only like the audit log (a trigger refuses every delete), holds
+# ids, actor labels and fixed reason codes but no content, and so stays when a workspace goes;
+# the preview rows and the files go with the workspace.
 KEPT = frozenset(
-    {"account_deletions", "audit_log", "connections", "memberships", "users", "workspaces"}
+    {
+        "account_deletions",
+        "audit_log",
+        "connections",
+        "memberships",
+        "preview_events",
+        "users",
+        "workspaces",
+    }
 )
 
 # Credentials and their digests are never exported, also not to their owner.

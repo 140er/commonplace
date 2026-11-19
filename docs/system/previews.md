@@ -132,5 +132,6 @@ A later slice (separate card, after the Compute start slice) adds `app` previews
 - Reasons added to the list: `rate_limited` (not stored), `files_deleted` (a stopped preview whose files an owner deleted).
 - The stop rule can be read and set (owner) and is shown, but is not applied until the serving slice; `stops_at` is null until then.
 - The URL `/p/<id>/` is returned but nothing answers it until slice 2.
+- Account deletion: the preview rows and files go with a deleted workspace; the append-only `preview_events` stay (ids, actor labels and reason codes, no content), like the audit log. An account export carries the preview rows of an owned workspace but not the published files.
 
 For slice 2: the serving route applies the same token scope and wing checks as the API; and its acceptance includes that `'self'` in the sandbox policy lets a preview load its own scripts and styles while app cookies and `/api/` calls fail, and that a token without `memory:read` is refused.

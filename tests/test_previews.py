@@ -246,7 +246,7 @@ def test_every_bundle_problem_names_its_reason_and_serves_nothing(console_hub, m
         "bad_path",
         "clash",
     )
-    leak = "ghp_" + "a1B2c3D4e5" * 4
+    leak = "ghp_" + "0" * 36
     text = refused(
         h,
         number,
@@ -541,7 +541,7 @@ def test_listing_by_pull_request_finds_the_cards_previews_and_records_the_pull_r
 def test_find_kinds_detects_unmistakable_credentials_and_ignores_build_output():
     from commonplace import redact
 
-    token = "ghp_" + "Zz9" * 12
+    token = "ghp_" + "0" * 36
     big = "x" * 40_000 + "\n-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n"
     assert redact.find_kinds(f"const t = '{token}';", bundle.SECRET_KINDS) == ["github_token"]
     assert redact.find_kinds(big, bundle.SECRET_KINDS) == [
@@ -611,7 +611,7 @@ def test_a_token_that_lost_write_access_cannot_stop_or_reopen(console_hub):
 def test_a_credential_in_a_file_that_is_not_utf8_is_still_refused(console_hub):
     h = console_hub
     number = card(h)
-    leak = ("ghp_" + "Zz9" * 12).encode()
+    leak = ("ghp_" + "0" * 36).encode()
     data = base64.b64encode(b"\xff\xfe" + leak).decode()
     ok, text = publish(h, h.t1, number, files=[INDEX, {"path": "blob.bin", "base64": data}])
     assert not ok and "[contains_secret_like_text]" in text and "blob.bin" in text
@@ -671,7 +671,7 @@ def test_a_delete_that_cannot_remove_every_file_says_so_and_records_it(console_h
     number = card(h)
     assert publish(h, h.t1, number)[0]
     identity = one(h, number)["id"]
-    monkeypatch.setattr(service.shutil, "rmtree", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, "_remove_tree", lambda path: None)
     status, body, _ = h.request(
         h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity}
     )
