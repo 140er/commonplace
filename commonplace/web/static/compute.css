@@ -71,6 +71,7 @@
 /* Cloud workspaces (compute-workspaces.js): reuse the inventory/editor cards; only the new pieces are styled here. */
 .compute-ws { --ws-warn: var(--wait); }
 :root[data-ui="deck"] .compute-ws { --ws-warn: var(--amber, #f59e0b); }
+.compute select:disabled { opacity: .55; cursor: not-allowed; }
 .compute-ws [data-ws-top] > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
 .compute-ws-list { max-height: none; overflow: visible; }
 .compute-ws-name { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
@@ -116,6 +117,9 @@
 .compute-ws-review, .compute-ws-typed { margin: 12px 0; padding: 0 0 0 20px; list-style: disc; }
 .compute-ws-review li + li, .compute-ws-typed li + li { margin-top: 4px; }
 .compute-ws-detail { margin: 12px 0 0; }
+.compute-ws-detail > header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.compute-ws-warn { color: var(--ws-warn); font-weight: 600; }
+.compute .compute-ws .compute-ws-problem:empty { margin: 0; padding: 0; min-height: 0; }
 .compute-ws-detail dd { overflow-wrap: anywhere; }
 .compute-ws-editor { margin: 12px 0 0; }
 .compute-ws .compute-actions .compute-ws-apart { margin-inline-start: auto; }

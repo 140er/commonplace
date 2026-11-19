@@ -14,6 +14,7 @@ every state (desktop 1280x800, phone 390x844).
 
 import importlib.util
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -291,6 +292,7 @@ def _assert_bar_sits_on_the_tab_bar(page):
     """One bottom offset per look. While its panel runs on below the screen the bar is stuck: its bottom edge is the
     tab bar's top edge (in Deck, the end of the scroller above it). When the panel ends on screen the bar simply ends
     the panel (it is the panel's last row). In no case does it reach under the tab bar."""
+    _settled(page)  # the heading's focus scroll must have ended before the edges are measured
     geometry = _geometry(page)
     edge = geometry["tabs"]["top"] if geometry["tabs"] else geometry["height"]
     bar, panel = geometry["bar"], geometry["panel"]
@@ -306,7 +308,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
 
     def body(page, label, context):
         section = _section(page)
-        expect(section).to_contain_text("No cloud workspaces yet. Choose New cloud workspace")
+        expect(section).to_contain_text("Nothing here yet. Choose New cloud workspace")
         assert (
             section.get_by_text(
                 "a separate place on one of your machines where Coworkers can run"
@@ -316,7 +318,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         _shot(page, f"{label}-01-empty")
         page.get_by_role("button", name="New cloud workspace").click()
         expect(page.locator("#compute-ws-heading")).to_be_focused()
-        expect(section).not_to_contain_text("No cloud workspaces yet")
+        expect(section).not_to_contain_text("Nothing here yet")
         expect(page.locator("[data-ws-preview]")).to_contain_text(
             "2 CPU cores, 4 GiB memory, 20 GiB storage. Machine: not chosen yet"
         )
@@ -342,7 +344,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         page.get_by_role("button", name="Review and create").click()
         summary = page.locator("[data-ws-summary]")
         expect(summary).to_contain_text("Fix this field, then review again:")
-        assert section.locator('[role="alert"]').count() == 0
+        assert section.locator('[role="alert"]:not(:empty)').count() == 0
         name = page.get_by_role("textbox", name="Name", exact=True)
         expect(name).to_have_attribute("aria-invalid", "true")
         expect(summary).to_be_focused()  # the summary takes focus; its links jump to the fields
@@ -360,7 +362,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
         address = page.get_by_role("textbox", name="Image address", exact=True)
         assert address.get_attribute("placeholder") is None  # an empty box does not read as filled
-        expect(section).to_contain_text("The name of the image, for example ubuntu:24.04.")
+        expect(section).to_contain_text("The address of the image, for example ubuntu:24.04.")
         # The jargon sits behind one disclosure with one definition.
         help_box = section.locator(".compute-ws-help")
         expect(help_box).not_to_have_attribute("open", "")
@@ -564,7 +566,7 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
         rows["Private box"].get_by_role("button", name="Details for Private box").click()
         detail = page.locator(".compute-ws-detail")
         expect(detail).to_contain_text(
-            "This image is private and Commonplace can't store sign-ins for private images yet"
+            "Private images need a sign-in, and Commonplace can't store sign-ins yet"
         )
         expect(detail).to_contain_text("Choose a public image.")
         _shot(page, f"{label}-18-private-detail")
@@ -640,10 +642,14 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
         )
         expect(refused).not_to_contain_text("nothing on a machine is affected")
         # The status above the refusal changed in the same render: it no longer says "Saved, not started".
-        expect(refused.locator(".compute-ws-status")).to_have_text("Changed since you opened it")
+        expect(refused.locator(".compute-ws-status")).to_have_text("Started since you opened this")
         expect(refused).not_to_contain_text("Saved, not started")
         expect(page.get_by_role("button", name="Discard workspace")).to_have_count(0)
         expect(page.get_by_role("button", name="Keep it")).to_be_focused()
+        # Focus on "Keep it" reads the reason: it is the button's description.
+        expect(page.get_by_role("button", name="Keep it")).to_have_accessible_description(
+            "It started after you opened this, so nothing was discarded. Keep it, or reload the list to see its current state."
+        )
         _shot(page, f"{label}-21-discard-refused")
         page.keyboard.press("Escape")
         rows["No machine yet box"].get_by_role("button", name="Discard No machine yet box").click()
@@ -692,12 +698,12 @@ def test_a_server_conflict_and_a_stale_rename_are_explained_and_recoverable(serv
         page.get_by_role("button", name="Refresh").click()
         expect(page.get_by_role("button", name="Refresh")).to_be_focused()
         summary = page.locator("[data-ws-summary]")
-        expect(summary).to_contain_text(
-            "Someone else changed this workspace, so nothing was saved."
-        )
+        expect(summary).to_contain_text("Someone else changed this workspace. Nothing was saved.")
         expect(page.locator("[data-ws-notice]")).to_contain_text("changed while you had it open")
-        expect(summary).to_contain_text("What you typed (copy it if you want to keep it):")
-        expect(summary).to_contain_text("Name: Mine, renamed here")
+        expect(summary).to_contain_text("What you typed is still in the form below.")
+        expect(page.get_by_role("textbox", name="Name", exact=True)).to_have_value(
+            "Mine, renamed here"
+        )
         reload_button = page.get_by_role("button", name="Reload to continue")
         expect(reload_button).to_be_visible()
         summary.evaluate("el => el.scrollIntoView({block: 'center'})")
@@ -1209,9 +1215,9 @@ def test_no_machines_enrolled_says_what_to_do(served_empty, ui, size):
         # Nothing to choose: the field says so and is disabled, and no sentence points at the SSH settings.
         expect(machine).to_contain_text("No machines set up yet")
         expect(machine).to_be_disabled()
-        expect(_section(page)).to_contain_text(
-            "No machine is set up yet, so this stays on Choose later."
-        )
+        expect(_section(page)).to_contain_text("No machine is set up yet, so none can be chosen.")
+        # A disabled field looks disabled (dimmed, not an editable box).
+        assert float(machine.evaluate("el => getComputedStyle(el).opacity")) < 0.7
         expect(_section(page)).not_to_contain_text("Targets")
         expect(_section(page)).not_to_contain_text("Advanced")
         _shot(page, f"{label}-26-no-machines")
@@ -1310,6 +1316,8 @@ def test_the_stale_and_leave_rows_wrap_instead_of_clipping_on_a_narrow_phone(ser
         )
         page.get_by_role("button", name="Refresh").click()
         expect(page.get_by_role("button", name="Reload to continue")).to_be_visible()
+        # The whole screen repaints once more when the refresh ends: measure the stale row after that.
+        expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
         page.locator(".compute-ws-stale").scroll_into_view_if_needed()
         _settled(page)
         intact(page, ".compute-ws-stale")
@@ -1343,6 +1351,7 @@ def test_deck_calls_the_page_cloud_workspaces_and_keeps_the_route_card_on_the_ma
                 ) if phone else expect(entry).to_contain_text("Cloud workspaces")
                 if phone:
                     expect(entry).to_contain_text("Workspaces")
+                    expect(entry).to_be_visible()  # laid out before its text is measured
                     lines = entry.evaluate(
                         "el => { const text = [...el.childNodes].find(n => n.nodeType === 3);"
                         " const r = document.createRange(); r.selectNodeContents(text);"
@@ -1439,3 +1448,174 @@ def test_a_ready_made_image_error_is_shown_on_the_visible_list(served, ui):
         assert "ws-error-image_choice" in choice.get_attribute("aria-describedby")
 
     _run(fx, ui, "desktop", body)
+
+
+VIEWPORTS = [
+    pytest.param((1280, 800), False, id="desktop"),
+    pytest.param((390, 844), True, id="phone-390"),
+    pytest.param((320, 640), True, id="phone-320"),
+    pytest.param((768, 1024), True, id="tablet-768-touch"),
+]
+
+
+def _tag(viewport):
+    return f"{viewport[0]}"
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("viewport,touch", VIEWPORTS)
+def test_card_621_states_at_every_viewport(served, ui, viewport, touch):
+    """The review minors of the card, seen in the page: list semantics, header Close, review warning, refused row, stale copy."""
+    fx = served
+    fx.make(name="Plain box")
+    mine = fx.make(name="Mine")
+    soon = fx.make(name="Soon started")
+
+    def body(page, label, context):
+        tag = f"{label.split('-')[0]}-{_tag(viewport)}"
+        section = _section(page)
+        # The list is a list, and a record's detail has its Close in the header, beside the name.
+        expect(section.locator("ul.compute-ws-list")).to_have_attribute("role", "list")
+        _shot(page, f"{tag}-01-list")
+        page.get_by_role("button", name="Details for Plain box").click()
+        detail = page.locator(".compute-ws-detail")
+        header_close = detail.locator("header").get_by_role(
+            "button", name="Close details of Plain box"
+        )
+        expect(header_close).to_be_visible()
+        expect(detail.get_by_role("button", name="Close details of Plain box")).to_have_count(1)
+        box = header_close.bounding_box()
+        assert box["x"] + box["width"] <= viewport[0] + 1, "Close is inside the viewport"
+        _shot(page, f"{tag}-02-detail-close-in-header")
+        header_close.click()
+        expect(page.get_by_role("button", name="Details for Plain box")).to_be_focused()
+        # Choosing a machine that is not verified says what that means before anything is saved.
+        page.get_by_role("button", name="Change settings for Plain box").click()
+        page.get_by_role("combobox", name="Machine", exact=True).select_option(
+            label="Build machine"
+        )
+        page.get_by_role("button", name="Review the change").click()
+        review = page.locator(".compute-ws-review")
+        expect(review).to_contain_text(
+            "Build machine is not verified yet, so nothing can start on it. Your settings are still saved."
+        )
+        _shot(page, f"{tag}-03-review-machine-not-verified")
+        page.get_by_role("button", name="Back").click()
+        page.get_by_role("button", name="Cancel").click()
+        page.get_by_role("button", name="Leave and lose changes").click()
+        # A refused discard names what happened in the row and in the description of the focused button.
+        page.get_by_role("button", name="Discard Soon started").click()
+        fx.state(soon["id"], "failed", "start_failed")
+        page.get_by_role("button", name="Discard workspace", exact=True).click()
+        refused = page.locator(f'[data-ws-id="{soon["id"]}"]')
+        expect(refused.locator(".compute-ws-status")).to_have_text("Started since you opened this")
+        expect(page.get_by_role("button", name="Keep it")).to_be_focused()
+        _shot(page, f"{tag}-04-discard-refused")
+        page.get_by_role("button", name="Keep it").click()
+        # A stale edit: nothing was saved, the form still holds what was typed, and the reload says how to get it back.
+        page.get_by_role("button", name="Change settings for Mine").click()
+        page.get_by_role("textbox", name="Name", exact=True).fill("Mine, renamed here")
+        fx.store.update_workspace(
+            fx.principal, mine["id"], **fx.auth, expected_revision=1, name="Mine, renamed elsewhere"
+        )
+        page.get_by_role("button", name="Refresh").click()
+        summary = page.locator("[data-ws-summary]")
+        expect(summary).to_contain_text("Nothing was saved.")
+        expect(summary).to_contain_text("What you typed is still in the form below.")
+        _shot(page, f"{tag}-05-stale-banner")
+        page.get_by_role("button", name="Reload to continue").click()
+        expect(page.locator("[data-ws-notice]")).to_have_text(
+            "Reloaded. Your earlier changes were not saved. Apply my changes again puts them back."
+        )
+        expect(page.get_by_role("button", name="Apply my changes again")).to_be_visible()
+        _shot(page, f"{tag}-06-after-reload")
+        _no_sideways_scroll(page)
+
+    _run(fx, ui, "phone" if viewport[0] < 700 else "desktop", body, viewport=viewport, touch=touch)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("viewport,touch", VIEWPORTS)
+def test_card_621_the_disabled_machine_field_at_every_viewport(served_empty, ui, viewport, touch):
+    fx = served_empty
+
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        machine = page.get_by_role("combobox", name="Machine", exact=True)
+        expect(machine).to_be_disabled()
+        assert float(machine.evaluate("el => getComputedStyle(el).opacity")) == pytest.approx(0.55)
+        machine.scroll_into_view_if_needed()
+        _settled(page)
+        _shot(page, f"{label.split('-')[0]}-{_tag(viewport)}-07-disabled-machine-select")
+
+    _run(fx, ui, "phone" if viewport[0] < 700 else "desktop", body, viewport=viewport, touch=touch)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_failed_list_load_is_one_alert_and_the_status_line_stays_silent(served, ui):
+    fx = served
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context = browser.new_context(viewport={"width": 1280, "height": 800})
+            context.add_cookies([{"name": sessions.COOKIE, "value": fx.cookie, "url": fx.origin}])
+            context.route(
+                re.compile(r".*/api/compute/workspaces$"),
+                lambda route: route.fulfill(status=500, json={"error": "x"}),
+            )
+            page = context.new_page()
+            page.set_default_timeout(20000)
+            route = "#/compute/management" if ui == "deck" else "#/compute"
+            page.goto(f"{fx.origin}/app/?ui={ui}{route}")
+            problem = page.locator("[data-ws-problem]")
+            sentence = "Cloud workspaces could not be loaded. Reload to try again."
+            expect(problem).to_have_text(sentence)
+            section = _section(page)
+            expect(section.locator('[role="alert"]:not(:empty)')).to_have_count(1)
+            expect(page.locator("[data-ws-notice]")).to_have_text("")
+            reload = section.get_by_role("button", name="Reload", exact=True)
+            reload.click()
+            expect(problem).to_have_text(sentence)
+            # The status line never says it as well: one voice for one failure.
+            expect(page.locator("[data-ws-notice]")).to_have_text("")
+            expect(section.locator('[role="alert"]:not(:empty)')).to_have_count(1)
+            _shot(page, f"{ui}-desktop-08-load-failed")
+            context.close()
+        finally:
+            browser.close()
+
+
+def test_the_deck_phone_tab_labels_keep_their_distance_at_320(served):
+    fx = served
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context = browser.new_context(
+                viewport={"width": 320, "height": 640}, has_touch=True, is_mobile=True
+            )
+            context.add_cookies([{"name": sessions.COOKIE, "value": fx.cookie, "url": fx.origin}])
+            page = context.new_page()
+            page.set_default_timeout(20000)
+            page.goto(f"{fx.origin}/app/?ui=deck#/compute")
+            page.locator("nav.m-tabs").wait_for()
+            labels = page.evaluate(
+                "() => [...document.querySelectorAll('nav.m-tabs > :is(a, button)')].map(el => {"
+                " const node = [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());"
+                " if (!node) return null;"
+                " const range = document.createRange(); range.selectNodeContents(node);"
+                " const box = range.getBoundingClientRect();"
+                " return {text: node.textContent.trim(), left: box.left, right: box.right,"
+                " size: getComputedStyle(el).fontSize}; }).filter(Boolean)"
+            )
+            _shot(page, "deck-320-09-tab-labels")
+            assert len(labels) >= 5, labels
+            assert {item["size"] for item in labels} == {"11px"}, labels
+            for first, second in zip(labels, labels[1:]):
+                assert second["left"] - first["right"] >= 1, (first, second)
+            assert labels[0]["left"] >= 0 and labels[-1]["right"] <= 320, labels
+            workspaces = next(item for item in labels if item["text"] == "Workspaces")
+            settings = next(item for item in labels if item["text"] == "Settings")
+            assert settings["left"] - workspaces["right"] >= 1, (workspaces, settings)
+            context.close()
+        finally:
+            browser.close()

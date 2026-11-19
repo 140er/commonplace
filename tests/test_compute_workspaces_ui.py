@@ -38,6 +38,7 @@ import pytest
         "status-tone",
         "background-reload-focus",
         "curated-image-error",
+        "minors-621",
     ],
 )
 def test_compute_workspaces_ui(case):

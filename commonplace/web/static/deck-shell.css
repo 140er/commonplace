@@ -90,8 +90,15 @@
   :root[data-ui="deck"] .m-tabs :is(a, .deck-tab-more) { min-height: 52px; font-size: 11px; gap: 3px; color: var(--ink3); }
   :root[data-ui="deck"] .m-tabs .deck-tab-more { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; padding: 0; border: 0; background: transparent; font-weight: 500; }
   :root[data-ui="deck"] .m-tabs :is(a, .deck-tab-more)[aria-current] { color: var(--ink); }
-  /* "Workspaces" is the longest tab word: one line at 10px, centred in its slot, never split mid-word. */
-  :root[data-ui="deck"] .m-tabs a[data-nav="compute"] { font-size: 10px; letter-spacing: -.02em; white-space: nowrap; overflow: visible; }
+  /* "Workspaces" is the longest tab word: one line at the same 11px as its siblings, centred in its slot, never split mid-word. */
+  :root[data-ui="deck"] .m-tabs a[data-nav="compute"] { letter-spacing: -.02em; white-space: nowrap; overflow: visible; }
+  /* Under 359px the five slots are about 54px wide: the bar gives its gap and side padding to the labels (and the voice button
+     its spare 10px) so "Workspaces", the longest word, clears "Settings". */
+  @media (max-width: 358px) {
+    :root[data-ui="deck"] .shell #phone-tabs .m-tabs { gap: 0; padding-inline: 4px; }
+    :root[data-ui="deck"] .shell #phone-tabs .m-tabs[data-mic="true"] { grid-template-columns: repeat(5, minmax(0, 1fr)) 44px; }
+    :root[data-ui="deck"] .m-tabs a[data-nav="compute"] { letter-spacing: -.04em; }
+  }
   :root[data-ui="deck"] .m-tabs :is(a, .deck-tab-more) .i { width: 22px; height: 22px; }
   /* The More sheet: every destination the rail offers, fixed above the tab bar and inside the viewport. */
   :root[data-ui="deck"] .deck-more { display: none; position: fixed; inset: 0; z-index: 40; background: rgb(0 0 0 / .5); }
