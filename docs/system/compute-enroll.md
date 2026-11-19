@@ -1,0 +1,81 @@
+### Compute: add a machine without SSH (guided pairing, slice 1)
+
+A person adds a machine in the Compute section by choosing what kind of machine it is, copying one command, running it on the machine and accepting once in the app. The app shows the machine as it connects, shows every step's state, and says what to do next when a step fails. This note is the design; it was written before the code. Slice 1 is delivered as three stacked changes: **A** the server (pairing records, the approval state machine, the API, the code lifecycle), **B** the installer that the command runs, **C** the screens (Classic and Deck, phone included). Where this note says "not in this slice" the app says the same in plain words.
+
+#### What exists today (gap analysis, develop at the start of this slice)
+
+Runner machines (a runner runs Coworkers):
+
+- `commonplace/runner/enrollment.py`, `enrollment_api.py`, `enrollment_crypto.py`: owner opt-in (`/api/runners/install-settings`), one-time enrollment code (256 random bits, five minutes, SHA-256 hash only, one consumer), uniform refusals, durable ten-per-minute counters, `exchange` that creates one disabled, unbound machine with separate machine and worker credentials sealed to the machine's RSA key, key-bound recovery of a lost response. Pinned by `tests/test_runner_enrollment.py`.
+- `commonplace/runner/installer.py`, `install_cli.py`, `install_host.py`, `install_files.py`, `install_receipts.py`, `bootstrap.py`: the machine-side installer (`commonplace runner install`), setup-only user service, private 0700/0600 files, manifest, uninstall, signed bootstrap launcher. Pinned by `tests/test_runner_install*.py`.
+- `commonplace/runner/setup_api.py`, `setup_approvals.py`, `device_login.py`, `runtime_status.py`, `lifecycle.py`: provider sign-in cards, fingerprint comparison, sealed host grants and machine-reported component facts (`agent_ready` is always false there: reports are facts, never authority). Pinned by `tests/test_runner_setup_*.py`.
+- `commonplace/runner/registry.py`, `owner_api.py`, `requester_api.py`, `web/static/adminrunners.js`: the owner screen and API for machine grants (projects, topics, wings, requesters, runtime ceiling), attestation and revoke.
+- Gate on running work: a machine runs a card start only when it is enabled **and** its binding is owner-attested (`runner_api.py`, `capacity.py`); an enrolled machine is inert until both.
+
+Compute targets (an SSH-reachable machine that runs approved scripts): `commonplace/compute/target_installer.py` (root install, manifest, socket-activated SSH handled since the follow-up recorded in `docs/system/compute-installer-followup.md` and `docs/modules/compute.d/socket-activated-ssh.md`), `target_helper.py`, `script_sandbox.py`, `docs/compute/RUNNING.md`. Everything about enrolling a target is a proposal only (`docs/design/compute-target-one-click.md`): no code issuance, no signed package, no approval-key pin (`pin_approval_keys` still raises), no API.
+
+What a person must do by hand today to add a runner:
+
+1. Turn on setup with a raw `PUT /api/runners/install-settings` (there is no screen).
+2. Work out a 64-hex "manifest digest" and hand-write the grant JSON (label, projects, topics, wings, mode ceiling, requesters), then `POST /api/runners/enrollments`.
+3. Copy five values (hub address, workspace id, label, enrollment id, digest) into `commonplace runner install`, and pipe the code in on stdin.
+4. Prepare the machine: Python, `cryptography`, a systemd user manager, linger, bubblewrap where scripts are used; on a stock Ubuntu 24.04 box nothing checks these before the code is spent.
+5. Find the machine in Needs me, compare fingerprints, attest topics and provider, add every requester again (#452) and re-pick wings and topics (#452).
+
+What is missing for "Add machine, pick kind, one command, appears as it connects, one accept, per-step states":
+
+| Missing | Where it lands |
+|---|---|
+| A screen or API that creates an enrollment without hand-written JSON or a hand-computed digest | A (`pairing.create` derives the digest and the grant) |
+| One string that carries every public value, so nothing is copied by hand | A (`setup` envelope) and B |
+| "Same as machine X" copying projects, topics, wings, mode ceiling and requesters (#452) | A (`copy_from`), C (the choice) |
+| Seeing the machine appear when it connects, and seeing a failed step | A (`state`, reported `steps`), C |
+| A clear refusal for a stale, used or foreign code (the exchange refuses everything alike on purpose) | A (`/api/runner-pairing/check`, code and pairing id as authority) |
+| One accept that shows machine identity and grants in words | A (`accept` with an identity digest), C (the sheet) |
+| An installer that checks the machine before it spends the code, handles stock Ubuntu 24.04 and reports step results | B |
+| Offline handling for an approved machine, revoke and re-enroll with the same values | A (`offline`, `close`, `retry`), C |
+| A target (SSH script) enrollment | Not in slice 1 (see below) |
+
+The loose cards: #490 (enroll from the app without a bot) is the whole of this slice for runners; #447 (stock Ubuntu socket-activated SSH) is already fixed in `target_installer.py` and B adds a fixture test for the runner installer's own prerequisites; #448/#449/#450 are the designs this slice builds the runner half of; #451 (no one-click path, runner box needs hand installs) is A+B+C; #452 (requesters) is `copy_from` and the carried `requesters` list; #430 (agentic first) is the rule: one command and one accept, no later prompt on the machine.
+
+#### Decisions
+
+**Machine kinds.** `runner` is available. `target` (script target over SSH) is listed and refused with the reason `kind_unavailable`: its design needs the owner's approval keys (#431/#509) and a signed package that do not exist, and a flow that cannot verify what it claims would be worse than none. The app shows the kind as "Not available yet" with that sentence.
+
+**One pairing record.** `machine_pairings` (control database, next to `runner_enrollments`) links one owner request to one runner enrollment: id, workspace, kind, label, owner, `request_id` and a hash of the request, the enrollment id, `version`, the accept decision, closed reason, last report time. `machine_pairing_steps` holds the machine's latest report per step. The pairing grants nothing by itself: authority stays in `runner_enrollments`, `runner_machines` and the ordinary approvals. Creating a pairing issues the enrollment in the same transaction and audits both.
+
+**Pairing code lifecycle.**
+- Created by the signed-in owner of the workspace (a person session; agent tokens and members are refused with a reason). 256 random bits, valid 15 minutes (the legacy enrollment keeps five), stored only as a SHA-256 hash, returned once in the creation response, never again (not by `GET`, not by an idempotent replay, not in the audit row, not in logs). A lost command means "Set up again": a new code, the old one revoked.
+- Single use: the exchange consumes it in one conditional update; a second try is refused, and the first machine's credentials are unaffected.
+- Scoped: to the workspace, the kind (`runner`), the exact label, and a digest of the frozen intent (grant plus plan version) that the installer must echo back; changing any of them after issuing needs a new pairing.
+- Rate limited: creating is capped per workspace and minute, and at ten open pairings; the check and exchange routes share the existing durable per-workspace counters; reports are capped separately.
+- Refused clearly when it cannot work, to the holder of the code only: `POST /api/runner-pairing/check` takes the workspace, the pairing id and the code (no cookie, no bearer token) and answers `usable`, or one of `expired`, `used`, `cancelled`, `revoked`, `setup_off`, `not_for_this_workspace`, `code_mismatch`, each with a plain sentence and a next step. The exchange itself keeps its uniform refusal, so a guess learns nothing; the pairing id is not a secret but is useless without the code, and it answers the same `code_mismatch` for a wrong code and an unknown id.
+- Expiry is checked at every use; the existing sweeper persists it. An expired pairing is shown as "Code expired" with "Set up again".
+
+**What the installer does and verifies (change B).** One command downloads a small launcher from the hub (a fixed path, over HTTPS), which carries no secret. It runs read-only checks first and **does not spend the code until they pass**: supported OS (Ubuntu 24.04 and Debian 12 or later), Python version, `cryptography`, a systemd user manager and linger (with the exact missing permission named), disk space, and, only where a script target is meant (not in slice 1), bubblewrap. On stock Ubuntu 24.04 with socket-activated SSH it never touches SSH. It then runs the existing installer with the values from the envelope (the code on stdin), installs the setup service, runs `runner check`, and reports each of four steps (`prerequisites`, `files`, `service`, `check`) to the hub with `ok` or `failed` and a cause from a closed list. It touches no real host in tests: fixtures, containers and fakes only.
+
+**Requester carry-over.** The grant frozen at creation includes `requesters`. `copy_from` copies projects, topics, wings, runtime ceiling, in-flight and hourly limits and requesters from an existing active machine of the same workspace; each value is validated again against the current owner (a requester must still be an active trusted workspace agent), so nothing is inherited from a revoked or lapsed source. Explicit fields override the copy. Nothing is copied that is a credential, a provider sign-in or an attestation.
+
+**What the owner approves (the one accept).** When the machine has connected, the owner sees in plain words: the machine's label, its key fingerprint (short groups to compare with what the command printed), what it may read (wings, projects, topics), who may start work on it (requesters), the runtime ceiling and limits. Accepting posts the pairing `version` and the **identity digest** the screen showed; if the grant or the machine key changed in between, the answer is `identity_changed` and the screen reloads. The accept enables the machine and records who approved what and when. It does not attest the binding and it does not sign in a provider: a machine runs Coworkers only when it is enabled **and** attested (unchanged), so "Approved" and "Ready" never claim that work runs. Approval is an ordinary signed-in owner decision; independent owner keys (passkeys) are not in this slice and the app says so.
+
+**States** (one list, derived by the server, one sentence and one next step each): `waiting` (Waiting for the machine), `connected` (Machine connected, waiting for your approval), `approved` (Approved: finishing setup on the machine), `ready` (Set up and checked), `offline` (nothing heard for over 15 minutes), `failed` (a step failed, with its cause), `expired`, `cancelled`, `declined`, `revoked`. `ready` means: approved, all four steps reported `ok`, and the last report is fresh. It deliberately does not mean "Coworkers can run here"; the view carries `binding_state` so a screen can say that the provider connection and attestation still come next, on the screens that exist for them.
+
+**Offline.** The machine's setup service repeats its check report. A `ready` machine whose last report is older than 15 minutes reads `offline` with the age; it comes back to `ready` by itself on the next report. An offline machine is never silently dropped and never revoked by the app.
+
+**Revoke and re-enroll.** One close action: a waiting pairing is `cancelled` (the code stops working), a connected one is `declined` ("This is not my machine"; credentials and grants are revoked), an approved one is `revoked`. All use the existing invalidation (credentials, recovery, consent requests, grants), so a closed pairing leaves nothing usable. Revoking the machine on the Runners screen or turning setup off closes the pairing as well (it reads `revoked`). "Set up again" is a new pairing with the same values: the owner view of a closed pairing carries the values to prefill, and the label is free again because the old machine is revoked.
+
+**Member view.** Any signed-in member of the workspace may read the list: label, kind, state, step states and the sentence, with no code, no fingerprint, no grants and no ids. Members cannot create, accept or close; agent tokens get no access at all. A member sees "Ask the workspace owner to ..." as the next step.
+
+**Concurrency and writes.** Every write is checked for the owner before the body is read, then runs in one control transaction with its audit rows. `request_id` makes create and accept idempotent (a replay returns the same record, with no code); a different body under the same id is `request_changed`. `version` is compare-and-set: a stale accept or close is `stale_version`. Every refusal carries `{error: {code, field, reason, next}}`.
+
+**Audit.** `runner.pairing.create`, `.accept`, `.close`, `.check` (denials only), `.report` (first report per step and every failure), with ids and fixed outcomes, never the code, the envelope secret or a key.
+
+**Secrets.** The code appears in the creation response and in the command, nowhere else: no URL, no query string, no browser storage, no log, no audit row. The command puts the code on the machine's command line once; the line stays in that machine's shell history, where it is useless after first use or expiry (the app says so next to the command, with the leading space that keeps it out of history on shells that honour it). The envelope that accompanies it carries public values only.
+
+**Not in slice 1 (the app says so).** Script (SSH) targets; independent owner approval keys; provider sign-in and binding attestation (they stay on the existing Needs me and Runners screens); a signed release channel for the launcher (B uses the hub's own origin and says so); starting or stopping anything on the machine; a QR code (a short code is not offered either: a short code would be a weaker secret).
+
+#### Slices
+
+- **A, server (this change):** `commonplace/runner/pairing.py`, `pairing_api.py`, additive `issue_in`/`charge` parameters in `enrollment.py`, classification of the routes and tables, tests (denied non-owner, member read-only, agent token refused, stale/used/expired code, replay, wrong workspace, rate limits, CAS, idempotency, audit in the same transaction, offline, close and retry).
+- **B, installer:** the launcher, the prerequisite checks, the step reports, tests with a fixture machine (no real host).
+- **C, screens:** the guided flow in the Compute section for Classic and Deck, phone layouts, browser tests at 1280x800 and 390x844, screenshots.

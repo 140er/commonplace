@@ -2258,6 +2258,7 @@ def _public_route(method: str, path: str) -> bool:
             "/oauth/revoke",
             "/api/runner-enrollment/exchange",
             "/api/runner-enrollment/recover",
+            "/api/runner-pairing/check",
         )
     )
 
