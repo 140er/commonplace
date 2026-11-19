@@ -196,3 +196,56 @@ def test_drain_state_is_plain_and_a_machine_never_drained_reads_as_active(api, f
                 by="u",
                 now="2026-01-01T00:00:00Z",
             )
+
+
+def test_a_request_id_is_kept_with_the_drain_and_a_reused_one_is_refused(api, fleet):
+    made = fleet.enroll("runner-ids")
+    url = f"{BASE}/runner/{made['machine_id']}"
+    status, first = api.request("POST", url + "/drain", {"expected_seq": 0, "request_id": "one"})
+    assert (status, first["repeated"]) == (200, False)
+    # A retry with the same id after a lost answer, even with a token that is now old, is the same request.
+    status, again = api.request("POST", url + "/drain", {"expected_seq": 0, "request_id": "one"})
+    assert (status, again["repeated"]) == (200, True)
+    assert runner(api, made)["basis"] == {"seq": 1}
+    # The same id for the other action is refused with the field named, and nothing changes.
+    assert api.request("POST", url + "/resume", {"expected_seq": 1, "request_id": "one"}) == (
+        409,
+        {"error": "conflict", "field": "request_id", "reason": "request_reused"},
+    )
+    assert runner(api, made)["draining"] is True
+
+
+def test_the_drain_flag_and_its_log_line_are_one_transaction(api, fleet):
+    made = fleet.enroll("runner-log")
+    act(api, made, "drain")
+    with fleet.store().connection() as conn:
+        rows = drain.log(conn, made["machine_id"], 10)
+    assert [r["action"] for r in rows] == ["drain"]
+    # A change that fails after the flag was written leaves neither the flag nor the line.
+    with pytest.raises(RuntimeError):
+        with fleet.store().transaction() as conn:
+            drain.change(
+                conn,
+                made["machine_id"],
+                draining=False,
+                expected_seq=1,
+                by="u",
+                now="2026-01-01T00:00:00Z",
+            )
+            raise RuntimeError("fail before commit")
+    with fleet.store().connection() as conn:
+        assert drain.is_drained(conn, made["machine_id"]) is True
+        assert [r["action"] for r in drain.log(conn, made["machine_id"], 10)] == ["drain"]
+    # The activity list says so in words.
+    texts = [e["text"] for e in runner(api, made)["activity"]]
+    assert "Drain started: no new runs start here" in texts
+
+
+def test_a_drain_table_made_before_request_ids_existed_is_upgraded_in_place(api, fleet):
+    made = fleet.enroll("runner-old-table")
+    with fleet.store().transaction() as conn:
+        conn.execute(
+            "CREATE TABLE runner_drain (machine_id TEXT PRIMARY KEY, draining INTEGER NOT NULL, seq INTEGER NOT NULL, changed_by TEXT NOT NULL, changed_at TEXT NOT NULL)"
+        )
+    status, result = act(api, made, "drain", request_id="old")
+    assert status == 200 and result["item"]["draining"] is True
