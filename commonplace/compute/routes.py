@@ -182,11 +182,11 @@ def handle(gateway, handler):
     # Cloud workspace routes name a reason on every refusal (``_WORKSPACE_REASON`` fills the gaps).
     path = urlsplit(h.path).path
     parts = _tail_parts(path)
-    workspace_route = [unquote(item) for item in path.split("/") if item][:3] == [
-        "api",
-        "compute",
-        "workspaces",
-    ]
+    # The overview shares the cloud workspace rules: members read it, every refusal carries a reason.
+    workspace_route = [unquote(item) for item in path.split("/") if item][:3] in (
+        ["api", "compute", "workspaces"],
+        ["api", "compute", "overview"],
+    )
     try:
         principal, cookie = _person(gateway, h)
         # Reject ambiguous cookies in a single header too.
@@ -212,6 +212,10 @@ def handle(gateway, handler):
         auth = {"session_hash": session_hash}
         if parts and parts[0] == "workspaces":
             return _workspaces(h, store, principal, parts[1:], auth)
+        if parts and parts[0] == "overview":
+            from . import overview_routes
+
+            return overview_routes.dispatch(h, store, principal, parts[1:], auth, _workspace_body)
         if h.command == "GET":
             if not parts:
                 return send_json(h, 200, store.inventory(principal, **auth))

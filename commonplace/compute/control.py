@@ -359,10 +359,12 @@ class Store:
                     if "operator_note" not in columns:
                         conn.execute("ALTER TABLE execution_runs ADD COLUMN operator_note TEXT")
                     from .script_control import schema
+                    from .workspace_lifecycle import schema as lifecycle_schema
                     from .workspaces import schema as workspace_schema
 
                     schema(conn)
                     workspace_schema(conn)
+                    lifecycle_schema(conn)
                     _attach_connection(conn, str(path), "compute")
                     conn.execute("BEGIN IMMEDIATE")
                     try:
