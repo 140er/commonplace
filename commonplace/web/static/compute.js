@@ -356,9 +356,9 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     else if (memberView) body = `<div class="compute-inventories">${overview.html()}${pairing.html()}${workspaces.html()}</div>`;
     // One outage message: when the overview has its own failure to say, the page's line is plain text, not a second alert.
     const overviewDown = Boolean(overview.state.loadError) || overview.state.refreshFailed;
-    const keepFocus = workspaces.holdFocus(), keepOverviewFocus = overview.holdFocus(), keepPairingFocus = pairing.holdFocus(), carryOverview = overview.carry();
+    const keepFocus = workspaces.holdFocus(), keepOverviewFocus = overview.holdFocus(), keepPairingFocus = pairing.holdFocus(), carryPairing = pairing.carry(), carryOverview = overview.carry();
     host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? "<h1>Cloud workspaces</h1>" : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Refresh", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error && !memberView ? `<p class="compute-error"${overviewDown ? "" : ' role="alert"'}>${e(error)}</p>` : ""}${memberView ? '<p class="compute-notice">You can read this workspace\'s settings. Only its owner can change them.</p>' : ""}${body}</div>`;
-    carryOverview(); keepFocus(); keepOverviewFocus(); keepPairingFocus();
+    carryOverview(); carryPairing(); keepFocus(); keepOverviewFocus(); keepPairingFocus();
     // Reload replaces its own button; once it is enabled again, put focus back on it.
     if (focusRefresh && !reading) { focusRefresh = false; host.querySelector?.('[data-compute-action="refresh"]')?.focus?.(); }
   }

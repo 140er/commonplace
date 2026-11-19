@@ -16,7 +16,7 @@ export const POLL_MS = 3000;
 export const LIVE = new Set(["waiting", "connected", "approved", "failed"]);
 export const CLOSED = new Set(["expired", "cancelled", "declined", "revoked"]);
 const STEP_LABELS = { prerequisites: "Checks on the machine", files: "Runner files installed", service: "Background service started", check: "Final check" };
-const STEP_STATE = { pending: "Waiting", ok: "Done", failed: "Failed" };
+const STEP_STATE = { pending: "Waiting", ok: "Done", failed: "Failed", not_run: "Not run" };
 const MODES = {
   "approval-required": "Asks before each action",
   "auto-accept-edits": "Accepts file edits, asks before other actions",
@@ -25,11 +25,18 @@ const MODES = {
 };
 const QUIET_MODES = new Set(["auto", "full-access"]);
 const AUTO_WARNING = "In this setting the agents on this machine run without asking before each action. Only choose it for a machine you trust with every project listed.";
+const MEMBER_INTRO = "This is a read-only view of the machines being added. Only the workspace owner adds a machine and approves it.";
+const OWNER_INTRO = "A machine here is a computer that runs Coworkers (a runner). To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added, its settings are under Runner machines in Admin; cloud workspaces are below.";
+const NO_OFF_SWITCH = "There is no switch here to turn machine setup off.";
+const GRANTS_NOTE = "Approving lets this machine use the access listed above. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it under Runner machines in Admin.";
+const RUN_STEPS = ["Open a terminal on that machine. On Ubuntu: press the Super key, type Terminal and press Enter.", "Paste the command below (Ctrl+Shift+V) and press Enter. Do not type sudo in front of it.", "Wait for the steps below to turn to Done. This page updates by itself."];
+const WAIT_FINGERPRINT = "Waiting for the machine to print its fingerprint.";
+const CANNOT_RUN_YET = "Coworkers cannot run on it yet.";
 export const LIMITS_NOTE = "This version does not install the runner program itself (the command checks that it is there), and Coworkers can run on a machine only after a provider is connected and the machine is attested under Runner machines in Admin.";
 const LOAD_ERROR = "Machines being added could not be loaded. Reload to try again.";
 const NO_ANSWER = "No answer from the server, so nothing is confirmed. Reload to check what happened before trying again.";
 const MEMBER_NOTE = "Only the workspace owner can add a machine.";
-const COMMAND_ONCE = "This command holds a one-time code. It stops working after one use or when its time is up, and this page shows it only now. The machine's shell history keeps the line, where it is useless once the code is spent.";
+const COMMAND_ONCE = "This command holds a one-time code. It stops working after one use or when its time is up, and this page shows it only now. Your terminal may keep this line in its history; that is harmless once the code has been used or has run out.";
 const GONE_COMMAND = "The command was shown once, when it was made, and is not kept. Set it up again for a new one.";
 const LABEL = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const PROJECT = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -46,7 +53,7 @@ const FIELD_TEXT = {
   kind: { kind_unavailable: "Script targets cannot be set up from the app yet. Choose a runner machine.", invalid: "Choose a runner machine." },
 };
 const FIELD_ORDER = ["label", "copy_from", "requesters", "projects", "topics", "wings", "max_runtime_mode", "max_in_flight"];
-const FIELD_LABEL = { label: "Name", copy_from: "Same settings as", requesters: "Same settings as", projects: "Projects", topics: "Topics", wings: "Wings", max_runtime_mode: "What it may do alone", max_in_flight: "Cards at once" };
+const FIELD_LABEL = { label: "Name", copy_from: "Same settings as", requesters: "Same settings as", projects: "Projects", topics: "Topics", wings: "Wings", max_runtime_mode: "What it may do without asking", max_in_flight: "Most cards at a time" };
 const FIELD_CONTROL = { label: "pr_label", copy_from: "pr_copy_from", requesters: "pr_copy_from", projects: "pr_projects", topics: "pr_topics", wings: "pr_wings", max_runtime_mode: "pr_mode", max_in_flight: "pr_max_in_flight" };
 
 export const listOf = text => [...new Set(String(text || "").split(",").map(part => part.trim()).filter(Boolean))];
@@ -83,22 +90,29 @@ export const blankValues = (retry = null) => ({
 });
 
 /** The plain-words sheet the owner approves: who the machine is and what it may do. */
+export const finished = item => (item.steps || []).length > 0 && item.steps.every(step => step.state === "ok");
 export function sheetHTML(item) {
   const grant = item.grant || {}, line = list => list?.length ? e(list.join(", ")) : "None";
-  const who = grant.requesters?.length ? `${grant.requesters.length} trusted ${grant.requesters.length === 1 ? "agent" : "agents"}` : "No agent yet";
+  const who = grant.requesters?.length ? `${grant.requesters.length} trusted ${grant.requesters.length === 1 ? "agent" : "agents"}` : "nobody yet";
+  const count = grant.max_in_flight ?? 1;
+  const fingerprint = finished(item) && item.fingerprint
+    ? `<code class="compute-pr-fingerprint">${e(item.fingerprint)}</code><small>The machine printed these same groups. If they differ, this is not your machine.</small>`
+    : `<span data-pr-fingerprint-wait>${e(WAIT_FINGERPRINT)}</span>`;
   return `<dl class="compute-pr-sheet"><dt>Name</dt><dd>${e(item.label)}</dd>`
-    + `<dt>Fingerprint</dt><dd><code class="compute-pr-fingerprint">${e(item.fingerprint || "")}</code><small>The machine printed these same groups. If they differ, this is not your machine.</small></dd>`
+    + `<dt>Fingerprint</dt><dd>${fingerprint}</dd>`
     + `<dt>May read</dt><dd>${grant.wings?.length ? e(grant.wings.map(w => wingLabel(w)).join(", ")) : "Nothing"}</dd>`
     + `<dt>Projects</dt><dd>${line(grant.projects)}</dd><dt>Topics</dt><dd>${line(grant.topics)}</dd>`
-    + `<dt>May start work on it</dt><dd>${e(who)}</dd>`
-    + `<dt>What it may do alone</dt><dd>${e(MODES[grant.max_runtime_mode] || grant.max_runtime_mode || "")}</dd>`
-    + `<dt>Cards at once</dt><dd>${e(grant.max_in_flight ?? 1)}</dd></dl>`;
+    + `<dt>Who can start work on it</dt><dd>${e(who)}</dd>`
+    + `<dt>What it may do without asking</dt><dd>${e(MODES[grant.max_runtime_mode] || grant.max_runtime_mode || "")}</dd>`
+    + `<dt>Works on at most</dt><dd>${e(count)} ${count === 1 ? "card" : "cards"} at a time</dd></dl>`;
 }
 
+/** One mapping for owner and member: a step that never ran in a closed or failed setup is "Not run", not "Waiting". */
+export const stepStateOf = (item, step) => step.state === "pending" && (CLOSED.has(item.state) || item.state === "failed" || item.stalled === true) ? "not_run" : step.state;
 export function stepsHTML(item) {
   return `<ol class="compute-pr-steps" aria-label="Setup steps on the machine">${(item.steps || []).map(step => {
-    const failed = step.state === "failed";
-    return `<li data-state="${e(step.state)}"><span class="compute-pr-step-name">${e(STEP_LABELS[step.step] || step.step)}</span> <span class="compute-pr-step-state">${e(STEP_STATE[step.state] || step.state)}</span></li>`;
+    const state = stepStateOf(item, step);
+    return `<li data-state="${e(state)}"><span class="compute-pr-step-name">${e(STEP_LABELS[step.step] || step.step)}</span> <span class="compute-pr-step-state">${e(STEP_STATE[state] || state)}</span></li>`;
   }).join("")}</ol>`;
 }
 
@@ -138,9 +152,10 @@ export function createPairing(ctx) {
 
   function topHTML() {
     const add = manage() && setupEnabled && !mode && list !== null && !busy ? '<button type="button" class="btn primary" data-pr-action="add">Add a machine</button>' : "";
+    const off = manage() && setupEnabled ? ` ${NO_OFF_SWITCH}` : "";
     return `<header><h2 id="compute-pairing" tabindex="-1">Add a machine</h2>${add}</header>`
-      + '<p class="compute-plain">A runner is a machine that runs Coworkers. To add one you copy one command, run it on the machine, and approve the machine here. Nothing is copied by hand and no SSH keys are involved.</p>'
-      + `<p class="compute-plain" data-pr-limits>${e(LIMITS_NOTE)}</p>`;
+      + `<p class="compute-plain">${e(manage() ? OWNER_INTRO : MEMBER_INTRO)}</p>`
+      + `<p class="compute-plain" data-pr-limits>${e(LIMITS_NOTE + off)}</p>`;
   }
 
   function setupOffHTML() {
@@ -183,15 +198,16 @@ export function createPairing(ctx) {
       + `<div class="compute-field"><label for="pr_projects">Projects${optional}</label><input id="pr_projects" name="pr_projects" value="${e(values.pr_projects)}" autocomplete="off" spellcheck="false" data-pr-control="pr_projects" aria-describedby="pr-projects-help pr-error-projects"${invalid("projects")}><small id="pr-projects-help">The projects the machine may work on, separated by commas.</small><span id="pr-error-projects">${err("projects")}</span></div>`
       + `<div class="compute-field"><label for="pr_topics">Topics${optional}</label><input id="pr_topics" name="pr_topics" value="${e(values.pr_topics)}" autocomplete="off" spellcheck="false" data-pr-control="pr_topics" aria-describedby="pr-topics-help pr-error-topics"${invalid("topics")}><small id="pr-topics-help">The topics its agents answer to, separated by commas.</small><span id="pr-error-topics">${err("topics")}</span></div>`
       + `<fieldset class="compute-wide compute-pr-wings" id="pr_wings" tabindex="-1"><legend class="compute-label">Wings it may read${copying ? ' <span class="compute-quiet">(optional: copied)</span>' : required}</legend><small>A wing is a part of your memory. The machine reads only the wings you tick.</small>${wingBoxes}${err("wings")}</fieldset>`
-      + `<div class="compute-field"><label for="pr_mode">What it may do alone</label><select id="pr_mode" name="pr_mode" data-pr-control="pr_mode" aria-describedby="pr-mode-warning">${Object.entries(MODES).map(([key, label]) => `<option value="${key}"${values.pr_mode === key ? " selected" : ""}>${e(label)}</option>`).join("")}</select><small id="pr-mode-warning" data-pr-warning>${QUIET_MODES.has(values.pr_mode) ? e(AUTO_WARNING) : ""}</small></div>`
-      + `<details class="compute-field compute-wide"><summary>More limits</summary><label for="pr_max_in_flight">Cards at once</label><select id="pr_max_in_flight" name="pr_max_in_flight" data-pr-control="pr_max_in_flight">${[1, 2, 3, 4].map(n => `<option value="${n}"${String(values.pr_max_in_flight) === String(n) ? " selected" : ""}>${n}</option>`).join("")}</select><small>The most cards the machine works on at the same time.</small></details>`
+      + `<div class="compute-field"><label for="pr_mode">What it may do without asking</label><select id="pr_mode" name="pr_mode" data-pr-control="pr_mode" aria-describedby="pr-mode-warning">${Object.entries(MODES).map(([key, label]) => `<option value="${key}"${values.pr_mode === key ? " selected" : ""}>${e(label)}</option>`).join("")}</select><small id="pr-mode-warning" data-pr-warning>${QUIET_MODES.has(values.pr_mode) ? e(AUTO_WARNING) : ""}</small></div>`
+      + `<details class="compute-field compute-wide"><summary>More limits</summary><label for="pr_max_in_flight">Most cards at a time</label><select id="pr_max_in_flight" name="pr_max_in_flight" data-pr-control="pr_max_in_flight">${[1, 2, 3, 4].map(n => `<option value="${n}"${String(values.pr_max_in_flight) === String(n) ? " selected" : ""}>${n}</option>`).join("")}</select><small>The most cards the machine works on at the same time.</small></details>`
       + `</div><div class="compute-actions compute-pr-actions"><button type="submit" class="btn primary"${busy ? ' aria-disabled="true"' : ""}>${busy ? "Creating…" : "Create the command"}</button><button type="button" class="btn" data-pr-action="cancel"${busy ? ' aria-disabled="true"' : ""}>Cancel</button></div></form>`;
   }
 
   function commandHTML(item) {
     if (!setup || setup.id !== item.id) return `<p class="compute-pr-gone" data-pr-gone>${e(GONE_COMMAND)}</p>`;
     return '<div class="compute-pr-command"><h4 id="compute-pr-command-title">Run this on the machine</h4>'
-      + `<pre tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">${e(setup.command)}</pre>`
+      + `<ol class="compute-pr-run">${RUN_STEPS.map(step => `<li>${e(step)}</li>`).join("")}</ol>`
+      + `<pre id="compute-pr-command" tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">${e(setup.command)}</pre>`
       + `<div class="compute-actions"><button type="button" class="btn primary" data-pr-action="copy">Copy the command</button></div>`
       + `<p class="compute-quiet" data-pr-copy-note role="status">${e(copyNote)}</p>`
       + `<p class="compute-plain">${e(COMMAND_ONCE)} The code works until ${e(clockText(setup.expires_at) || "it expires")}.</p>`
@@ -202,33 +218,44 @@ export function createPairing(ctx) {
     if (!manage()) return "";
     if (confirm) {
       const decline = confirm === "decline";
-      return `<div class="compute-ws-discard compute-pr-confirm" role="group" aria-labelledby="compute-pr-confirm-title"><h4 id="compute-pr-confirm-title">${decline ? "Remove this machine's access?" : "Remove this machine?"}</h4>`
+      // The safe answer comes first and takes focus: a second Enter must never remove access.
+      return `<div class="compute-ws-discard compute-pr-confirm" role="group" aria-labelledby="compute-pr-confirm-title"><h4 id="compute-pr-confirm-title">${decline ? "Is this not your machine?" : "Remove this machine?"}</h4>`
         + `<p>${decline ? "Its access is removed and nothing it holds works any more. You can set it up again." : "Its access is removed and its credentials stop working. You can set it up again with the same settings."}</p>`
-        + `<div class="compute-actions"><button type="button" class="btn danger" data-pr-action="confirm-close"${busy ? ' aria-disabled="true"' : ""}>${busy ? "Removing…" : decline ? "Yes, remove its access" : "Yes, remove it"}</button><button type="button" class="btn" data-pr-action="keep">Keep it</button></div></div>`;
+        + `<div class="compute-actions"><button type="button" class="btn" data-pr-action="keep">Go back</button><button type="button" class="btn danger" data-pr-action="confirm-close"${busy ? ' aria-disabled="true"' : ""}>${busy ? "Removing…" : decline ? "Yes, this is not my machine" : "Yes, remove it"}</button></div></div>`;
     }
-    const buttons = [];
-    if (item.state === "connected") buttons.push(`<button type="button" class="btn primary" data-pr-action="approve"${busy ? ' aria-disabled="true"' : ""}>${busy ? "Approving…" : "Approve this machine"}</button>`, '<button type="button" class="btn" data-pr-action="decline">This is not my machine</button>');
-    else if (item.state === "waiting") buttons.push('<button type="button" class="btn" data-pr-action="cancel-setup">Cancel this setup</button>');
-    else if (["approved", "ready", "offline", "failed"].includes(item.state) && item.can_close) buttons.push('<button type="button" class="btn danger" data-pr-action="remove">Remove this machine</button>');
-    if (item.retry || (item.state === "waiting" && item.grant)) buttons.push(`<button type="button" class="btn" data-pr-action="again" data-id="${e(item.id)}">${item.state === "waiting" ? "Cancel and set up again" : "Set up again"}</button>`);
+    const buttons = [], again = (label, primary) => `<button type="button" class="btn${primary ? " primary" : ""}" data-pr-action="again" data-id="${e(item.id)}">${label}</button>`;
+    const blocked = item.stalled === true || item.state === "failed";
+    if (item.state === "connected" && !blocked) {
+      const ready = finished(item), off = busy || !ready;
+      buttons.push(`<button type="button" class="btn primary" data-pr-action="approve"${off ? ' aria-disabled="true"' : ""}${ready ? "" : ' aria-describedby="compute-pr-approve-note"'}>${busy ? "Approving…" : "Approve this machine"}</button>`, '<button type="button" class="btn" data-pr-action="decline">This is not my machine</button>');
+    } else if (item.state === "waiting") buttons.push('<button type="button" class="btn" data-pr-action="cancel-setup">Cancel this setup</button>', again("Make a new command (this one stops working)", false));
+    else if (blocked && item.can_close) buttons.push(again("Set up again", true), '<button type="button" class="btn danger" data-pr-action="remove">Remove this machine</button>');
+    else if (["approved", "ready", "offline"].includes(item.state) && item.can_close) buttons.push('<button type="button" class="btn danger" data-pr-action="remove">Remove this machine</button>');
+    else if (item.retry) buttons.push(again("Set up again", true));
     buttons.push('<button type="button" class="btn" data-pr-action="close">Back to the list</button>');
-    return `<div class="compute-actions compute-pr-actions">${buttons.join("")}</div>`;
+    const note = item.state === "connected" && !blocked && !finished(item) ? `<p class="compute-quiet" id="compute-pr-approve-note" data-pr-approve-note>You can approve once the machine has finished its setup and printed its fingerprint. This page updates by itself.</p>` : "";
+    const leave = item.state === "waiting" && setup && setup.id === item.id ? '<p class="compute-quiet" data-pr-leave>If you leave this page you need a new command: this one is not kept.</p>' : "";
+    return `${note}<div class="compute-actions compute-pr-actions">${buttons.join("")}</div>${leave}`;
   }
 
-  function detailHTML(item) {
-    const owner = manage();
+  // The clock line changes on every check; it is written in place and never decides whether the section repaints.
+  function clockText_(item) {
     const checked = serverTime ? `Checked at ${clockText(serverTime)}.` : "";
     const stale = pollError ? ` Could not check just now. Showing what was true at ${clockText(serverTime)}; trying again.` : "";
     const heard = item.last_report_at ? ` Last seen at ${clockText(item.last_report_at)}.` : "";
+    return checked + heard + stale;
+  }
+  function detailHTML(item, clock = true) {
+    const owner = manage();
     const body = item.state === "waiting" && owner ? commandHTML(item) : "";
-    const sheet = item.state === "connected" && owner ? `<h4>Approve this machine?</h4>${sheetHTML(item)}` : "";
+    const sheet = item.state === "connected" && owner && !item.stalled ? `${confirm ? "" : "<h4>Approve this machine?</h4>"}${sheetHTML(item)}${confirm ? "" : `<p class="compute-plain" data-pr-grants>${e(GRANTS_NOTE)}</p>`}` : "";
     const provider = owner && ["approved", "ready", "offline"].includes(item.state) ? `<p class="compute-plain">Provider and attestation: ${item.binding_state === "owner_attested" ? "done" : "not done yet"}.</p>` : "";
     return `<article class="compute-ws-detail compute-pr-detail" data-pr-id="${e(item.id)}" data-state="${e(item.state)}" aria-labelledby="compute-pr-heading">`
       + `<header><h3 id="compute-pr-heading" tabindex="-1">${e(item.label)}</h3><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item.state))}">${e(item.state_label)}</span></header>`
       + `<p class="compute-pr-sentence">${e(item.sentence)}</p><p class="compute-pr-next">${e(item.next)}</p>${causeHTML(item)}`
       // What the person acts on comes first (the command, or the sheet and its buttons); the steps and the clock follow.
       + `${body}${sheet}${actionsHTML(item)}${stepsHTML(item)}${provider}`
-      + `<p class="compute-quiet" data-pr-checked>${e(checked + heard + stale)}</p></article>`;
+      + `<p class="compute-quiet" data-pr-checked>${clock ? e(clockText_(item)) : ""}</p></article>`;
   }
 
   const toneOf = state => state === "failed" ? "bad" : ["connected", "waiting", "approved", "offline"].includes(state) ? "wait" : state === "ready" ? "ok" : "quiet";
@@ -236,18 +263,18 @@ export function createPairing(ctx) {
   function rowHTML(item) {
     return `<li class="compute-row compute-pr-row" data-pr-id="${e(item.id)}" data-state="${e(item.state)}"><header><strong class="compute-ws-name">${e(item.label)}</strong><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item.state))}">${e(item.state_label)}</span></header>`
       // A settled machine's next step only repeats the note at the top of the section, so its row leaves it out.
-      + `<p>${e(item.sentence)}</p>${item.state === "ready" ? "" : `<p class="compute-pr-next">${e(item.next)}</p>`}${item.last_report_at ? `<p class="compute-quiet">Last seen at ${e(clockText(item.last_report_at))}.</p>` : ""}`
+      + `<p>${e(item.sentence)}</p>${item.state === "ready" ? (item.binding_state === "owner_attested" ? "" : `<p class="compute-pr-next">${e(CANNOT_RUN_YET)}</p>`) : `<p class="compute-pr-next">${e(item.next)}</p>`}${item.last_report_at ? `<p class="compute-quiet">Last seen at ${e(clockText(item.last_report_at))}.</p>` : ""}`
       + `<div class="compute-actions"><button type="button" class="btn" data-pr-action="open" data-id="${e(item.id)}" aria-label="Open ${e(item.label)}">Open</button></div></li>`;
   }
 
-  function inner() {
+  function inner(clock = true) {
     if (list === null && !loadError) return '<p class="compute-empty" role="status">Loading…</p>';
     if (list === null) return '<div class="compute-actions"><button type="button" class="btn" data-pr-action="reload">Reload</button></div>';
     if (!setupEnabled && !list.length) return setupOffHTML();
     let panel = "";
     const item = find(selected);
     if (mode === "form" && manage()) panel = formHTML();
-    else if (mode === "detail" && item) panel = detailHTML(item);
+    else if (mode === "detail" && item) panel = detailHTML(item, clock);
     const shown = list.filter(row => !(mode === "detail" && row.id === selected));
     const more = total > list.length ? `<p class="compute-quiet">Showing the newest ${list.length} of ${total}.</p>` : "";
     const rows = shown.length ? `${more}<ul class="compute-list compute-pr-list" role="list" aria-label="Machines being added">${shown.map(rowHTML).join("")}</ul>` : (mode ? "" : `<p class="compute-empty">${manage() ? "No machine has been added this way yet. Choose Add a machine to start." : "No machine has been added yet. " + MEMBER_NOTE}</p>`);
@@ -256,14 +283,52 @@ export function createPairing(ctx) {
   }
 
   const problem = () => list === null ? loadError : "";
+  // What the root last showed, without the clock line: a check that finds nothing new changes the clock and nothing else.
+  let shownRoot = "";
   function html() {
-    return `<section class="compute-inventory compute-wide compute-pr" aria-labelledby="compute-pairing"><div data-pr-top>${topHTML()}</div>`
+    shownRoot = inner(false);
+    return `<section class="compute-inventory compute-wide compute-pr" aria-labelledby="compute-pairing" data-pr><div data-pr-top>${topHTML()}</div>`
       + `<p class="compute-notice compute-ws-notice" data-pr-notice role="status">${e(notice)}</p>`
       + `<p class="compute-error compute-ws-problem" data-pr-problem role="alert">${e(problem())}</p><div data-pr-root>${inner()}</div></section>`;
   }
   function writeProblem() {
     const node = ctx.host()?.querySelector?.("[data-pr-problem]"), value = problem();
     if (node && node.textContent !== value) node.textContent = value;
+  }
+
+  /**
+   * The whole Compute screen is rebuilt whenever the app refreshes it (every few seconds, and on its own events). The
+   * section as it stood is put back in place of the fresh copy, so the command keeps its node, its selection and its
+   * focus. It is put back only when the state it was painted from is the state html() just rebuilt from; if the state
+   * moved in between, the fresh copy stays.
+   */
+  function carry() {
+    const old = ctx.host()?.querySelector?.("[data-pr]"), painted = shownRoot, kept = selectionOf(old);
+    return () => {
+      const fresh = ctx.host()?.querySelector?.("[data-pr]");
+      if (old && fresh && old !== fresh && painted === shownRoot && typeof fresh.replaceWith === "function") { fresh.replaceWith(old); reselect(old, kept); }
+    };
+  }
+  // A node that is taken out of the page and put back loses its selection, so the part of the command that was selected
+  // is noted by text offsets and selected again.
+  function selectionOf(section) {
+    try {
+      const node = section?.querySelector?.("[data-pr-command]"), selection = ctx.doc?.getSelection?.();
+      if (!node || !selection?.rangeCount) return null;
+      const range = selection.getRangeAt(0);
+      if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) return null;
+      const offset = (container, at) => { const probe = ctx.doc.createRange(); probe.selectNodeContents(node); probe.setEnd(container, at); return probe.toString().length; };
+      return [offset(range.startContainer, range.startOffset), offset(range.endContainer, range.endOffset)];
+    } catch { return null; }
+  }
+  function reselect(section, kept) {
+    try {
+      const text = section?.querySelector?.("[data-pr-command]")?.firstChild, selection = ctx.doc?.getSelection?.();
+      if (!kept || !text || text.nodeType !== 3 || !selection) return;
+      const range = ctx.doc.createRange();
+      range.setStart(text, Math.min(kept[0], text.length)); range.setEnd(text, Math.min(kept[1], text.length));
+      selection.removeAllRanges(); selection.addRange(range);
+    } catch { /* the text stays selectable by hand */ }
   }
 
   // A repaint nobody asked focus for (a check that found a change) puts focus back where it was.
@@ -283,13 +348,23 @@ export function createPairing(ctx) {
       if (caret) try { again.setSelectionRange?.(...caret); } catch { /* some inputs have no caret */ }
     };
   }
+  // The clock line is written in place: a check that changed nothing must not rebuild the command (its selection and
+  // focus would be lost) or the buttons under the pointer.
+  function writeClock() {
+    const item = find(selected), node = ctx.host()?.querySelector?.("[data-pr-checked]");
+    const want = item ? clockText_(item) : "";
+    if (node && node.textContent !== want) node.textContent = want;
+  }
   function paint(focus = "") {
-    const restore = focus ? null : holdFocus();
     const host = ctx.host(), root = host?.querySelector?.("[data-pr-root]");
+    const signature = inner(false);
+    if (root && !focus && signature === shownRoot) { writeClock(); writeProblem(); return; }
+    const restore = focus ? null : holdFocus();
     if (root) {
       const top = host.querySelector("[data-pr-top]"), next = topHTML();
       if (top && top.innerHTML !== next) top.innerHTML = next;
-      root.innerHTML = inner();
+      root.innerHTML = inner(true);
+      shownRoot = signature;
       writeProblem();
     } else ctx.rerender();
     restore?.();
@@ -431,6 +506,7 @@ export function createPairing(ctx) {
       list = list.map(row => row.id === id ? result.pairing : row);
       lastSaid = ""; observed.set(id, result.pairing.state); announce(result.pairing); say(done(result.pairing));
       paint("heading"); schedule();
+      return true;
     } catch (failure) {
       if (!ctx.valid(page)) return;
       busy = false; if (failure?.status === 401 && ctx.denied(failure)) return;
@@ -484,8 +560,9 @@ export function createPairing(ctx) {
     else if (action === "reload") void load({ announceDone: true });
     else if (action === "copy") void copyCommand();
     else if (action === "approve" && item?.state === "connected") void act("accept", { identity_digest: item.identity_digest }, { item, done: p => `Approved ${quoted(p.label)}. ${p.next}` });
-    else if (action === "decline" && item) { confirm = "decline"; paint("confirm-close"); }
-    else if (action === "remove" && item) { confirm = "remove"; paint("confirm-close"); }
+    // Asking changes nothing, and focus goes to the safe answer: a second Enter must never remove access.
+    else if (action === "decline" && item) { confirm = "decline"; paint("keep"); }
+    else if (action === "remove" && item) { confirm = "remove"; paint("keep"); }
     else if (action === "keep") { confirm = ""; paint(item?.state === "connected" ? "decline" : "remove"); }
     else if (action === "confirm-close" && item) void act("close", {}, { item, done: p => `${quoted(p.label)}: ${p.state_label}.` });
     else if (action === "cancel-setup" && item) void act("close", {}, { item, done: p => `Cancelled. ${quoted(p.label)} can be set up again.` });
@@ -493,7 +570,8 @@ export function createPairing(ctx) {
       const row = find(target.dataset.id);
       if (!row) return true;
       const retry = row.retry || { label: row.label, ...row.grant };
-      if (row.state === "waiting") void act("close", {}, { item: row, done: () => "Cancelled. The form below starts from the same settings." }).then(() => openForm(retry));
+      // The old setup is cancelled first (its name and its machine would otherwise be in the way), then the form opens with the same values.
+      if (row.can_close) void act("close", {}, { item: row, done: () => "The earlier setup is cancelled. The form below starts from the same settings." }).then(ok => { if (ok) openForm(retry); });
       else openForm(retry);
     }
     return true;
@@ -507,7 +585,7 @@ export function createPairing(ctx) {
   }
   function keydown(event) {
     if (event.key !== "Escape" || !ctx.host()?.querySelector?.(".compute-pr :focus")) return false;
-    if (confirm) { confirm = ""; paint("keep"); return true; }
+    if (confirm) { confirm = ""; paint(find(selected)?.state === "connected" ? "decline" : "remove"); return true; }
     if (mode) { close(); return true; }
     return false;
   }
@@ -542,5 +620,5 @@ export function createPairing(ctx) {
     mode = ""; selected = null; setup = null; values = {}; errors = {}; formError = ""; busy = false; confirm = ""; copyNote = ""; notice = ""; lastSaid = ""; requestId = "";
   }
   const state = { get list() { return list; }, get mode() { return mode; }, get setup() { return setup; } };
-  return { html, load, click, submit, keydown, input, holdFocus, reset, state, check };
+  return { html, load, click, submit, keydown, input, holdFocus, carry, reset, state, check };
 }

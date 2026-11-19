@@ -49,7 +49,7 @@ const sentences = {
   connected: ['Machine connected, waiting for your approval', 'The machine used the code and connected. It cannot do anything until you approve it.', "Compare the machine's name and fingerprint, then approve or choose This is not my machine."],
   approved: ['Approved', 'You approved this machine. It is finishing its setup.', 'Nothing to do here. This page updates when the machine reports that its checks passed.'],
   ready: ['Set up and checked', 'The machine passed its setup checks.', 'Coworkers can run here only after a provider is connected and the machine is attested under Runner machines in Admin.'],
-  failed: ['A step failed', 'A setup step failed on the machine.', 'Read the cause below, fix it and run the same command again, or set the machine up again.'],
+  failed: ['A step failed', 'A setup step failed on the machine.', 'Open it to see the cause, then choose Set up again.'],
   expired: ['Code expired', 'The code was not used within 15 minutes and no longer works.', 'Choose Set up again for a new command.'],
   cancelled: ['Cancelled', 'This setup was cancelled before the machine connected. The code no longer works.', 'Choose Set up again for a new command.'],
   declined: ['Not approved', 'You said this is not your machine. Its access was removed.', 'Choose Set up again if you want to add a machine with the same settings.'],
@@ -62,14 +62,14 @@ function item(state, extra = {}) {
   const sheet = ['connected', 'approved', 'ready', 'failed', 'offline'].includes(state);
   const stepStates = { waiting: [], connected: ['ok', 'ok', 'ok', 'ok'], approved: ['ok', 'ok'], ready: ['ok', 'ok', 'ok', 'ok'], failed: ['ok', 'ok', 'failed'], offline: ['ok', 'ok', 'ok', 'ok'] }[state] || [];
   return {
-    id: 'pair_0123456789abcdef', kind: 'runner', label: 'build-box', state, state_label: label, sentence, next, cause: state === 'failed' ? { step: 'service', code: 'service_failed', text: 'The background service did not start.', next: 'Run the command again. If it fails again, set the machine up again.' } : null,
+    id: 'pair_0123456789abcdef', kind: 'runner', label: 'build-box', state, state_label: label, sentence, next, cause: state === 'failed' ? { step: 'service', code: 'service_failed', text: 'The background service did not start.', next: 'The window where you ran the command shows the reason on its last lines. Then choose Set up again.' } : null,
     steps: steps(...stepStates), last_report_at: sheet ? STAMP : null, created_at: STAMP, expires_at: '2026-11-19T12:15:00Z', version: 1, fingerprint: sheet ? FINGERPRINT : null, grant,
     identity_digest: sheet ? 'f'.repeat(64) : null, accepted_at: ['approved', 'ready', 'offline'].includes(state) ? STAMP : null, binding_state: ['approved', 'ready', 'offline'].includes(state) ? 'unbound' : null,
     can_accept: state === 'connected', can_close: ['waiting', 'connected', 'approved', 'ready', 'offline', 'failed'].includes(state),
     retry: ['expired', 'cancelled', 'declined', 'revoked', 'failed'].includes(state) ? { kind: 'runner', label: 'build-box', ...grant } : null, ...extra,
   };
 }
-const memberNext = { connected: 'The machine connected. The owner has to approve it.', failed: 'A setup step failed on this machine. The owner can retry it.' };
+const memberNext = { connected: "Waiting for the owner's approval.", failed: 'A setup step failed on this machine. The owner can set it up again.' };
 const memberView = row => ({ ...Object.fromEntries(['id', 'kind', 'label', 'state', 'state_label', 'sentence', 'next', 'cause', 'steps', 'last_report_at', 'created_at', 'expires_at'].map(key => [key, row[key]])), next: memberNext[row.state] || row.next });
 
 function fixture({ pairings = [], owner = true, setup = true, options = owner ? ownerOptions : memberOptions } = {}) {
@@ -78,10 +78,20 @@ function fixture({ pairings = [], owner = true, setup = true, options = owner ? 
   const listeners = new Map(), calls = [], doc = new EventTarget(), events = new EventTarget(), focused = [], status = { writes: [], copy: [] }, timers = new Map(), copied = [];
   doc.hidden = false;
   const stub = path => ({ focus() { focused.push(path); }, setAttribute() {}, removeAttribute() {}, scrollIntoView() {}, set textContent(value) { if (path === '[data-pr-notice]') status.writes.push(value); if (path === '[data-pr-copy-note]') status.copy.push(value); }, get textContent() { return ''; }, querySelector: child => stub(`${path} ${child}`) });
+  // With roots mounted the section repaints only its own parts, and the counters show what a check really rewrote.
+  const mounted = { on: false, rootWrites: 0, topWrites: 0, clock: [] };
+  const root = { get innerHTML() { return ''; }, set innerHTML(value) { mounted.rootWrites++; } };
+  const top = { get innerHTML() { return 'x'; }, set innerHTML(value) { mounted.topWrites++; } };
+  const clockNode = { get textContent() { return mounted.clock.at(-1) ?? ''; }, set textContent(value) { mounted.clock.push(value); } };
   const host = {
     get innerHTML() { return html; }, set innerHTML(value) { html = value; },
     addEventListener(kind, fn) { listeners.set(kind, fn); }, removeEventListener(kind) { listeners.delete(kind); },
-    querySelector(selector) { return ['[data-pr-root]', '[data-pr-top]', '[data-ws-root]', '[data-ws-top]'].includes(selector) ? null : stub(selector); },
+    querySelector(selector) {
+      if (mounted.on && selector === '[data-pr-root]') return root;
+      if (mounted.on && selector === '[data-pr-top]') return top;
+      if (mounted.on && selector === '[data-pr-checked]') return clockNode;
+      return ['[data-pr-root]', '[data-pr-top]', '[data-ws-root]', '[data-ws-top]'].includes(selector) ? null : stub(selector);
+    },
     querySelectorAll() { return []; },
   };
   const state = { pairings: pairings.map(row => structuredClone(row)), setup, options, writes: [], next: [], fail: null, clipboard: 'ok' };
@@ -110,14 +120,14 @@ function fixture({ pairings = [], owner = true, setup = true, options = owner ? 
   const copy = value => { copied.push(value); if (state.clipboard === 'none') return undefined; if (state.clipboard === 'deny') return Promise.reject(new Error('denied')); return Promise.resolve(); };
   const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, doc, events, now: () => clock, requestId: () => `r-${++counter}`, copy, schedule: (fn, ms) => { timers.set(++timerId, { fn, ms }); return timerId; }, cancel: id => timers.delete(id) });
   const dispatch = (kind, event) => listeners.get(kind)?.(event);
-  const click = (action, id) => dispatch('click', { target: { closest: selector => selector === '[data-pr-action]' ? { dataset: { prAction: action, id }, getAttribute: () => null } : null } });
+  const click = (action, id) => dispatch('click', { target: { closest: selector => selector === '[data-pr-action]' ? { dataset: { prAction: action, id }, getAttribute: name => name === 'aria-disabled' && new RegExp(`data-pr-action="${action}"[^>]*aria-disabled="true"`).test(html) ? 'true' : null } : null } });
   const jump = key => { const event = { prevented: false, preventDefault() { this.prevented = true; }, target: { closest: selector => selector === '[data-pr-jump]' ? { dataset: { prJump: key } } : null } }; dispatch('click', event); return event; };
   const input = (name, value, type = 'text') => dispatch('input', { type: 'input', target: { name, type, value, checked: value, removeAttribute() {} } });
   const submit = () => dispatch('submit', { target: { closest: selector => selector === '[data-pr-form]' ? {} : null }, preventDefault() {}, stopPropagation() {} });
   const key = (name, inside = true) => { const event = { key: name, target: {}, prevented: false, preventDefault() { this.prevented = true; } }; dispatch('keydown', event); return event; };
   const open = async () => { ui.show(); await flush(); };
   const tick = async () => { const first = [...timers.entries()][0]; assert.ok(first, 'a check on the machine is scheduled'); timers.delete(first[0]); first[1].fn(); await flush(); };
-  return { ui, host, doc, state, calls, focused, status, timers, copied, click, jump, input, submit, key, open, tick, dispatch, setRoute(value) { hash = value; }, html: () => html, section: () => { const start = html.indexOf('compute-pr"'); return html.slice(start, html.indexOf('compute-ws"', start) > 0 ? html.indexOf('compute-ws"', start) : undefined); } };
+  return { ui, host, doc, mounted, state, calls, focused, status, timers, copied, click, jump, input, submit, key, open, tick, dispatch, setRoute(value) { hash = value; }, html: () => html, section: () => { const start = html.indexOf('compute-pr"'); return html.slice(start, html.indexOf('compute-ws"', start) > 0 ? html.indexOf('compute-ws"', start) : undefined); } };
 }
 const valid = { pr_label: 'build-box', pr_projects: 'demo', pr_topics: 'worker' };
 const fill = (f, values = valid) => { for (const [name, value] of Object.entries(values)) f.input(name, value); };
@@ -148,9 +158,20 @@ const cases = {
     assert.deepEqual([retry.pr_label, retry.pr_projects, retry.pr_topics, retry.wings, retry.pr_mode, retry.pr_max_in_flight], ['again', 'a, b', 't', ['shared'], 'auto', '3']);
     const sheet = text(pr.sheetHTML(item('connected')));
     for (const phrase of ['build-box', FINGERPRINT, 'Workspace notes', 'demo', 'worker', '1 trusted agent', 'Asks before each action', 'The machine printed these same groups']) assert.ok(sheet.includes(phrase), phrase);
-    assert.match(pr.sheetHTML(item('connected', { grant: { ...grant, requesters: [] } })), /No agent yet/);
+    assert.match(text(pr.sheetHTML(item('connected', { grant: { ...grant, requesters: [] } }))), /Who can start work on it nobody yet/);
+    assert.match(text(pr.sheetHTML(item('connected', { grant: { ...grant, max_in_flight: 3 } }))), /Works on at most 3 cards at a time/);
+    assert.match(text(pr.sheetHTML(item('connected'))), /Works on at most 1 card at a time/);
+    // The fingerprint is not offered for comparison before the machine has printed it (it prints it as setup finishes).
+    const early = text(pr.sheetHTML(item('connected', { steps: steps('ok') })));
+    assert.match(early, /Waiting for the machine to print its fingerprint\./); assert.ok(!early.includes('0123abcd'), 'no fingerprint to compare yet');
+    assert.equal(pr.finished(item('connected')), true); assert.equal(pr.finished(item('waiting')), false);
+    // One mapping for owner and member: steps that never ran in a closed or failed setup are Not run, not Waiting.
+    const failedSteps = text(pr.stepsHTML(item('failed')));
+    assert.match(failedSteps, /Final check Not run/); assert.match(failedSteps, /Checks on the machine Done/); assert.match(failedSteps, /Background service started Failed/);
+    for (const state of ['expired', 'cancelled', 'declined', 'revoked']) assert.doesNotMatch(text(pr.stepsHTML(item(state))), /Waiting/, state);
+    assert.match(text(pr.stepsHTML(item('waiting'))), /Waiting/); assert.doesNotMatch(text(pr.stepsHTML(item('waiting'))), /Not run/);
     assert.match(pr.stepsHTML(item('failed')), /Background service started<\/span> <span class="compute-pr-step-state">Failed/);
-    assert.match(pr.causeHTML(item('failed')), /Background service started failed\.[\s\S]*did not start[\s\S]*Run the command again/);
+    assert.match(pr.causeHTML(item('failed')), /Background service started failed\.[\s\S]*did not start[\s\S]*Then choose Set up again/);
     assert.equal(pr.causeHTML(item('waiting')), '');
     assert.ok(pr.LIVE.has('waiting') && pr.LIVE.has('connected') && pr.LIVE.has('approved') && pr.LIVE.has('failed'));
     for (const settled of ['ready', 'expired', 'cancelled', 'declined', 'revoked', 'offline']) assert.equal(pr.LIVE.has(settled), false, settled);
@@ -182,7 +203,7 @@ const cases = {
     await f.open();
     const html = f.section(), t = text(html);
     assert.doesNotMatch(html, /data-pr-action="(add|enable|approve|decline|remove|cancel-setup|again|copy)"/);
-    assert.match(t, /The machine connected\. The owner has to approve it\./);
+    assert.match(t, /Waiting for the owner's approval\./);
     assert.doesNotMatch(html, new RegExp(FINGERPRINT)); assert.doesNotMatch(html, /identity_digest|data-pr-command/);
     f.click('open', 'pair_0123456789abcdef'); await flush();
     const detail = text(f.section());
@@ -207,7 +228,7 @@ const cases = {
     assert.match(t, /Runner machine/); assert.match(t, /Script target/);
     assert.match(html, /name="pr_kind" value="target" disabled aria-describedby="pr-target-note"/);
     assert.match(t, /Not available yet: it cannot be set up from the app yet\./);
-    for (const label of ['Name', 'Same settings as', 'Projects', 'Topics', 'Wings it may read', 'What it may do alone']) assert.ok(t.includes(label), label);
+    for (const label of ['Name', 'Same settings as', 'Projects', 'Topics', 'Wings it may read', 'What it may do without asking']) assert.ok(t.includes(label), label);
     assert.match(html, /<label for="pr_label">Name/); assert.match(html, /<label for="pr_projects">/);
     assert.match(html, /value="shared"/); assert.match(t, /Workspace notes/);
     assert.match(html, /<option value="mach_0123456789abcdef">night-runner/);
@@ -233,7 +254,7 @@ const cases = {
     f.submit(); await flush();
     assert.deepEqual(tickets(f)[0][2], { request_id: 'r-1', kind: 'runner', label: 'build-box', max_runtime_mode: 'approval-required', max_in_flight: 1, projects: ['demo'], topics: ['worker'], wings: ['shared'] });
     const html = f.section(), t = text(html);
-    assert.match(html, /<pre tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">/);
+    assert.match(html, /<pre id="compute-pr-command" tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">/);
     assert.ok(html.includes('SyntheticCodeSentinel_0123456789abcdefghijk'.replace(/'/g, '&#39;')) || html.includes('SyntheticCodeSentinel_'), 'the command carries the code');
     assert.match(t, /Run this on the machine/); assert.match(t, /holds a one-time code/); assert.match(t, /stops working after one use/);
     assert.match(t, /only question it asks/);
@@ -250,7 +271,7 @@ const cases = {
     // Opening it again says the command is not shown again and offers a fresh one.
     f.click('open', 'pair_0123456789abcdef'); await flush();
     assert.match(text(f.section()), /shown once, when it was made, and is not kept/); assert.doesNotMatch(f.html(), /data-pr-command/);
-    assert.match(f.html(), /data-pr-action="again"[^>]*>Cancel and set up again/);
+    assert.match(f.html(), /data-pr-action="again"[^>]*>Make a new command \(this one stops working\)/);
   },
 
   async refusals() {
@@ -313,7 +334,7 @@ const cases = {
     await f.tick();
     const t = text(f.section());
     assert.match(t, /Machine connected, waiting for your approval/); assert.match(t, /Approve this machine\?/);
-    assert.ok(t.includes(FINGERPRINT)); assert.match(t, /May read Workspace notes/); assert.match(t, /May start work on it 1 trusted agent/);
+    assert.ok(t.includes(FINGERPRINT)); assert.match(t, /May read Workspace notes/); assert.match(t, /Who can start work on it 1 trusted agent/); assert.match(t, /Works on at most 1 card at a time/);
     assert.match(f.html(), /data-pr-action="approve"/); assert.match(f.html(), /data-pr-action="decline">This is not my machine/);
     assert.equal(f.status.writes.filter(line => /Machine connected/.test(line)).length, 1);
     await f.tick(); assert.equal(f.status.writes.filter(line => /Machine connected/.test(line)).length, 1, 'said once, not on every check');
@@ -358,12 +379,121 @@ const cases = {
     await f.tick(); assert.equal(f.status.writes.filter(line => /Machine connected/.test(line)).length, 1, 'the next check adds nothing');
   },
 
+  async 'run-steps'() {
+    // M2: where and how to run the command is said, in order, above the command.
+    const f = fixture(); await f.open(); f.click('add'); await flush(); fill(f); wingBoxes(f); f.state.next.push(created()); f.submit(); await flush();
+    const html = f.section(), t = text(html);
+    const at = pattern => html.search(pattern);
+    assert.ok(at(/<ol class="compute-pr-run">/) > 0 && at(/<ol class="compute-pr-run">/) < at(/<pre id="compute-pr-command"/), 'the numbered lines come above the command');
+    assert.match(t, /Open a terminal on that machine\. On Ubuntu: press the Super key, type Terminal and press Enter\./);
+    assert.match(t, /Paste the command below \(Ctrl\+Shift\+V\) and press Enter\. Do not type sudo in front of it\./);
+    assert.match(t, /Wait for the steps below to turn to Done\. This page updates by itself\./);
+    assert.equal((html.match(/<ol class="compute-pr-run">[\s\S]*?<\/ol>/)[0].match(/<li>/g) || []).length, 3);
+    assert.match(t, /If you leave this page you need a new command: this one is not kept\./);
+    assert.match(html, /data-pr-action="again"[^>]*>Make a new command \(this one stops working\)/);
+    assert.match(t, /Your terminal may keep this line in its history; that is harmless/);
+    assert.doesNotMatch(t, /shell history/);
+  },
+
+  async grants() {
+    // M1: the sheet says what approval grants and what it does not, above the buttons; Approve waits for the fingerprint.
+    const early = fixture({ pairings: [item('connected', { steps: steps('ok', 'ok') })] }); await early.open(); early.click('open', 'pair_0123456789abcdef'); await flush();
+    let html = early.section(), t = text(html);
+    assert.match(t, /Waiting for the machine to print its fingerprint\./);
+    assert.match(html, /data-pr-action="approve" aria-disabled="true" aria-describedby="compute-pr-approve-note"/);
+    assert.match(t, /You can approve once the machine has finished its setup and printed its fingerprint\./);
+    early.click('approve'); await flush(); assert.equal(early.state.writes.length, 0, 'a press on the waiting Approve changes nothing');
+    const f = fixture({ pairings: [item('connected')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
+    html = f.section(); t = text(html);
+    assert.doesNotMatch(html, /data-pr-action="approve" aria-disabled/);
+    assert.match(t, /Approving lets this machine use the access listed above\. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it under Runner machines in Admin\./);
+    assert.ok(html.indexOf('data-pr-grants') < html.indexOf('data-pr-action="approve"'), 'the sentence is above the buttons');
+    assert.match(t, /Who can start work on it 1 trusted agent/);
+    for (const old of ['May start work on it', 'Cards at once', 'What it may do alone', 'No agent yet']) assert.ok(!t.includes(old), old);
+    f.click('approve'); await flush(); assert.equal(f.state.writes.length, 1);
+  },
+
+  async 'confirm-focus'() {
+    // M7: the confirm dialogs open on the safe button, and a second Enter on it removes nothing.
+    for (const [state, trigger, heading, yes] of [['connected', 'decline', /Is this not your machine\?/, /Yes, this is not my machine/], ['ready', 'remove', /Remove this machine\?/, /Yes, remove it/]]) {
+      const f = fixture({ pairings: [item(state)] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
+      f.click(trigger); await flush();
+      const html = f.section();
+      assert.match(text(html), heading); assert.match(text(html), yes);
+      assert.ok(html.indexOf('data-pr-action="keep"') < html.indexOf('data-pr-action="confirm-close"'), 'the safe answer comes first');
+      assert.match(text(html), /Go back/); assert.doesNotMatch(text(html), /Keep it/);
+      assert.ok(f.focused.at(-1).includes('[data-pr-action="keep"]'), `${trigger}: default focus is Go back`);
+      f.click('keep'); await flush();
+      assert.equal(f.state.writes.length, 0, 'going back changes nothing');
+      assert.ok(f.focused.at(-1).includes(`[data-pr-action="${trigger}"]`), 'going back returns focus to the button that asked');
+      f.click(trigger); await flush(); f.key('Escape'); await flush();
+      assert.ok(f.focused.at(-1).includes(`[data-pr-action="${trigger}"]`), 'Escape returns focus to the button that asked');
+      assert.equal(f.state.writes.length, 0);
+    }
+  },
+
+  async stalled() {
+    // M3: a machine that connected and never finished says so, and the way out is Set up again or Remove, never Approve.
+    const row = item('connected', { stalled: true, steps: steps('ok'), sentence: 'This setup has not finished.', next: 'Remove this machine and set it up again.' });
+    const f = fixture({ pairings: [row] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
+    const html = f.section(), t = text(html);
+    assert.match(t, /This setup has not finished\. Remove this machine and set it up again\./);
+    assert.doesNotMatch(html, /data-pr-action="(approve|decline)"/); assert.doesNotMatch(t, /Approve this machine\?|Approving lets/);
+    assert.match(html, /data-pr-action="again"[^>]*>Set up again/); assert.match(html, /data-pr-action="remove"/);
+    assert.match(text(f.html()), /Not run/, 'the steps it never reached are Not run');
+    // A member reads it too, with no controls.
+    const m = fixture({ pairings: [row], owner: false }); await m.open();
+    assert.match(text(m.section()), /This setup has not finished\./); assert.doesNotMatch(m.section(), /data-pr-action="(approve|remove|again)"/);
+  },
+
+  async 'no-repaint'() {
+    // M6: a check that finds nothing new rewrites only the clock line, so the command keeps its focus and selection.
+    const f = fixture({ pairings: [item('waiting')] });
+    await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
+    f.state.next.push(created()); // (unused) keep the queue shape the same as a real session
+    f.mounted.on = true; f.mounted.rootWrites = f.mounted.topWrites = 0; f.mounted.clock.length = 0;
+    await f.tick();
+    assert.equal(f.mounted.rootWrites, 0, 'the root is not rebuilt when nothing changed');
+    assert.equal(f.mounted.topWrites, 0);
+    assert.equal(f.mounted.clock.length, 1, 'only the clock line is written'); assert.match(f.mounted.clock[0], /^Checked at /);
+    await f.tick();
+    assert.equal(f.mounted.rootWrites, 0, 'and again on the next check'); assert.equal(f.mounted.clock.length, 1, 'an identical clock is not rewritten');
+    // A real change repaints once.
+    f.state.pairings = [item('connected')]; await f.tick();
+    assert.equal(f.mounted.rootWrites, 1);
+    // A failed check changes the clock line only, too.
+    f.mounted.rootWrites = 0; f.mounted.clock.length = 0; f.state.fail = failure(503, { error: 'x' }); await f.tick();
+    assert.equal(f.mounted.rootWrites, 0, 'a failed check says so in the clock line and rebuilds nothing');
+    assert.match(f.mounted.clock.at(-1), /Could not check just now\. Showing what was true at/);
+    f.state.fail = null; await f.tick();
+    assert.doesNotMatch(f.mounted.clock.at(-1), /Could not check/); assert.equal(f.mounted.rootWrites, 0);
+  },
+
+  async 'member-intro'() {
+    const f = fixture({ pairings: [item('waiting')], owner: false }); await f.open();
+    const t = text(f.section());
+    assert.match(t, /This is a read-only view of the machines being added\. Only the workspace owner adds a machine and approves it\./);
+    assert.doesNotMatch(t, /To add one you copy one command/); assert.doesNotMatch(t, /There is no switch here/);
+    const o = fixture(); await o.open();
+    assert.match(text(o.section()), /A machine here is a computer that runs Coworkers \(a runner\)\./);
+    assert.match(text(o.section()), /its settings are under Runner machines in Admin; cloud workspaces are below/);
+    assert.match(text(o.section()), /There is no switch here to turn machine setup off\./);
+    assert.equal((text(o.section()).match(/There is no switch here/g) || []).length, 1);
+  },
+
+  async 'ready-row'() {
+    const f = fixture({ pairings: [item('ready'), item('ready', { id: 'pair_4444444444444444', label: 'attested-box', binding_state: 'owner_attested' })] }); await f.open();
+    const t = text(f.section());
+    assert.equal((t.match(/Coworkers cannot run on it yet\./g) || []).length, 1, 'only the machine that is not attested says it');
+    assert.equal((t.match(/attested under Runner machines in Admin/g) || []).length, 1, 'and the section note is not repeated per row');
+  },
+
   async 'list-quiet'() {
     // Going back to the list clears what was said about the pairing just left, and a settled row does not repeat the section's note.
     const f = fixture({ pairings: [item('ready'), item('failed', { id: 'pair_3333333333333333', label: 'other-box' })] }); await f.open();
     const list = text(f.section());
     assert.equal((list.match(/attested under Runner machines in Admin/g) || []).length, 1, 'the ready machine\'s next step is not repeated beside the section note');
-    assert.match(list, /Read the cause below, fix it and run the same command again/, 'a failed row keeps its next step');
+    assert.match(list, /Open it to see the cause, then choose Set up again/, "a failed row keeps its next step");
     f.click('open', 'pair_0123456789abcdef'); await flush();
     assert.match(text(f.section()), /Coworkers can run here only after a provider is connected/);
     // Something was said about it (the machine connected), then the person goes back.
@@ -407,9 +537,9 @@ const cases = {
     const f = fixture({ pairings: [item('connected')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
     f.click('decline'); await flush();
     const t = text(f.section());
-    assert.match(t, /Remove this machine's access\?/); assert.match(t, /You can set it up again/);
+    assert.match(t, /Is this not your machine\?/); assert.match(t, /You can set it up again/); assert.match(t, /Yes, this is not my machine/); assert.match(t, /Go back/); assert.doesNotMatch(t, /Approve this machine\?/, 'the heading above must not still ask to approve');
     assert.match(f.html(), /role="group" aria-labelledby="compute-pr-confirm-title"/);
-    assert.ok(f.focused.some(path => path.includes('confirm-close')), 'focus goes to the confirm button');
+    assert.ok(f.focused.at(-1).includes('[data-pr-action="keep"]'), 'focus goes to the safe button, never the destructive one');
     assert.equal(f.state.writes.length, 0, 'asking changes nothing');
     f.click('keep'); await flush(); assert.doesNotMatch(f.section(), /compute-pr-confirm/); assert.equal(f.state.writes.length, 0);
     f.click('decline'); await flush();
@@ -426,18 +556,22 @@ const cases = {
     const f = fixture({ pairings: [item('failed')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
     const t = text(f.section());
     assert.match(t, /A step failed/); assert.match(t, /Background service started failed\. The background service did not start\./);
-    assert.match(t, /Run the command again\. If it fails again, set the machine up again\./);
+    assert.match(t, /The window where you ran the command shows the reason on its last lines\. Then choose Set up again\./); assert.doesNotMatch(t, /run the (same )?command again/i, 'no next step points at a command the page does not hold');
     assert.match(f.html(), /Set up again/); assert.match(f.html(), /data-pr-action="remove"/); assert.doesNotMatch(f.html(), /data-pr-action="approve"/);
-    assert.equal(f.timers.size, 1, 'a failed machine is still watched: running the command again recovers it');
+    assert.equal(f.timers.size, 1, 'a failed machine is still watched: a machine that finishes by itself moves the page on');
     f.state.pairings = [item('connected')]; await f.tick();
     assert.match(text(f.section()), /Machine connected, waiting for your approval/); assert.doesNotMatch(f.section(), /compute-pr-cause/);
     // Set up again carries the values over so nothing is typed twice.
     const g = fixture({ pairings: [item('failed')] }); await g.open(); g.click('open', 'pair_0123456789abcdef'); await flush();
+    assert.match(g.html(), /data-pr-action="again"[^>]*>Set up again/, 'Set up again is the first and primary next step');
+    assert.ok(g.section().indexOf('data-pr-action="again"') < g.section().indexOf('data-pr-action="remove"'));
+    g.state.next.push({ pairing: item('declined', { version: 2 }) });
     g.click('again', 'pair_0123456789abcdef'); await flush();
+    // The old setup is cancelled first (its name would be in the way), then the form opens with the same values.
+    assert.equal(g.state.writes[0][1], '/api/compute/pairings/pair_0123456789abcdef/close');
     assert.match(g.section(), /name="pr_label" value="build-box"/); assert.match(g.section(), /name="pr_projects" value="demo"/); assert.match(g.section(), /name="pr_topics" value="worker"/);
     assert.match(g.section(), /name="wings" value="shared"[^>]* checked/);
     assert.match(g.section(), /data-pr-form/);
-    assert.equal(g.state.writes.length, 0, 'a failed setup is replaced, not cancelled behind the person');
   },
 
   async closed() {
