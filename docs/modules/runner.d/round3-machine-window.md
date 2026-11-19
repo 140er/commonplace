@@ -1,0 +1,4 @@
+- **Owns:** `machine_setup.py` binds the stored machine credential to the site named in the installation's manifest and stops, naming that site, when a command is for another one; a spent code with nothing saved says when the app offers Set up again; `installer.py` reads a 5xx at the exchange as delivery unavailable.
+- **Promises:** No request carries the old credential to a different site; nothing is removed for a command from another site.
+- **How it fails:** A mismatched site, an open earlier machine and an unreachable site all leave the machine as it is.
+- **Tests:** `tests/test_machine_setup.py`.
