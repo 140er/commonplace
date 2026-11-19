@@ -1,0 +1,1 @@
+- **Owns:** the card panel (`details.js`) places the Previews section (`cardpreviews.js`) right after Runs in both looks, `workbench.css` styles it like Runs with full-width 44 px actions on a phone, and the Permissions labels name the three preview tools in plain words.

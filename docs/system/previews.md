@@ -146,3 +146,10 @@ A later slice (separate card, after the Compute start slice) adds `app` previews
 - The stop rule is applied when a preview is read or requested: a ready preview whose time has passed is stopped once (reason `expired`, `pr_merged` or `pr_closed`, event actor `rule`), its files kept. Time counts from when it last became ready, so Open again gives it the full time again; the pull request part counts from the card's last merged or closed report.
 - Signing in does not return to the preview by itself (sign-in only returns to app pages); the page says to open the link again.
 
+#### Slice 3 as built (the card)
+
+- The card panel has a **Previews** section right after Runs, in the Deck and the classic look. Each preview shows its state in words (Ready, Being published, Stopped, Could not be published), the server's reason and next step, the revision, when and by whom it was published, and, when the stop rule applies, the day it stops being served. Actions: **Open** (a new tab, one click), **Stop** (ready), **Open again** (stopped). A refusal shows the server's reason and next step, and the list is reloaded so it shows what is true now.
+- No preview yet says so in words. If the server cannot be reached the section says so with Try again, or keeps the last list and says it could not refresh. A card the person cannot see shows no Previews section, like a missing card.
+- Below the list: the workspace's usage (open previews and space used of the limits) and the stop rule in a sentence. The workspace owner can change the rule there (`can_set_rule` in the list answer; the server checks again). There is no separate Settings page for previews and no link in Needs me yet: the card is one click from a Needs me item. Both are follow-ups.
+- On a phone the actions are full width with 44 px targets and nothing scrolls sideways.
+

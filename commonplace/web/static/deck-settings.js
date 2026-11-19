@@ -25,7 +25,8 @@ const SPECIAL = { 'shell.exec':'Run commands on runners', 'git.push':'Push branc
   space_own_wing:'Give project chat a dedicated memory wing', board_set:'Set project Coworker', space_set:'Set chat Coworker', card_split_done:'Finish splitting a card', card_goal:'Set card goal',
   task_approve:'Approve a card', task_comment:'Comment on a card',
   task_handoff:'Hand off a card', task_snooze:'Snooze a card', task_unsnooze:'End card snooze',
-  orch_heartbeat:'Keep Coworker active', orch_exp_retire:'Retire Coworker experiment' };
+  orch_heartbeat:'Keep Coworker active', orch_exp_retire:'Retire Coworker experiment',
+  preview_publish:'Publish a preview', preview_list:'List previews', preview_stop:'Stop a preview' };
 const VERBS = { add:'Create', create:'Create', list:'List', get:'Read', show:'Read', read:'Read',
   save:'Save', update:'Update', set:'Set', delete:'Delete', remove:'Remove', search:'Search',
   query:'Search', write:'Write', post:'Post', append:'Append', export:'Export', import:'Import',

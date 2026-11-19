@@ -513,7 +513,14 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
         store.shape(r, current.get(r["id"]), None, stop_due(r, cards.get(r["card"]), rule)[0])
         for r in rows
     ]
-    return {"previews": shown, "usage": held, "limits": store.LIMITS, "rule": rule}
+    return {
+        "previews": shown,
+        "usage": held,
+        "limits": store.LIMITS,
+        "rule": rule,
+        # Whether this caller may change the rule; the PUT route checks it again.
+        "can_set_rule": bool(principal.person and principal.role == "owner"),
+    }
 
 
 def _change(gateway, principal, preview_id, *, kind, to_state, reason_for, allowed_from):

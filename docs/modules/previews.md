@@ -1,11 +1,13 @@
 ## previews
 
-- **Paths:** `commonplace/previews/`, `tests/test_previews.py`, `tests/test_previews_account.py`, `tests/test_previews_serving.py`, `tests/test_previews_browser.py`
+- **Paths:** `commonplace/previews/`, `tests/test_previews.py`, `tests/test_previews_account.py`, `tests/test_previews_serving.py`, `tests/test_previews_browser.py`, `commonplace/web/static/cardpreviews.js`, `tests/cardpreviews.mjs`, `tests/test_card_previews_ui.py`, `tests/test_card_previews_browser.py`
 - **Owns:**
 
   - Persistent previews, slice 1 (card #612, design in `docs/system/previews.md`): a Coworker publishes a bundle of files for a card and people who can open that card list, stop and reopen it later. Rows live in the control database (`previews`, `preview_revisions`, append-only `preview_events`, `preview_rules`); each revision's files live under `<workspace dir>/previews/<id>/r<n>/` and are written once.
 
   - `bundle.py` checks a bundle before anything is stored (size, file count, paths, entry page, credential-shaped text); `store.py` holds the tables, the limits and the fixed reason texts; `service.py` is publish, stop, reopen and the stop rule; `routes.py` is `/api/previews` for signed-in people; `tools.py` is `preview_publish`, `preview_list` and `preview_stop` for Coworkers; `serving.py` is `GET /p/<id>/<path>`, the files of a ready preview with the isolation headers and the state pages; `links.py` is the short-lived page link (`preview_links`) that stands in for the session for the sandboxed page's own requests.
+
+  - `web/static/cardpreviews.js` is the Previews section of the card panel (after Runs): every preview of the card with its state in words, the reason and next step, Open (new tab), Stop and Open again, the workspace's usage and stop rule, and for the owner a form to change the rule.
 
 - **Promises:**
 
@@ -21,6 +23,8 @@
 
   - Nothing outside the revision folder is read: decoded paths follow the published-path rules, links are never followed, and the state pages quote nothing from the request.
 
+  - The card's Previews section never shows an empty panel: no previews says so, a server it cannot reach says so with Try again (or keeps the last list and says it is old), and a card the person cannot see shows no section at all. Only the server's own `/p/<id>/` address is ever a link.
+
 - **How it fails:**
 
   - A refused bundle returns 422 with its reason (`no_index_html`, `too_large`, `too_many_files`, `bad_path`, `contains_secret_like_text`), 409 for `workspace_quota_full`, `too_many_previews` and `changed_meanwhile`, 429 for `rate_limited` and 503 for `storage_unavailable`; a new name keeps a failed row the card shows, an existing preview keeps serving its current revision.
@@ -34,3 +38,5 @@
   - `tests/test_previews_account.py` covers account export and deletion with published previews and their events present: records are exported without the published files, a purge removes the preview rows and files with a deleted workspace, the append-only events stay, and another workspace's previews are untouched.
 
   - `tests/test_previews_serving.py` covers the served files and headers, content types, redirects, the uniform 404, the sign-in and agent pages, path discipline and links, every state page, missing files, the age and pull request stop rules with a moved clock, a hostile page's `Origin: null` writes, a restarted server and the page link (no session needed, one preview only, re-checked, expiry and pruning). `tests/test_previews_browser.py` (Playwright) opens a hostile page in Chromium: its own stylesheet and script load, the cookie, storage and `/api/` do not.
+
+  - `tests/cardpreviews.mjs` (run by `tests/test_card_previews_ui.py`) covers every state, the empty and offline views, escaping, link checks, the stop rule form, Stop, Open again, refusals and the panel placement; `tests/test_card_previews_browser.py` (Playwright) shows every state in the real shell at desktop and phone size, 44 px touch targets on a phone, one click to open in a new tab and Stop from the keyboard.
