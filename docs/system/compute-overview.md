@@ -177,7 +177,7 @@ Everything else is refused with a reason (`already_running`, `already_stopped`, 
 
 #### Decisions after review round 7 (20 Nov): the browser decides no status
 
-Round 7 scored 7.5 with two majors, both in the state where the browser changed a row's chip by its own clock: a clock-made Offline still said "Allowed to start runs: Yes" beside "Offline", and the ages in its detail were the server's while only "Last seen" was recomputed. Both came from the same design: the screen recomputed one fact while every other fact stayed as the server wrote it. Decision A (Chief): remove the client-made status entirely.
+Round 7 scored 7.5 with two majors, both in the state where the browser changed a row's chip by its own clock: a clock-made Offline still said "Allowed to start runs: Yes" beside "Offline", and the ages in its detail were the server's while only "Last seen" was recomputed. Both came from the same design: the screen recomputed one fact while every other fact stayed as the server wrote it. Decision: remove the client-made status entirely.
 
 **One snapshot.** The screen shows what the server said at the last read and never makes a status, an attention state, a blocker, a next step or an age from this browser. Removed: the Unknown, Slow to report and Offline overrides by the clock, the served `thresholds`, `drain_scope` and `next_steps` (they existed only for those overrides), the recomputed "Last seen", and the ticking ages in the rows. The one thing the clock still says is how old the read is ("Updated 12 seconds ago"), measured with the monotonic clock from the read; the "as of" time is the server's own read time in local time.
 

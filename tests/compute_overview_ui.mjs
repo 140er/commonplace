@@ -188,7 +188,7 @@ const cases = {
     assert.match(f.nodes.summary.textContent, /2 runners, 1 machine, 2 cloud workspaces\. 2 need attention: edge-runner, Old box\./, 'the closed fold still says what needs attention');
     assert.equal(f.nodes.stale.hidden, true);
     // The one Refresh button is the page's: the overview has no button of its own named for refreshing.
-    assert.doesNotMatch(f.ui.html(), /Update overview|data-ov-action="refresh"(?! data-ov-stale-retry)/);
+    assert.doesNotMatch(f.html(), /Update overview|data-ov-action="refresh"/, 'no refresh button in the state, list or panel slots');
     assert.equal(f.nodes.retry.hidden, true, 'the banner\'s own button is only there while the data is old');
     // The empty state tells the owner what to do and a member who to ask.
     const empty = fixture({ data: overviewOf([]) }); await empty.ui.load();
