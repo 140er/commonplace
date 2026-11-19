@@ -24,13 +24,16 @@ export const NOT_STARTED = `Saved, not started. ${NOT_STARTED_NOTE}`;
 export const STARTED = "A start was recorded for this workspace. Changes to the image, limits or network are saved and apply at its next start; a new name applies at once.";
 const LAST_START_FAILED = "The last recorded start failed.";
 // Said when no machine exists at all: there is nothing to choose, and no instruction that cannot be followed.
+// Kept word for word with overview.py (NO_MACHINES_SENTENCE): a test compares the two, and the overview owns the sentence.
 export const NO_MACHINES_SENTENCE = "No machine is set up yet, so this stays on Choose later. Starting will need one; that is not available yet.";
+// The one sentence that says why a private image does not work; every place that mentions it uses this.
+export const PRIVATE_IMAGE = "Private images need a sign-in, and Commonplace can't store sign-ins yet, so only public images work for now.";
 const FAILURES = {
   out_of_memory: memory => `It ran out of memory at ${memory}. Raise the memory limit with Change settings; the new limit applies at its next start.`,
   storage_full: () => "Its storage is full. Raise the storage limit with Change settings; the change applies at its next start.",
   image_pull_failed: () => "The machine could not download the image. Check the image address with Change settings.",
   image_not_found: () => "No such image was found. Check the image name and version with Change settings.",
-  registry_login_failed: () => "The image's website refused the sign-in. Choose a public image with Change settings; sign-ins for private images can't be stored yet.",
+  registry_login_failed: () => `The image's website refused the sign-in. ${PRIVATE_IMAGE} Choose a public image with Change settings.`,
   machine_too_small: () => "The machine is smaller than these limits. Lower them or choose a bigger machine with Change settings.",
   limit_not_enforceable: () => "The machine cannot enforce these limits, so it did not start. Nothing ran without limits.",
   machine_unreachable: () => "The machine could not be reached.",
@@ -38,7 +41,7 @@ const FAILURES = {
 };
 const UNKNOWN_FAILURE = manage => `Failed for a reason this page does not recognise. ${manage ? "Check the machine, then reload this list." : "The workspace owner can check the machine."}`;
 const PREVIEW_INVALID = "Fix the highlighted fields to see what this will use.";
-const STALE = "Someone else changed this workspace, so nothing was saved.";
+const STALE = "Someone else changed this workspace. Nothing was saved.";
 const STALE_DISCARD = "This workspace changed after you opened this, so nothing was discarded. Reload the list and check it first.";
 const STARTED_DISCARD = "It started after you opened this, so nothing was discarded. Keep it, or reload the list to see its current state.";
 const NO_ANSWER = "No answer from the server, so nothing is confirmed. Reload to check what was saved before trying again.";
@@ -71,7 +74,7 @@ export const REASONS = {
     digest: () => "A digest looks like @sha256: followed by 64 lowercase hex characters.",
     not_curated: () => "Pick one of the listed images, or choose My own image.",
   },
-  private_registry: { unavailable: () => "This image is private and Commonplace can't store sign-ins for private images yet. Choose a public image.", choice: () => "Choose whether the image is public." },
+  private_registry: { unavailable: () => `${PRIVATE_IMAGE} Choose a public image.`, choice: () => "Choose whether the image is public." },
   cpu_cores: { range: l => `Enter a number of cores from ${l.min} to ${l.max}.`, step: l => `Use steps of ${l.step}, for example 2 or 2.5.`, not_a_number: () => "Enter a number of cores, for example 2." },
   memory_mib: { range: l => `Enter an amount from ${l.min / 1024} to ${l.max / 1024} GiB.`, step: l => `Use steps of ${l.step / 1024} GiB.`, not_a_number: () => "Enter an amount of memory in GiB, for example 4." },
   storage_gib: { range: l => `Enter a whole number of GiB from ${l.min} to ${l.max}.`, step: () => "Storage is a whole number of GiB.", not_a_number: () => "Enter a whole number of GiB, for example 20." },
@@ -88,7 +91,8 @@ const GENERAL = {
   stale_revision: () => STALE,
   limit_reached: (options, every) => `You have reached the limit of ${options.max_workspaces} cloud workspaces. ${every ? `All ${options.max_workspaces} have started, so none can be discarded yet.` : "Discard one that was never started to make room."}`,
   already_started: () => STARTED_DISCARD,
-  registry_logins_unavailable: () => "Sign-ins for private images can't be connected yet.",
+  registry_logins_unavailable: () => PRIVATE_IMAGE,
+  request_pending: () => "A request for this workspace is waiting to be handled, so its image, limits, network and machine can't change yet. A new name can still be saved.",
   required: () => "A required value is missing. Fill in every field marked *.",
   no_changes: () => "You haven't changed anything yet.",
   request_reused: () => "This form was already sent with different values. Close it and start again.",
@@ -249,7 +253,7 @@ export function statusView(row, { manage = true, hasMachines = true } = {}) {
   if (row.image_unreadable) return { tone: "wait", label: "Image unreadable", detail: manage ? "The saved image address can't be read. Choose the image again with Change settings." : "The saved image address can't be read. The workspace owner can choose the image again.", action: manage ? "image" : "" };
   switch (row.status) {
     case "no_machine": return { tone: "quiet", label: "Saved, not started", detail: !manage ? `${NOT_STARTED_NOTE} The workspace owner can choose a machine.` : hasMachines ? `${NOT_STARTED_NOTE} Choose a machine for it with Change settings.` : NO_MACHINES_SENTENCE };
-    case "needs_credential": return { tone: "wait", label: "Private image", detail: manage ? "This image is private and Commonplace can't store sign-ins for private images yet. Choose a public image." : "This image is private, so it can't start. The workspace owner can choose a public image.", action: manage ? "image" : "" };
+    case "needs_credential": return { tone: "wait", label: "Private image", detail: manage ? `${PRIVATE_IMAGE} Choose a public image.` : `${PRIVATE_IMAGE} The workspace owner can choose a public image.`, action: manage ? "image" : "" };
     case "pending": return { tone: "quiet", label: "Saved, not started", detail: NOT_STARTED_NOTE };
     case "restart_needed": return { tone: "wait", label: "Changes waiting", detail: "The saved settings are newer than the ones a machine applied. Starting is not available yet, so they are kept for its next start." };
     case "ready": return { tone: "ok", label: "Settings applied", detail: "A machine recorded that it applied the saved settings." };
@@ -263,10 +267,11 @@ export const editsOf = row => { const n = Math.max(0, (row.version || 1) - 1); r
 const historyOf = row => {
   const notes = [];
   if (row.started) {
-    const failed = row.status === "failed" || row.applied_revision == null;
+    // Failed means the record says so; a start with nothing applied yet is a start under way or recorded, not a failure.
+    const failed = row.status === "failed";
     if (failed) notes.push(LAST_START_FAILED);
     if (row.restart_needed) notes.push("Changes are waiting for the next start.");
-    else if (!failed) notes.push("A machine recorded the saved settings as applied.");
+    else if (!failed) notes.push(row.applied_revision == null ? "A start was recorded; no machine has recorded the saved settings as applied yet." : "A machine recorded the saved settings as applied.");
   }
   return [`${editsOf(row)}.`, ...notes].join(" ");
 };
@@ -275,8 +280,8 @@ const imageLine = row => row.image_unreadable ? "not readable" : row.image_sourc
 const aria = (label, name) => ` aria-label="${e(`${label} ${name}`)}"`;
 
 export function rowHTML(row, { manage, busy, confirm = "", hasMachines = true, changed = false }) {
-  // A refused discard means the record moved on: its status says so in the same render as the refusal.
-  const status = changed ? { tone: "wait", label: "Changed since you opened it" } : statusView(row, { manage, hasMachines }), dis = busy ? ' aria-disabled="true"' : "";
+  // A refused discard means the record has started since: its status says so in the same render as the refusal.
+  const status = changed ? { tone: "wait", label: "Started since you opened this" } : statusView(row, { manage, hasMachines }), dis = busy ? ' aria-disabled="true"' : "";
   const head = `<header><h3 class="compute-ws-name" tabindex="-1">${e(row.name)}</h3><span class="compute-state compute-ws-status" data-tone="${status.tone}">${e(status.label)}</span></header>`;
   // A confirmation (discard) lives inside the record it is about, so it is never far from its name.
   if (confirm) return `<li class="compute-row compute-ws-row" data-ws-id="${e(row.id)}" data-status="${e(row.status)}">${head}${confirm}</li>`;
@@ -291,13 +296,13 @@ export function detailHTML(row, { manage, busy, hasMachines = true }) {
   const status = statusView(row, { manage, hasMachines }), dis = busy ? ' aria-disabled="true"' : "";
   const rows = [
     ["Resources", e(previewOf(row))], ["Image", `${e(imageLine(row))}<br>${e(imageNote(row))}`],
-    ["Comes from", `${e(hostedOn(row.image_registry))}${row.private_registry ? " (private: it needs a sign-in, which can't be added yet)" : ""}`], ["Network", e(NETWORKS[row.network] || row.network)], ["Machine", e(machineText(row, manage).replace(/^(?:Planned machine|Machine): /, ""))],
+    ["Comes from", `${e(hostedOn(row.image_registry))}${row.private_registry ? " (a private image)" : ""}`], ["Network", e(NETWORKS[row.network] || row.network)], ["Machine", e(machineText(row, manage).replace(/^(?:Planned machine|Machine): /, ""))],
     ["History", e(historyOf(row))],
   ];
   const actions = manage
-    ? `<div class="compute-actions"><button type="button" class="btn primary" data-ws-action="edit" data-id="${e(row.id)}"${aria("Change settings for", row.name)}${dis}>Change settings</button>${status.action ? `<button type="button" class="btn" data-ws-action="edit" data-focus="${status.action}" data-id="${e(row.id)}"${aria("Change image of", row.name)}${dis}>Change image</button>` : ""}<button type="button" class="btn" data-ws-action="close"${aria("Close details of", row.name)}>Close</button>${row.discardable ? `<button type="button" class="btn danger compute-ws-apart" data-ws-action="discard" data-id="${e(row.id)}"${aria("Discard", row.name)}${dis}>Discard</button>` : ""}</div><p class="compute-quiet">${e(deleteNote(row))}</p>`
-    : `<p class="compute-quiet">You can read this workspace's settings. Only its owner can change them.</p><div class="compute-actions"><button type="button" class="btn" data-ws-action="close"${aria("Close details of", row.name)}>Close</button></div>`;
-  return `<section class="compute-editor compute-ws-detail" aria-labelledby="compute-ws-heading"><header><h3 id="compute-ws-heading" tabindex="-1">${e(row.name)}</h3></header>`
+    ? `<div class="compute-actions"><button type="button" class="btn primary" data-ws-action="edit" data-id="${e(row.id)}"${aria("Change settings for", row.name)}${dis}>Change settings</button>${status.action ? `<button type="button" class="btn" data-ws-action="edit" data-focus="${status.action}" data-id="${e(row.id)}"${aria("Change image of", row.name)}${dis}>Change image</button>` : ""}${row.discardable ? `<button type="button" class="btn danger compute-ws-apart" data-ws-action="discard" data-id="${e(row.id)}"${aria("Discard", row.name)}${dis}>Discard</button>` : ""}</div><p class="compute-quiet">${e(deleteNote(row))}</p>`
+    : '<p class="compute-quiet">You can read this workspace\'s settings. Only its owner can change them.</p>';
+  return `<section class="compute-editor compute-ws-detail" aria-labelledby="compute-ws-heading"><header><h3 id="compute-ws-heading" tabindex="-1">${e(row.name)}</h3><button type="button" class="btn" data-ws-action="close"${aria("Close details of", row.name)}>Close</button></header>`
     + `<p class="compute-ws-statusline"><strong class="compute-ws-status" data-tone="${status.tone}">${e(status.label)}.</strong> ${e(status.detail)}</p>`
     + `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>${actions}</section>`;
 }
@@ -342,7 +347,7 @@ function actionsHTML(ctx, { primaryLabel, primaryAction, secondary, secondaryLab
 }
 
 const IMAGE_HELP = "An image is the ready-made software a workspace starts from.";
-const CUSTOM_HELP = "The name of the image, for example ubuntu:24.04. Not sure? Pick a ready-made image above.";
+const CUSTOM_HELP = "The address of the image, for example ubuntu:24.04. Not sure? Pick a ready-made image above.";
 const FIND_IT = "Open your image's page on the website that publishes it (for example Docker Hub or GitHub) and copy the text shown after “docker pull”. A registry is a website that stores images. Only public images work for now: anyone must be able to download them without signing in.";
 const NEED = {
   cpu_cores: "1 core is enough for editing and light scripts; 4 or more helps with builds and tests. Examples: 1 for a small web app, 4 for a large test suite.",
@@ -386,21 +391,18 @@ export function formHTML(ctx) {
     field("memory_mib", "ws-field-memory", "Memory (GiB)", num("memory_mib", "ws-field-memory", "ws_memory_gib", L.memory_mib, 1024, "decimal", hintIds("memory_mib", true, true)), { hint: range(L.memory_mib, 1024), need: NEED.memory_mib }, errors),
     field("storage_gib", "ws-field-storage", "Storage (GiB)", num("storage_gib", "ws-field-storage", "ws_storage_gib", L.storage_gib, 1, "numeric", hintIds("storage_gib", true, true)), { hint: range(L.storage_gib), need: NEED.storage_gib }, errors),
     field("network", "ws-field-network", "Network", select("network", "ws-field-network", "ws_network", options.networks.map(n => `<option value="${e(n)}"${values.ws_network === n ? " selected" : ""}>${e(NETWORKS[n] || n)}</option>`).join(""), ["ws-hint-network"]), { hint: "Whether the workspace can reach the internet once it starts." }, errors),
-    field("node_id", "ws-field-machine", "Machine", select("node_id", "ws-field-machine", "ws_node_id", machineOptions, ["ws-hint-node_id"], locked || noMachines ? " disabled" : ""), { hint: locked ? "A started workspace can't move to another machine yet." : noMachines ? "No machine is set up yet, so this stays on Choose later." : "The machine it is planned for. You can choose later. Whether it is big enough is only checked when starting is available." }, errors, { wide: true }),
+    field("node_id", "ws-field-machine", "Machine", select("node_id", "ws-field-machine", "ws_node_id", machineOptions, ["ws-hint-node_id"], locked || noMachines ? " disabled" : ""), { hint: locked ? "A started workspace can't move to another machine yet." : noMachines ? "No machine is set up yet, so none can be chosen." : "The machine it is planned for. You can choose later. Whether it is big enough is only checked when starting is available." }, errors, { wide: true }),
   ].join("");
   return `<section class="compute-editor compute-ws-editor" aria-labelledby="compute-ws-heading"${busy ? ' aria-busy="true"' : ""}><header><h3 id="compute-ws-heading" tabindex="-1">${heading}</h3></header>`
     + `<p class="compute-quiet">${e(note)} Fields marked * are required; the others start with a default.</p>`
-    + `<form data-ws-form="${editing ? "edit" : "create"}" novalidate>${summary(ctx, ctx.stale ? staleExtra(ctx) : "")}${reapplyHTML(ctx)}<fieldset><legend class="compute-ws-legend">${editing ? "Settings" : "New workspace settings"}</legend><div class="compute-fields">${fields}</div></fieldset>`
+    + `<form data-ws-form="${editing ? "edit" : "create"}" novalidate>${summary(ctx, ctx.stale ? staleExtra() : "")}${reapplyHTML(ctx)}<fieldset><legend class="compute-ws-legend">${editing ? "Settings" : "New workspace settings"}</legend><div class="compute-fields">${fields}</div></fieldset>`
     + `<div class="compute-ws-preview" data-ws-preview><strong>What it will use</strong><p>${e(ctx.previewText)}</p></div>`
     + `${actionsHTML(ctx, { primaryLabel: editing ? "Review the change" : "Review and create", primaryAction: "submit", secondary: "close", secondaryLabel: "Cancel", busyText: "Saving…" })}</form></section>`;
 }
 const imageChoiceHint = (options, values) => values.ws_image_source === "custom" ? "Paste the address of your own image below." : `${IMAGE_HELP} ${options.images.find(item => item.reference === values.ws_curated)?.description || ""}`.trim();
 
-// What the person typed, as they typed it, so it can be copied out; the form is stale until it is reloaded.
-function staleExtra(ctx) {
-  const lines = ctx.typed || [];
-  return `${lines.length ? `<p>What you typed (copy it if you want to keep it):</p><ul role="list" class="compute-ws-typed">${lines.map(line => `<li>${e(line)}</li>`).join("")}</ul>` : ""}<p>Reload to continue: your typed values stay and can be applied again.</p>`;
-}
+// The form below the banner still holds what the person typed; it stays that way until it is reloaded.
+const staleExtra = () => "<p>What you typed is still in the form below. Reload to continue loads the current version.</p>";
 // After a reload: the earlier typed values wait here until the person chooses to apply them.
 function reapplyHTML(ctx) {
   if (!ctx.reapply?.length) return "";
@@ -418,7 +420,7 @@ function typedLines(values, baseValues, options, machines) {
   return lines;
 }
 
-const SHOW = machines => ({ memory_mib: v => gib(v), storage_gib: v => `${v} GiB`, cpu_cores: v => cores(v), network: v => NETWORKS[v] || v, node_id: v => v ? (machines.find(m => m.id === v)?.name || "the chosen machine") : "No machine" });
+const SHOW = machines => ({ memory_mib: v => gib(v), storage_gib: v => `${v} GiB`, cpu_cores: v => cores(v), network: v => NETWORKS[v] || v, node_id: v => v ? (machines.find(m => m.id === v)?.name || "the chosen machine") : "not chosen yet" });
 function changeLines(row, values, machines) {
   const now = workspacePayload(values), before = { name: row.name, image: row.image, cpu_cores: row.cpu_cores, memory_mib: row.memory_mib, storage_gib: row.storage_gib, network: row.network, node_id: row.node_id || null }, show = SHOW(machines);
   return Object.keys(FIELD_LABELS).filter(key => now[key] !== before[key]).map(key => ({ label: FIELD_LABELS[key], before: (show[key] || String)(before[key]), after: (show[key] || String)(now[key]) }));
@@ -428,10 +430,14 @@ export function reviewHTML(ctx) {
   const { values, editing, row, previewText, machines, options } = ctx;
   const image = imageOf(values), pinned = parseImage(image).pinned, friendly = values.ws_image_source === "curated" ? imageLabel(options, image) : "";
   const lines = (editing ? changeLines(row, values, machines) : []).map(line => `<li>${e(line.label)}: ${e(line.before)} → ${e(line.after)}</li>`);
-  lines.push(`<li>${e(previewText)}</li>`, `<li>Image: ${e(friendly ? `${friendly} (${image})` : image)} — ${pinned ? "locked to one exact version" : "the publisher can update its version over time"}</li>`, `<li>Network: ${e(NETWORKS[values.ws_network] || values.ws_network)}</li>`);
+  lines.push(`<li>${e(previewText)}</li>`);
+  // The machine records whether it was verified; an unverified one is still a valid choice, so say what that means.
+  const chosen = values.ws_node_id ? machines.find(m => m.id === values.ws_node_id) : null;
+  if (chosen && chosen.state !== "verified") lines.push(`<li class="compute-ws-warn">${e(`${chosen.name} is not verified yet, so nothing can start on it. Your settings are still saved.`)}</li>`);
+  lines.push(`<li>Image: ${e(friendly ? `${friendly} (${image})` : image)} — ${pinned ? "locked to one exact version" : "the publisher can update its version over time"}</li>`, `<li>Network: ${e(NETWORKS[values.ws_network] || values.ws_network)}</li>`);
   const started = editing && row.started;
   const next = started ? `${STARTED} You can change these settings later. ${DISCARD_NOTE}` : `Confirming saves these settings in Commonplace only. Starting is not available yet, so nothing is sent to a machine. You can change them later.`;
-  return `<section class="compute-editor compute-ws-editor" aria-labelledby="compute-ws-heading"${ctx.busy ? ' aria-busy="true"' : ""}><header><h3 id="compute-ws-heading" tabindex="-1">${editing ? `Confirm the change to ${e(quoted(values.ws_name))}` : `Create ${e(quoted(values.ws_name))}?`}</h3></header>${summary(ctx, ctx.stale ? staleExtra(ctx) : "")}`
+  return `<section class="compute-editor compute-ws-editor" aria-labelledby="compute-ws-heading"${ctx.busy ? ' aria-busy="true"' : ""}><header><h3 id="compute-ws-heading" tabindex="-1">${editing ? `Confirm the change to ${e(quoted(values.ws_name))}` : `Create ${e(quoted(values.ws_name))}?`}</h3></header>${summary(ctx, ctx.stale ? staleExtra() : "")}`
     + `<ul class="compute-ws-review" role="list">${lines.join("")}</ul><p class="compute-quiet" data-ws-honesty>${e(next)}</p>`
     + actionsHTML(ctx, { primaryLabel: editing ? "Confirm and save" : "Confirm and create", primaryAction: "confirm", secondary: "back", secondaryLabel: "Back", busyText: "Saving…" }) + "</section>";
 }
@@ -440,10 +446,10 @@ export function reviewHTML(ctx) {
 export function discardHTML(ctx) {
   const { row, busy, refused, stale } = ctx;
   const extra = stale && !refused ? '<div class="compute-actions"><button type="button" class="btn primary" data-ws-action="reload">Reload the list</button></div>' : "";
-  const body = refused ? `<p>${e(STARTED_DISCARD)}</p>`
+  const body = refused ? `<p id="ws-discard-reason">${e(STARTED_DISCARD)}</p>`
     : `<p>This removes the saved settings for ${e(quoted(row.name))} from Commonplace. It was never started, so nothing on a machine is affected. You can't undo this, but you can create it again with the same settings.</p>`;
   const buttons = refused
-    ? `<button type="button" class="btn primary" data-ws-action="close">Keep it</button><button type="button" class="btn" data-ws-action="reload">Reload the list</button>`
+    ? `<button type="button" class="btn primary" data-ws-action="close" aria-describedby="ws-discard-reason">Keep it</button><button type="button" class="btn" data-ws-action="reload">Reload the list</button>`
     : `<button type="button" class="btn danger" data-ws-action="confirm"${stale ? ' disabled aria-describedby="ws-summary"' : dis(busy)}>${busy ? "Discarding…" : "Discard workspace"}</button><button type="button" class="btn primary" data-ws-action="close"${dis(busy)}>Keep it</button>`;
   return `<section class="compute-editor compute-ws-editor compute-ws-discard" aria-labelledby="compute-ws-heading"${busy ? ' aria-busy="true"' : ""}><h4 id="compute-ws-heading" tabindex="-1">Discard ${e(quoted(row.name))}?</h4>${summary(ctx, extra)}${body}`
     + `<div class="compute-actions compute-ws-actions">${buttons}</div></section>`;
@@ -471,7 +477,7 @@ export function createWorkspaces(ctx) {
     return resourcePreview(number(values.ws_cpu_cores), Math.round(number(values.ws_memory_gib) * 1024), number(values.ws_storage_gib), machine);
   }
   const dirty = () => startValues !== null && JSON.stringify(values) !== JSON.stringify(startValues);
-  const context = () => ({ values, errors, options, machines: machines(), editing: mode === "edit", row: find(selected), busy, stale, leaving, refused, formError, typed: stale && baseValues ? typedLines(values, baseValues, options, machines()) : [], reapply: reapply?.lines || null, previewText: options ? previewText() : "" });
+  const context = () => ({ values, errors, options, machines: machines(), editing: mode === "edit", row: find(selected), busy, stale, leaving, refused, formError, reapply: reapply?.lines || null, previewText: options ? previewText() : "" });
 
   function topHTML() {
     const create = canManage && rows !== null && !mode && options && !full() ? `<button type="button" class="btn primary" data-ws-action="create"${busy ? ' aria-disabled="true"' : ""}>New cloud workspace</button>` : "";
@@ -481,7 +487,7 @@ export function createWorkspaces(ctx) {
   }
   function inner() {
     if (rows === null && !loadError) return '<p class="compute-empty" role="status">Loading cloud workspaces…</p>';
-    if (rows === null) return `<p class="compute-error" role="alert">${e(loadError)}</p><div class="compute-actions"><button type="button" class="btn" data-ws-action="reload">Reload</button></div>`;
+    if (rows === null) return '<div class="compute-actions"><button type="button" class="btn" data-ws-action="reload">Reload</button></div>';
     let panel = "";
     const row = find(selected);
     if ((mode === "create" && options) || (mode === "edit" && row && options)) panel = step === "review" ? reviewHTML(context()) : formHTML(context());
@@ -490,15 +496,23 @@ export function createWorkspaces(ctx) {
     // A discard confirmation is the exception: it renders inside its own row, in place.
     const shown = rows.filter(item => !(mode && mode !== "create" && mode !== "discard" && item.id === selected));
     const more = total > rows.length ? `<p class="compute-quiet">Showing the newest ${rows.length} of ${total} cloud workspaces.</p>` : "";
-    const list = more + (shown.length ? `<ul class="compute-list compute-ws-list">${shown.map(item => { const mine = mode === "discard" && item.id === selected; return rowHTML(item, { manage: canManage, busy, hasMachines: machines().length > 0, changed: mine && refused, confirm: mine ? discardHTML(context()) : "" }); }).join("")}</ul>`
-      : rows.length || mode ? "" : `<p class="compute-empty">No cloud workspaces yet. ${canManage ? "Choose New cloud workspace to create one." : "The workspace owner can create one here."}</p>`);
-    const unavailable = configError ? `<p class="compute-error" role="alert">${e(configError)}</p><div class="compute-actions"><button type="button" class="btn" data-ws-action="reload">Reload</button></div>` : "";
+    const list = more + (shown.length ? `<ul class="compute-list compute-ws-list" role="list">${shown.map(item => { const mine = mode === "discard" && item.id === selected; return rowHTML(item, { manage: canManage, busy, hasMachines: machines().length > 0, changed: mine && refused, confirm: mine ? discardHTML(context()) : "" }); }).join("")}</ul>`
+      : rows.length || mode ? "" : `<p class="compute-empty">Nothing here yet. ${canManage ? "Choose New cloud workspace to create one. A machine can be chosen later." : "The workspace owner can create one here."}</p>`);
+    const unavailable = configError ? '<div class="compute-actions"><button type="button" class="btn" data-ws-action="reload">Reload</button></div>' : "";
     return `${unavailable}${panel}${list}`;
   }
   function html() {
     shownTop = topHTML();
     return `<section class="compute-inventory compute-wide compute-ws" aria-labelledby="compute-workspaces"><div data-ws-top>${shownTop}</div>`
-      + `<p class="compute-notice compute-ws-notice" data-ws-notice role="status">${e(notice)}</p><div data-ws-root>${inner()}</div></section>`;
+      + `<p class="compute-notice compute-ws-notice" data-ws-notice role="status">${e(notice)}</p>`
+      + `<p class="compute-error compute-ws-problem" data-ws-problem role="alert">${e(problem())}</p><div data-ws-root>${inner()}</div></section>`;
+  }
+  // A failed load is one static alert node that is written only when its text changes, so a repaint never
+  // re-announces it (and the status line says nothing about it: one voice, not two).
+  const problem = () => rows === null ? loadError : configError;
+  function writeProblem() {
+    const node = ctx.host()?.querySelector?.("[data-ws-problem]"), text = problem();
+    if (node && node.textContent !== text) node.textContent = text;
   }
 
   // Bring a field (its label, control, hint and error) fully into view above the sticky action bar, then focus it.
@@ -517,6 +531,7 @@ export function createWorkspaces(ctx) {
       const top = host.querySelector("[data-ws-top]"), next = topHTML();
       if (top && next !== shownTop) { top.innerHTML = next; shownTop = next; }
       root.innerHTML = inner();
+      writeProblem();
     } else ctx.rerender();
     restore?.();
     if (!focus) return;
@@ -612,7 +627,8 @@ export function createWorkspaces(ctx) {
     // Said once, through the status line (no focus is taken from whatever the person was doing).
     if (stale) { say("This workspace changed while you had it open. Nothing was saved or discarded; the message in the form says what to do."); ctx.host()?.querySelector?.("[data-ws-summary]")?.scrollIntoView?.({ block: "center" }); }
     else if (announce) {
-      say(rows === null ? LOAD_ERROR : configError || "Cloud workspaces reloaded.");
+      // A failed reload is spoken by the alert node alone; only a good one is said here.
+      if (rows !== null && !configError) say("Cloud workspaces reloaded.");
       // A failed reload keeps the person on its Reload button; a good one on the section heading.
       ctx.host()?.querySelector?.(rows === null || configError ? '[data-ws-action="reload"]' : "#compute-workspaces")?.focus?.();
     }
@@ -773,7 +789,7 @@ export function createWorkspaces(ctx) {
       const lines = mine ? typedLines(mine.values, mine.base, options, machines()) : [];
       reapply = lines.length ? { ...mine, lines } : null;
       paint("heading");
-      say(lines.length ? "Reloaded. Your typed changes are kept: apply them again if they still fit." : "Reloaded.");
+      say(lines.length ? "Reloaded. Your earlier changes were not saved. Apply my changes again puts them back." : "Reloaded.");
     } else { paint(); restoreFocus(opener); say(row ? "Reloaded." : "That cloud workspace is no longer available."); }
   }
   // Put back only the fields the person had changed; the rest stay on the current saved values.
