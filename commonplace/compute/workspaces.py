@@ -440,7 +440,12 @@ def _machine(conn, node_id):
 
 
 def _machine_name(row):
-    return json.loads(row["node_metadata"]).get("name") if row["node_metadata"] else None
+    """The machine's name, or None. A row whose metadata cannot be read has no name: it never fails a list."""
+    try:
+        meta = json.loads(row["node_metadata"]) if row["node_metadata"] else None
+    except (TypeError, ValueError):
+        return None
+    return meta.get("name") if isinstance(meta, dict) else None
 
 
 def has_started(row):

@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS audit (
  id INTEGER PRIMARY KEY, object_id TEXT NOT NULL, action TEXT NOT NULL,
  user_id TEXT NOT NULL, created_at REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS audit_object ON audit(object_id,id);
 CREATE TABLE IF NOT EXISTS enrollment_verifications (
  node_id TEXT PRIMARY KEY REFERENCES nodes(id), gateway_id TEXT NOT NULL,
  enrollment TEXT NOT NULL, receipt_digest TEXT NOT NULL,

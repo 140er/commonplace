@@ -104,7 +104,7 @@ def test_preview_states_what_happens_to_running_work_before_the_confirm(api, fle
     status, preview = api.request(path=f"{BASE}/runner/{made['machine_id']}/preview/drain")
     assert status == 200 and preview["allowed"] is True and preview["danger"] is True
     assert preview["running_work"] == "1 run in progress will finish normally; none is cancelled."
-    assert "Queued runs (1) wait in the queue" in preview["effect"][0]
+    assert "Queued runs (1) stay in the queue" in preview["effect"][0]
     assert any(
         "Chat and Coworker sessions can still start here" in line for line in preview["will_not"]
     )
@@ -297,19 +297,29 @@ def test_the_hub_audit_line_is_written_before_the_drain_commits(api, fleet, monk
 def test_the_poll_reads_runs_through_indexes_and_opens_the_runner_store_once(
     api, fleet, monkeypatch
 ):
+    from commonplace.compute import overview
+
     made = fleet.enroll("runner-index")
     fleet.job(made, "started", task=1)
+    stamp = "2026-01-01T00:00:00Z"
     with fleet.store().connection() as conn:
         names = {r[1] for r in conn.execute("PRAGMA index_list(runner_jobs)")}
-        assert {"runner_jobs_machine_state", "runner_jobs_starting"} <= names
-        plan = " ".join(
-            row[3]
-            for row in conn.execute(
-                "EXPLAIN QUERY PLAN SELECT machine_id,state,count(*) FROM runner_jobs "
-                "WHERE state IN ('queued','started') GROUP BY machine_id,state"
-            )
-        )
-        assert "runner_jobs_machine_state" in plan
+        assert {"runner_jobs_state_updated", "runner_jobs_starting"} <= names
+        # Every read of a poll searches an index (a SCAN reads the whole history, which is never pruned).
+        for sql, params in (
+            (overview.FACT_ACTIVE_SQL, ()),
+            (overview.FACT_STARTED_RECENT_SQL, (stamp,)),
+            (overview.FACT_STARTED_OLDER_SQL, (stamp, stamp)),
+            (overview.FACT_STARTS_HOUR_SQL, (stamp,)),
+        ):
+            plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
+            assert "SEARCH" in plan and "SCAN" not in plan, plan
+        for sql in (
+            "SELECT machine_id,max(updated_at) FROM runner_jobs INDEXED BY runner_jobs_state_updated "
+            "WHERE state='started' AND updated_at>? GROUP BY machine_id",
+        ):
+            plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, (stamp,)))
+            assert "SEARCH" in plan and "SCAN" not in plan, plan
     opened = []
     real = jobs.JobStore.__init__
 
@@ -340,3 +350,40 @@ def test_drain_is_stated_to_stop_card_runs_only(api, fleet):
 
     for module in (chat_relay, sessions):
         assert "drain" not in inspect.getsource(module)
+
+
+def test_a_runner_removed_between_the_check_and_the_drain_is_refused_inside_the_lock(
+    api, fleet, monkeypatch
+):
+    from commonplace.compute import overview
+
+    made = fleet.enroll("runner-race")
+    real = overview._machine_row
+    calls = []
+
+    def racing(store, machine_id):
+        calls.append(1)
+        row = real(store, machine_id)
+        # The first read is the pre-check (not removed yet); the one inside the lock sees the removal.
+        return row if len(calls) == 1 else {**dict(row), "revoked_at": "2026-11-19T10:00:00Z"}
+
+    monkeypatch.setattr(overview, "_machine_row", racing)
+    assert act(api, made, "drain") == (409, {"error": "conflict", "reason": "revoked"})
+    monkeypatch.undo()
+    assert runner(api, made)["draining"] is False
+    with fleet.store().connection() as conn:
+        assert drain.log(conn, made["machine_id"], 10) == []
+
+
+def test_a_busy_runner_store_is_busy_not_an_audit_failure(api, fleet, monkeypatch):
+    import sqlite3
+
+    made = fleet.enroll("runner-busy-store")
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(drain, "change", locked)
+    assert act(api, made, "drain") == (503, {"error": "authority_unavailable", "reason": "busy"})
+    monkeypatch.undo()
+    assert runner(api, made)["draining"] is False

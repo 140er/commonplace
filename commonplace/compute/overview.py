@@ -44,6 +44,15 @@ FAILURE_TEXT = {
     "machine_unreachable": "The machine could not be reached.",
     "start_failed": "It did not start.",
 }
+# What a member reads for the same failures: the fix is the owner's, so the words say who.
+MEMBER_FAILURE_TEXT = {
+    "out_of_memory": "It ran out of memory. Ask the workspace owner to raise the memory limit.",
+    "storage_full": "Its storage is full. Ask the workspace owner to raise the storage limit.",
+    "image_pull_failed": "The machine could not download the image. Ask the workspace owner to check the image address.",
+    "image_not_found": "No such image was found. Ask the workspace owner to check the image name and version.",
+    "registry_login_failed": "The registry refused the login. Ask the workspace owner to choose a public image.",
+    "machine_too_small": "The machine is smaller than these limits. Ask the workspace owner to lower them or choose a bigger machine.",
+}
 REFUSAL_TEXT = {
     "no_machine": "It needs a machine before it can start. Choose one with Change settings once a machine is set up.",
     "needs_credential": "This image is private and Commonplace can't store registry logins yet. Choose a public image first.",
@@ -56,7 +65,7 @@ REFUSAL_TEXT = {
     "not_started": "It has not been started yet. Start it first.",
     "not_running": "Only a running workspace can be restarted. Use Start for a stopped one.",
     "nothing_to_withdraw": "No request is waiting.",
-    "already_picked_up": "A machine has already picked this request up, so it can't be withdrawn. Stop the workspace instead.",
+    "already_picked_up": "A machine picked this request up and is reporting on it, so it can't be withdrawn yet. If the machine goes quiet for ten minutes it can be.",
     "already_draining": "It is already draining.",
     "not_draining": "It is not draining.",
     "revoked": "This runner was removed, so nothing can be changed on it.",
@@ -87,8 +96,10 @@ NEXT_STEP = {
     "slow": "Wait a little: a busy machine or a poor connection can delay a report. If it stays like this, check the machine's network.",
     "never_connected": "Finish its setup on the machine (Admin, Runner machines lists what to run there).",
     "unknown": "Nothing newer has been reported. Check the machine that carries it.",
-    "not_verified": "Verify it under Advanced on this page, where its settings are.",
-    "verification_expired": "Verify it again under Advanced on this page, where its settings are.",
+    # No control verifies a machine in this version (enrollment is checked by a signed receipt, never set by hand), so
+    # these say what is true instead of pointing at one.
+    "not_verified": "Verification is not available in this version of the app. Until a machine is verified, cloud workspaces placed on it cannot start.",
+    "verification_expired": "Verification is not available in this version of the app. Until the machine is verified again, cloud workspaces placed on it cannot start.",
     "disabled": "Turn it on again in Admin, Runner machines.",
 }
 
@@ -121,13 +132,19 @@ def ago(seconds):
     return "just now" if seconds is not None and seconds < 5 else f"{span(seconds)} ago"
 
 
-def _status(code, tone, label, detail):
+# The steps a member can take differ from the owner's: they ask the owner.
+NEXT_STEP_MEMBER = {
+    "unknown": "Nothing newer has been reported. Ask the workspace owner to check the machine that carries it."
+}
+
+
+def _status(code, tone, label, detail, *, manage=True):
     return {
         "code": code,
         "tone": tone,
         "label": label,
         "detail": detail,
-        "next": NEXT_STEP.get(code),
+        "next": (NEXT_STEP if manage else NEXT_STEP_MEMBER).get(code),
     }
 
 
@@ -157,18 +174,9 @@ def _money(micros, currency):
 # cloud workspaces
 
 
-def effective_phase(row, life):
-    """The phase to show. A record the old seam marked ready or failed (no lifecycle row) keeps that
-    meaning, but a ``ready`` nobody reported has no report time, so it is never trusted."""
-    if life["reported_at"] is not None or life["seq"] > 0 or life["phase"] != "not_started":
-        return life["phase"], life["reason"] or (
-            row["state_reason"] if life["phase"] == "failed" else None
-        )
-    if row["state"] == "ready":
-        return "running", None
-    if row["state"] == "failed":
-        return "failed", row["state_reason"]
-    return ("stopped", None) if row["applied_revision"] is not None else ("not_started", None)
+effective_phase = (
+    lifecycle.effective_phase
+)  # one reading of the phase, shared with ``lifecycle.decide``
 
 
 def _saved_status(row, *, manage, executor, has_machines):
@@ -239,6 +247,16 @@ def workspace_status(row, life, now, *, manage, executor, has_machines=None):
         )
     trusted = _trusted(phase, life, now)
     if pending and phase == "stopped":
+        if not lifecycle.report_fresh(life, now):
+            # A restart a machine picked up, stopped, and then went silent on: not known to be restarting.
+            return _status(
+                "unknown",
+                "quiet",
+                "Unknown",
+                "A machine picked up a restart and stopped it, and nothing newer has arrived, so it may not be "
+                "restarting.",
+                manage=manage,
+            )
         return _status("starting", "wait", "Restarting", "It stopped and is about to start again.")
     if phase in ("running", "starting", "stopping") and not trusted:
         said = {"running": "Running", "starting": "Starting", "stopping": "Stopping"}[phase]
@@ -249,7 +267,7 @@ def workspace_status(row, life, now, *, manage, executor, has_machines=None):
                 f"Its last report said {said} and nothing newer has arrived, "
                 f"so it may not be {said.lower()} any more."
             )
-        return _status("unknown", "quiet", "Unknown", detail)
+        return _status("unknown", "quiet", "Unknown", detail, manage=manage)
     if phase == "running":
         stale_settings = workspaces._restart_needed(row)
         return _status(
@@ -277,10 +295,13 @@ def workspace_status(row, life, now, *, manage, executor, has_machines=None):
             ),
         )
     if phase == "failed":
-        text = FAILURE_TEXT.get(
-            reason, "It failed for a reason this page does not recognise. Check the machine."
+        table = FAILURE_TEXT if manage else {**FAILURE_TEXT, **MEMBER_FAILURE_TEXT}
+        text = table.get(
+            reason,
+            "It failed for a reason this page does not recognise. "
+            + ("Check the machine." if manage else "Ask the workspace owner to check the machine."),
         )
-        return _status("failed", "bad", "Failed", text)
+        return _status("failed", "bad", "Failed", text, manage=manage)
     return _saved_status(row, manage=manage, executor=executor, has_machines=has_machines)
 
 
@@ -298,7 +319,7 @@ def _machine_verified(row):
         meta = json.loads(row["node_metadata"]) if row["node_metadata"] else {}
     except ValueError:
         meta = {}
-    return meta.get("state") == "verified"
+    return isinstance(meta, dict) and meta.get("state") == "verified"
 
 
 def _workspace_blockers(row, status, executor, manage, has_machines):
@@ -329,7 +350,7 @@ def _workspace_blockers(row, status, executor, manage, has_machines):
         blockers.append(
             {
                 "code": "not_available",
-                "text": "Starting cloud workspaces on a machine is not available in this version.",
+                "text": "No machine can carry out a start yet.",
             }
         )
     return blockers
@@ -351,9 +372,15 @@ def workspace_item(row, life, now, *, manage, executor, has_machines=None):
         "issues": [],
     }
     if life.get("expired_action"):
+        health["issue_label"] = "Not carried out"
         health["issues"].append(
             f"Its earlier {life['expired_action']} request expired after "
             f"{lifecycle.REQUEST_TTL_S // 3600} hours without a machine picking it up, so it was not carried out."
+            + (
+                ""
+                if executor
+                else " Starting is not available in this version, so there is nothing to do yet."
+            )
         )
     item = {
         "kind": "workspace",
@@ -542,6 +569,30 @@ def blank_facts():
     }
 
 
+# The run counts of a poll, as four literal reads that each name their index and are bounded by what they ask: the
+# active states are few; "started" is the history (a finished run stays "started"), so it is read by time, newest
+# first, never as a whole. ``tests/test_runner_drain.py`` asserts a SEARCH (not a SCAN) for each.
+STARTED_WINDOW_S = (
+    90 * 86400
+)  # "started long ago" is counted back this far; older rows are history, not "may still be open"
+FACT_ACTIVE_SQL = (
+    "SELECT machine_id,state,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_state_updated "
+    "WHERE state IN ('queued','leased','starting','uncertain') GROUP BY machine_id,state"
+)
+FACT_STARTED_RECENT_SQL = (
+    "SELECT machine_id,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_state_updated "
+    "WHERE state='started' AND updated_at>? GROUP BY machine_id"
+)
+FACT_STARTED_OLDER_SQL = (
+    "SELECT machine_id,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_state_updated "
+    "WHERE state='started' AND updated_at<=? AND updated_at>? GROUP BY machine_id"
+)
+FACT_STARTS_HOUR_SQL = (
+    "SELECT machine_id,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_starting "
+    "WHERE starting_at>? GROUP BY machine_id"
+)
+
+
 def _runner_facts(store, now):
     """Per-machine run counts, resource reports, spend and drain flags from the runner store (``store`` is
     opened once by the caller). Two indexed reads of ``runner_jobs`` serve every count: one by state (index
@@ -557,28 +608,24 @@ def _runner_facts(store, now):
 
     with store.connection() as conn:
         recent_limit = stamp(now - RECENT_STARTED_S)
-        for row in conn.execute(
-            "SELECT machine_id,state,count(*) AS n,sum(updated_at>?) AS recent FROM runner_jobs "
-            "WHERE state IN ('queued','leased','starting','uncertain','started') GROUP BY machine_id,state",
-            (recent_limit,),
-        ):
+        for row in conn.execute(FACT_ACTIVE_SQL):
             entry = of(row["machine_id"])
             if row["state"] == "queued":
                 entry["queued"] += row["n"]
             elif row["state"] == "uncertain":
                 entry["uncertain"] += row["n"]
                 entry["running"] += row["n"]
-            elif row["state"] == "started":
-                # Started rows nobody has updated for hours are not counted as in progress, but they are not
-                # dropped either: the machine says how many may still be open (``older_started``).
-                entry["running"] += row["recent"]
-                entry["older_started"] = row["n"] - row["recent"]
             else:
                 entry["running"] += row["n"]
+        for row in conn.execute(FACT_STARTED_RECENT_SQL, (recent_limit,)):
+            of(row["machine_id"])["running"] += row["n"]
+        # Started rows nobody has updated for hours are not counted as in progress, but they are not
+        # dropped either: the machine says how many may still be open (``older_started``).
         for row in conn.execute(
-            "SELECT machine_id,count(*) AS n FROM runner_jobs WHERE starting_at>? GROUP BY machine_id",
-            (stamp(now - 3600),),
+            FACT_STARTED_OLDER_SQL, (recent_limit, stamp(now - STARTED_WINDOW_S))
         ):
+            of(row["machine_id"])["older_started"] = row["n"]
+        for row in conn.execute(FACT_STARTS_HOUR_SQL, (stamp(now - 3600),)):
             of(row["machine_id"])["starts_hour"] = row["n"]
         if _table(conn, "runner_resources"):
             for row in conn.execute(
@@ -722,46 +769,54 @@ def runner_blockers(machine, record, facts, red_after_s=900):
     drain = facts["drain"]
     if reason == "revoked":
         blockers.append(
-            {"code": "revoked", "text": "This runner was removed. It can't be used again."}
+            {
+                "code": "revoked",
+                "text": "Removed: the owner removed this runner. It can't be used again.",
+            }
         )
         return blockers
     if reason == "disabled":
         blockers.append(
             {
                 "code": "disabled",
-                "text": "It is turned off. Turn it on again in Admin, Runner machines.",
+                "text": "Turned off: the owner turned it off. Turn it on again in Admin, Runner machines.",
             }
         )
     if machine["binding_state"] != "owner_attested":
         blockers.append(
             {
                 "code": "not_approved",
-                "text": "It is not approved for work yet. Approve its setup in Admin, Runner machines to let it start runs.",
+                "text": "Not approved: it can't start runs yet. Approve its setup in Admin, Runner machines.",
             }
         )
     if drain["draining"]:
+        # One word per state, the chip's: "Draining" while runs are in progress, "Drained" when none are.
+        word = "Draining" if facts["running"] else "Drained"
         blockers.append(
             {
                 "code": "draining",
-                "text": f"It is draining: no new card runs start on it. {NO_RESUME}",
+                "text": f"{word}: no new card runs start on it. {NO_RESUME}",
             }
         )
     if reason == "never_reported":
         blockers.append(
-            {"code": "never_connected", "text": "It has not connected yet, so runs would wait."}
+            {
+                "code": "never_connected",
+                "text": "Never connected: it has not contacted Commonplace yet, so runs would wait.",
+            }
         )
     elif reason == "no_heartbeat":
         blockers.append(
             {
                 "code": "offline",
-                "text": f"Commonplace has not heard from it for over {span(red_after_s)}, so new card runs would wait.",
+                "text": f"Offline: nothing heard for over {span(red_after_s)}, so new card runs would wait.",
             }
         )
     if facts["running"] >= machine["max_in_flight"]:
         blockers.append(
             {
                 "code": "full",
-                "text": f"It may be full: {_runs(facts['running'])} recorded in progress, and it runs up to "
+                "text": f"May be full: {_runs(facts['running'])} recorded in progress, and it runs up to "
                 f"{machine['max_in_flight']} at once. New runs wait for one to finish.",
             }
         )
@@ -769,7 +824,7 @@ def runner_blockers(machine, record, facts, red_after_s=900):
         blockers.append(
             {
                 "code": "hourly_cap",
-                "text": f"It reached its limit of {machine['max_starts_per_hour']} starts per hour. New runs wait.",
+                "text": f"Hourly limit: it reached {machine['max_starts_per_hour']} starts this hour. New runs wait.",
             }
         )
     return blockers
@@ -909,7 +964,9 @@ def runner_item(machine, record, facts, now, red_after_s=900):
             "suffix": suffix,
             "when": ago(record["age_s"]),
         }
-    attention = status["code"] in ("offline", "slow", "revoked", "disabled") or bool(issues)
+    attention = status["code"] in ("offline", "slow", "disabled") or bool(
+        issues
+    )  # a removed runner is informational
     item = {
         "kind": "runner",
         "id": machine["id"],
@@ -922,9 +979,12 @@ def runner_item(machine, record, facts, now, red_after_s=900):
             if status["code"] == "never_connected"
             else "attention"
             if attention
+            else "idle"
+            if status["code"] == "revoked"
             else "ok",
             "blockers": blockers,
             "issues": issues,
+            "issue_label": "Needs a person",
             "heartbeat": {"status": record["status"], "reason": record["reason"]},
         },
         "usage": _runner_usage(machine, facts, now, silent=status["code"] == "offline"),
@@ -1039,8 +1099,11 @@ def _registry_machines(db, workspace_id):
 
     try:
         return registry.machines(db, workspace_id)
-    except sqlite3.OperationalError:
-        return []
+    except sqlite3.OperationalError as exc:
+        # Only a missing table means "no runner machines here"; a lock timeout or any other fault is not an empty list.
+        if "no such table" in str(exc):
+            return []
+        raise StoreError("authority_unavailable", 503, reason="busy") from None
 
 
 def _runner_items(store, now, only=None):
@@ -1144,8 +1207,7 @@ def read(store, principal, *, session_hash):
             "available": executor,
             "text": None
             if executor
-            else "Starting and stopping cloud workspaces on a machine is not available in this version. "
-            "Requests are saved and wait.",
+            else "Starting and stopping cloud workspaces on a machine is not available in this version.",
         },
         "counts": _summary(items),
         "items": items,
@@ -1172,6 +1234,7 @@ _ACTIVITY_TEXT = {
     "workspace.stop_requested": "Stop requested",
     "workspace.restart_requested": "Restart requested",
     "workspace.request_withdrawn": "Request withdrawn",
+    "workspace.request_expired": "A request expired without being carried out",
     "workspace.request_claimed": "A machine picked the request up",
     "workspace.reported_starting": "The machine reported: starting",
     "workspace.reported_running": "The machine reported: running",
@@ -1527,8 +1590,8 @@ def _runner_preview(item, facts, action, refusal):
         base.update(
             title=f"Drain {name}?",
             effect=[
-                f"From now on no new card runs start on {name}. Queued runs ({queued}) wait in the queue until "
-                "it is resumed.",
+                f"From now on no new card runs start on {name}. Queued runs ({queued}) stay in the queue; none is "
+                "cancelled.",
                 "Takes effect at once: Commonplace itself stops handing it card runs.",
             ],
             running_work=f"{_runs(running)} in progress will finish normally; none is cancelled.",
@@ -1585,6 +1648,10 @@ def act(
     return _runner_act(store, principal, item_id, action, session_hash, expected_seq, request_id)
 
 
+class _AuditFailed(Exception):
+    """The hub-wide audit line could not be written, so the drain change is rolled back."""
+
+
 def _runner_act(store, principal, machine_id, action, session_hash, expected_seq, request_id):
     from commonplace.runner import drain
 
@@ -1600,10 +1667,15 @@ def _runner_act(store, principal, machine_id, action, session_hash, expected_seq
     now = store._now()
     stamp = _dt(now).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        # The flag, the request id, the drain log line and the hub-wide audit line stand or fall together:
-        # the hub audit goes in before the runner transaction commits, so a drain nobody audited cannot
-        # exist. The control lock is taken first, as everywhere else (control before any workspace writer).
+        # The flag, the request id and the drain log line are one transaction in the runner store. The hub-wide audit
+        # line goes in just before it commits and is its own write in another database, so the two cannot be one
+        # atomic step: a failed audit rolls the drain back, and a crash between the audit and the commit leaves an
+        # audit line for a drain that did not happen (never the other way round). The control lock is taken first,
+        # as everywhere else (control before any workspace writer), and held through the revoke check below, so a
+        # runner removed meanwhile cannot be drained.
         with store.gateway.db._lock, store_runner(store).transaction() as conn:
+            if _machine_row(store, machine_id)["revoked_at"]:
+                raise conflict("revoked")
             state, repeated = drain.change(
                 conn,
                 machine_id,
@@ -1614,23 +1686,33 @@ def _runner_act(store, principal, machine_id, action, session_hash, expected_seq
                 request_id=request_id,
             )
             if not repeated:
-                store.gateway.db.audit(
-                    action="runner.drain_started" if action == "drain" else "runner.drain_ended",
-                    decision="ok",
-                    workspace_id=store.workspace_id,
-                    user_id=current.user_id,
-                    connection_id=current.connection_id,
-                    auth=current.auth,
-                    target_ids=(machine_id,),
-                )
+                try:
+                    store.gateway.db.audit(
+                        action="runner.drain_started"
+                        if action == "drain"
+                        else "runner.drain_ended",
+                        decision="ok",
+                        workspace_id=store.workspace_id,
+                        user_id=current.user_id,
+                        connection_id=current.connection_id,
+                        auth=current.auth,
+                        target_ids=(machine_id,),
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "hub audit of a runner drain change failed"
+                    )
+                    raise _AuditFailed from None
     except drain.Refused as exc:
         raise conflict(
             exc.reason, "request_id" if exc.reason == "request_reused" else None
         ) from None
-    except Exception:
-        # The change was rolled back with its audit line; say so rather than leave a drain nobody recorded.
-        logging.getLogger(__name__).exception("runner drain change failed and was rolled back")
+    except _AuditFailed:
+        # Rolled back with its audit line: nothing changed, and the answer says why.
         raise StoreError("authority_unavailable", 503, reason="audit") from None
+    except sqlite3.OperationalError:
+        # A store that is busy or locked is not an audit problem: nothing changed, try again.
+        raise StoreError("authority_unavailable", 503, reason="busy") from None
     return {
         "request": None,
         "item": detail(store, principal, "runner", machine_id, session_hash=session_hash)["item"],

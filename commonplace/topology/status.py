@@ -221,6 +221,10 @@ def _instant(value):
     return None if not value else model.instant(value)
 
 
+# A run recorded as started this long ago or longer is history, not a signal that the machine is working.
+STARTED_WINDOW_S = 90 * 86400
+
+
 def collect_signals(
     gateway, workspace_id: str, *, now: datetime, runs=None
 ) -> dict[str, MachineSignals]:
@@ -258,17 +262,20 @@ def collect_signals(
         lease_limit = model.stamp(now)
         starting_limit = model.stamp(now - timedelta(seconds=_STARTING_GRACE_S))
         with (runs or jobs.open_store(gateway, workspace_id)).connection() as conn:
-            # One row per machine, not one per run: the newest start, the latest lease and the latest start
-            # under way are all that is read from the runs.
+            # One row per machine, not one per run, and only what can still matter: a lease or a start under way is
+            # current (a handful of rows), and the newest start counts back ``STARTED_WINDOW_S`` (a finished run stays
+            # "started", so the history is never read whole). Both reads name an index that leads with the state.
             for job in conn.execute(
-                "SELECT machine_id,"
-                "max(CASE WHEN state='started' THEN updated_at END) AS started_at,"
-                "max(CASE WHEN state='leased' THEN lease_until END) AS lease_until,"
-                "max(CASE WHEN state='starting' THEN starting_at END) AS starting_at "
-                "FROM runner_jobs WHERE state IN ('started','leased','starting') GROUP BY machine_id"
+                "SELECT machine_id,max(updated_at) AS started_at FROM runner_jobs "
+                "INDEXED BY runner_jobs_state_updated WHERE state='started' AND updated_at>? GROUP BY machine_id",
+                (model.stamp(now - timedelta(seconds=STARTED_WINDOW_S)),),
             ):
-                if job["started_at"]:
-                    started[job["machine_id"]] = job["started_at"]
+                started[job["machine_id"]] = job["started_at"]
+            for job in conn.execute(
+                "SELECT machine_id,max(CASE WHEN state='leased' THEN lease_until END) AS lease_until,"
+                "max(CASE WHEN state='starting' THEN starting_at END) AS starting_at FROM runner_jobs "
+                "INDEXED BY runner_jobs_state_updated WHERE state IN ('leased','starting') GROUP BY machine_id"
+            ):
                 if (job["lease_until"] or "") > lease_limit or (
                     job["starting_at"] or ""
                 ) > starting_limit:

@@ -151,6 +151,28 @@ def report_age(life, now):
     return None if life["reported_at"] is None else max(0, int(now - life["reported_at"]))
 
 
+def effective_phase(row, life):
+    """The phase the record is in. A record the old seam marked ready or failed (no lifecycle row) keeps that
+    meaning, but a ``ready`` nobody reported has no report time, so it is never trusted. One reading for the
+    screen and for ``decide``: what is shown as Unknown is never offered as something that can be started."""
+    if life["reported_at"] is not None or life["seq"] > 0 or life["phase"] != "not_started":
+        return life["phase"], life["reason"] or (
+            row["state_reason"] if life["phase"] == "failed" else None
+        )
+    if row["state"] == "ready":
+        return "running", None
+    if row["state"] == "failed":
+        return "failed", row["state_reason"]
+    return ("stopped", None) if row["applied_revision"] is not None else ("not_started", None)
+
+
+def report_fresh(life, now):
+    """True while the machine that picked a request up is still reporting on it (a report no older than
+    ``REPORT_STALE_S``). Unlike ``phase_trusted`` this holds for every phase, a stopped one included."""
+    age = report_age(life, now)
+    return age is not None and age <= REPORT_STALE_S
+
+
 def phase_trusted(life, now):
     """A moving or running phase is believed only while its report is fresh; stopped, failed and
     never-started are facts that do not expire."""
@@ -188,9 +210,11 @@ def _clear_expired(conn, workspace_id, life, now):
     already showed no request, so what they read is still what they act on."""
     if not request_expired(life, now):
         return life
+    # The request id that asked for it is remembered as expired: a retry with it is refused (``request_expired``)
+    # instead of answering "repeated" with no request behind it.
     conn.execute(
         "UPDATE cloud_workspace_lifecycle SET request_action=NULL,requested_by=NULL,requested_at=NULL,"
-        "claimed_by=NULL,claimed_at=NULL,claim_token=NULL WHERE workspace_id=?",
+        "claimed_by=NULL,claimed_at=NULL,claim_token=NULL,last_request_action='expired' WHERE workspace_id=?",
         (workspace_id,),
     )
     conn.execute(
@@ -221,11 +245,13 @@ def _check_token(value, name, *, minimum):
 def decide(row, life, action, now):
     """None when ``action`` may be requested now, or the reason it may not. Pure over the two rows."""
     life = effective(life, now)
-    phase, pending = life["phase"], life["request_action"]
+    phase, pending = effective_phase(row, life)[0], life["request_action"]
     if action == "withdraw":
         if not pending:
             return "nothing_to_withdraw"
-        if life["claimed_at"] is not None and phase_trusted(life, now):
+        # A claimed request can be withdrawn once its machine has gone quiet, whatever phase it left behind
+        # (a restart that reached "stopped" and then fell silent included).
+        if life["claimed_at"] is not None and report_fresh(life, now):
             return "already_picked_up"
         return None
     if row["node_id"] is None:
@@ -276,6 +302,8 @@ def request(
         now = store._now()
         life = life_of(conn, workspace_id, now)
         if request_id is not None and life["last_request_id"] == request_id:
+            if life["last_request_action"] == "expired":
+                raise conflict("request_expired", "request_id")
             if life["last_request_action"] != action:
                 raise conflict("request_reused", "request_id")
             return _result(life), True
@@ -287,6 +315,14 @@ def request(
         if refusal is not None:
             raise conflict(refusal)
         _ensure_row(conn, workspace_id, now)
+        # A record the older seam marked ready or failed has no lifecycle phase of its own yet: record the one it is
+        # read as, so the executor's claim moves it from where it is (a stop of a "ready" record is a stop).
+        shown_phase, shown_reason = effective_phase(row, life)
+        if shown_phase != life["phase"] and life["seq"] == 0 and life["reported_at"] is None:
+            conn.execute(
+                "UPDATE cloud_workspace_lifecycle SET phase=?,reason=? WHERE workspace_id=?",
+                (shown_phase, shown_reason, workspace_id),
+            )
         if action == "withdraw":
             claimed = life["claimed_at"] is not None
             conn.execute(
@@ -375,6 +411,30 @@ def claim(conn, executor_id, now):
         "node_id": row["node_id"],
         "revision": row["settings_revision"],
     }
+
+
+def fail(conn, workspace_id, reason, now):
+    """Executor seam: a machine reports that a workspace it was carrying failed with nothing waiting for it (a
+    running workspace that ran out of memory). A report needs no claim for this: the request that started it is long
+    done. Allowed from ``starting``, ``running`` and ``stopping``; anything else is ``invalid_report`` and changes nothing."""
+    if reason not in FAILURE_REASONS:
+        raise conflict("invalid_report")
+    life = conn.execute(
+        "SELECT * FROM cloud_workspace_lifecycle WHERE workspace_id=?", (workspace_id,)
+    ).fetchone()
+    if life is None or life["phase"] not in ("starting", "running", "stopping"):
+        raise conflict("invalid_report")
+    workspaces.set_state(conn, workspace_id, "failed", reason)
+    conn.execute(
+        "UPDATE cloud_workspace_lifecycle SET phase='failed',reason=?,phase_at=?,reported_at=?,seq=seq+1,"
+        "request_action=NULL,requested_by=NULL,requested_at=NULL,claimed_by=NULL,claimed_at=NULL,"
+        "claim_token=NULL WHERE workspace_id=?",
+        (reason, now, now, workspace_id),
+    )
+    conn.execute(
+        "INSERT INTO audit(object_id,action,user_id,created_at) VALUES (?,?,?,?)",
+        (workspace_id, "workspace.reported_failed", "system", now),
+    )
 
 
 def report(conn, workspace_id, claim_token, phase, now, *, reason=None, applied_revision=None):

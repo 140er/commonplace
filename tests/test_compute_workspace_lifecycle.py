@@ -598,3 +598,86 @@ def test_a_claim_token_is_not_the_counter_plus_one(api):
         assert claim["claim_token"] != seq and isinstance(claim["claim_token"], int)
         tokens.append(claim["claim_token"])
     assert tokens[0] != tokens[1]
+
+
+# round 2 of the #615 review (quality and security)
+
+
+def test_a_legacy_ready_record_is_decided_as_what_it_is_shown_as(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    # The older seam marked it ready with no lifecycle row and no report: shown as Unknown, so it is not startable.
+    with api.env.store._journal() as conn:
+        conn.execute(
+            "UPDATE cloud_workspaces SET state='ready',applied_revision=1 WHERE id=?", (ws["id"],)
+        )
+    shown = item(api, ws)
+    assert shown["status"]["code"] == "unknown"
+    conflict(ask(api, ws, "start"), "already_running")
+    status, _ = ask(api, ws, "stop")
+    assert status == 202
+    # The executor's claim moves it from where it is: a stop of a "ready" record is a stop, not a stuck queue.
+    claim = executor.claim()
+    assert claim["action"] == "stop"
+    executor.run(claim, "stopped")
+    assert item(api, ws)["status"]["code"] == "stopped"
+
+
+def test_a_restart_that_stopped_and_then_went_silent_can_be_withdrawn(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    executor.run(executor.claim(), "running")
+    ask(api, ws, "restart")
+    executor.run(executor.claim(), "stopped")
+    assert item(api, ws)["status"]["code"] == "starting"  # fresh: it is restarting
+    conflict(ask(api, ws, "withdraw"), "already_picked_up")
+    api.env.clock.now += lifecycle.REPORT_STALE_S + 5
+    quiet = item(api, ws)
+    # Not "Restarting" on a report nobody has repeated, and not a dead end either.
+    assert quiet["status"]["code"] == "unknown"
+    status, result = ask(api, ws, "withdraw")
+    assert status == 200 and result["item"]["status"]["code"] == "failed"
+
+
+def test_a_request_id_that_asked_for_an_expired_request_is_refused_not_repeated(api):
+    ws = make(api)
+    ask(api, ws, "start", request_id="first")
+    api.env.clock.now += lifecycle.REQUEST_TTL_S + 60
+    assert ask(api, ws, "start", request_id="first") == (
+        409,
+        {"error": "conflict", "field": "request_id", "reason": "request_expired"},
+    )
+    status, _ = ask(api, ws, "start", request_id="second")
+    assert status == 202
+    assert item(api, ws)["status"]["code"] == "start_requested"
+
+
+def test_an_expired_request_is_in_the_activity_list(api):
+    ws = make(api)
+    ask(api, ws, "start")
+    api.env.clock.now += lifecycle.REQUEST_TTL_S + 60
+    ask(api, ws, "start")  # clears the dead request first, audited, then asks again
+    texts = [a["text"] for a in item(api, ws)["activity"]]
+    assert any(t.startswith("A request expired without being carried out") for t in texts)
+    assert not any(t == "Changed" for t in texts)
+
+
+def test_a_running_workspace_that_fails_can_be_reported_without_a_claim(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    executor.run(executor.claim(), "running")
+    assert item(api, ws)["status"]["code"] == "running"
+    executor.fail(ws["id"], "out_of_memory")
+    failed = item(api, ws)
+    assert (
+        failed["status"]["code"] == "failed" and "ran out of memory" in failed["status"]["detail"]
+    )
+    assert api.request(path=f"/workspaces/{ws['id']}")[1]["workspace"]["status"] == "failed"
+    # A workspace that is not running cannot be reported failed this way, and an unknown reason is refused.
+    with pytest.raises(StoreError):
+        executor.fail(ws["id"], "out_of_memory")
+    ws2 = make(api, name="Second")
+    with pytest.raises(StoreError):
+        executor.fail(ws2["id"], "out_of_memory")
