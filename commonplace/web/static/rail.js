@@ -7,6 +7,7 @@ const paths = {
   memory: '<path d="M3.5 2.5h6.5L12.5 5v8.5h-9zM5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/>',
   bots: '<rect x="2.5" y="5" width="11" height="8" rx="2"/><path d="M8 5V2.8M5.8 9h.1M10.2 9h.1"/>',
   settings: '<path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/>',
+  cloud: '<path d="M4.6 12.5h6.4a2.6 2.6 0 0 0 .5-5.15 3.7 3.7 0 0 0-7.1-.4A2.8 2.8 0 0 0 4.6 12.5z"/>',
   keys: '<rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.1M6.5 7h.1M9 7h.1M11.5 7h.1M5 9.5h6"/>',
   chevron: '<path d="m4.5 6 3.5 3.5L11.5 6"/>',
   menu: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>',
@@ -24,11 +25,11 @@ export function projectSubline(board) {
 // The Workspace group of the account menu: the screens people only visit to set things up.
 // Shared by the desktop rail and the phone top bar so both list the same entries.
 function menuLinks({ needs = 0, rulesWaiting = 0, can_admin = false, can_manage_instance = false } = {}) {
-  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a><a href="#/compute">Compute</a>${can_admin === true ? '<a href="#/compute-map">Compute map</a>' : ''}</div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="logout">Sign out</button>`;
+  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a><a href="#/compute">Cloud workspaces</a>${can_admin === true ? '<a href="#/compute-map">Compute map</a>' : ''}</div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="logout">Sign out</button>`;
 }
 
 // Pure markup: the shell delegates data-action clicks and owns navigation/state.
-// The rail carries Bots and Memory only; botsWaiting is the one count (questions waiting on the person).
+// The rail carries Bots, Memory and Cloud workspaces; botsWaiting is the one count (questions waiting on the person).
 // Rail styles live in workbench.css, so re-rendering the rail never adds a stylesheet.
 export function renderRail({ workspace = 'Commonplace', user = '', view = 'board', needs = 0, rulesWaiting = 0, botsWaiting = 0, can_admin = false, can_manage_instance = false } = {}) {
   return `<nav class="rail" aria-label="Workspace">
@@ -36,6 +37,7 @@ export function renderRail({ workspace = 'Commonplace', user = '', view = 'board
     <button class="cmdk" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K">${icon('search')}<span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
     <a class="nav" href="#/bots" data-nav="bots"${current(view === 'bots')}>${icon('bots')}Bots ${badge(botsWaiting, 'waiting on you')}</a>
     <a class="nav" href="#/memory" data-nav="memory"${current(view === 'memory')}>${icon('memory')}Memory</a>
+    <a class="nav" href="#/compute" data-nav="compute"${current(view === 'compute')}>${icon('cloud')}Cloud workspaces</a>
     <div class="rail-foot"><button class="nav" id="shortcuts-link" data-action="shortcuts">${icon('keys')}Shortcuts <kbd>?</kbd></button>
     <details class="user-menu"><summary class="me"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${e(user || 'Account')}${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links">${menuLinks({ needs, rulesWaiting, can_admin, can_manage_instance })}</div></details></div>
   </nav>`;
@@ -48,5 +50,5 @@ export function renderPhoneBar({ board = null, needs = 0, rulesWaiting = 0, can_
 }
 
 export function renderPhoneTabs({ view = 'bots', botsWaiting = 0 } = {}) {
-  return `<nav class="m-tabs" aria-label="Main"><a href="#/bots" data-nav="bots"${current(view === 'bots')}>${icon('bots')}Bots ${badge(botsWaiting, 'waiting on you')}</a><a href="#/memory" data-nav="memory"${current(view === 'memory')}>${icon('memory')}Memory</a></nav>`;
+  return `<nav class="m-tabs" aria-label="Main"><a href="#/bots" data-nav="bots"${current(view === 'bots')}>${icon('bots')}Bots ${badge(botsWaiting, 'waiting on you')}</a><a href="#/memory" data-nav="memory"${current(view === 'memory')}>${icon('memory')}Memory</a><a href="#/compute" data-nav="compute"${current(view === 'compute')}>${icon('cloud')}Cloud workspaces</a></nav>`;
 }

@@ -12,11 +12,14 @@ import pytest
     "case",
     [
         "pure",
+        "images",
         "names",
         "states",
         "status-copy",
         "escaping",
         "create",
+        "presets",
+        "summary",
         "server-errors",
         "edit",
         "conflict",
@@ -25,6 +28,8 @@ import pytest
         "member",
         "failures",
         "focus",
+        "escape",
+        "busy",
     ],
 )
 def test_compute_workspaces_ui(case):

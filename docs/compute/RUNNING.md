@@ -278,7 +278,7 @@ fixtures, not real endpoints, operator keys or paid model calls.
 
 ## Workspace scripts
 
-The owner Workspace scripts section saves immutable Python source, arguments and
+The owner Scripts section (on the Compute screen) saves immutable Python source, arguments and
 relative output paths, then exposes source/manifest inspection and a separate
 exact execution proposal. Scripts remain unavailable without trusted
 scripts_enabled, ScriptRuntimeConfig and a separately signed runtime receipt;

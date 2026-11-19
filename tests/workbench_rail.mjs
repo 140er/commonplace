@@ -14,11 +14,14 @@ const renderAll = () => rail.renderRail({ ...options, can_admin: true }) + rail.
 const text = (html) => html.replace(/<span class="sr">[^<]*<\/span>/g, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 switch (process.argv[2]) {
   case 'nav': {
-    // Primary navigation: exactly Bots and Memory. Everything else lives in the account menu.
+    // Primary navigation: Bots, Memory and Cloud workspaces. The third entry is a deliberate exception to the earlier
+    // "rail is Bots and Memory only" decision: the usability review of the Compute cloud workspaces card (#614) found
+    // that Compute was not visibly reachable in Classic (no sidebar entry, no tab), so it is a first-level entry here and
+    // in the phone tab bar. Everything else still lives in the account menu.
     const html = rail.renderRail({ ...options, can_admin: true });
     const primary = html.slice(0, html.indexOf('<div class="rail-foot">'));
-    assert.deepEqual(hrefs(primary), ['#/bots', '#/memory']);
-    assert.deepEqual(links(primary).map(text), ['Bots 2', 'Memory']);
+    assert.deepEqual(hrefs(primary), ['#/bots', '#/memory', '#/compute']);
+    assert.deepEqual(links(primary).map(text), ['Bots 2', 'Memory', 'Cloud workspaces']);
     for (const gone of ['#/needs', '#/console', '#/boards', '#/board/', 'rail-h', 'new-project', 'new-board', 'class="proj"']) assert.ok(!primary.includes(gone), gone);
     // The Workspace group: Projects, Needs me, Console, Compute (everyone, as in Deck) and, for the owner, Compute map, in that order, then the existing entries.
     const menu = html.match(/<div class="user-links">([\s\S]*?)<\/div><\/details>/)[1];
@@ -26,7 +29,7 @@ switch (process.argv[2]) {
     assert.match(menu, /<div class="menu-group" role="group" aria-label="Workspace">/);
     assert.match(group, /Workspace</);
     assert.deepEqual(hrefs(group), ['#/boards', '#/needs', '#/console', '#/compute', '#/compute-map']);
-    assert.deepEqual(links(group).map(text), ['Projects', 'Needs me 3', 'Console', 'Compute', 'Compute map']);
+    assert.deepEqual(links(group).map(text), ['Projects', 'Needs me 3', 'Console', 'Cloud workspaces', 'Compute map']);
     assert.deepEqual(hrefs(menu), ['#/boards', '#/needs', '#/console', '#/compute', '#/compute-map', '#/rules', '#/settings', '#/admin']);
     assert.ok(!rail.renderRail({ ...options, can_admin: false }).includes('#/compute-map'), 'the map is the owner\'s');
     // Compute itself (cloud workspaces, read-only for members) is in the menu for every member, like the Deck bar.
@@ -45,8 +48,9 @@ switch (process.argv[2]) {
   }
   case 'phone': {
     const html = rail.renderPhoneTabs({ ...options, view: 'bots' });
-    assert.deepEqual(hrefs(html), ['#/bots', '#/memory']);
-    assert.deepEqual(links(html).map(text), ['Bots 2', 'Memory']);
+    // Three tabs (the bar is three columns wide): the third is Cloud workspaces, so Compute is visibly reachable on a phone.
+    assert.deepEqual(hrefs(html), ['#/bots', '#/memory', '#/compute']);
+    assert.deepEqual(links(html).map(text), ['Bots 2', 'Memory', 'Cloud workspaces']);
     for (const gone of ['Board', 'Chat', 'Needs me', 'm-chat-tab', '#/needs', 'newb']) assert.ok(!html.includes(gone), gone);
     // The same Workspace group is reachable from the phone top bar's menu.
     const bar = rail.renderPhoneBar({ ...options, can_admin: true });
@@ -83,7 +87,7 @@ switch (process.argv[2]) {
     break;
   }
   case 'current': {
-    for (const view of ['bots', 'memory']) {
+    for (const view of ['bots', 'memory', 'compute']) {
       for (const html of [rail.renderRail({ ...options, view }), rail.renderPhoneTabs({ ...options, view })]) {
         const active = links(html).filter(a => a.includes('aria-current="page"'));
         assert.equal(active.length, 1, view);

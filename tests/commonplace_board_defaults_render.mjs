@@ -20,7 +20,8 @@ assert.ok(nav.outerHTML.includes('href="#/boards">Projects<'));
 assert.ok(!nav.outerHTML.includes('href="#/board/fresh-space"'));
 assert.ok(!nav.outerHTML.includes('href="#/space/fresh-space"'));
 assert.ok(phoneBar.innerHTML.includes('href="#/boards">Projects<'));
-assert.equal((phoneTabs.innerHTML.match(/<a /g) || []).length, 2);
+// Cloud workspaces (#614) is a deliberate third first-level entry: the usability review found Compute was not reachable at a glance in Classic.
+assert.equal((phoneTabs.innerHTML.match(/<a /g) || []).length, 3);
 // Moving a card to Review just moves it: the shell has no question form for a person's move.
 assert.ok(!app.includes('function reviewForm'));
 panel.hidden = false;

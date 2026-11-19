@@ -465,7 +465,7 @@ function navigation() {
   if (!boardNav) return;
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base === "#/compute-map" ? "map" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : /^#\/compute(\/management)?$/.test(state.base) ? "compute" : state.base === "#/compute-map" ? "map" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
@@ -1212,7 +1212,7 @@ function mountWorkbenchChat() {
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
         const mount = root.querySelector("#phone-tabs");
-        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
+        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : /^#\/compute(\/management)?$/.test(state.base) ? "compute" : "", botsWaiting: state.botsWaiting });
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
