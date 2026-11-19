@@ -1,8 +1,14 @@
 """Chat-relay jobs in the cost ledger: events per scope, the 80% warning, the hard stop."""
 
 import json
+import sys
 import time
+from pathlib import Path
 
+import pytest
+
+from commonplace.runner import chat_agent
+from commonplace.runner.agent import _Hub, _HubError
 from mempalace.sqlite_crypto import connect, row_factory
 from tests._relay_helpers import relay_hub_fixture  # noqa: F401
 
@@ -262,3 +268,135 @@ def test_no_budget_leaves_chat_untouched(relay_hub):
     message = h.post(h.owner, "Next.")
     assert h.poll(m)[0] == 200
     assert [r for r in _replies(h) if r["message_id"] == message] == []
+
+
+# The runner chat client end to end: a fake provider CLI prints its result, the real client
+# reads it, leases and answers over HTTP, and the hub's ledger and budgets do the rest.
+CLIENT_USAGE = ("--json-result", "--tokens", "100,20,10,30", "--cost", "0.0007")
+
+
+def _client_turn(h, m, tmp_path, *flags, text="Question"):
+    """One chat turn through the real client: post, lease, run the fake CLI, send the result."""
+    config = {
+        "hub_url": f"http://127.0.0.1:{h.hub.port}",
+        "token_env": "COMMONPLACE_RUNNER_TOKEN",
+        "chat": {
+            "default_cli": "claude",
+            "context": "minimal",
+            "relay_always": False,
+            "clis": {
+                "claude": {
+                    "argv": [
+                        sys.executable,
+                        str(Path(__file__).with_name("runner_fake_cli.py").resolve()),
+                        "--record",
+                        str(tmp_path / "record.json"),
+                        "--model",
+                        "{model}",
+                        *flags,
+                    ],
+                    "default_model": "claude-haiku-5-5",
+                    "tools": True,
+                }
+            },
+        },
+    }
+    h.post(h.owner, text)
+    hub = _Hub({"hub_url": config["hub_url"], "poll_seconds": 3}, m["machine_token"])
+    job = hub.post("lease", {"clis": ["claude"]}, prefix="/api/runner/chat/")
+    assert job is not None
+    chat_agent._reply(hub, config, job)
+    return job
+
+
+def test_client_sends_provider_usage_so_chat_writes_a_known_cost(relay_hub, tmp_path):
+    h = relay_hub
+    m = _setup(h)
+    job = _client_turn(h, m, tmp_path, *CLIENT_USAGE)
+    [event] = _rows(h, "SELECT * FROM cost_events WHERE job_id=?", job["job"])
+    assert (event["source"], event["cost_micros"], event["currency"]) == ("chat", 700, "USD")
+    assert (event["input_tokens"], event["output_tokens"], event["cost_unknown"]) == (130, 30, 0)
+    [row] = _rows(h, "SELECT * FROM run_ledger WHERE source='chat'")
+    assert (row["model_provider"], row["model"]) == ("claude", "claude-haiku-5-5")
+    sums = _costs(h)
+    assert sums["workspace"]["cost_micros"] == {"USD": 700}
+    assert sums["workspace"]["unknown_cost_runs"] == 0
+    assert [a["cost_micros"] for a in sums["by_agent"]] == [{"USD": 700}]
+    assert [p["project"] for p in sums["by_project"]] == ["work"]
+    # Only the whitelisted numbers left the machine: none of the other result fields did.
+    dump = json.dumps({t: _rows(h, "SELECT * FROM " + t) for t in ("run_ledger", "cost_events")})
+    for canary in ("session-canary", "/canary/path", "canary-model", "canary-tier", "Question"):
+        assert canary not in dump
+
+
+def test_client_without_a_reported_cost_stays_unknown_never_zero(relay_hub, tmp_path):
+    h = relay_hub
+    m = _setup(h)
+    plain = _client_turn(h, m, tmp_path)  # a CLI that prints plain text reports nothing
+    no_cost = _client_turn(h, m, tmp_path, "--json-result", "--tokens", "5,0,0,7")
+    zero = _client_turn(h, m, tmp_path, "--json-result", "--cost", "0")
+    events = {e["job_id"]: e for e in _rows(h, "SELECT * FROM cost_events")}
+    for job in (plain, no_cost, zero):
+        event = events[job["job"]]
+        assert (event["cost_unknown"], event["cost_micros"], event["currency"]) == (1, None, None)
+    assert (events[no_cost["job"]]["input_tokens"], events[no_cost["job"]]["output_tokens"]) == (
+        5,
+        7,
+    )
+    assert events[plain["job"]]["input_tokens"] is None
+    sums = _costs(h)
+    assert sums["workspace"]["unknown_cost_runs"] == 3 and sums["workspace"]["cost_micros"] == {}
+
+
+def test_client_sends_usage_of_a_failed_turn(relay_hub, tmp_path):
+    h = relay_hub
+    m = _setup(h)
+    job = _client_turn(h, m, tmp_path, *CLIENT_USAGE, "--exit", "1")
+    assert h.jobs()[-1]["code"] == "cli_failed"
+    [event] = _rows(h, "SELECT * FROM cost_events WHERE job_id=?", job["job"])
+    assert (event["cost_micros"], event["output_tokens"], event["cost_unknown"]) == (700, 30, 0)
+
+
+def test_chat_spend_from_the_client_reaches_the_warning_and_the_hard_stop(relay_hub, tmp_path):
+    h = relay_hub
+    m = _setup(h)
+    _budget(h, "project", "work", 1000)
+    _client_turn(h, m, tmp_path, "--json-result", "--cost", "0.0007")
+    assert "budget_warnings" not in _needs_me(h, h.owner)
+    _client_turn(h, m, tmp_path, "--json-result", "--cost", "0.0001")  # 800 of 1000: 80%
+    [item] = _needs_me(h, h.owner)["budget_warnings"]
+    assert item["scope"] == {"kind": "project", "key": "work"} and item["reasons"] == ["warning"]
+    assert h.request(h.member, "GET", "/api/needs-me")[0] == 403
+    assert "budget_warnings" not in _needs_me(h, h.other)
+    # Still below the limit: the next chat start is admitted and its answer reaches 100%.
+    _client_turn(h, m, tmp_path, "--json-result", "--cost", "0.0002")
+    levels = {mark["level"] for mark in _rows(h, "SELECT level FROM cost_budget_marks")}
+    assert levels == {"warning", "limit"}
+    assert len(_needs_me(h, h.owner)["budget_warnings"]) == 1  # one item per scope and window
+    message = h.post(h.owner, "One more question.")
+    assert h.poll(m)[0] == 204
+    job = h.jobs()[-1]
+    assert (job["state"], job["code"], job["message_id"]) == ("skipped", "budget_exceeded", message)
+    [reply] = [r for r in _replies(h) if r["message_id"] == message]
+    assert reply["code"] == "budget_exceeded" and "project work budget" in reply["text"]
+    assert h.status(h.owner)[1]["front"]["runner"]["last_error"] == "budget_exceeded"
+
+
+def test_client_resending_the_same_answer_counts_once(relay_hub, tmp_path, monkeypatch):
+    h = relay_hub
+    m = _setup(h)
+    send = chat_agent._post_result
+    fenced = []
+
+    def twice(hub, action, body, deadline):
+        result = send(hub, action, body, deadline)
+        with pytest.raises(_HubError) as exc:  # the retry of an answer the hub already holds
+            send(hub, action, body, deadline)
+        fenced.append(exc.value.kind)
+        return result
+
+    monkeypatch.setattr(chat_agent, "_post_result", twice)
+    _client_turn(h, m, tmp_path, *CLIENT_USAGE)
+    assert fenced == ["fenced"]
+    assert len(_rows(h, "SELECT * FROM cost_events")) == 1
+    assert _costs(h)["workspace"]["cost_micros"] == {"USD": 700}
