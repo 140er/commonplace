@@ -1013,7 +1013,9 @@ def test_escape_steps_back_and_saving_keeps_focus_on_the_button(served, ui):
         assert page.locator("[data-ws-notice]").inner_text() == "Saving…"
         notice = page.locator("[data-ws-notice]")
         expect(notice).to_contain_text("Saved “Escape box”")
-        expect(page.get_by_role("heading", name="Escape box", exact=True)).to_be_focused()
+        expect(
+            page.locator(".compute-ws").get_by_role("heading", name="Escape box", exact=True)
+        ).to_be_focused()
 
     _run(fx, ui, "desktop", body)
 

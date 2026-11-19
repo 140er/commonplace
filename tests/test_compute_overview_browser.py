@@ -551,16 +551,16 @@ def test_a_refresh_that_fails_keeps_the_old_data_and_says_it_is_old(served, ui):
                 body='{"error":"authority_unavailable"}',
             ),
         )
-        page.get_by_role("button", name="Refresh overview").click()
+        page.get_by_role("button", name="Update overview").click()
         expect(page.locator(ROOT)).to_contain_text("Could not refresh. Showing the data from")
         expect(page.locator(ROOT)).to_contain_text("it may be out of date")
         expect(page.locator("[data-ov-announce]")).to_contain_text("could not be refreshed")
         assert "edge-runner" in _shown(page) and "edge-runner" in before
         _shot(page, f"{label}-44-stale")
         page.unroute(f"**{OVERVIEW}")
-        page.get_by_role("button", name="Refresh overview").click()
+        page.get_by_role("button", name="Update overview").click()
         expect(page.locator(ROOT)).not_to_contain_text("Could not refresh")
-        expect(page.get_by_role("button", name="Refresh overview")).to_be_focused()
+        expect(page.get_by_role("button", name="Update overview")).to_be_focused()
 
     _run(fx, ui, "desktop", body, expect_errors=True)  # the 503 is the point of this case
 
@@ -629,7 +629,7 @@ def test_a_status_that_changes_while_the_page_is_open_is_announced_once(served, 
                 "UPDATE connections SET last_used_at='2026-01-01T00:00:00Z' WHERE id IN "
                 "(SELECT machine_connection_id FROM runner_machines WHERE label='review-runner')"
             )
-        page.get_by_role("button", name="Refresh overview").click()
+        page.get_by_role("button", name="Update overview").click()
         expect(page.locator("[data-ov-announce]")).to_have_text("review-runner is now Offline.")
         expect(_row(page, "review-runner")).to_contain_text("Offline")
 

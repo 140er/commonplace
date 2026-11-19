@@ -178,10 +178,10 @@ export function createOverview(ctx) {
 
   function metaText() {
     if (data === null) return "";
-    return `As of ${timeOf(data.as_of)}. It refreshes every ${interval()} seconds while this page is open, or press Refresh overview.`;
+    return `As of ${timeOf(data.as_of)}. It refreshes every ${interval()} seconds while this page is open, or press Update overview.`;
   }
 
-  const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn" data-ov-action="refresh"${loading ? ' aria-disabled="true"' : ""}>${loading && data ? "Refreshing…" : "Refresh overview"}</button></header>`
+  const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn" data-ov-action="refresh"${loading ? ' aria-disabled="true"' : ""}>${loading && data ? "Refreshing…" : "Update overview"}</button></header>`
     + '<p class="compute-plain">Every machine, runner and cloud workspace Compute knows about. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
 
   function html() {

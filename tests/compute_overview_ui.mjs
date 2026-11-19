@@ -142,7 +142,7 @@ const cases = {
     assert.match(shown, /2 runners, 1 machine, 2 cloud workspaces\. 2 need attention\./);
     for (const label of ['Runners', 'Machines', 'Cloud workspaces']) assert.match(shown, new RegExp(`${label} \\(`));
     assert.match(shown, /Starting and stopping cloud workspaces on a machine is not available in this version/);
-    assert.match(f.nodes.meta.textContent, /^As of \d{1,2}:\d\d:\d\d.*\. It refreshes every 30 seconds while this page is open, or press Refresh overview\.$/);
+    assert.match(f.nodes.meta.textContent, /^As of \d{1,2}:\d\d:\d\d.*\. It refreshes every 30 seconds while this page is open, or press Update overview\.$/);
     assert.equal(f.ui.html().match(/role="alert"/g)?.length || 0, 0);
     // The empty state tells the owner what to do and a member who to ask.
     const empty = fixture({ data: overviewOf([]) }); await empty.ui.load();
