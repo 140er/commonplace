@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from datetime import timedelta
 
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import require_visible, task_row
@@ -53,31 +54,39 @@ def card_info(gateway, principal, number, *, write=False) -> dict:
             and not principal.policy.can_write_wing(row["board_wing"])
         ):
             raise Forbidden("card")
-        return {
-            "number": row["id"],
-            "pr_url": row["pr_url"] or "",
-            "pr_head": row["pr_head"] or "",
-        }
+        return _facts(row)
 
 
-def _visible_cards(gateway, principal, numbers) -> set:
+def _facts(row) -> dict:
+    """What previews need to know about a card: its number and its pull request as reported."""
+    return {
+        "number": row["id"],
+        "pr_url": row["pr_url"] or "",
+        "pr_head": row["pr_head"] or "",
+        "pr_state": row["pr_state"] or "",
+        "pr_reported_at": row["pr_reported_at"] or "",
+    }
+
+
+def _visible_cards(gateway, principal, numbers) -> dict:
+    """``{number: facts}`` for the cards of ``numbers`` the caller can see."""
     service = _service(gateway, principal)
-    seen = set()
+    seen = {}
     with service.store.connection() as conn:
         for number in numbers:
             try:
-                _card_row(conn, principal, number)
+                row = _card_row(conn, principal, number)
             except NotFound:
                 continue
-            seen.add(number)
+            seen[number] = _facts(row)
     return seen
 
 
-def _pr_cards(gateway, principal, pr_url) -> list:
+def _pr_cards(gateway, principal, pr_url) -> dict:
     service = _service(gateway, principal)
     with service.store.connection() as conn:
         numbers = [r[0] for r in conn.execute("SELECT id FROM tasks WHERE pr_url=?", (pr_url,))]
-    return sorted(_visible_cards(gateway, principal, numbers))
+    return _visible_cards(gateway, principal, numbers)
 
 
 def _name(raw) -> str:
@@ -378,36 +387,117 @@ def _held(conn, principal, preview_id):
     return row
 
 
-def get(gateway, principal, preview_id) -> dict:
+def stop_due(row, card, rule) -> tuple:
+    """``(stops_at, reason)`` for a ready preview under the workspace's stop rule, or
+    ``(None, None)``. A preview counts from when it last became ready (published or opened again),
+    so opening an expired preview again gives it the rule's full time again. The pull request
+    part counts from when the card last reported it merged or closed."""
+    if row["state"] != "ready" or rule is None:
+        return None, None
+    since = store.parse_stamp(row["updated_at"])
+    due = []
+    if rule.get("max_age_days"):
+        due.append((since + timedelta(days=rule["max_age_days"]), "expired"))
+    state = (card or {}).get("pr_state")
+    reported = (card or {}).get("pr_reported_at")
+    if rule.get("stop_days_after_pr") and state in ("merged", "closed") and reported:
+        try:
+            closed = store.parse_stamp(reported)
+        except ValueError:
+            closed = None
+        if closed is not None:
+            anchor = max(closed, since)
+            due.append((anchor + timedelta(days=rule["stop_days_after_pr"]), f"pr_{state}"))
+    if not due:
+        return None, None
+    at, why = min(due)
+    return store.stamp(at), why
+
+
+def _settle_expired(gateway, workspace, rows, cards, rule) -> set:
+    """Stop the ready previews whose time under the rule has passed, once, when they are read
+    or requested; nothing runs on a timer and the files stay. Returns the ids it stopped."""
+    now = store.stamp(store.clock())
+    due = []
+    for row in rows:
+        at, why = stop_due(row, cards.get(row["card"]), rule)
+        if at is not None and at <= now:
+            due.append((row, why))
+    if not due:
+        return set()
     db = gateway.db
+    stopped = set()
+    with db._lock, db._tx() as conn:
+        for row, why in due:
+            # Only the row as it was read: a preview opened again meanwhile keeps its new time.
+            changed = conn.execute(
+                "UPDATE previews SET state='stopped',reason=?,updated_at=? "
+                "WHERE id=? AND state='ready' AND updated_at=?",
+                (why, now, row["id"], row["updated_at"]),
+            ).rowcount
+            if changed:
+                store.event(conn, workspace, row["id"], row["card"], "expired", "rule", why)
+                stopped.add(row["id"])
+    return stopped
+
+
+def _rule_now(gateway, workspace):
+    with gateway.db._lock:
+        return rules(gateway.db._conn, workspace)
+
+
+def get(gateway, principal, preview_id) -> dict:
+    shown, _folder = open_preview(gateway, principal, preview_id, revisions=True)
+    return shown
+
+
+def open_preview(gateway, principal, preview_id, *, revisions=False) -> tuple:
+    """``(view, folder of the current revision or None)`` for a preview the caller can open,
+    with the stop rule applied first; ``NotFound`` otherwise."""
+    db, workspace = gateway.db, principal.workspace_id
     with db._lock:
-        row = store.row_by_id(db._conn, principal.workspace_id, preview_id)
+        row = store.row_by_id(db._conn, workspace, preview_id)
     if row is None:
         raise NotFound(str(preview_id))
-    card_info(gateway, principal, row["card"])
+    card = card_info(gateway, principal, row["card"])
+    rule = _rule_now(gateway, workspace)
+    if _settle_expired(gateway, workspace, [row], {row["card"]: card}, rule):
+        with db._lock:
+            row = store.row_by_id(db._conn, workspace, preview_id)
     with db._lock:
-        current, revisions = store.snapshot(db._conn, row, revisions=True)
-    return store.shape(row, current, revisions)
+        current, history = store.snapshot(db._conn, row, revisions=revisions)
+    stops_at, _why = stop_due(row, card, rule)
+    shown = store.shape(row, current, history, stops_at)
+    folder = (
+        store.revision_dir(gateway, workspace, row["id"], row["current_revision"])
+        if current is not None
+        else None
+    )
+    return shown, folder
 
 
 def listing(gateway, principal, *, card=None, pr=None) -> dict:
     """Previews the caller may see, newest first, with the workspace's usage and limits."""
     db, workspace = gateway.db, principal.workspace_id
     if card is not None:
-        numbers = [card_info(gateway, principal, card)["number"]]
+        info = card_info(gateway, principal, card)
+        cards = {info["number"]: info}
     elif pr is not None:
-        numbers = _pr_cards(gateway, principal, pr)
+        cards = _pr_cards(gateway, principal, pr)
     else:
-        numbers = None
+        cards = None
     with db._lock:
         rows = db._conn.execute(
             "SELECT * FROM previews WHERE workspace_id=? ORDER BY updated_at DESC, id DESC",
             (workspace,),
         ).fetchall()
-    if numbers is None:
-        allowed = _visible_cards(gateway, principal, sorted({r["card"] for r in rows}))
-    else:
-        allowed = set(numbers)
+    if cards is None:
+        cards = _visible_cards(gateway, principal, sorted({r["card"] for r in rows}))
+    rows = [r for r in rows if r["card"] in cards]
+    rule = _rule_now(gateway, workspace)
+    if _settle_expired(gateway, workspace, rows, cards, rule):
+        with db._lock:
+            rows = [store.row_by_id(db._conn, workspace, r["id"]) for r in rows]
     # One query for every current revision, then the shaping happens outside the lock.
     with db._lock:
         current = {
@@ -419,8 +509,10 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
             )
         }
         held = store.usage(db._conn, workspace)
-        rule = rules(db._conn, workspace)
-    shown = [store.shape(r, current.get(r["id"])) for r in rows if r["card"] in allowed]
+    shown = [
+        store.shape(r, current.get(r["id"]), None, stop_due(r, cards.get(r["card"]), rule)[0])
+        for r in rows
+    ]
     return {"previews": shown, "usage": held, "limits": store.LIMITS, "rule": rule}
 
 
@@ -507,8 +599,8 @@ def get_rules(gateway, principal) -> dict:
 
 
 def set_rules(gateway, principal, body) -> dict:
-    """Owner only. ``None`` switches a part of the rule off. The rule is stored and shown; the
-    serving slice applies it."""
+    """Owner only. ``None`` switches a part of the rule off. The rule is applied when a
+    preview is next read or requested (``stop_due``); nothing runs on a timer."""
     if not principal.person or principal.role != "owner":
         raise Forbidden("owner")
     if not isinstance(body, dict) or set(body) - set(RULE_BOUNDS):

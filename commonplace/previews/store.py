@@ -293,7 +293,7 @@ def snapshot(conn, row, *, revisions=False) -> tuple:
     return current, (revision_rows(conn, row["id"]) if revisions else None)
 
 
-def shape(row, current, revisions=None) -> dict:
+def shape(row, current, revisions=None, stops_at=None) -> dict:
     """The public shape of a preview, from rows already read. It names no path, host or
     environment value."""
     state, reason = effective(row)
@@ -316,7 +316,7 @@ def shape(row, current, revisions=None) -> dict:
         "published_by": current["published_by"] if current else row["published_by"],
         "by": "person" if (current["by_person"] if current else row["by_person"]) else "coworker",
         "published_at": current["published_at"] if current else row["created_at"],
-        "stops_at": None,
+        "stops_at": stops_at if state == "ready" else None,
         "last_changed_at": row["updated_at"],
         "url": f"/p/{row['id']}/" if current is not None else None,
     }

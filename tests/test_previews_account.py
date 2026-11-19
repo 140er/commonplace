@@ -13,7 +13,7 @@ from commonplace import sessions
 from commonplace.account import deletion
 from commonplace.boards.service import BoardService
 from commonplace.extensions import ToolContext
-from commonplace.previews import service as previews
+from commonplace.previews import links, service as previews
 from tests._commonplace_account_helpers import site_fixture  # noqa: F401
 
 DAY = 86400
@@ -56,6 +56,9 @@ def test_deleting_the_account_removes_the_preview_rows_and_files_with_the_worksp
     site = published
     folder = site.data_dir / "workspaces" / site.studio / "previews"
     assert (folder / site.preview_ids[0] / "r1" / "index.html").is_file()
+    person = sessions.person_principal(site.db, site.alice, site.studio)
+    links.mint(site.gateway, person, site.preview_ids[0])
+    assert len(site.rows("SELECT * FROM preview_links")) == 1
     status, _ = site.json(
         "POST",
         "/api/account/deletion",
@@ -68,7 +71,7 @@ def test_deleting_the_account_removes_the_preview_rows_and_files_with_the_worksp
     assert result["state"] == "purged", result
     assert site.studio in result["deleted_workspaces"]
     assert not (site.data_dir / "workspaces" / site.studio).exists()
-    for table in ("previews", "preview_revisions", "preview_rules"):
+    for table in ("previews", "preview_revisions", "preview_rules", "preview_links"):
         assert site.rows(f"SELECT * FROM {table}") == [], table
     # The append-only record stays and holds ids and fixed reason codes, never the files.
     events = site.rows("SELECT * FROM preview_events")
