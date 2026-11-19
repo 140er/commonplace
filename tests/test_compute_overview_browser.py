@@ -100,15 +100,21 @@ def _populate(fx):
     draining = fleet.enroll("night-runner", **wings)
     fleet.seen(draining, 20)
     fleet.job(draining, "started", task=2, minutes_ago=5)
+    idle = fleet.enroll("idle-runner", **wings)
+    fleet.seen(idle, 15)
     gone = fleet.enroll("retired-runner", **wings)
     fleet.seen(gone, 20)
     revoke_machine(env, gone)
     with fleet.store().transaction() as conn:
-        conn.execute(drain.SCHEMA)
-        conn.execute(
-            "INSERT INTO runner_drain VALUES (?,?,?,?,?)",
-            (draining["machine_id"], 1, 1, "owner", "2026-11-19T09:00:00Z"),
-        )
+        for machine in (draining, idle):
+            drain.change(
+                conn,
+                machine["machine_id"],
+                draining=True,
+                expected_seq=0,
+                by="owner",
+                now="2026-11-19T09:00:00Z",
+            )
     node = fx.node["id"]
     executor = FakeExecutor(env)
     names = {}
@@ -261,7 +267,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         shown = _shown(page)
         assert "5 runners" not in shown  # six were enrolled; the sentence counts them all
         expect(page.locator(f"{ROOT} .compute-ov-summary")).to_contain_text(
-            "6 runners, 1 machine, 7 cloud workspaces"
+            "7 runners, 1 machine, 7 cloud workspaces"
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Busy")
@@ -274,6 +280,8 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         expect(_row(page, "spare-runner")).to_contain_text("Never connected")
         expect(_row(page, "spare-runner")).to_contain_text("No signal yet")
         expect(_row(page, "night-runner")).to_contain_text("Draining")
+        expect(_row(page, "idle-runner")).to_contain_text("Drained")
+        expect(_row(page, "idle-runner")).to_contain_text("none is in progress")
         expect(_row(page, "retired-runner")).to_contain_text("Revoked")
         # An offline runner is never green and never says online or running.
         offline = _row(page, "edge-runner")
@@ -317,13 +325,13 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
 
     def body(page, label, context):
         _go(page, fx, ui)
-        expect(_rows(page)).to_have_count(14)
-        page.get_by_role("button", name=re.compile(r"^Runners \(6\)")).click()
-        expect(_rows(page)).to_have_count(6)
+        expect(_rows(page)).to_have_count(15)
+        page.get_by_role("button", name=re.compile(r"^Runners \(7\)")).click()
+        expect(_rows(page)).to_have_count(7)
         expect(page.get_by_role("button", name=re.compile(r"^Runners"))).to_have_attribute(
             "aria-pressed", "true"
         )
-        expect(page.locator("[data-ov-announce]")).to_have_text("Showing 6 items.")
+        expect(page.locator("[data-ov-announce]")).to_have_text("Showing 7 items.")
         expect(page.get_by_role("button", name=re.compile(r"^Runners"))).to_be_focused()
         page.get_by_label("Filter by status").select_option(label="Offline (1)")
         expect(_rows(page)).to_have_count(1)
@@ -335,7 +343,7 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         )
         _shot(page, f"{label}-12-no-match")
         page.get_by_role("button", name="Clear filters").first.click()
-        expect(_rows(page)).to_have_count(14)
+        expect(_rows(page)).to_have_count(15)
         expect(page.get_by_label("Filter by status")).to_be_focused()
         page.get_by_label("Filter by status").select_option(label="Needs attention (6)")
         expect(_rows(page)).to_have_count(6)
@@ -404,6 +412,15 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                     "It is draining: no new runs start until you resume it.",
                 ],
                 "24-detail-draining",
+            ),
+            (
+                "idle-runner",
+                [
+                    "No new runs start here and none is in progress.",
+                    "Resume to use it again.",
+                    "Drain started: no new runs start here",
+                ],
+                "27-detail-drained",
             ),
             (
                 "Queued box",

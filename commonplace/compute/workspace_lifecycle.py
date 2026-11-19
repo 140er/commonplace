@@ -31,6 +31,10 @@ WORKSPACE_ACTIONS = (*ACTIONS, "withdraw")
 REPORT_STALE_S = 600
 # What a stop gives the container before it is ended; the confirmation states it.
 STOP_GRACE_S = 30
+# An unclaimed request that no machine picked up within this long expires: it is cleared when a machine asks for
+# work (``claim``) and whenever the owner asks for anything else, and it shows as expired until then, so an old
+# "start" can never be carried out by an executor that appears days later.
+REQUEST_TTL_S = 24 * 3600
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
 
 _START_FROM = frozenset({"not_started", "stopped", "failed"})
@@ -75,21 +79,33 @@ def conflict(reason, field=None):
 
 
 def schema(conn):
-    """One table, created once. A discarded record cascades its lifecycle row away."""
+    """The one table. Created in its own ``BEGIN IMMEDIATE`` step (or the caller's open transaction) with
+    ``IF NOT EXISTS``, so two processes opening the store together never both create it and a failure
+    leaves nothing half made. A discarded record cascades its lifecycle row away."""
     if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cloud_workspace_lifecycle'"
     ).fetchone():
         return
-    conn.execute(
-        "CREATE TABLE cloud_workspace_lifecycle ("
-        "workspace_id TEXT PRIMARY KEY REFERENCES cloud_workspaces(id) ON DELETE CASCADE,"
-        "phase TEXT NOT NULL DEFAULT 'not_started' CHECK(phase IN "
-        "('not_started','starting','running','stopping','stopped','failed')),"
-        "reason TEXT, seq INTEGER NOT NULL DEFAULT 0, phase_at REAL NOT NULL, reported_at REAL,"
-        "request_action TEXT CHECK(request_action IN ('start','stop','restart')),"
-        "requested_by TEXT, requested_at REAL, claimed_by TEXT, claimed_at REAL, claim_token INTEGER,"
-        "last_request_id TEXT, last_request_action TEXT)"
-    )
+    own = not conn.in_transaction
+    if own:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cloud_workspace_lifecycle ("
+            "workspace_id TEXT PRIMARY KEY REFERENCES cloud_workspaces(id) ON DELETE CASCADE,"
+            "phase TEXT NOT NULL DEFAULT 'not_started' CHECK(phase IN "
+            "('not_started','starting','running','stopping','stopped','failed')),"
+            "reason TEXT, seq INTEGER NOT NULL DEFAULT 0, phase_at REAL NOT NULL, reported_at REAL,"
+            "request_action TEXT CHECK(request_action IN ('start','stop','restart')),"
+            "requested_by TEXT, requested_at REAL, claimed_by TEXT, claimed_at REAL, claim_token INTEGER,"
+            "last_request_id TEXT, last_request_action TEXT)"
+        )
+    except BaseException:
+        if own:
+            conn.rollback()
+        raise
+    if own:
+        conn.commit()
 
 
 def default(now):
@@ -143,6 +159,46 @@ def phase_trusted(life, now):
     return True
 
 
+def request_expired(life, now):
+    """True for an unclaimed request older than ``REQUEST_TTL_S``."""
+    return (
+        life["request_action"] is not None
+        and life["claimed_at"] is None
+        and life["requested_at"] is not None
+        and now - life["requested_at"] > REQUEST_TTL_S
+    )
+
+
+def effective(life, now):
+    """The lifecycle row with an expired request taken out (pure: nothing is written)."""
+    if not request_expired(life, now):
+        return life
+    return {
+        **life,
+        "request_action": None,
+        "requested_by": None,
+        "requested_at": None,
+        "expired_action": life["request_action"],
+    }
+
+
+def _clear_expired(conn, workspace_id, life, now):
+    """Write the expiry down: the request goes and the audit trail says why. ``seq`` stays: the owner's view
+    already showed no request, so what they read is still what they act on."""
+    if not request_expired(life, now):
+        return life
+    conn.execute(
+        "UPDATE cloud_workspace_lifecycle SET request_action=NULL,requested_by=NULL,requested_at=NULL,"
+        "claimed_by=NULL,claimed_at=NULL,claim_token=NULL WHERE workspace_id=?",
+        (workspace_id,),
+    )
+    conn.execute(
+        "INSERT INTO audit(object_id,action,user_id,created_at) VALUES (?,?,?,?)",
+        (workspace_id, "workspace.request_expired", "system", now),
+    )
+    return life_of(conn, workspace_id, now)
+
+
 def _check_token(value, name, *, minimum):
     if type(value) is not int or value < minimum:
         raise workspaces.refuse(name, "invalid")
@@ -151,6 +207,7 @@ def _check_token(value, name, *, minimum):
 
 def decide(row, life, action, now):
     """None when ``action`` may be requested now, or the reason it may not. Pure over the two rows."""
+    life = effective(life, now)
     phase, pending = life["phase"], life["request_action"]
     if action == "withdraw":
         if not pending:
@@ -198,7 +255,7 @@ def request(
     with store._transaction(principal, session_hash) as (conn, current):
         row = workspaces._row(conn, workspace_id)
         now = store._now()
-        life = life_of(conn, workspace_id, now)
+        life = _clear_expired(conn, workspace_id, life_of(conn, workspace_id, now), now)
         if request_id is not None and life["last_request_id"] == request_id:
             if life["last_request_action"] != action:
                 raise conflict("request_reused", "request_id")
@@ -249,6 +306,12 @@ def claim(conn, executor_id, now):
 
     The caller holds a transaction on the Compute store. Never called by REST.
     """
+    for stale in conn.execute(
+        "SELECT * FROM cloud_workspace_lifecycle WHERE request_action IS NOT NULL AND claimed_at IS NULL "
+        "AND requested_at<=?",
+        (now - REQUEST_TTL_S,),
+    ).fetchall():
+        _clear_expired(conn, stale["workspace_id"], dict(stale), now)
     row = conn.execute(
         "SELECT l.*, w.revision AS settings_revision, w.node_id AS node_id "
         "FROM cloud_workspace_lifecycle l JOIN cloud_workspaces w ON w.id=l.workspace_id "

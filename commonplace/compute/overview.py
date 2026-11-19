@@ -13,6 +13,7 @@ Docs: docs/system/compute-overview.md.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -244,6 +245,15 @@ def _trusted(phase, life, now):
     return True
 
 
+def _machine_verified(row):
+    """The chosen machine's enrollment state (``verified`` only after a signed check; never a live probe)."""
+    try:
+        meta = json.loads(row["node_metadata"]) if row["node_metadata"] else {}
+    except ValueError:
+        meta = {}
+    return meta.get("state") == "verified"
+
+
 def _workspace_blockers(row, status, executor, manage):
     blockers = []
     if row["node_id"] is None:
@@ -252,6 +262,13 @@ def _workspace_blockers(row, status, executor, manage):
                 "code": "no_machine",
                 "text": "No machine is chosen for it."
                 + (" Choose one with Change settings." if manage else ""),
+            }
+        )
+    if row["node_id"] is not None and not _machine_verified(row):
+        blockers.append(
+            {
+                "code": "machine_not_verified",
+                "text": "Its machine is not verified yet, so nothing can start on it.",
             }
         )
     if status["code"] == "private_image":
@@ -272,6 +289,7 @@ def _workspace_blockers(row, status, executor, manage):
 
 
 def workspace_item(row, life, now, *, manage, executor):
+    life = lifecycle.effective(life, now)  # an expired request is not a request
     status = workspace_status(row, life, now, manage=manage, executor=executor)
     public = workspaces.public(row, manage=manage)
     phase, _ = effective_phase(row, life)
@@ -283,6 +301,12 @@ def workspace_item(row, life, now, *, manage, executor):
         "blockers": blockers,
         "issues": [],
     }
+    if life.get("expired_action"):
+        health["issues"].append(
+            f"Its earlier {life['expired_action']} request expired after "
+            f"{lifecycle.REQUEST_TTL_S // 3600} hours without a machine picking it up. "
+            "Ask again if you still want it."
+        )
     item = {
         "kind": "workspace",
         "id": row["id"],
@@ -1064,6 +1088,27 @@ def _activity_from_audit(rows, now, *, manage):
     return result
 
 
+def _runner_activity(gateway, workspace_id, machine_id, now):
+    """Recent runs and drain changes, newest first."""
+    from commonplace.runner import drain, jobs
+
+    entries = _runs_activity(_recent_runs(gateway, workspace_id, machine_id), now)
+    with jobs.open_store(gateway, workspace_id).connection() as conn:
+        for row in drain.log(conn, machine_id, ACTIVITY_LIMIT):
+            at = _iso_to_epoch(row["at"])
+            entries.append(
+                {
+                    "at": at,
+                    "age_s": None if at is None else max(0, int(now - at)),
+                    "text": "Drain started: no new runs start here"
+                    if row["action"] == "drain"
+                    else "Drain ended: new runs can start again",
+                }
+            )
+    entries.sort(key=lambda entry: entry["at"] or 0, reverse=True)
+    return entries[:ACTIVITY_LIMIT]
+
+
 def _runs_activity(runs, now):
     result = []
     for run in runs:
@@ -1132,7 +1177,7 @@ def detail(store, principal, kind, item_id, *, session_hash):
     item = items[0] if items else None
     if item is None:
         raise not_found()
-    item["activity"] = _runs_activity(_recent_runs(store.gateway, store.workspace_id, item_id), now)
+    item["activity"] = _runner_activity(store.gateway, store.workspace_id, item_id, now)
     machine = _machine_row(store, item_id)
     item["facts"] = [
         {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
@@ -1152,11 +1197,13 @@ def detail(store, principal, kind, item_id, *, session_hash):
 def require(store, principal, kind, item_id, *, session_hash):
     """Owner check plus concealment: the record must exist in this workspace, before any body is read."""
     _ident(item_id)
-    if kind == "workspace":
-        _one_workspace(store, principal, session_hash, item_id)
-    else:
-        with store._transaction(principal, session_hash):
-            pass
+    with store._transaction(principal, session_hash) as (
+        conn,
+        _,
+    ):  # owner only, here as well as in the route
+        if kind == "workspace":
+            workspaces._row(conn, item_id)
+    if kind != "workspace":
         _machine_row(store, item_id)
 
 
@@ -1421,6 +1468,7 @@ def _runner_act(store, principal, machine_id, action, session_hash, expected_seq
     now = store._now()
     stamp = _dt(now).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
+        # The flag, the request id and the audit line are one transaction in the runner store.
         with jobs.open_store(store.gateway, store.workspace_id).transaction() as conn:
             state, repeated = drain.change(
                 conn,
@@ -1429,19 +1477,27 @@ def _runner_act(store, principal, machine_id, action, session_hash, expected_seq
                 expected_seq=expected_seq,
                 by=current.user_id,
                 now=stamp,
+                request_id=request_id,
             )
     except drain.Refused as exc:
-        raise conflict(exc.reason) from None
+        raise conflict(
+            exc.reason, "request_id" if exc.reason == "request_reused" else None
+        ) from None
     if not repeated:
-        store.gateway.db.audit(
-            action="runner.drain_started" if action == "drain" else "runner.drain_ended",
-            decision="ok",
-            workspace_id=store.workspace_id,
-            user_id=current.user_id,
-            connection_id=current.connection_id,
-            auth=current.auth,
-            target_ids=(machine_id,),
-        )
+        # The same event in the hub-wide audit log (another database, so written after the commit; the
+        # drain log row above is the one that cannot be missing).
+        try:
+            store.gateway.db.audit(
+                action="runner.drain_started" if action == "drain" else "runner.drain_ended",
+                decision="ok",
+                workspace_id=store.workspace_id,
+                user_id=current.user_id,
+                connection_id=current.connection_id,
+                auth=current.auth,
+                target_ids=(machine_id,),
+            )
+        except Exception:  # noqa: BLE001 - the drain is done and logged; a mirror failure must not undo it
+            logging.getLogger(__name__).exception("hub audit of a runner drain change failed")
     return {
         "request": None,
         "item": detail(store, principal, "runner", machine_id, session_hash=session_hash)["item"],

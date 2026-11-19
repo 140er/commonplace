@@ -535,3 +535,28 @@ def test_no_secret_shaped_field_is_ever_served(api, fleet):
     ):
         assert needle not in text, needle
     assert made["machine_token"] not in text and made["worker_token"] not in text
+
+
+def test_a_workspace_on_an_unverified_machine_lists_that_as_what_stops_it(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"])
+    blockers = {b["code"] for b in by_name(read(api))[ws["name"]]["health"]["blockers"]}
+    assert "machine_not_verified" in blockers
+    with api.env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+    blockers = {b["code"] for b in by_name(read(api))[ws["name"]]["health"]["blockers"]}
+    assert "machine_not_verified" not in blockers
+
+
+def test_the_action_route_checks_the_owner_before_it_looks_at_a_record(api):
+    ws = workspace(api)
+    ask = member(api)
+    for path in (f"{BASE}/workspace/{ws['id']}/start", f"{BASE}/workspace/nothing/start"):
+        assert ask("POST", path, {"expected_seq": 0, "expected_version": 1}) == (
+            403,
+            {"error": "owner_required", "reason": "member"},
+        )

@@ -441,3 +441,62 @@ def test_withdrawing_a_request_a_machine_picked_up_does_not_say_nothing_was_sent
     text = " ".join(after["effect"])
     assert "Nothing had been sent" not in text
     assert "may still be starting or running" in text
+
+
+def test_an_unclaimed_request_expires_and_no_executor_can_take_it_later(api):
+    env = api.env
+    ws = make(api)
+    ask(api, ws, "start")
+    assert item(api, ws)["status"]["code"] == "start_requested"
+    env.clock.now += lifecycle.REQUEST_TTL_S + 60
+    # Shown as expired at once (a read writes nothing) and said so, not carried out.
+    expired = item(api, ws)
+    assert expired["status"]["code"] == "not_started" and expired["request"] is None
+    assert "earlier start request expired after 24 hours" in expired["health"]["issues"][0]
+    with env.store._journal() as conn:
+        assert lifecycle.claim(conn, "late-executor", env.store._now()) is None
+        actions = [
+            r["action"]
+            for r in conn.execute("SELECT action FROM audit WHERE object_id=?", (ws["id"],))
+        ]
+    assert "workspace.request_expired" in actions and "workspace.request_claimed" not in actions
+    # The owner can ask again at once; the new request is a fresh one.
+    status, result = ask(api, ws, "start")
+    assert status == 202 and item(api, ws)["status"]["code"] == "start_requested"
+
+
+def test_a_request_inside_its_time_to_live_is_still_claimed(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    api.env.clock.now += lifecycle.REQUEST_TTL_S - 60
+    assert executor.claim()["workspace_id"] == ws["id"]
+
+
+def test_asking_for_something_else_after_expiry_is_not_blocked_by_the_dead_request(api):
+    ws = make(api)
+    ask(api, ws, "start")
+    api.env.clock.now += lifecycle.REQUEST_TTL_S + 1
+    current = item(api, ws)
+    allowed = {a["action"]: a["allowed"] for a in current["actions"]}
+    assert allowed["start"] is True and allowed["withdraw"] is False
+    conflict(ask(api, ws, "withdraw"), "nothing_to_withdraw")
+
+
+def test_the_lifecycle_table_is_created_once_inside_its_own_transaction(api):
+    with api.env.store._journal() as conn:
+        lifecycle.schema(conn)  # a second call finds the table and changes nothing
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE name='cloud_workspace_lifecycle'"
+            ).fetchone()[0]
+            == 1
+        )
+    import sqlite3
+
+    plain = sqlite3.connect(":memory:", isolation_level=None)
+    plain.execute("CREATE TABLE cloud_workspaces (id TEXT PRIMARY KEY)")
+    lifecycle.schema(plain)
+    assert not plain.in_transaction
+    lifecycle.schema(plain)
+    assert plain.execute("SELECT count(*) FROM cloud_workspace_lifecycle").fetchone()[0] == 0
