@@ -250,7 +250,7 @@
 .compute-pr-sentence { margin: 8px 0 0; font-size: 14px; }
 .compute-pr-next { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
 .compute-pr-command pre { max-height: none; overflow: visible; font-size: 13px; overflow-wrap: anywhere; word-break: normal; user-select: all; }
-.compute-pr-run { margin: 8px 0 12px; padding-left: 22px; font-size: 14px; line-height: 1.5; }
+.compute-pr-run { list-style: decimal; margin: 8px 0 12px; padding-left: 22px; font-size: 14px; line-height: 1.5; }
 .compute-pr-run li + li { margin-top: 4px; }
 .compute-pr-grants { margin: 12px 0 0; }
 .compute-pr-gone { margin: 12px 0 0; padding: 12px; background: var(--well); border-radius: var(--r); font-size: 14px; }

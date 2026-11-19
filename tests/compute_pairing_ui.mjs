@@ -48,11 +48,12 @@ const sentences = {
   waiting: ['Waiting for the machine', 'The code is ready. Nothing has connected yet.', 'Run the command on the machine. The code stops working after 15 minutes.'],
   connected: ['Machine connected, waiting for your approval', 'The machine used the code and connected. It cannot do anything until you approve it.', "Compare the machine's name and fingerprint, then approve or choose This is not my machine."],
   approved: ['Approved', 'You approved this machine. It is finishing its setup.', 'Nothing to do here. This page updates when the machine reports that its checks passed.'],
-  ready: ['Set up and checked', 'The machine passed its setup checks.', 'Coworkers can run here only after a provider is connected and the machine is attested under Runner machines in Admin.'],
+  ready: ['Set up and checked', 'The machine passed its setup checks. This page cannot see whether it is switched on right now.', 'Coworkers can run here only after a provider is connected (sign in from Needs me) and the machine is attested under Runner machines in Admin.'],
   failed: ['A step failed', 'A setup step failed on the machine.', 'Open it to see the cause, then choose Set up again.'],
   expired: ['Code expired', 'The code was not used within 15 minutes and no longer works.', 'Choose Set up again for a new command.'],
   cancelled: ['Cancelled', 'This setup was cancelled before the machine connected. The code no longer works.', 'Choose Set up again for a new command.'],
   declined: ['Not approved', 'You said this is not your machine. Its access was removed.', 'Choose Set up again if you want to add a machine with the same settings.'],
+  abandoned: ['Setup removed', 'This setup was removed before it finished. Its access was removed.', 'Choose Set up again to add the machine with the same settings.'],
   revoked: ['Access removed', "This machine's access was removed.", 'Choose Set up again to add it back.'],
   offline: ['Offline', 'This machine sent signs of life before, and nothing has been heard for over 15 minutes.', 'Check that the machine is on and online. It returns to Set up and checked by itself.'],
 };
@@ -66,7 +67,7 @@ function item(state, extra = {}) {
     steps: steps(...stepStates), last_report_at: sheet ? STAMP : null, created_at: STAMP, expires_at: '2026-11-19T12:15:00Z', version: 1, fingerprint: sheet ? FINGERPRINT : null, grant,
     identity_digest: sheet ? 'f'.repeat(64) : null, accepted_at: ['approved', 'ready', 'offline'].includes(state) ? STAMP : null, binding_state: ['approved', 'ready', 'offline'].includes(state) ? 'unbound' : null,
     can_accept: state === 'connected', can_close: ['waiting', 'connected', 'approved', 'ready', 'offline', 'failed'].includes(state),
-    retry: ['expired', 'cancelled', 'declined', 'revoked', 'failed'].includes(state) ? { kind: 'runner', label: 'build-box', ...grant } : null, ...extra,
+    retry: ['expired', 'cancelled', 'declined', 'abandoned', 'revoked', 'failed'].includes(state) ? { kind: 'runner', label: 'build-box', ...grant } : null, ...extra,
   };
 }
 const memberNext = { connected: "Waiting for the owner's approval.", failed: 'A setup step failed on this machine. The owner can set it up again.' };
@@ -254,7 +255,7 @@ const cases = {
     f.submit(); await flush();
     assert.deepEqual(tickets(f)[0][2], { request_id: 'r-1', kind: 'runner', label: 'build-box', max_runtime_mode: 'approval-required', max_in_flight: 1, projects: ['demo'], topics: ['worker'], wings: ['shared'] });
     const html = f.section(), t = text(html);
-    assert.match(html, /<pre id="compute-pr-command" tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">/);
+    assert.match(html, /<pre id="compute-pr-command" role="region" tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">/);
     assert.ok(html.includes('SyntheticCodeSentinel_0123456789abcdefghijk'.replace(/'/g, '&#39;')) || html.includes('SyntheticCodeSentinel_'), 'the command carries the code');
     assert.match(t, /Run this on the machine/); assert.match(t, /holds a one-time code/); assert.match(t, /stops working after one use/);
     assert.match(t, /only question it asks/);
@@ -406,7 +407,7 @@ const cases = {
     const f = fixture({ pairings: [item('connected')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
     html = f.section(); t = text(html);
     assert.doesNotMatch(html, /data-pr-action="approve" aria-disabled/);
-    assert.match(t, /Approving lets this machine use the access listed above\. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it under Runner machines in Admin\./);
+    assert.match(t, /Approving lets this machine use the access listed above\. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it \(explained above\)\./);
     assert.ok(html.indexOf('data-pr-grants') < html.indexOf('data-pr-action="approve"'), 'the sentence is above the buttons');
     assert.match(t, /Who can start work on it 1 trusted agent/);
     for (const old of ['May start work on it', 'Cards at once', 'What it may do alone', 'No agent yet']) assert.ok(!t.includes(old), old);
@@ -485,14 +486,50 @@ const cases = {
     const f = fixture({ pairings: [item('ready'), item('ready', { id: 'pair_4444444444444444', label: 'attested-box', binding_state: 'owner_attested' })] }); await f.open();
     const t = text(f.section());
     assert.equal((t.match(/Coworkers cannot run on it yet\./g) || []).length, 1, 'only the machine that is not attested says it');
-    assert.equal((t.match(/attested under Runner machines in Admin/g) || []).length, 1, 'and the section note is not repeated per row');
+    assert.equal((t.match(/attests the machine/g) || []).length, 1, 'and the section note (which defines attested) is not repeated per row');
+    assert.doesNotMatch(t, /sign in from Needs me\) and the machine is attested/, 'the ready next step is not repeated in a row');
+  },
+
+  async 'copy-in-place'() {
+    // F: a failed copy selects the command and says so; the note is written in place, so nothing is rebuilt and the
+    // selection survives the next check.
+    const f = fixture(); f.state.clipboard = 'deny'; await f.open(); f.click('add'); await flush(); fill(f); wingBoxes(f); f.state.next.push(created()); f.submit(); await flush();
+    f.mounted.on = true; f.mounted.rootWrites = f.mounted.topWrites = 0;
+    f.click('copy'); await flush();
+    assert.deepEqual(f.status.copy, ['Copying is not available here. Select the command above and copy it yourself.']);
+    assert.equal(f.mounted.rootWrites, 0, 'the note is written in place');
+    f.state.pairings = [item('waiting')];
+    await f.tick();
+    assert.equal(f.mounted.rootWrites, 0, 'and the next check rebuilds nothing');
+    assert.equal(pr.finished(item('waiting')), false);
+  },
+
+  async 'poll-failure-announced'() {
+    const f = fixture({ pairings: [item('waiting')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
+    f.state.fail = failure(503, { error: 'x' }); await f.tick();
+    assert.equal(f.status.writes.filter(line => /Could not check just now/.test(line)).length, 1, 'said once, by the status line');
+    await f.tick(); await f.tick();
+    assert.equal(f.status.writes.filter(line => /Could not check just now/.test(line)).length, 1, 'not again while it keeps failing');
+  },
+
+  async 'set-up-again-keeps-requesters'() {
+    const f = fixture({ pairings: [item('expired')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
+    f.click('again', 'pair_0123456789abcdef'); await flush();
+    f.state.next.push(created()); f.submit(); await flush();
+    assert.deepEqual(tickets(f)[0][2].requesters, ['conn_a'], 'who may start work on the machine is carried over');
+    // Copying from a machine takes its requesters from the server instead.
+    assert.equal('requesters' in pr.createPayload({ ...pr.blankValues({ label: 'x', requesters: ['c'] }), pr_copy_from: 'mach_0123456789abcdef' }, 'r'), false);
+    assert.match(text(f.section()), /Setup removed|Waiting for the machine/);
+    const g = fixture({ pairings: [item('abandoned')] }); await g.open(); g.click('open', 'pair_0123456789abcdef'); await flush();
+    assert.match(text(g.section()), /Setup removed/); assert.match(g.html(), /data-pr-action="again"[^>]*>Set up again/);
+    assert.doesNotMatch(text(pr.stepsHTML(item('abandoned'))), /Waiting/);
   },
 
   async 'list-quiet'() {
     // Going back to the list clears what was said about the pairing just left, and a settled row does not repeat the section's note.
     const f = fixture({ pairings: [item('ready'), item('failed', { id: 'pair_3333333333333333', label: 'other-box' })] }); await f.open();
     const list = text(f.section());
-    assert.equal((list.match(/attested under Runner machines in Admin/g) || []).length, 1, 'the ready machine\'s next step is not repeated beside the section note');
+    assert.equal((list.match(/attests the machine/g) || []).length, 1, 'the ready machine\'s next step is not repeated beside the section note');
     assert.match(list, /Open it to see the cause, then choose Set up again/, "a failed row keeps its next step");
     f.click('open', 'pair_0123456789abcdef'); await flush();
     assert.match(text(f.section()), /Coworkers can run here only after a provider is connected/);
@@ -515,7 +552,7 @@ const cases = {
     f.state.pairings = [item('ready', { version: 2 })]; await f.tick();
     t = text(f.section());
     assert.match(t, /Set up and checked/); assert.match(t, /Provider and attestation: not done yet/);
-    assert.match(t, /Coworkers can run here only after a provider is connected and the machine is attested/);
+    assert.match(t, /Coworkers can run here only after a provider is connected \(sign in from Needs me\) and the machine is attested/);
     assert.doesNotMatch(t, /\b(running|runs now|is running|ready to run)\b/i, 'nothing says that anything runs');
     assert.equal(f.timers.size, 0);
   },
@@ -575,7 +612,7 @@ const cases = {
   },
 
   async closed() {
-    for (const state of ['expired', 'cancelled', 'declined', 'revoked']) {
+    for (const state of ['expired', 'cancelled', 'declined', 'abandoned', 'revoked']) {
       const f = fixture({ pairings: [item(state)] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
       const t = text(f.section());
       assert.ok(t.includes(sentences[state][0]), state); assert.ok(t.includes(sentences[state][1]), state); assert.ok(t.includes(sentences[state][2]), state);

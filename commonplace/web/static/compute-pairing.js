@@ -14,7 +14,7 @@ const enc = encodeURIComponent;
 export const POLL_MS = 3000;
 // States the machine can still move out of by itself or by the owner: the page keeps checking only these.
 export const LIVE = new Set(["waiting", "connected", "approved", "failed"]);
-export const CLOSED = new Set(["expired", "cancelled", "declined", "revoked"]);
+export const CLOSED = new Set(["expired", "cancelled", "declined", "abandoned", "revoked"]);
 const STEP_LABELS = { prerequisites: "Checks on the machine", files: "Runner files installed", service: "Background service started", check: "Final check" };
 const STEP_STATE = { pending: "Waiting", ok: "Done", failed: "Failed", not_run: "Not run" };
 const MODES = {
@@ -28,11 +28,11 @@ const AUTO_WARNING = "In this setting the agents on this machine run without ask
 const MEMBER_INTRO = "This is a read-only view of the machines being added. Only the workspace owner adds a machine and approves it.";
 const OWNER_INTRO = "A machine here is a computer that runs Coworkers (a runner). To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added, its settings are under Runner machines in Admin; cloud workspaces are below.";
 const NO_OFF_SWITCH = "There is no switch here to turn machine setup off.";
-const GRANTS_NOTE = "Approving lets this machine use the access listed above. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it under Runner machines in Admin.";
+const GRANTS_NOTE = "Approving lets this machine use the access listed above. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it (explained above).";
 const RUN_STEPS = ["Open a terminal on that machine. On Ubuntu: press the Super key, type Terminal and press Enter.", "Paste the command below (Ctrl+Shift+V) and press Enter. Do not type sudo in front of it.", "Wait for the steps below to turn to Done. This page updates by itself."];
 const WAIT_FINGERPRINT = "Waiting for the machine to print its fingerprint.";
 const CANNOT_RUN_YET = "Coworkers cannot run on it yet.";
-export const LIMITS_NOTE = "This version does not install the runner program itself (the command checks that it is there), and Coworkers can run on a machine only after a provider is connected and the machine is attested under Runner machines in Admin.";
+export const LIMITS_NOTE = "This version does not install the runner program itself (the command checks that it is there), and Coworkers can run on a machine only after a provider is connected (sign in from Needs me) and an owner attests the machine, which means confirming its provider and topics under Runner machines in Admin.";
 const LOAD_ERROR = "Machines being added could not be loaded. Reload to try again.";
 const NO_ANSWER = "No answer from the server, so nothing is confirmed. Reload to check what happened before trying again.";
 const MEMBER_NOTE = "Only the workspace owner can add a machine.";
@@ -81,12 +81,14 @@ export function createPayload(values, requestId) {
   if (projects.length) body.projects = projects;
   if (topics.length) body.topics = topics;
   if ((values.wings || []).length) body.wings = values.wings;
+  // Set up again keeps who may start work on the machine (the form has no control for it, so the values carry it).
+  if (!values.pr_copy_from && (values.requesters || []).length) body.requesters = values.requesters;
   return body;
 }
 
 export const blankValues = (retry = null) => ({
   pr_kind: "runner", pr_label: retry?.label || "", pr_copy_from: "", pr_projects: (retry?.projects || []).join(", "), pr_topics: (retry?.topics || []).join(", "),
-  wings: [...(retry?.wings || [])], pr_mode: retry?.max_runtime_mode || "approval-required", pr_max_in_flight: String(retry?.max_in_flight || 1),
+  wings: [...(retry?.wings || [])], requesters: [...(retry?.requesters || [])], pr_mode: retry?.max_runtime_mode || "approval-required", pr_max_in_flight: String(retry?.max_in_flight || 1),
 });
 
 /** The plain-words sheet the owner approves: who the machine is and what it may do. */
@@ -193,23 +195,24 @@ export function createPairing(ctx) {
       + `<div class="compute-summary compute-ws-summary" data-pr-summary role="alert" tabindex="-1">${summaryHTML()}</div>`
       + `<div class="compute-fields">`
       + `<div class="compute-field"><label for="pr_label">Name${required}</label><input id="pr_label" name="pr_label" value="${e(values.pr_label)}" maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false" data-pr-control="pr_label" aria-describedby="pr-label-help pr-error-label"${invalid("label")}><small id="pr-label-help">Lowercase letters, numbers, dots and dashes. Example: build-box.</small><span id="pr-error-label">${err("label")}</span></div>`
-      + `<div class="compute-field"><label for="pr_copy_from">Same settings as</label><select id="pr_copy_from" name="pr_copy_from" data-pr-control="pr_copy_from"${invalid("copy_from")}><option value="">Start from scratch</option>${(options?.copy_from || []).map(m => `<option value="${e(m.id)}"${m.id === values.pr_copy_from ? " selected" : ""}>${e(m.label)}</option>`).join("")}</select><small>${options?.copy_from?.length ? "Copies projects, topics, wings, what it may do alone and who may start work. No sign-ins and no approvals are copied." : "No machine exists yet to copy from."}</small>${err("copy_from")}</div>`
+      + `<div class="compute-field"><label for="pr_copy_from">Same settings as</label><select id="pr_copy_from" name="pr_copy_from" data-pr-control="pr_copy_from"${invalid("copy_from")}><option value="">Start from scratch</option>${(options?.copy_from || []).map(m => `<option value="${e(m.id)}"${m.id === values.pr_copy_from ? " selected" : ""}>${e(m.label)}</option>`).join("")}</select><small>${options?.copy_from?.length ? "Copies projects, topics, wings, what it may do without asking and who may start work. No sign-ins and no approvals are copied." : "No machine exists yet to copy from."}</small>${err("copy_from")}</div>`
       + (source ? `<p class="compute-quiet compute-wide" data-pr-source-note>Copied from ${e(quoted(source.label))}: projects ${e(source.projects.join(", "))}; topics ${e(source.topics.join(", "))}; ${source.requesters.length} trusted ${source.requesters.length === 1 ? "agent" : "agents"} may start work.</p>` : "")
       + `<div class="compute-field"><label for="pr_projects">Projects${optional}</label><input id="pr_projects" name="pr_projects" value="${e(values.pr_projects)}" autocomplete="off" spellcheck="false" data-pr-control="pr_projects" aria-describedby="pr-projects-help pr-error-projects"${invalid("projects")}><small id="pr-projects-help">The projects the machine may work on, separated by commas.</small><span id="pr-error-projects">${err("projects")}</span></div>`
       + `<div class="compute-field"><label for="pr_topics">Topics${optional}</label><input id="pr_topics" name="pr_topics" value="${e(values.pr_topics)}" autocomplete="off" spellcheck="false" data-pr-control="pr_topics" aria-describedby="pr-topics-help pr-error-topics"${invalid("topics")}><small id="pr-topics-help">The topics its agents answer to, separated by commas.</small><span id="pr-error-topics">${err("topics")}</span></div>`
       + `<fieldset class="compute-wide compute-pr-wings" id="pr_wings" tabindex="-1"><legend class="compute-label">Wings it may read${copying ? ' <span class="compute-quiet">(optional: copied)</span>' : required}</legend><small>A wing is a part of your memory. The machine reads only the wings you tick.</small>${wingBoxes}${err("wings")}</fieldset>`
-      + `<div class="compute-field"><label for="pr_mode">What it may do without asking</label><select id="pr_mode" name="pr_mode" data-pr-control="pr_mode" aria-describedby="pr-mode-warning">${Object.entries(MODES).map(([key, label]) => `<option value="${key}"${values.pr_mode === key ? " selected" : ""}>${e(label)}</option>`).join("")}</select><small id="pr-mode-warning" data-pr-warning>${QUIET_MODES.has(values.pr_mode) ? e(AUTO_WARNING) : ""}</small></div>`
+      + `<div class="compute-field compute-wide"><label for="pr_mode">What it may do without asking</label><select id="pr_mode" name="pr_mode" data-pr-control="pr_mode" aria-describedby="pr-mode-warning">${Object.entries(MODES).map(([key, label]) => `<option value="${key}"${values.pr_mode === key ? " selected" : ""}>${e(label)}</option>`).join("")}</select><small id="pr-mode-warning" data-pr-warning>${QUIET_MODES.has(values.pr_mode) ? e(AUTO_WARNING) : ""}</small></div>`
       + `<details class="compute-field compute-wide"><summary>More limits</summary><label for="pr_max_in_flight">Most cards at a time</label><select id="pr_max_in_flight" name="pr_max_in_flight" data-pr-control="pr_max_in_flight">${[1, 2, 3, 4].map(n => `<option value="${n}"${String(values.pr_max_in_flight) === String(n) ? " selected" : ""}>${n}</option>`).join("")}</select><small>The most cards the machine works on at the same time.</small></details>`
       + `</div><div class="compute-actions compute-pr-actions"><button type="submit" class="btn primary"${busy ? ' aria-disabled="true"' : ""}>${busy ? "Creating…" : "Create the command"}</button><button type="button" class="btn" data-pr-action="cancel"${busy ? ' aria-disabled="true"' : ""}>Cancel</button></div></form>`;
   }
 
-  function commandHTML(item) {
+  function commandHTML(item, clock = true) {
     if (!setup || setup.id !== item.id) return `<p class="compute-pr-gone" data-pr-gone>${e(GONE_COMMAND)}</p>`;
     return '<div class="compute-pr-command"><h4 id="compute-pr-command-title">Run this on the machine</h4>'
       + `<ol class="compute-pr-run">${RUN_STEPS.map(step => `<li>${e(step)}</li>`).join("")}</ol>`
-      + `<pre id="compute-pr-command" tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">${e(setup.command)}</pre>`
+      + `<pre id="compute-pr-command" role="region" tabindex="0" data-pr-command aria-labelledby="compute-pr-command-title">${e(setup.command)}</pre>`
       + `<div class="compute-actions"><button type="button" class="btn primary" data-pr-action="copy">Copy the command</button></div>`
-      + `<p class="compute-quiet" data-pr-copy-note role="status">${e(copyNote)}</p>`
+      // The copy note, like the clock line, is written in place and is not part of what decides a repaint.
+      + `<p class="compute-quiet" data-pr-copy-note role="status">${clock ? e(copyNote) : ""}</p>`
       + `<p class="compute-plain">${e(COMMAND_ONCE)} The code works until ${e(clockText(setup.expires_at) || "it expires")}.</p>`
       + '<p class="compute-plain">On a machine that does not already keep your services running after you log out, the command asks for one administrator confirmation. That is the only question it asks.</p></div>';
   }
@@ -247,7 +250,7 @@ export function createPairing(ctx) {
   }
   function detailHTML(item, clock = true) {
     const owner = manage();
-    const body = item.state === "waiting" && owner ? commandHTML(item) : "";
+    const body = item.state === "waiting" && owner ? commandHTML(item, clock) : "";
     const sheet = item.state === "connected" && owner && !item.stalled ? `${confirm ? "" : "<h4>Approve this machine?</h4>"}${sheetHTML(item)}${confirm ? "" : `<p class="compute-plain" data-pr-grants>${e(GRANTS_NOTE)}</p>`}` : "";
     const provider = owner && ["approved", "ready", "offline"].includes(item.state) ? `<p class="compute-plain">Provider and attestation: ${item.binding_state === "owner_attested" ? "done" : "not done yet"}.</p>` : "";
     return `<article class="compute-ws-detail compute-pr-detail" data-pr-id="${e(item.id)}" data-state="${e(item.state)}" aria-labelledby="compute-pr-heading">`
@@ -354,6 +357,8 @@ export function createPairing(ctx) {
     const item = find(selected), node = ctx.host()?.querySelector?.("[data-pr-checked]");
     const want = item ? clockText_(item) : "";
     if (node && node.textContent !== want) node.textContent = want;
+    const note = ctx.host()?.querySelector?.("[data-pr-copy-note]");
+    if (note && note.textContent !== copyNote) note.textContent = copyNote;
   }
   function paint(focus = "") {
     const host = ctx.host(), root = host?.querySelector?.("[data-pr-root]");
@@ -416,14 +421,15 @@ export function createPairing(ctx) {
       if (!ctx.valid(page) || id !== selected) return;
       if (failure?.status === 401 && ctx.denied(failure)) return;
       if (failure?.status === 404) { mode = ""; selected = null; setup = null; paint(); say("That setup is no longer available."); return; }
-      if (!pollError) { pollError = true; paint(); }
+      if (!pollError) { pollError = true; paint(); say(`Could not check just now. Showing what was true at ${clockText(serverTime)}; trying again.`); }
       schedule(); return;
     }
     if (!ctx.valid(page) || id !== selected || busy) return;
     const next = result?.pairing;
     if (!next || !list) { schedule(); return; }
     list = list.map(item => item.id === id ? next : item);
-    serverTime = result.server_time || serverTime; pollError = false;
+    serverTime = result.server_time || serverTime;
+    if (pollError) { pollError = false; lastSaid = ""; say(""); } // a recovered check clears what the failed one said
     note(next);
     paint();
     schedule();
@@ -536,8 +542,8 @@ export function createPairing(ctx) {
     catch { note = "Copying is not available here. Select the command above and copy it yourself."; selectCommand(); }
     if (!ctx.valid(page)) return;
     copyNote = note;
-    const node = ctx.host()?.querySelector?.("[data-pr-copy-note]");
-    if (node) node.textContent = note; else paint();
+    // In place: the command keeps its node, focus and selection (the fallback selects it for the person to copy).
+    if (ctx.host()?.querySelector?.("[data-pr-copy-note]")) writeClock(); else paint();
   }
   function selectCommand() {
     const node = ctx.host()?.querySelector?.("[data-pr-command]");
