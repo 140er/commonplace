@@ -29,7 +29,7 @@ STATUS = {"type": "string", "enum": ["backlog", "todo", "doing", "review", "done
 PRIORITY = {
     "type": "string",
     "enum": list(PRIORITIES),
-    "description": "Owner person only. Omit on a new card for the default (normal).",
+    "description": "Workspace owner (person) on any card; the board's Coworker only on a card no person ranked, with priority_reason. Omit on a new card for the default (normal), which the Coworker ranks on intake.",
 }
 REVIEWER = {
     "type": ["string", "null"],
@@ -48,6 +48,8 @@ def line(c):
         result += f" type:{c['task_type']}"
     if c.get("priority"):
         result += f" priority:{c['priority']}"
+        if c.get("priority_source") in ("person", "coworker"):
+            result += f" priority_by:{c['priority_source']}"
     result += parent_line(c)
     if c["assignee"]:
         result += f"  {c['assignee']}"
@@ -344,7 +346,7 @@ def add(
                 "task_heartbeat": "Renew your doing card's claim and read approvals waiting on you. Call every 20 minutes, including while waiting on checks.",
                 "task_comment": "Append a comment and renew your claim.",
                 "task_take_next": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
-                "task_update": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. "
+                "task_update": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority and it always wins; the board's Coworker may rank cards no person ranked, with priority_reason (one line, kept in the card history). Other connections cannot. Review requires question, context and at least two options. "
                 "Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. "
                 "Reopen done to todo (status only). Save a lesson with done. "
                 "Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. "
@@ -587,6 +589,10 @@ def register_tools():
                 "description": "Owner person only; empty string clears. Omit to preserve the type.",
             },
             "priority": PRIORITY,
+            "priority_reason": {
+                "type": "string",
+                "description": "One line (max 200 characters) saying why the Coworker set this priority; required for the Coworker, refused for a person.",
+            },
             "reviewer": REVIEWER,
             "labels": ARRAY,
             "blocked_by": {

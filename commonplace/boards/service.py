@@ -3213,7 +3213,7 @@ class BoardService(lifecycle.LifecycleMixin):
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_session=?,claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=?,ask_blocks=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=?,priority=?,priority_by=?,reviewer=?,ask_blocks=? WHERE id=?",
             (
                 self.ctx.extra.get("claim_session", "") if until and assignee == p.actor else "",
                 until,
@@ -3224,6 +3224,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 "decision" if ask is not None else None,
                 label,
                 rank,
+                priorities.BY_DEFAULT if priority is priorities.UNSET else priorities.BY_PERSON,
                 reviewer,
                 blocks if ask is not None else None,
                 number,
@@ -4277,20 +4278,57 @@ class BoardService(lifecycle.LifecycleMixin):
                 raise refusal
         return update
 
-    def _priority_rank(self, args):
-        """The owner's requested rank, or None when the update does not set one."""
+    @staticmethod
+    def _priority_value(args):
+        """The requested priority name, or None when the update does not set one."""
         if "priority" not in args:
+            if "priority_reason" in args:
+                raise ToolError("no: priority_reason needs a priority")
             return None
-        return priorities.rank(priorities.owner_value(self.principal, args["priority"]))
+        return priorities.validate(args["priority"])
+
+    def _may_rank(self, row):
+        """Whether this caller is the card board's Coworker (its coordinator or lease holder)."""
+        q = self.principal
+        try:
+            return (
+                not q.person
+                and (row["board_coordinator"] == q.actor or self._holds_lease(q, row))
+                and _can_coordinate(q, row["board_wing"])
+            )
+        except (ControlError, ValueError, TypeError):
+            return False
+
+    def _priority_change(self, row, value, args):
+        """The update that sets a priority: the owner's, or the Coworker's with its reason.
+
+        A person's priority is never replaced by a Coworker's, and the Coworker gives a
+        one-line reason that lands in the card history."""
+        if value is None:
+            return {}
+        by = priorities.setter(self.principal, self._may_rank(row))
+        rank = priorities.rank(value)
+        if by == priorities.BY_PERSON:
+            if "priority_reason" in args:
+                raise ToolError("no: priority_reason is for the Coworker; a person needs none")
+        else:
+            if row["priority_by"] == priorities.BY_PERSON:
+                raise ToolError(
+                    "no: a person set this priority; it stays. Raise a disagreement as a "
+                    "question to the owner only if it really matters"
+                )
+            priorities.reason(args.get("priority_reason"))
+        if rank == row["priority"] and by == row["priority_by"]:
+            return {}
+        return {"priority": rank, "priority_by": by}
 
     @staticmethod
-    def _priority_change(row, rank):
-        return {} if rank is None or rank == row["priority"] else {"priority": rank}
-
-    @staticmethod
-    def _priority_note(ask, updates):
-        if "priority" in updates and ask["text"] is None:
-            return {**ask, "text": "Priority set to " + priorities.name(updates["priority"])}
+    def _priority_note(row, ask, updates, args):
+        if "priority_by" in updates and ask["text"] is None:
+            text = "Priority set to " + priorities.name(updates.get("priority", row["priority"]))
+            if updates["priority_by"] == priorities.BY_COWORKER:
+                text += " by the Coworker: " + args["priority_reason"].strip()
+            return {**ask, "text": text}
         return ask
 
     def _done_needs_review(self, board, row, updates):
@@ -4370,8 +4408,9 @@ class BoardService(lifecycle.LifecycleMixin):
             if key == "task_type"
         }
         prospective_actor, type_holder = self._update_type_holder(task, args)
-        priority_update = self._priority_rank(args)
+        priority_value = self._priority_value(args)
         permitted = {
+            "priority_reason",
             "task_type",
             "priority",
             "reviewer",
@@ -4471,7 +4510,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status", row["status"]) != "done":
                 raise ToolError("no: a lesson requires status done")
-            updates = {**type_updates, **self._priority_change(row, priority_update)}
+            updates = {
+                **type_updates,
+                **self._priority_change(row, priority_value, args),
+            }
             self._reviewer_change(conn, row, args, updates)
             self._update_waiting(conn, row, args)
             if "labels" in args:
@@ -4601,7 +4643,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 if updates.get("ask") is not None
                 else {"text": review_edit_text}
             )
-            ask = self._priority_note(ask, updates)
+            ask = self._priority_note(row, ask, updates, args)
             ask = self._reviewer_note(ask, row, updates)
             self._record_review_withdrawal(conn, row, status, reason)
             self._log(
