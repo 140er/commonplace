@@ -27,7 +27,7 @@ const NARROW = "(max-width: 699px)";
 // One short name per blocker code, so a row names what blocks new work instead of only counting it.
 const BLOCK_SHORT = {
   no_machine: "machine not chosen yet", machine_not_verified: "its machine is not verified", private_image: "private image", not_available: "starting is not available yet",
-  revoked: "removed", disabled: "turned off", not_approved: "not approved", draining: "draining", never_connected: "never connected", offline: "offline", full: "may be full",
+  revoked: "removed", disabled: "turned off", not_approved: "not approved", draining: "draining", never_connected: "never connected", offline: "offline", full: "full",
   hourly_cap: "hourly limit reached", not_verified: "not verified", verification_expired: "verification expired", unknown: "not known until the next report",
 };
 
@@ -52,7 +52,7 @@ const timeOf = iso => {
  * marked "as of" because the last refresh failed. `clock` is { nowS, thresholds, failedAt } (all optional).
  */
 export function viewOf(item, clock = {}) {
-  const { nowS = null, thresholds = {}, failedAt = "" } = clock;
+  const { nowS = null, thresholds = {}, failedAt = "", drainScope = "" } = clock;
   let status = item.status, health = item.health, blockers = item.health?.blockers || [];
   const last = item.last_seen;
   let seen = last?.label || "", age = null;
@@ -68,13 +68,14 @@ export function viewOf(item, clock = {}) {
       status = { code: "unknown", tone: "quiet", label: "Unknown", detail: `Its last report said ${word} ${agoText(age)} and nothing newer has arrived, so it may not be ${word.toLowerCase()} any more.`, next: UNKNOWN_STEP };
       blockers = [...blockers, { code: "unknown", text: "Not known until the next report: its last report is too old to trust." }];
       overridden = true;
-    } else if (item.kind === "runner" && ["online", "busy", "draining", "drained", "slow"].includes(status.code)) {
-      const was = status.label, drain = item.draining ? " It is also set to drain: no new card runs start on it." : "";
+    } else if (item.kind === "runner" && ["online", "busy", "full", "draining", "drained", "slow"].includes(status.code)) {
+      const was = status.label, drain = item.draining ? ` It is also set to drain. ${drainScope || "No new card runs start here."}` : "";
       if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.${drain}`, next: status.next }; overridden = true; }
       else if (status.code !== "slow" && age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: status.next }; overridden = true; }
     }
   }
-  if (overridden) health = { ...health, state: "attention", blockers };
+  // Only Offline asks something of a person (it is something to check); Slow to report and Unknown only wait.
+  if (overridden) health = { ...health, state: status.code === "offline" ? "attention" : health.state, blockers };
   const stale = Boolean(failedAt) && !overridden;
   if (stale) status = { ...status, label: status.code === "unknown" ? status.label : `Last known: ${status.label}`, detail: `As of ${failedAt}: ${status.detail}` };
   return { status, health, seen, stale };
@@ -214,7 +215,7 @@ export function createOverview(ctx) {
   const mono = () => (typeof ctx.mono === "function" ? ctx.mono() : ctx.now());
   const sinceRead = () => Math.max(0, (mono() - fetchedMono) / 1000);
   const serverNow = () => { const read = data ? epochOf(data.as_of) : null; return read === null ? null : read + sinceRead(); };
-  const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "" });
+  const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "", drainScope: data?.drain_scope || "" });
   const items = () => (data?.items || []).map(item => withView(item, clock()));
   const narrow = () => ctx.doc?.defaultView?.matchMedia?.(NARROW)?.matches === true;
   // Closed on a phone and above a handful of items (the summary names what needs attention); open for the person's own choice,
@@ -258,7 +259,7 @@ export function createOverview(ctx) {
   }
 
   const stateHTML = () => data === null
-    ? (loadError ? `<p class="compute-error" role="alert">${e(loadError)}</p><div class="compute-actions"><button type="button" class="btn" data-ov-action="refresh"${loading ? ' aria-busy="true"' : ""}>Try again</button></div>` : "")
+    ? (loadError ? `<p class="compute-error" role="alert" data-ov-alert>${e(loadError)}</p><p class="compute-quiet" data-ov-tries></p><div class="compute-actions"><button type="button" class="btn" data-ov-action="refresh">Try again</button></div>` : "")
     : (!data.items.length ? emptyHTML() : "");
 
   function noteText() {
@@ -333,18 +334,27 @@ export function createOverview(ctx) {
     const old = ctx.host()?.querySelector?.("[data-ov]");
     return () => {
       const fresh = ctx.host()?.querySelector?.("[data-ov]");
-      if (old && fresh && old !== fresh && typeof fresh.replaceWith === "function") fresh.replaceWith(old);
+      // The old section is put back only if it has the same shape as the one just built (a fold, or plain text).
+      const same = old?.querySelector?.("[data-ov-fold-wrap]")?.dataset?.foldKey === foldKey();
+      if (old && fresh && old !== fresh && same && typeof fresh.replaceWith === "function") fresh.replaceWith(old);
     };
   }
 
+  // With nothing to fold (loading, a failed first read, an empty overview) the headline is plain text: no operable summary
+  // that opens nothing. Otherwise it is the summary of the fold that holds the list.
+  const foldKey = () => (plain() ? "plain" : "fold");
+  function foldHTML() {
+    return plain()
+      ? `<p class="compute-ov-headline" data-ov-summary>${e(summaryLine())}</p>`
+      : `<details class="compute-ov-fold" data-ov-fold${isOpen() ? " open" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary><div data-ov-root>${inner()}</div></details>`;
+  }
   function html() {
     return `<section class="compute-inventory compute-wide compute-ov" aria-labelledby="compute-overview" data-ov><div data-ov-top>${topHTML()}</div>`
       // The refresh state sits above the fold, so a closed fold (a phone) cannot hide a failed refresh.
       + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p>`
       + `<p class="compute-error compute-ov-stale" role="alert" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
       + `<p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p>`
-      + `<details class="compute-ov-fold" data-ov-fold${isOpen() ? " open" : ""}${plain() ? " data-plain" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary>`
-      + `<div data-ov-root>${inner()}</div></details><div data-ov-slot="state">${slots().state}</div></section>`;
+      + `<div data-ov-fold-wrap data-fold-key="${foldKey()}">${foldHTML()}</div><div data-ov-slot="state">${slots().state}</div></section>`;
   }
 
   const setText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
@@ -377,7 +387,13 @@ export function createOverview(ctx) {
   // Repaint what changed, slot by slot. A control inside the section that has focus is found again by its data attributes.
   function paint(focus = "") {
     const host = ctx.host();
-    if (!host || !root()) { ctx.rerender(); return; }
+    if (!host || !host.querySelector("[data-ov]") && !root()) { ctx.rerender(); return; }
+    const wrap = host.querySelector("[data-ov-fold-wrap]");
+    if (wrap && wrap.dataset && wrap.dataset.foldKey !== foldKey()) {
+      // The shape changed (a first read arrived, or the list emptied): rebuild the fold or the plain headline, once.
+      wrap.dataset.foldKey = foldKey();
+      wrap.innerHTML = foldHTML();
+    }
     const control = host.querySelector?.(".compute-ov :focus");
     const key = control ? focusKey(control) : "";
     const values = slots();
@@ -385,14 +401,16 @@ export function createOverview(ctx) {
     setText(host.querySelector("[data-ov-meta]"), metaText());
     // Until the person chooses, the fold follows what it holds: closed above a handful of items, open for a failed first read.
     if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = isOpen(); if (fold && fold.open !== want) fold.open = want; }
-    const fold = host.querySelector("[data-ov-fold]");
-    if (fold?.toggleAttribute) fold.toggleAttribute("data-plain", plain());
     const top = host.querySelector("[data-ov-top]");
     if (top && painted.top !== topHTML()) { painted.top = topHTML(); top.innerHTML = topHTML(); }
     const banner = host.querySelector("[data-ov-stale]");
     if (banner) { setText(banner, values.stale); banner.hidden = !values.stale; }
     painted.stale = values.stale;
+    setText(host.querySelector("[data-ov-tries]"), loadError && tries > 1 ? `Tried ${tries} times.` : "");
     setHTML("state", values.state); setHTML("notes", values.notes);
+    // "Try again" is marked busy by attribute, not by markup: rewriting the state slot would speak the alert again.
+    const retry = host.querySelector('[data-ov-slot="state"] [data-ov-action="refresh"]');
+    if (retry) { if (loading) retry.setAttribute?.("aria-busy", "true"); else retry.removeAttribute?.("aria-busy"); }
     // The open panel keeps its nodes: it is built when it opens (or changes) and its body repainted in place by paintDetail.
     if (painted.panelKey !== panelKey()) {
       painted.panelKey = panelKey();
@@ -446,6 +464,7 @@ export function createOverview(ctx) {
     const page = ctx.epoch();
     if (loading || (within && data && (mono() - fetchedMono < within || ctx.doc?.hidden))) return; // the screen's own reloads never read for a hidden tab
     loading = true;
+    if (say && data === null && loadError) announce("Trying again…"); // the one thing said at the start of a retry
     if (!quiet) paint();
     let result = null, failure = null;
     try { result = await ctx.request(BASE); } catch (error) { failure = error; }
@@ -459,6 +478,8 @@ export function createOverview(ctx) {
       previous = new Map(result.items.map(item => [`${item.kind}:${item.id}`, item.status.code]));
       if (kind !== "all" && !result.items.some(item => item.kind === kind)) kind = "all";
       if (status !== "all" && status !== "attention" && !result.items.some(item => item.status.code === status)) status = "all";
+      // The attention filter with nothing left to show would read "All statuses" over an empty list: back to all.
+      if (status === "attention" && !items().some(item => item.health?.state === "attention")) status = "all";
       const gone = detail && !find(detail.id);
       if (gone) { announce("That item is no longer in the overview."); detail = null; detailBusy = false; }
       paint(gone ? "opener" : "");
@@ -471,8 +492,7 @@ export function createOverview(ctx) {
     } else {
       tries++;
       // Said again each time, so pressing "Try again" visibly does something even when it fails again.
-      loadError = tries > 1 ? `${LOAD_ERROR} Tried ${tries} times.` : LOAD_ERROR; paint();
-      if (say) announce(loadError);
+      loadError = LOAD_ERROR; paint();  // the alert speaks (once: its text never changes); the count is plain text beside it
     }
     if (detail && data && !detailBusy && !failure) void loadDetail(detail.kind, detail.id, { quiet: true });
     schedule();
@@ -480,7 +500,7 @@ export function createOverview(ctx) {
 
   async function loadDetail(detailKind, id, { quiet = false } = {}) {
     const page = ctx.epoch();
-    if (!quiet) { detailBusy = true; detailFailed = false; paint("detail"); }
+    if (!quiet) { detailBusy = true; detailFailed = false; paint("detail"); announce("Loading details…"); }
     let result = null, failure = null;
     try { result = await ctx.request(`${BASE}/${enc(detailKind)}/${enc(id)}`); } catch (error) { failure = error; }
     if (!ctx.valid(page) || !detail || detail.id !== id) return;

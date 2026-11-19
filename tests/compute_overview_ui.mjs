@@ -43,7 +43,7 @@ const detailOf = (base, extra = {}) => ({ item: { ...base, activity: [{ at: 1, a
 
 function fixture({ data = overviewOf(), hidden = false, narrow = false, signature = () => '', skew = 0 } = {}) {
   const slot = () => { const n = { writes: 0, html: '' }; Object.defineProperty(n, 'innerHTML', { get() { return n.html; }, set(v) { n.html = v; n.writes++; } }); return n; };
-  const nodes = { root: slot(), top: slot(), meta: { textContent: '' }, announce: { textContent: '' }, summary: { textContent: '' }, stale: (() => { const n = { text: '', hidden: true, writes: 0 }; Object.defineProperty(n, 'textContent', { get() { return n.text; }, set(v) { n.text = v; n.writes++; } }); return n; })(), state: slot(), notes: slot(), panel: slot(), filters: slot(), list: slot() };
+  const nodes = { root: slot(), top: slot(), meta: { textContent: '' }, announce: { textContent: '' }, summary: { textContent: '' }, tries: { textContent: '' }, stale: (() => { const n = { text: '', hidden: true, writes: 0 }; Object.defineProperty(n, 'textContent', { get() { return n.text; }, set(v) { n.text = v; n.writes++; } }); return n; })(), state: slot(), notes: slot(), panel: slot(), filters: slot(), list: slot() };
   const focused = [], timers = [], calls = [], docListeners = new Map(), flags = { statusFocused: false };
   let epoch = 1, timerId = 0;
   const state = { answers: new Map(), delay: new Map(), denied: [], signature };
@@ -64,6 +64,7 @@ function fixture({ data = overviewOf(), hidden = false, narrow = false, signatur
       if (sel === '[data-ov-announce]') return nodes.announce;
       if (sel === '[data-ov-summary]') return nodes.summary;
       if (sel === '[data-ov-stale]') return nodes.stale;
+      if (sel === '[data-ov-tries]') return nodes.tries;
       const m = /^\[data-ov-slot="(\w+)"\]$/.exec(sel);
       if (m) return nodes[m[1]];
       if (sel === '.compute-ov :focus') return null;
@@ -205,7 +206,8 @@ const cases = {
     assert.match(phone.ui.html(), /data-ov-fold open>/, 'a phone opens a short list (five items or fewer)');
     const broken = fixture({ narrow: true }); broken.state.answers.set('/api/compute/overview', failure(500, { error: 'boom' })); await broken.ui.load();
     assert.doesNotMatch(broken.ui.html(), /data-ov-fold open>/, 'a failed first read is plain text with no disclosure and nothing in a fold');
-    assert.match(broken.ui.html(), /data-ov-fold data-plain>/);
+    assert.match(broken.ui.html(), /<p class="compute-ov-headline" data-ov-summary>Overview not loaded\./, 'plain text: a headline, not an operable summary');
+    assert.doesNotMatch(broken.ui.html(), /<details|<summary/);
     const small = fixture({ data: overviewOf(fleet().slice(0, 3)) }); await small.ui.load();
     assert.match(small.ui.html(), /data-ov-fold open>/, 'a handful of items stays open on a desktop');
     const many = fixture({ data: overviewOf([...fleet(), ...fleet().map(i => ({ ...i, id: i.id + 'x' }))]) }); await many.ui.load();
@@ -218,7 +220,7 @@ const cases = {
     const f = fixture();
     f.state.answers.set('/api/compute/overview', failure(500, { error: 'boom' }));
     await f.ui.load();
-    assert.match(f.html(), /role="alert">The overview could not be loaded\. Nothing is shown rather than a guess\./);
+    assert.match(f.html(), /role="alert" data-ov-alert>The overview could not be loaded\. Nothing is shown rather than a guess\./);
     assert.match(f.html(), /data-ov-action="refresh">Try again/);
     // Recovery shows the data and drops the alert.
     f.state.answers.delete('/api/compute/overview');
@@ -426,7 +428,7 @@ const cases = {
     assert.equal(ov.viewOf(running, at(0)).seen, 'Last reported 2 minutes ago');
     assert.equal(ov.viewOf(running, at(60)).seen, 'Last reported 3 minutes ago', 'the age is recomputed from the report time');
     const old = ov.viewOf(running, at(600));
-    assert.equal(old.status.code, 'unknown'); assert.equal(old.status.label, 'Unknown'); assert.equal(old.health.state, 'attention');
+    assert.equal(old.status.code, 'unknown'); assert.equal(old.status.label, 'Unknown'); assert.notEqual(old.health.state, 'attention', 'Unknown only waits for the machine to report again');
     assert.match(old.status.detail, /Its last report said Running 12 minutes ago and nothing newer has arrived, so it may not be running any more\./);
     assert.equal(ov.viewOf(online, at(0)).status.code, 'online');
     assert.equal(ov.viewOf(online, at(200)).status.code, 'slow');
@@ -453,7 +455,7 @@ const cases = {
     await f.fire(10000);
     assert.equal(f.calls.length, readsBefore, 'the clock tick reads nothing');
     assert.match(f.html(), /data-status="unknown"[\s\S]{0,300}Build box|Build box[\s\S]{0,600}data-status="unknown"/);
-    assert.match(f.nodes.summary.textContent, /Build box/, 'it now counts as needing attention, by name');
+    assert.doesNotMatch(f.nodes.summary.textContent, /Build box/, 'Unknown only waits: it is not named as needing attention');
   },
 
   async 'clock-ticks-in-place'() {
@@ -553,11 +555,13 @@ const cases = {
   async fold() {
     // The summary sentence is the fold's summary: open on a desktop, closed on a phone, and the person's choice is kept.
     const desktop = fixture();
-    assert.match(desktop.ui.html(), /<details class="compute-ov-fold" data-ov-fold data-plain>/, 'while the first read is under way the fold is closed (the headline says it is loading)');
+    assert.doesNotMatch(desktop.ui.html(), /<details|<summary/, 'while the first read is under way there is nothing to fold: the headline says it is loading');
     await desktop.ui.load();
     assert.match(desktop.ui.html(), /<details class="compute-ov-fold" data-ov-fold open>/, 'five items on a desktop: open');
-    const phone = fixture({ narrow: true });
-    assert.match(phone.ui.html(), /<details class="compute-ov-fold" data-ov-fold( data-plain)?>/);
+    const phone = fixture({ narrow: true, data: overviewOf([...fleet(), ...fleet().map(i => ({ ...i, id: i.id + 'x' }))]) });
+    assert.doesNotMatch(phone.ui.html(), /<details/);
+    await phone.ui.load();
+    assert.match(phone.ui.html(), /<details class="compute-ov-fold" data-ov-fold( open)?>/);
     assert.doesNotMatch(phone.ui.html(), /data-ov-fold open/);
     const toggle = f => f.ui.click({ target: { closest: sel => sel === '[data-ov-fold-summary]' ? { closest: q => q === '.compute-ov' ? {} : null } : null } });
     assert.equal(toggle(phone), true);
@@ -621,9 +625,9 @@ const cases = {
     const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
     for (const code of ['draining', 'drained', 'busy', 'online', 'slow']) {
       const runner = item('runner', 'r', 'night-runner', { code, label: code }, { more: { draining: code === 'draining' || code === 'drained' } });
-      const quiet = ov.viewOf(runner, { nowS: clock + 1000, thresholds: th });
+      const quiet = ov.viewOf(runner, { nowS: clock + 1000, thresholds: th, drainScope: 'No new card runs start here. Chat and Coworker sessions can still start here.' });
       assert.equal(quiet.status.code, 'offline', code);
-      if (runner.draining) assert.match(quiet.status.detail, /It is also set to drain: no new card runs start on it\./);
+      if (runner.draining) assert.match(quiet.status.detail, /It is also set to drain\. No new card runs start here\. Chat and Coworker sessions can still start here\./);
     }
     // A removed or disabled runner is left alone: its age is not a claim about its health.
     for (const code of ['revoked', 'disabled', 'never_connected']) assert.equal(ov.viewOf(item('runner', 'r', 'x', { code, label: code }), { nowS: clock + 1000, thresholds: th }).status.code, code);
@@ -642,20 +646,23 @@ const cases = {
     // nothing to fold the summary has no disclosure marker.
     const phone = fixture({ narrow: true, data: overviewOf([]) });
     const before = phone.ui.html();
-    assert.ok(before.indexOf('data-ov-slot="state"') > before.indexOf('</details>'), 'the headline comes first and the state sentence after it');
-    assert.match(before, /data-ov-fold data-plain>/);
+    assert.ok(before.indexOf('data-ov-slot="state"') > before.indexOf('compute-ov-headline'), 'the headline comes first and the state sentence after it');
+    assert.doesNotMatch(before, /<details|<summary/, 'nothing to fold: plain text');
     await phone.ui.load();
     assert.match(phone.nodes.state.html, /You can still create a cloud workspace below/, 'the empty-state next step is outside the fold');
     // Pressing "Try again" visibly does something: a headline while it runs, and a count when it fails again.
     const broken = fixture({ narrow: true });
     broken.state.answers.set('/api/compute/overview', failure(500, { error: 'boom' }));
     await broken.ui.load();
-    assert.match(broken.nodes.state.html, /role="alert">The overview could not be loaded\. Nothing is shown rather than a guess\.</);
+    assert.match(broken.nodes.state.html, /role="alert" data-ov-alert>The overview could not be loaded\. Nothing is shown rather than a guess\.</);
+    const alertWrites = broken.nodes.state.writes;
     let release; broken.state.answers.set('/api/compute/overview', () => new Promise(done => { release = done; }));
-    const again = broken.ui.load();
+    const again = broken.ui.load({ say: true }); // what the Try again button does
     assert.equal(broken.nodes.summary.textContent, 'Trying again…');
     release(failure(500, { error: 'boom' })); await again;
-    assert.match(broken.nodes.state.html, /Tried 2 times\./);
+    assert.equal(broken.nodes.tries.textContent, 'Tried 2 times.', 'the count is plain text beside the alert');
+    assert.equal(broken.nodes.state.writes, alertWrites, 'the alert node is not rewritten by a second failure (it would be spoken again)');
+    assert.equal(broken.nodes.announce.textContent, 'Trying again…', 'one thing is said at the start of a retry; the failure is the alert');
     assert.equal(broken.nodes.summary.textContent, 'Overview not loaded.');
   },
 
@@ -676,6 +683,19 @@ const cases = {
     f.state.answers.set('/api/compute/overview', overviewOf(changed));
     await f.ui.load({ quiet: true });
     assert.ok(f.nodes.list.writes > writes, 'a changed status is rewritten');
+  },
+
+  async 'attention-filter-resets'() {
+    // The attention filter with nothing left to show would read "All statuses" over an empty list: it goes back to all.
+    const f = fixture();
+    await f.ui.load();
+    f.select('attention');
+    assert.equal(f.ui.state.status, 'attention');
+    f.state.answers.set('/api/compute/overview', overviewOf(fleet().map(i => ({ ...i, health: { ...i.health, state: 'ok' } }))));
+    await f.ui.load({ quiet: true });
+    assert.equal(f.ui.state.status, 'all');
+    assert.match(f.html(), /<option value="all" selected>/);
+    assert.equal((f.html().match(/data-ov-id=/g) || []).length, 5, 'and the list shows everything, not nothing');
   },
 
   async member() {

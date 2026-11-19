@@ -94,7 +94,7 @@ def _populate(fx):
     fleet = _fleet(fx)
     env = fx.env
     wings = {"wings": ["fixture"]}
-    busy = fleet.enroll("build-runner", max_in_flight=2, **wings)
+    busy = fleet.enroll("build-runner", max_in_flight=3, **wings)
     fleet.seen(busy, 40)
     fleet.job(busy, "started", task=fleet.work(busy))  # its card is being worked on: in progress
     # A run that finished: reported ended, so it is not in progress, not full and not an unreported end.
@@ -184,6 +184,8 @@ def _fold(page):
     expect(page.locator("[data-ov-summary]")).not_to_have_text(
         "Loading the overview…", timeout=20000
     )
+    if page.locator("details[data-ov-fold]").count() == 0:
+        return  # nothing to fold (an empty or failed overview is plain text)
     if fold.get_attribute("open") is None:
         page.locator("[data-ov-fold-summary]").click()
         expect(fold).to_have_attribute("open", "")
@@ -298,11 +300,13 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
-        expect(_row(page, "build-runner")).to_contain_text("1 of 2 runs at once is in progress")
+        expect(_row(page, "build-runner")).to_contain_text(
+            "2 of 3 runs at once are in use: 1 in progress; 1 finished run still counts until its card moves out of Doing."
+        )
         expect(_row(page, "build-runner")).to_contain_text(
             re.compile(r"Last seen \d+ (seconds?|minutes?) ago")
         )
-        expect(_row(page, "build-runner")).to_contain_text("1 run in progress (up to 2 at once)")
+        expect(_row(page, "build-runner")).to_contain_text("1 run in progress (up to 3 at once)")
         expect(_row(page, "review-runner")).to_contain_text("Slow to report")
         expect(_row(page, "edge-runner")).to_contain_text("Offline")
         expect(_row(page, "edge-runner")).to_contain_text("Last seen 25 minutes ago")
@@ -465,8 +469,10 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
             (
                 "build-runner",
                 [
-                    "1 of 2 runs at once is in progress.",
-                    "1 run in progress (up to 2 at once)",
+                    "2 of 3 runs at once are in use: 1 in progress; 1 finished run still counts until its card moves out of Doing.",
+                    "demo card",
+                    "Move it out of Doing (to Done, Review or Todo) to free its place.",
+                    "1 run in progress (up to 3 at once)",
                     "6.0 GiB memory free",
                     "2 runs with unknown cost",
                 ],
@@ -814,8 +820,8 @@ def test_a_folded_phone_overview_still_shows_a_failed_refresh_and_opens_for_a_fa
             )
             _visit(page, fx, ui)
             # A failed first read is plain text (no disclosure, nothing in a fold) and "Try again" is outside it.
-            expect(page.locator("details[data-ov-fold]")).to_have_attribute("data-plain", "")
-            assert page.locator("details[data-ov-fold]").get_attribute("open") is None
+            assert page.locator("details[data-ov-fold], summary[data-ov-fold-summary]").count() == 0
+            expect(page.locator(".compute-ov-headline")).to_be_visible()
             expect(page.get_by_role("button", name="Try again")).to_be_visible()
             expect(page.locator("[data-ov-summary]")).to_have_text("Overview not loaded.")
             _shot(page, f"{ui}-phone-67-failed-first-read")
@@ -1008,7 +1014,9 @@ def test_fleet_rows_paused_no_match_and_a_whole_runner_detail_are_captured(serve
         expect(_row(page, "night-runner")).not_to_contain_text("Full")
         expect(_row(page, "idle-runner").locator("[data-ov-chip]")).to_have_text("Drained")
         # The finished run (reported ended, card moved on) is not Busy: the fixture's build-runner shows only the live one.
-        expect(_row(page, "build-runner")).to_contain_text("1 of 2 runs at once is in progress")
+        expect(_row(page, "build-runner")).to_contain_text(
+            "2 of 3 runs at once are in use: 1 in progress; 1 finished run still counts until its card moves out of Doing."
+        )
         # Paused: the button and the line say what it stops and what keeps counting.
         page.get_by_role("button", name="Pause automatic updates").click()
         expect(page.locator(".compute-ov-meta")).to_contain_text("statuses and ages keep counting")
@@ -1026,10 +1034,11 @@ def test_fleet_rows_paused_no_match_and_a_whole_runner_detail_are_captured(serve
             ),
         )
         page.get_by_role("button", **REFRESH).click()
-        expect(page.locator(ROOT)).to_contain_text("match these filters")
-        _shot(page, f"{label}-94-no-match")
+        # Nothing needs attention any more: the filter goes back to all statuses, so the person is not left with an empty list.
+        expect(page.get_by_label("Filter by status")).to_have_value("all")
+        expect(_rows(page)).to_have_count(15)
+        _shot(page, f"{label}-94-attention-filter-reset")
         page.unroute(f"**{OVERVIEW}")
-        page.get_by_role("button", name="Clear filters").click()
         # The whole of a runner's detail, end to end, in one capture.
         page.get_by_role("button", name="Status and activity of build-runner").click()
         panel = page.locator(".compute-ov-panel")
@@ -1083,7 +1092,9 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
     def loading(page, label):
         expect(page.locator("[data-ov-summary]")).to_have_text("Loading the overview…")
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0
-        assert "Loading" not in page.locator(ROOT).inner_text(), "the headline says it once"
+        assert page.locator(ROOT).count() == 0, (
+            "nothing to fold while it loads: plain headline only"
+        )
         _shot(page, label)
         gate["route"].continue_()
         # A fresh workspace: nothing is listed, and the empty state says what to do next.
@@ -1093,11 +1104,12 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         expect(page.locator("[data-ov-slot=state]")).to_contain_text(
             "No machine is set up yet. You can still create a cloud workspace below; it waits for a machine."
         )
-        expect(page.locator("details[data-ov-fold]")).to_have_attribute("data-plain", "")
+        assert page.locator("details[data-ov-fold], summary[data-ov-fold-summary]").count() == 0
+        expect(page.locator(".compute-ov-headline")).to_be_visible()
         assert "Nothing here yet" not in page.locator("[data-ov-slot=state]").inner_text(), (
             "the headline says it once"
         )
-        assert "runner machine" not in page.locator(ROOT).inner_text()
+        assert "runner machine" not in page.locator(".compute-ov").inner_text()
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0
         assert page.locator("[data-ov-kind-filter]").count() == 0
         _shot(page, f"{ui}-{size}-43-empty")

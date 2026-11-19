@@ -132,6 +132,21 @@ class Fleet:
             conn.close()
         return number
 
+    def move_out_of_doing(self, number, status="todo"):
+        """The card leaves Doing (a person moves it): this is what frees the machine's place for a finished run."""
+        from pathlib import Path
+
+        from mempalace.sqlite_crypto import connect
+
+        conn = connect(
+            str(Path(self.env.gateway.workspace_dir(self.env.workspace)) / "boards.sqlite3")
+        )
+        try:
+            conn.execute("UPDATE tasks SET status=?,assignee=NULL WHERE id=?", (status, number))
+            conn.commit()
+        finally:
+            conn.close()
+
     def end(self, job_id, *, minutes_ago=0):
         """The machine reported the run's end: the run ledger learns of it (the job row stays ``started``)."""
         at = iso(self.env.clock.now - minutes_ago * 60)

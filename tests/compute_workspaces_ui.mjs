@@ -75,7 +75,7 @@ const fill = (f, values) => { for (const [name, value] of Object.entries(values)
 const valid = { ws_name: 'Acceptance', ws_image: 'ghcr.io/acme/tools:1.2', ws_cpu_cores: '2', ws_memory_gib: '4', ws_storage_gib: '20' };
 const section = html => html.slice(html.indexOf('compute-ws"'), html.indexOf('<details class="compute-advanced'));
 // Alerts that carry text: the static load-error node is always in the markup and is empty until something fails.
-const alerts = html => (html.match(/role="alert">[^<]/g) || []).length;
+const alerts = html => (html.match(/role="alert"[^>]*>[^<]/g) || []).length;
 
 const cases = {
   async pure() {

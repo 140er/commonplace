@@ -144,18 +144,30 @@ def test_an_unapproved_runner_lists_what_blocks_it(api, fleet):
     assert [b["code"] for b in blockers] == ["not_approved"]
 
 
-def test_busy_runner_shows_runs_in_progress_the_age_and_a_full_blocker(api, fleet):
-    made = fleet.enroll("runner-busy", max_in_flight=1)
-    fleet.seen(made, 20)
-    fleet.job(made, "started", minutes_ago=3, task=fleet.work(made))
-    fleet.job(made, "queued", task=2)
+def test_busy_and_full_use_one_word_and_one_count_in_the_chip_the_sentence_and_the_blocker(
+    api, fleet
+):
+    some = fleet.enroll("runner-some", max_in_flight=2)
+    fleet.seen(some, 20)
+    fleet.job(some, "started", minutes_ago=3, task=fleet.work(some))
+    item = by_name(read(api))["runner-some"]
+    assert (item["status"]["code"], item["status"]["label"]) == ("busy", "Online · Busy")
+    assert item["status"]["detail"] == "1 of 2 runs at once is in use: 1 in progress."
+    assert item["health"]["blockers"] == []
+    all_of_them = fleet.enroll("runner-busy", max_in_flight=1)
+    fleet.seen(all_of_them, 20)
+    fleet.job(all_of_them, "started", minutes_ago=3, task=fleet.work(all_of_them))
+    fleet.job(all_of_them, "queued", task=2)
     busy = by_name(read(api))["runner-busy"]
-    assert busy["status"]["code"] == "busy"
-    assert busy["status"]["label"] == "Online · Busy"
-    assert busy["status"]["detail"] == "1 of 1 runs at once is in progress."
+    assert (busy["status"]["code"], busy["status"]["label"]) == ("full", "Online · Full")
+    assert (
+        busy["status"]["detail"] == "1 of 1 runs at once is in use: 1 in progress. New runs wait."
+    )
     assert busy["last_seen"]["label"] == "Last seen 20 seconds ago"
     assert busy["usage"]["runs"]["running"] == 1 and busy["usage"]["runs"]["queued"] == 1
-    assert [b["code"] for b in busy["health"]["blockers"]] == ["full"]
+    assert [(b["code"], b["text"]) for b in busy["health"]["blockers"]] == [
+        ("full", "Full: 1 of 1 runs at once is in use: 1 in progress. New runs wait.")
+    ]
 
 
 def test_a_started_run_whose_end_was_never_reported_is_its_own_bucket_not_in_progress(api, fleet):
@@ -167,22 +179,43 @@ def test_a_started_run_whose_end_was_never_reported_is_its_own_bucket_not_in_pro
     assert "plus 1 run that started and never reported an end" in runs["text"]
 
 
-def test_a_finished_run_whose_card_is_still_doing_holds_a_slot_and_says_so(api, fleet):
-    # The hub's rule, unchanged: a started run holds a slot while its card is Doing, whether or not the machine reported
-    # its end (the job row stays "started"; only the ledger knows). The screen says the same and says why.
+def test_a_finished_run_whose_card_is_still_doing_still_counts_and_says_what_to_do(api, fleet):
+    # The hub's rule, unchanged: a started run counts toward the machine's runs at once while its card is Doing, whether
+    # or not the machine reported its end (the job row stays "started"; only the ledger knows). The screen says the same,
+    # names the card and says the one action that clears it.
     made = fleet.enroll("runner-finished", max_in_flight=1)
     fleet.seen(made, 20)
-    job = fleet.job(made, "started", minutes_ago=60, task=fleet.work(made))
+    card = fleet.work(made)
+    job = fleet.job(made, "started", minutes_ago=60, task=card)
     fleet.end(job, minutes_ago=50)
     item = by_name(read(api))["runner-finished"]
-    assert item["status"]["code"] == "busy"
+    assert (item["status"]["code"], item["status"]["label"]) == ("full", "Online · Full")
     assert item["status"]["detail"] == (
-        "None is in progress, but the machine is busy: 1 finished run still holds a slot until its card moves on."
+        "1 of 1 runs at once is in use: 1 finished run still counts until its card moves out of Doing. New runs wait."
+    )
+    assert item["status"]["next"] == (
+        f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
+        "to free its place."
     )
     runs = item["usage"]["runs"]
     assert (runs["running"], runs["finished_holding"], runs["end_unreported"]) == (0, 1, 0)
     full = [b for b in item["health"]["blockers"] if b["code"] == "full"]
-    assert full and "1 finished run still holds a slot until its card moves on" in full[0]["text"]
+    assert full and full[0]["text"].startswith(
+        "Full: 1 of 1 runs at once is in use: 1 finished run still counts"
+    )
+    assert "slot" not in json.dumps(item).lower().replace("slots", "")
+    # Moving the card out of Doing is what really clears it: the screen and the hub's lease both free the machine.
+    from commonplace.runner import jobs
+
+    epoch = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])["binding_epoch"]
+    fleet.job(made, "queued", task=800, project="other", binding_epoch=epoch)
+    machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+    assert jobs.lease(fleet.store(), machine) is None  # the hub refuses while the card is in Doing
+    fleet.move_out_of_doing(card)
+    cleared = by_name(read(api))["runner-finished"]
+    assert cleared["status"]["code"] == "online" and cleared["status"]["next"] is None
+    assert cleared["health"]["blockers"] == []
+    assert jobs.lease(fleet.store(), machine) is not None  # and now it leases
     # Once the card moves on the slot is free, and the finished run is not counted anywhere.
     other = fleet.enroll("runner-freed", max_in_flight=1)
     fleet.seen(other, 20)
@@ -198,7 +231,7 @@ def test_a_finished_run_whose_card_is_still_doing_holds_a_slot_and_says_so(api, 
     fleet.seen(working, 20)
     fleet.job(working, "started", minutes_ago=60, task=fleet.work(working))
     busy = by_name(read(api))["runner-working"]
-    assert busy["status"]["code"] == "busy" and busy["usage"]["runs"]["running"] == 1
+    assert busy["status"]["code"] == "full" and busy["usage"]["runs"]["running"] == 1
 
 
 def test_a_card_that_moved_on_without_an_end_report_is_not_in_progress(api, fleet):
@@ -1045,3 +1078,26 @@ def test_a_queued_request_says_there_is_nothing_to_do_and_one_sentence_covers_no
         "No machine is set up yet. Starting will need one, which is not available yet."
     )
     assert "Choose later" not in overview.NO_MACHINES_SENTENCE
+
+
+def test_allowed_to_start_runs_follows_the_drain_and_the_approval(api, fleet):
+    made = fleet.enroll("runner-allowed")
+    fleet.seen(made, 5)
+
+    def allowed():
+        status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+        assert status == 200
+        return {f["label"]: f["value"] for f in result["item"]["facts"]}["Allowed to start runs"]
+
+    assert allowed() == "Yes"
+    api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    assert allowed() == "No: it is draining"
+    loose = fleet.enroll("runner-loose", attest=False)
+    status, result = api.request(path=f"{BASE}/runner/{loose['machine_id']}")
+    assert {f["label"]: f["value"] for f in result["item"]["facts"]}["Allowed to start runs"] == (
+        "No: it is not set up and approved yet"
+    )
+
+
+def test_the_payload_serves_the_one_drain_sentence_for_the_screens_own_overrides(api):
+    assert read(api)["drain_scope"] == overview.DRAIN_SCOPE
