@@ -68,6 +68,9 @@ INDEXES = (
     "CREATE INDEX IF NOT EXISTS run_ledger_created ON run_ledger(created_at)",
     "CREATE INDEX IF NOT EXISTS run_ledger_started ON run_ledger(started_at)",
 )
+BACKFILL_MARKER = (
+    "CREATE TABLE IF NOT EXISTS run_ledger_backfill (id INTEGER PRIMARY KEY CHECK(id = 1))"
+)
 _MISSING = (
     "SELECT j.* FROM runner_jobs j "
     "WHERE NOT EXISTS (SELECT 1 FROM run_ledger l WHERE l.job_id=j.id)"
@@ -84,17 +87,29 @@ class ReportError(Exception):
 
 def ensure(conn):
     """Create the table and give every job that predates it a row. Autocommit connection."""
+    fresh = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_ledger'"
+        ).fetchone()
+        is None
+    )
     conn.execute(TABLE)
+    if fresh:  # a ledger made (or made again) now has not been backfilled, whatever a marker from before says
+        conn.execute("DROP TABLE IF EXISTS run_ledger_backfill")
     # NULL is a card run; 'chat' is a chat-relay job (see chat_ledger). Added in place.
     if "source" not in {row[1] for row in conn.execute("PRAGMA table_info(run_ledger)")}:
         conn.execute("ALTER TABLE run_ledger ADD COLUMN source TEXT")
     for statement in INDEXES:
         conn.execute(statement)
-    if conn.execute(_MISSING + " LIMIT 1").fetchone() is not None:
+    # The backfill for jobs that predate the ledger is an anti-join over every job: it runs once (a marker row says so),
+    # not at every open of the store. Every job written since goes through ``sync`` and has its row from the start.
+    conn.execute(BACKFILL_MARKER)
+    if conn.execute("SELECT 1 FROM run_ledger_backfill").fetchone() is None:
         conn.execute("BEGIN IMMEDIATE")
         try:
             for row in conn.execute(_MISSING).fetchall():
                 sync(conn, row)
+            conn.execute("INSERT INTO run_ledger_backfill(id) VALUES (1)")
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")

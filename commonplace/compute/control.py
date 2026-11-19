@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -380,6 +381,12 @@ class Store:
         except (ProtocolDenied, ScopeDenied):
             # Only the protocol's own refusals; a TypeError or OverflowError is a bug and must show as one.
             raise StoreError() from None
+        except sqlite3.OperationalError as exc:
+            # A compute database that is locked or busy is not a bug and not the caller's fault: say so (503), change
+            # nothing, and let them try again. Any other database error is still a bug and shows as one.
+            if "locked" in str(exc) or "busy" in str(exc):
+                raise StoreError("authority_unavailable", 503, reason="busy") from None
+            raise
 
     def _authority(self, principal, board, task_number=None):
         """Use the canonical board's current read/write and task visibility."""

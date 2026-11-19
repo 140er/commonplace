@@ -108,6 +108,42 @@ class Fleet:
     def store(self):
         return jobs.open_store(self.env.gateway, self.env.workspace)
 
+    def work(self, made):
+        """A card the machine's worker is working on (``doing``, assigned to it), as ``jobs.lease`` reads it.
+        Returns its number; a started run counts as in progress only while its card is like this."""
+        from pathlib import Path
+
+        from commonplace.boards.service import BoardService
+        from commonplace.extensions import ToolContext
+        from mempalace.sqlite_crypto import connect
+
+        service = BoardService(ToolContext(principal=self.env.principal, gateway=self.env.gateway))
+        number = service.task_add("A card being worked on", board="compute")["number"]
+        worker = self.env.db.connection(made["worker_connection_id"], self.env.workspace)["name"]
+        conn = connect(
+            str(Path(self.env.gateway.workspace_dir(self.env.workspace)) / "boards.sqlite3")
+        )
+        try:
+            conn.execute(
+                "UPDATE tasks SET status='doing',assignee=? WHERE id=?", ("conn:" + worker, number)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return number
+
+    def end(self, job_id, *, minutes_ago=0):
+        """The machine reported the run's end: the run ledger learns of it (the job row stays ``started``)."""
+        at = iso(self.env.clock.now - minutes_ago * 60)
+        with self.store().transaction() as conn:
+            row = conn.execute("SELECT * FROM runner_jobs WHERE id=?", (job_id,)).fetchone()
+            from commonplace.runner import ledger
+
+            ledger.sync(conn, row)
+            conn.execute(
+                "UPDATE run_ledger SET status='completed',ended_at=? WHERE job_id=?", (at, job_id)
+            )
+
     def job(self, made, state="started", *, minutes_ago=1, project="demo", task=1, **columns):
         """One run row for the machine, ``minutes_ago`` old."""
         at = iso(self.env.clock.now - minutes_ago * 60)

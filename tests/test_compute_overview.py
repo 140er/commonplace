@@ -147,7 +147,7 @@ def test_an_unapproved_runner_lists_what_blocks_it(api, fleet):
 def test_busy_runner_shows_runs_in_progress_the_age_and_a_full_blocker(api, fleet):
     made = fleet.enroll("runner-busy", max_in_flight=1)
     fleet.seen(made, 20)
-    fleet.job(made, "started", minutes_ago=3, task=1)
+    fleet.job(made, "started", minutes_ago=3, task=fleet.work(made))
     fleet.job(made, "queued", task=2)
     busy = by_name(read(api))["runner-busy"]
     assert busy["status"]["code"] == "busy"
@@ -158,13 +158,43 @@ def test_busy_runner_shows_runs_in_progress_the_age_and_a_full_blocker(api, flee
     assert [b["code"] for b in busy["health"]["blockers"]] == ["full"]
 
 
-def test_old_started_rows_are_not_counted_as_running_but_are_not_dropped_either(api, fleet):
+def test_a_started_run_whose_end_was_never_reported_is_its_own_bucket_not_in_progress(api, fleet):
     made = fleet.enroll("runner-old")
     fleet.seen(made, 20)
-    fleet.job(made, "started", minutes_ago=60 * 8, task=1)
+    fleet.job(made, "started", minutes_ago=60 * 8, task=1)  # no card is being worked on for it
     runs = by_name(read(api))["runner-old"]["usage"]["runs"]
-    assert runs["running"] == 0 and runs["older_started"] == 1
-    assert "plus 1 run recorded as started long ago that may still be open" in runs["text"]
+    assert runs["running"] == 0 and runs["end_unreported"] == 1
+    assert "plus 1 run that started and never reported an end" in runs["text"]
+
+
+def test_a_finished_run_is_not_in_progress_not_full_and_not_an_unreported_end(api, fleet):
+    # Reproduced by the round 3 review: a run started 60 minutes ago and reported completed 50 minutes ago stayed
+    # "in progress" (its job row never leaves "started"; only the run ledger learns of the end).
+    made = fleet.enroll("runner-finished", max_in_flight=1)
+    fleet.seen(made, 20)
+    job = fleet.job(made, "started", minutes_ago=60, task=fleet.work(made))
+    fleet.end(job, minutes_ago=50)
+    item = by_name(read(api))["runner-finished"]
+    assert item["status"]["code"] == "online" and item["status"]["detail"] == "Waiting for work."
+    assert item["usage"]["runs"]["running"] == 0 and item["usage"]["runs"]["end_unreported"] == 0
+    assert item["health"]["blockers"] == []
+    # The same run, not yet reported ended and its card still being worked on, is in progress and fills the machine.
+    other = fleet.enroll("runner-working", max_in_flight=1)
+    fleet.seen(other, 20)
+    fleet.job(other, "started", minutes_ago=60, task=fleet.work(other))
+    working = by_name(read(api))["runner-working"]
+    assert working["status"]["code"] == "busy" and working["usage"]["runs"]["running"] == 1
+
+
+def test_a_card_that_moved_on_without_an_end_report_is_not_in_progress(api, fleet):
+    made = fleet.enroll("runner-moved-on")
+    fleet.seen(made, 20)
+    fleet.job(
+        made, "started", minutes_ago=30, task=7
+    )  # a card nobody is working on: its end was never reported
+    item = by_name(read(api))["runner-moved-on"]
+    assert item["status"]["code"] == "online"
+    assert item["usage"]["runs"]["running"] == 0 and item["usage"]["runs"]["end_unreported"] == 1
 
 
 def test_a_drained_runner_with_an_old_open_run_never_claims_none_is_in_progress(api, fleet):
@@ -178,7 +208,7 @@ def test_a_drained_runner_with_an_old_open_run_never_claims_none_is_in_progress(
     item = by_name(read(api))["runner-old-drain"]
     assert item["status"]["code"] == "drained"
     assert "None is known to be in progress" in item["status"]["detail"]
-    assert "may still be open" in item["status"]["detail"]
+    assert "started and never reported an end" in item["status"]["detail"]
 
 
 def test_an_item_beyond_the_cap_is_still_reachable_by_id(api, fleet, monkeypatch):
@@ -388,7 +418,7 @@ def test_detail_has_activity_facts_and_says_logs_are_not_collected(api):
     texts = [entry["text"] for entry in result["item"]["activity"]]
     assert texts == ["Settings changed by the owner", "Created by the owner"]
     facts = {fact["label"]: fact["value"] for fact in result["item"]["facts"]}
-    assert facts["Container logs"].startswith("Not collected")
+    assert facts["Logs"].startswith("Not collected")
     assert facts["Image"] == "ghcr.io/acme/tools:1.2"
 
 
@@ -400,9 +430,7 @@ def test_runner_detail_lists_recent_runs_and_limits(api, fleet):
     assert status == 200
     assert result["item"]["activity"][0]["text"].startswith("Started: demo card 7")
     facts = {f["label"]: f["value"] for f in result["item"]["facts"]}
-    assert facts["Approved for work"] == "Yes" and facts["Container logs"].startswith(
-        "Not collected"
-    )
+    assert facts["Allowed to start runs"] == "Yes" and facts["Logs"].startswith("Not collected")
 
 
 def test_unknown_ids_kinds_and_paths_are_refused_with_a_reason(api):
@@ -585,12 +613,15 @@ def test_an_unverified_or_expired_machine_names_what_it_blocks(api):
     assert machine["health"]["blockers"][0]["text"] == (
         "Not verified: cloud workspaces placed here cannot start until it is verified."
     )
-    # No control verifies a machine in this version: the step says what is true, not where to click.
-    assert machine["status"]["next"] == (
-        "Verification is not available in this version of the app. "
-        "Until a machine is verified, cloud workspaces placed on it cannot start."
+    # No control verifies a machine in this version: there is no step, and the sentence says what is true.
+    assert machine["status"]["next"] is None
+    assert machine["status"]["detail"].endswith(
+        "Verification is not available in this version of the app."
     )
-    assert "Advanced" not in machine["status"]["next"]
+    assert "Advanced" not in machine["status"]["detail"]
+    assert machine["health"]["state"] == "idle", (
+        "nobody can act on it, so it is not an attention state"
+    )
     env = api.env
     with env.store._journal() as conn:
         meta = json.loads(
@@ -784,7 +815,10 @@ def test_the_expired_verification_step_does_not_point_at_a_control_either(api):
     after(env, 1200)
     status = by_name(read(api))[node["name"]]["status"]
     assert status["code"] == "verification_expired"
-    assert "Advanced" not in status["next"] and "not available in this version" in status["next"]
+    assert status["next"] is None
+    assert (
+        "Advanced" not in status["detail"] and "not available in this version" in status["detail"]
+    )
 
 
 def test_a_member_is_never_told_to_use_a_control_only_the_owner_has(api):
@@ -814,12 +848,12 @@ def test_a_workspace_the_clock_made_unknown_tells_a_member_to_ask_the_owner(api)
     executor.run(executor.claim(), "running")
     after(api.env, 1000)
     owner = by_name(read(api))["Quiet box"]["status"]
-    assert owner["code"] == "unknown" and owner["next"].endswith(
-        "Check the machine that carries it."
-    )
+    assert owner["code"] == "unknown"
+    assert owner["next"] == "Nothing to do yet; this clears when the machine reports again."
     _, shown = member(api)(path=BASE)
-    assert shown["items"][0]["status"]["next"].endswith(
-        "Ask the workspace owner to check the machine that carries it."
+    assert (
+        shown["items"][0]["status"]["next"]
+        == "Nothing to do yet; this clears when the machine reports again."
     )
 
 
@@ -929,3 +963,37 @@ def test_the_audit_and_the_poll_read_by_index(api):
             )
         )
     assert "SEARCH" in plan and "audit_object" in plan and "SCAN" not in plan, plan
+
+
+def test_a_locked_compute_database_is_busy_not_a_server_error(api):
+    import sqlite3
+
+    holder = sqlite3.connect(str(api.env.path), isolation_level=None, timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        status, result = api.request(path=BASE)
+        assert (status, result) == (503, {"error": "authority_unavailable", "reason": "busy"})
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert read(api)["items"] == []
+
+
+def test_a_machine_with_more_workspaces_than_names_says_and_n_more(api):
+    _, node = api.enrolled()
+    for n in range(7):
+        workspace(api, name=f"Box {n}", node_id=node["id"])
+    status, detail = api.request(path=f"{BASE}/machine/{node['id']}")
+    assert status == 200
+    value = {f["label"]: f["value"] for f in detail["item"]["facts"]}[
+        "Cloud workspaces placed here"
+    ]
+    assert value.endswith(" and 2 more") and value.count(",") == 4
+
+
+def test_the_verified_machine_has_nothing_known_to_block_and_an_unverified_one_is_not_attention(
+    api,
+):
+    _, node = api.enrolled()
+    unverified = by_name(read(api))[node["name"]]
+    assert unverified["health"]["state"] == "idle" and unverified["status"]["next"] is None

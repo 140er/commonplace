@@ -27,9 +27,6 @@ MAX_ITEMS = 100
 ACTIVITY_LIMIT = 10
 SPEND_DAYS = 30
 RESOURCE_STALE_S = 600  # a runner resource report older than this is shown as stale
-RECENT_STARTED_S = (
-    6 * 3600
-)  # a run recorded as started this long ago and not updated is no longer counted
 _ID = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
 _COUNTED = ("started", "completed", "errored", "stopped", "uncertain")
 
@@ -95,11 +92,9 @@ NEXT_STEP = {
     "offline": "Check that the machine is on and the runner program is running there. New card runs wait until it reports again.",
     "slow": "Wait a little: a busy machine or a poor connection can delay a report. If it stays like this, check the machine's network.",
     "never_connected": "Finish its setup on the machine (Admin, Runner machines lists what to run there).",
-    "unknown": "Nothing newer has been reported. Check the machine that carries it.",
-    # No control verifies a machine in this version (enrollment is checked by a signed receipt, never set by hand), so
-    # these say what is true instead of pointing at one.
-    "not_verified": "Verification is not available in this version of the app. Until a machine is verified, cloud workspaces placed on it cannot start.",
-    "verification_expired": "Verification is not available in this version of the app. Until the machine is verified again, cloud workspaces placed on it cannot start.",
+    "unknown": "Nothing to do yet; this clears when the machine reports again.",
+    # Not verified and verification expired have no step here: no control verifies a machine in this version (enrollment
+    # is checked by a signed receipt, never set by hand), and the status sentence says so instead of pointing at one.
     "disabled": "Turn it on again in Admin, Runner machines.",
 }
 
@@ -133,9 +128,7 @@ def ago(seconds):
 
 
 # The steps a member can take differ from the owner's: they ask the owner.
-NEXT_STEP_MEMBER = {
-    "unknown": "Nothing newer has been reported. Ask the workspace owner to check the machine that carries it."
-}
+NEXT_STEP_MEMBER = {"unknown": "Nothing to do yet; this clears when the machine reports again."}
 
 
 def _status(code, tone, label, detail, *, manage=True):
@@ -475,7 +468,8 @@ def machine_item(row, verification, placed, now):
                 "verification_expired",
                 "wait",
                 "Verification expired",
-                f"Its last verification ended {ago(now - expires)}. Commonplace does not check target machines live.",
+                f"Its last verification ended {ago(now - expires)}. Commonplace does not check target machines live. "
+                "Verification is not available in this version of the app.",
             )
             blockers.append(
                 {
@@ -501,7 +495,8 @@ def machine_item(row, verification, placed, now):
             "not_verified",
             "wait",
             "Not verified",
-            "Commonplace has not verified this machine yet. Cloud workspaces can be saved for it, but nothing runs on it.",
+            "Commonplace has not verified this machine yet. Cloud workspaces can be saved for it, but nothing runs on it. "
+            "Verification is not available in this version of the app.",
         )
         blockers.append(
             {
@@ -517,7 +512,8 @@ def machine_item(row, verification, placed, now):
         "status": status,
         "last_seen": None,
         "health": {
-            "state": "attention" if status["code"] != "verified" else "unknown",
+            # Nobody can act on an unverified machine in this version: it waits (quiet), it is not an attention state.
+            "state": "idle" if status["code"] != "verified" else "unknown",
             "blockers": blockers,
             "issues": [],
         },
@@ -557,7 +553,7 @@ def _table(conn, name):
 def blank_facts():
     return {
         "running": 0,
-        "older_started": 0,
+        "end_unreported": 0,
         "uncertain": 0,
         "queued": 0,
         "starts_hour": 0,
@@ -569,23 +565,35 @@ def blank_facts():
     }
 
 
-# The run counts of a poll, as four literal reads that each name their index and are bounded by what they ask: the
-# active states are few; "started" is the history (a finished run stays "started"), so it is read by time, newest
-# first, never as a whole. ``tests/test_runner_drain.py`` asserts a SEARCH (not a SCAN) for each.
+# The run counts of a poll, as literal reads that each name their index and are bounded by what they ask: the active
+# states are few; "started" is the history (a run stays "started" in ``runner_jobs`` after it ends: only the run ledger
+# learns of the end), so it is read by time and joined to its ledger row. ``tests/test_runner_drain.py`` asserts a
+# SEARCH (not a SCAN) for each.
 STARTED_WINDOW_S = (
-    90 * 86400
-)  # "started long ago" is counted back this far; older rows are history, not "may still be open"
+    7 * 86400
+)  # an open "started" run is looked for this far back; older rows are history
 FACT_ACTIVE_SQL = (
     "SELECT machine_id,state,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_state_updated "
     "WHERE state IN ('queued','leased','starting','uncertain') GROUP BY machine_id,state"
 )
-FACT_STARTED_RECENT_SQL = (
-    "SELECT machine_id,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_state_updated "
-    "WHERE state='started' AND updated_at>? GROUP BY machine_id"
+# A started run whose end nobody reported (the ledger has no ``ended_at``): it is in progress only while its card is
+# still being worked on by the machine's worker (as ``jobs.lease`` counts it); otherwise its end was never reported.
+FACT_STARTED_OPEN_SQL = (
+    "SELECT j.id AS id,j.machine_id AS machine_id,j.board_slug AS board_slug,j.task_number AS task_number "
+    "FROM runner_jobs j INDEXED BY runner_jobs_state_updated LEFT JOIN run_ledger l ON l.job_id=j.id "
+    "WHERE j.state='started' AND j.updated_at>? AND l.ended_at IS NULL LIMIT 1000"
 )
-FACT_STARTED_OLDER_SQL = (
-    "SELECT machine_id,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_state_updated "
-    "WHERE state='started' AND updated_at<=? AND updated_at>? GROUP BY machine_id"
+# Spend of the last 30 days: the five counted statuses, then the window twice (started, or never started and created).
+FACT_SPEND_SQL = (
+    "SELECT l.machine_id AS machine_id,e.currency AS currency,count(*) AS runs,sum(e.cost_micros) AS micros "
+    "FROM run_ledger l LEFT JOIN cost_events e ON e.id=(SELECT max(id) FROM cost_events WHERE job_id=l.job_id) "
+    "WHERE l.status IN (?,?,?,?,?) AND (l.started_at>=? OR (l.started_at IS NULL AND l.created_at>=?)) "
+    "GROUP BY l.machine_id,e.currency"
+)
+FACT_SPEND_PLAIN_SQL = (
+    "SELECT l.machine_id AS machine_id,l.currency AS currency,count(*) AS runs,sum(l.cost_micros) AS micros "
+    "FROM run_ledger l WHERE l.status IN (?,?,?,?,?) "
+    "AND (l.started_at>=? OR (l.started_at IS NULL AND l.created_at>=?)) GROUP BY l.machine_id,l.currency"
 )
 FACT_STARTS_HOUR_SQL = (
     "SELECT machine_id,count(*) AS n FROM runner_jobs INDEXED BY runner_jobs_starting "
@@ -593,10 +601,42 @@ FACT_STARTS_HOUR_SQL = (
 )
 
 
-def _runner_facts(store, now):
+def _working_cards(store, machines):
+    """``{machine_id: {(board_slug, task_number)}}``: the cards each machine's worker is working on now, the same
+    reading as ``jobs.lease`` (a card in ``doing`` assigned to the worker's connection)."""
+    from commonplace.projects import orchestration as orch
+
+    names = {}
+    for machine in machines:
+        try:
+            worker = store.gateway.db.connection(
+                machine["worker_connection_id"], store.workspace_id
+            )
+        except Exception:  # noqa: BLE001 - a worker connection that is gone has no cards
+            continue
+        names["conn:" + worker["name"]] = machine["id"]
+    working = {machine["id"]: set() for machine in machines}
+    if not names:
+        return working
+    try:
+        with orch.board_read(store.gateway.workspace_dir(store.workspace_id)) as boards:
+            for row in boards.execute(
+                "SELECT b.slug AS slug,t.id AS id,t.assignee AS assignee FROM tasks t "
+                "JOIN boards b ON b.id=t.board_id WHERE t.status='doing'"
+            ):
+                if row["assignee"] in names:
+                    working[names[row["assignee"]]].add((row["slug"], row["id"]))
+    except sqlite3.OperationalError:
+        pass  # no board database yet: nothing is being worked on
+    return working
+
+
+def _runner_facts(store, now, machines=()):
     """Per-machine run counts, resource reports, spend and drain flags from the runner store (``store`` is
-    opened once by the caller). Two indexed reads of ``runner_jobs`` serve every count: one by state (index
-    ``runner_jobs_machine_state``), one by ``starting_at`` (index ``runner_jobs_starting``)."""
+    opened once by the caller). A run counts as in progress while it is leased, starting or uncertain, or started with
+    its card still being worked on by the machine's worker and no end reported in the run ledger; a started run whose
+    end was never reported and whose card moved on is its own bucket (``end_unreported``), and a run the ledger says
+    ended is not counted at all."""
     from commonplace.runner import drain
 
     since_epoch = now - SPEND_DAYS * 86400
@@ -607,7 +647,6 @@ def _runner_facts(store, now):
         return facts.setdefault(machine_id, blank_facts())
 
     with store.connection() as conn:
-        recent_limit = stamp(now - RECENT_STARTED_S)
         for row in conn.execute(FACT_ACTIVE_SQL):
             entry = of(row["machine_id"])
             if row["state"] == "queued":
@@ -617,14 +656,17 @@ def _runner_facts(store, now):
                 entry["running"] += row["n"]
             else:
                 entry["running"] += row["n"]
-        for row in conn.execute(FACT_STARTED_RECENT_SQL, (recent_limit,)):
-            of(row["machine_id"])["running"] += row["n"]
-        # Started rows nobody has updated for hours are not counted as in progress, but they are not
-        # dropped either: the machine says how many may still be open (``older_started``).
-        for row in conn.execute(
-            FACT_STARTED_OLDER_SQL, (recent_limit, stamp(now - STARTED_WINDOW_S))
-        ):
-            of(row["machine_id"])["older_started"] = row["n"]
+        working = _working_cards(store, machines) if machines else {}
+        seen = (
+            set()
+        )  # a card restarted leaves older "started" rows: one card is one run in progress
+        for row in conn.execute(FACT_STARTED_OPEN_SQL, (stamp(now - STARTED_WINDOW_S),)):
+            entry, card = of(row["machine_id"]), (row["board_slug"], row["task_number"])
+            if card in working.get(row["machine_id"], ()) and (row["machine_id"], card) not in seen:
+                seen.add((row["machine_id"], card))
+                entry["running"] += 1
+            else:
+                entry["end_unreported"] += 1
         for row in conn.execute(FACT_STARTS_HOUR_SQL, (stamp(now - 3600),)):
             of(row["machine_id"])["starts_hour"] = row["n"]
         if _table(conn, "runner_resources"):
@@ -636,28 +678,10 @@ def _runner_facts(store, now):
                     "values": json.loads(row["resources"]),
                 }
         if _table(conn, "run_ledger"):
-            counted = ",".join("?" for _ in _COUNTED)
-            if _table(conn, "cost_events"):
-                rows = conn.execute(
-                    "SELECT l.machine_id AS machine_id,e.currency AS currency,count(*) AS runs,"
-                    "sum(e.cost_micros) AS micros FROM run_ledger l LEFT JOIN cost_events e "
-                    "ON e.id=(SELECT max(id) FROM cost_events WHERE job_id=l.job_id) "
-                    "WHERE l.status IN ("
-                    + counted
-                    + ") AND (l.started_at>=? OR (l.started_at IS NULL AND l.created_at>=?)) "
-                    "GROUP BY l.machine_id,e.currency",
-                    (*_COUNTED, stamp(since_epoch), stamp(since_epoch)),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT l.machine_id AS machine_id,l.currency AS currency,count(*) AS runs,"
-                    "sum(l.cost_micros) AS micros FROM run_ledger l "
-                    "WHERE l.status IN ("
-                    + counted
-                    + ") AND (l.started_at>=? OR (l.started_at IS NULL AND l.created_at>=?)) "
-                    "GROUP BY l.machine_id,l.currency",
-                    (*_COUNTED, stamp(since_epoch), stamp(since_epoch)),
-                ).fetchall()
+            rows = conn.execute(
+                FACT_SPEND_SQL if _table(conn, "cost_events") else FACT_SPEND_PLAIN_SQL,
+                (*_COUNTED, stamp(since_epoch), stamp(since_epoch)),
+            ).fetchall()
             for row in rows:
                 entry = of(row["machine_id"])
                 entry["runs"] += row["runs"]
@@ -740,14 +764,14 @@ def runner_status(machine, record, facts, now):
                 "Draining",
                 f"{DRAIN_SCOPE} {_runs(running)} in progress will finish. {NO_RESUME}",
             )
-        older = facts["older_started"]
+        older = facts["end_unreported"]
         return _status(
             "drained",
             "wait",
             "Drained",
             f"{DRAIN_SCOPE} "
             + (
-                f"None is known to be in progress; {_runs(older)} recorded as started long ago may still be open."
+                f"None is known to be in progress; {_runs(older)} started and never reported an end."
                 if older
                 else "None is in progress."
             )
@@ -812,7 +836,9 @@ def runner_blockers(machine, record, facts, red_after_s=900):
                 "text": f"Offline: nothing heard for over {span(red_after_s)}, so new card runs would wait.",
             }
         )
-    if facts["running"] >= machine["max_in_flight"]:
+    # A draining runner starts nothing whatever its load: "full" would say new runs wait for one to finish, which a drain
+    # already overrides, so it is not listed beside it.
+    if facts["running"] >= machine["max_in_flight"] and not drain["draining"]:
         blockers.append(
             {
                 "code": "full",
@@ -846,13 +872,13 @@ def _runner_usage(machine, facts, now, *, silent=False):
             "queued": facts["queued"],
             "starts_last_hour": facts["starts_hour"],
             "max_starts_per_hour": machine["max_starts_per_hour"],
-            "older_started": facts["older_started"],
+            "end_unreported": facts["end_unreported"],
             "text": f"{in_progress} (up to {machine['max_in_flight']} at once), "
             f"{facts['queued']} waiting, {facts['starts_hour']} of {machine['max_starts_per_hour']} "
             "starts used this hour"
             + (
-                f", plus {_runs(facts['older_started'])} recorded as started long ago that may still be open"
-                if facts["older_started"]
+                f", plus {_runs(facts['end_unreported'])} that started and never reported an end"
+                if facts["end_unreported"]
                 else ""
             ),
         }
@@ -1121,7 +1147,7 @@ def _runner_items(store, now, only=None):
     config = topo.StatusConfig.from_env()
     runs = store_runner(store)
     signals = topo.collect_signals(gateway, ws, now=when, runs=runs)
-    facts = _runner_facts(runs, now)
+    facts = _runner_facts(runs, now, machines)
     items = []
     for machine in machines:
         sig = signals.get(machine["id"]) or topo.MachineSignals(
@@ -1346,7 +1372,12 @@ def detail(store, principal, kind, item_id, *, session_hash):
         item["facts"] = [
             {
                 "label": "Cloud workspaces placed here",
-                "value": ", ".join(placed["names"]) or "None",
+                "value": (", ".join(placed["names"]) or "None")
+                + (
+                    f" and {placed['count'] - len(placed['names'])} more"
+                    if placed["count"] > len(placed["names"])
+                    else ""
+                ),
             },
             {
                 "label": "Live status",
@@ -1361,15 +1392,15 @@ def detail(store, principal, kind, item_id, *, session_hash):
     item["activity"] = _runner_activity(store, item_id, now)
     machine = _machine_row(store, item_id)
     item["facts"] = [
-        {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
+        {"label": "Runs at the same time", "value": f"Up to {machine['max_in_flight']}"},
         {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
         {
-            "label": "Approved for work",
+            "label": "Allowed to start runs",
             "value": "Yes" if machine["binding_state"] == "owner_attested" else "No",
         },
         {
-            "label": "Container logs",
-            "value": "Not collected: the activity list is the run history.",
+            "label": "Logs",
+            "value": "Not collected here: the activity list is the run history.",
         },
     ]
     return {"item": item, "can_manage": True}
@@ -1423,8 +1454,8 @@ def _workspace_facts(row, life, now, manage):
             else ("A machine is assigned" if public["machine_assigned"] else "None chosen yet"),
         },
         {
-            "label": "Container logs",
-            "value": "Not collected: the activity list is the audit trail.",
+            "label": "Logs",
+            "value": "Not collected here: the activity list is the audit trail.",
         },
     ]
     if life["reported_at"] is not None:
@@ -1555,7 +1586,8 @@ def _workspace_preview(item, row, life, action, refusal, executor):
             title="Withdraw the request?",
             effect=[
                 "Clears the request, which a machine had picked up and then stopped reporting on. "
-                "This does not undo what the machine did: the workspace may still be starting or running."
+                "The workspace is then marked Failed (the machine could not be reached). "
+                "This does not undo what the machine did: it may still be starting or running."
                 if life["claimed_at"] is not None
                 else "Cancels the request that is waiting. Nothing had been sent to a machine."
             ],
@@ -1596,7 +1628,7 @@ def _runner_preview(item, facts, action, refusal):
             ],
             running_work=f"{_runs(running)} in progress will finish normally; none is cancelled.",
             will_not=[
-                "Chat and Coworker sessions can still start here: drain stops card runs only.",
+                DRAIN_SCOPE,
                 "The runner program keeps running: this does not shut the machine down.",
             ],
         )
@@ -1670,10 +1702,11 @@ def _runner_act(store, principal, machine_id, action, session_hash, expected_seq
         # The flag, the request id and the drain log line are one transaction in the runner store. The hub-wide audit
         # line goes in just before it commits and is its own write in another database, so the two cannot be one
         # atomic step: a failed audit rolls the drain back, and a crash between the audit and the commit leaves an
-        # audit line for a drain that did not happen (never the other way round). The control lock is taken first,
-        # as everywhere else (control before any workspace writer), and held through the revoke check below, so a
-        # runner removed meanwhile cannot be drained.
-        with store.gateway.db._lock, store_runner(store).transaction() as conn:
+        # audit line for a drain that did not happen (never the other way round). The lock order is the lease's: the
+        # runner write transaction first, the control lock inside it (``jobs.lease`` does the same), so the two can
+        # never wait for each other. A runner removed between the check below and the commit is drained harmlessly
+        # (nothing leases to a removed runner).
+        with store_runner(store).transaction() as conn:
             if _machine_row(store, machine_id)["revoked_at"]:
                 raise conflict("revoked")
             state, repeated = drain.change(

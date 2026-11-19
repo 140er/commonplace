@@ -2,7 +2,7 @@
 
 import pytest
 
-from commonplace.compute import routes
+from commonplace.compute import overview, routes
 from commonplace.runner import capacity, drain, jobs, registry
 from tests.compute_overview_helpers import Fleet
 from tests.test_compute_api import API
@@ -68,7 +68,7 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
 ):
     made = fleet.enroll("runner-draining", max_in_flight=3)
     fleet.seen(made, 5)
-    fleet.job(made, "started", task=1)
+    fleet.job(made, "started", task=fleet.work(made))
     act(api, made, "drain")
     item = runner(api, made)
     assert item["status"]["code"] == "draining" and item["status"]["tone"] == "wait"
@@ -99,15 +99,14 @@ def test_an_offline_drained_runner_still_says_offline_and_mentions_the_drain(api
 def test_preview_states_what_happens_to_running_work_before_the_confirm(api, fleet):
     made = fleet.enroll("runner-preview")
     fleet.seen(made, 5)
-    fleet.job(made, "started", task=1)
+    fleet.job(made, "started", task=fleet.work(made))
     fleet.job(made, "queued", task=2)
     status, preview = api.request(path=f"{BASE}/runner/{made['machine_id']}/preview/drain")
     assert status == 200 and preview["allowed"] is True and preview["danger"] is True
     assert preview["running_work"] == "1 run in progress will finish normally; none is cancelled."
     assert "Queued runs (1) stay in the queue" in preview["effect"][0]
-    assert any(
-        "Chat and Coworker sessions can still start here" in line for line in preview["will_not"]
-    )
+    # The confirmation says what drain stops in the one sentence every other screen uses, word for word.
+    assert overview.DRAIN_SCOPE in preview["will_not"]
     assert any("does not shut the machine down" in line for line in preview["will_not"])
     assert preview["basis"] == {"seq": 0}
     # Read-only: nothing changed.
@@ -308,8 +307,9 @@ def test_the_poll_reads_runs_through_indexes_and_opens_the_runner_store_once(
         # Every read of a poll searches an index (a SCAN reads the whole history, which is never pruned).
         for sql, params in (
             (overview.FACT_ACTIVE_SQL, ()),
-            (overview.FACT_STARTED_RECENT_SQL, (stamp,)),
-            (overview.FACT_STARTED_OLDER_SQL, (stamp, stamp)),
+            (overview.FACT_STARTED_OPEN_SQL, (stamp,)),
+            (overview.FACT_SPEND_SQL, ("a", "b", "c", "d", "e", stamp, stamp)),
+            (overview.FACT_SPEND_PLAIN_SQL, ("a", "b", "c", "d", "e", stamp, stamp)),
             (overview.FACT_STARTS_HOUR_SQL, (stamp,)),
         ):
             plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
@@ -391,3 +391,91 @@ def test_a_busy_runner_store_is_busy_not_an_audit_failure(api, fleet, monkeypatc
     assert act(api, made, "drain") == (503, {"error": "authority_unavailable", "reason": "busy"})
     monkeypatch.undo()
     assert runner(api, made)["draining"] is False
+
+
+def test_a_truly_busy_drained_runner_does_not_also_say_it_is_full(api, fleet):
+    # Round 3 review: "Draining" beside "May be full: new runs wait for one to finish" contradicted itself.
+    made = fleet.enroll("runner-busy-drained", max_in_flight=1)
+    fleet.seen(made, 5)
+    fleet.job(made, "started", task=fleet.work(made))
+    before = {b["code"] for b in runner(api, made)["health"]["blockers"]}
+    assert before == {"full"}
+    act(api, made, "drain")
+    item = runner(api, made)
+    assert item["status"]["code"] == "draining"
+    blockers = {b["code"]: b["text"] for b in item["health"]["blockers"]}
+    assert set(blockers) == {"draining"} and blockers["draining"].startswith("Draining: ")
+
+
+def test_drain_and_lease_take_their_locks_in_the_same_order(api, fleet, monkeypatch):
+    """The lease takes the runner write transaction and then the control lock; a drain that took them the other way
+    round could deadlock with it. A lease-like thread holds the runner transaction and then wants the control lock while
+    a drain starts: both must finish."""
+    import threading
+
+    made = fleet.enroll("runner-order-2")
+    store = fleet.store()
+    db = api.env.db
+    runner_held, drain_at_txn, results = threading.Event(), threading.Event(), {}
+    real = overview.store_runner
+
+    def lease_like():
+        with store.transaction():
+            runner_held.set()
+            assert drain_at_txn.wait(10)
+            with db._lock:  # the lease reads control data (a connection) inside its transaction
+                results["lease"] = True
+
+    def spy(store_arg):
+        opened = real(store_arg)
+        original = opened.transaction
+
+        def transaction():
+            drain_at_txn.set()  # the drain is about to open the runner transaction: it holds nothing yet
+            return original()
+
+        opened.transaction = transaction
+        return opened
+
+    monkeypatch.setattr(overview, "store_runner", spy)
+    lease = threading.Thread(target=lease_like, daemon=True)
+    lease.start()
+    assert runner_held.wait(10)
+    seq = runner(api, made)["basis"]["seq"]  # before the drain thread exists
+    results["drain"] = []
+    thread = threading.Thread(
+        target=lambda: results["drain"].append(
+            api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": seq})
+        ),
+        daemon=True,
+    )
+    thread.start()
+    lease.join(15)
+    thread.join(15)
+    assert not lease.is_alive() and not thread.is_alive(), (
+        "deadlock between the drain and the lease"
+    )
+    assert results["lease"] is True and results["drain"][0][0] == 200
+
+
+def test_the_ledger_backfill_runs_once_not_at_every_open_of_the_store(api, fleet):
+    from commonplace.runner import ledger
+
+    made = fleet.enroll("runner-backfill")
+    fleet.job(made, "started", task=11)
+    store = fleet.store()
+    # A store that predates the marker: the backfill finds the job that has no ledger row and writes it, once.
+    with store.transaction() as conn:
+        conn.execute("DROP TABLE run_ledger_backfill")
+        conn.execute("DELETE FROM run_ledger")
+    fleet.store()
+    with fleet.store().connection() as conn:
+        assert conn.execute("SELECT count(*) FROM run_ledger").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM run_ledger_backfill").fetchone()[0] == 1
+        # A job row written behind the ledger's back is not looked for at every open any more.
+        conn.execute("DELETE FROM run_ledger")
+        plan = " ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + ledger._MISSING))
+        assert "SCAN" in plan  # the anti-join is the expensive read the marker spares
+    fleet.store()
+    with fleet.store().connection() as conn:
+        assert conn.execute("SELECT count(*) FROM run_ledger").fetchone()[0] == 0

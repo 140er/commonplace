@@ -88,7 +88,9 @@ def _populate(fx):
     wings = {"wings": ["fixture"]}
     busy = fleet.enroll("build-runner", max_in_flight=2, **wings)
     fleet.seen(busy, 40)
-    fleet.job(busy, "started", task=1)
+    fleet.job(busy, "started", task=fleet.work(busy))  # its card is being worked on: in progress
+    # A run that finished: reported ended, so it is not in progress, not full and not an unreported end.
+    fleet.end(fleet.job(busy, "started", minutes_ago=300, task=fleet.work(busy)), minutes_ago=290)
     fleet.resources(busy, seconds_ago=90)
     fleet.spend(busy, micros=1_250_000, job="s1")
     fleet.spend(busy, unknown=True, job="s2")
@@ -99,7 +101,7 @@ def _populate(fx):
     fleet.enroll("spare-runner", **wings)
     draining = fleet.enroll("night-runner", **wings)
     fleet.seen(draining, 20)
-    fleet.job(draining, "started", task=2, minutes_ago=5)
+    fleet.job(draining, "started", task=fleet.work(draining), minutes_ago=5)  # drained and busy
     idle = fleet.enroll("idle-runner", **wings)
     fleet.seen(idle, 15)
     gone = fleet.enroll("retired-runner", **wings)
@@ -280,7 +282,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         shown = _shown(page)
         assert "5 runners" not in shown  # six were enrolled; the sentence counts them all
         expect(page.locator("[data-ov-summary]")).to_contain_text(
-            "7 runners, 1 machine, 7 cloud workspaces. 5 need attention: "
+            "7 runners, 1 machine, 7 cloud workspaces. 4 need attention: "
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
@@ -328,8 +330,9 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         expect(_row(page, "Build machine")).to_contain_text("Not verified")
         expect(_row(page, "Build machine")).to_contain_text("1 thing blocks new work: not verified")
         expect(_row(page, "Build machine")).to_contain_text(
-            "Next step: Verification is not available in this version of the app."
+            "Verification is not available in this version of the app."
         )
+        assert "Next step" not in _row(page, "Build machine").inner_text()
         assert "Advanced" not in _row(page, "Build machine").inner_text()
         # What is not known says so: no zero stands in for a missing report.
         expect(_row(page, "build-runner")).to_contain_text("2 runs of unknown cost")
@@ -379,13 +382,13 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         expect(_rows(page)).to_have_count(15)
         expect(page.get_by_label("Filter by status")).to_be_focused()
         # "6 need attention" is a button that sets the same filter, with a filled pressed state.
-        page.get_by_role("button", name="5 need attention").click()
-        expect(_rows(page)).to_have_count(5)
-        expect(page.get_by_role("button", name="5 need attention")).to_have_attribute(
+        page.get_by_role("button", name="4 need attention").click()
+        expect(_rows(page)).to_have_count(4)
+        expect(page.get_by_role("button", name="4 need attention")).to_have_attribute(
             "aria-pressed", "true"
         )
         expect(page.get_by_label("Filter by status")).to_have_value("attention")
-        pressed = page.get_by_role("button", name="5 need attention").evaluate(
+        pressed = page.get_by_role("button", name="4 need attention").evaluate(
             "el => getComputedStyle(el).backgroundColor"
         )
         idle = page.get_by_role("button", name="Runners (7)").evaluate(
@@ -422,7 +425,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
         assert panel.get_by_role("button", name="Close").count() == 1
         expect(panel).to_contain_text("Machine resources")
         expect(panel).to_contain_text("Not reported: this machine has not sent a resource report.")
-        expect(panel).to_contain_text("Container logs")
+        expect(panel).to_contain_text("Logs")
         expect(panel).to_contain_text("Not collected")
         assert page.locator('.compute-ov [role="alert"]:visible').count() == 0
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0, (
@@ -486,7 +489,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                     "Not checked live",
                     "Commonplace does not probe target machines.",
                     "Not verified: cloud workspaces placed here cannot start until it is verified.",
-                    "Next step: Verification is not available in this version of the app.",
+                    "Verification is not available in this version of the app.",
                 ],
                 "26-detail-machine",
             ),
@@ -1002,7 +1005,7 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
             expect(_row(page, "Build box")).to_contain_text("nothing newer has arrived")
             expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text("Offline")
             expect(page.locator("[data-ov-summary]")).to_contain_text(
-                re.compile(r"[789] need attention")
+                re.compile(r"[6789] need attention")
             )
             _shot(page, f"{ui}-desktop-45-aged-by-clock")
             context.close()
