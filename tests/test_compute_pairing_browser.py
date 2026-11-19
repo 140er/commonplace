@@ -165,6 +165,9 @@ class Fixture:
         """A machine that connected, was approved and passed its checks (no browser involved)."""
         item, setup = self.add(**changes)
         credentials = self.connect(setup)
+        self.steps(
+            credentials
+        )  # the server approves only a machine that has finished all four steps
         view = self.view(item)
         status, result = self.call(
             "POST",
@@ -177,7 +180,6 @@ class Fixture:
             cookie=self.cookie,
         )
         assert status == 200, result
-        self.steps(credentials)
         return item, credentials
 
 
@@ -368,7 +370,7 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         expect(section).to_contain_text("Waiting for the machine")
         command = page.locator("[data-pr-command]").inner_text()
         assert (
-            command.startswith(" S=$(curl -fsSL '")
+            command.startswith(" S=$(curl -fsS '")
             and "&& printf '%s' '" in command
             and "| sh -c" in command
         )

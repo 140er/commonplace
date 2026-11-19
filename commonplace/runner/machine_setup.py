@@ -135,6 +135,8 @@ class Hub:
             with self.opener.open(request, timeout=20) as response:
                 return json.loads(response.read(65537))
         except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                raise Unreachable from None  # the site did not give an answer about this code
             try:
                 return json.loads(exc.read(65537))
             except Exception:
@@ -255,8 +257,8 @@ def prerequisites(probe):
         raise Failure(
             "missing_runner_program",
             "The runner program is not installed on this machine.",
-            "This command does not install it yet. Install it first (see the runner guide), "
-            "then open Compute in the app and choose Set up again.",
+            "This command does not install it yet. Ask the person who runs this site for the "
+            "runner program, then open Compute in the app and choose Set up again.",
         )
     if not probe.user_manager():
         raise Failure(
@@ -315,6 +317,9 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
         report = {"step": "prerequisites", "state": "failed", "cause": failure.cause}
     answer = ask(report)
     if answer is None:
+        if failure:
+            out(failure.message)
+            out(failure.then)
         return 1
     resume = answer.get("reason") == "used" and _resumable(probe.home(), envelope)
     if not answer.get("usable") and not resume:
@@ -332,21 +337,65 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
         )
         if not probe.enable_linger():
             ask({"step": "prerequisites", "state": "failed", "cause": "missing_privilege"})
-            out("The confirmation was not given, so nothing was installed.")
             out(
-                "Ask an administrator to run: sudo loginctl enable-linger "
+                "The confirmation was not given (or the password was wrong), so nothing was installed."
+            )
+            out(
+                "Open Compute in the app, choose Set up again, run the new command and type your password "
+                "carefully; or ask an administrator to run: sudo loginctl enable-linger "
                 + probe.account()
-                + ". Then "
-                + AGAIN[0].lower()
-                + AGAIN[1:]
             )
             return 1
-    out(
-        "Continuing the setup that stopped earlier ..."
-        if resume
-        else "Installing the runner (this spends the one-time code) ..."
-    )
+    out("Continuing the setup that stopped earlier ..." if resume else "Installing the runner ...")
     return _install(envelope, code, probe, hub, make_installer, out, ask)
+
+
+def _reason_lines(exc, lines, code):
+    """What the window says about why it failed: the installer's last lines and one fixed reason.
+
+    Never the code, a token or an exception's own text (it may quote a path or a value): a fixed installer
+    refusal is printed as it is, an operating-system error as its system message, anything else by its kind.
+    """
+    from_installer = [
+        line
+        for line in lines[-3:]
+        if code not in line
+        and "token" not in line.lower()
+        and not line.startswith("Machine fingerprint")
+    ]
+    if exc is None:
+        reason = None
+    elif type(exc).__name__ in ("InstallError", "EnrollmentRefused"):
+        reason = str(exc)
+    elif isinstance(exc, OSError):
+        reason = exc.strerror or "an operating-system error"
+    else:
+        reason = "an unexpected " + type(exc).__name__
+    return from_installer + (["Reason: " + reason] if reason else [])
+
+
+def _earlier_alive(home, hub):
+    """Is the installation here still open on the site? True, False, or None when the site cannot say.
+
+    No credential means it never connected: nothing healthy to protect. A closed or cancelled setup answers
+    closed (or its credential no longer works); an open one answers ok. The probe writes nothing.
+    """
+    token = _token(home)
+    if not token:
+        return False
+    try:
+        answer = hub.status(token, {"step": "probe"})
+    except Unreachable:
+        return None
+    return bool(isinstance(answer, dict) and answer.get("ok"))
+
+
+def _manifest_label(home):
+    try:
+        journal = json.loads((Path(home) / ".commonplace-runner" / "manifest.json").read_text())
+        return str(journal["intent"]["machine_label"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "of an earlier setup"
 
 
 def _install(envelope, code, probe, hub, make_installer, out, ask):
@@ -379,8 +428,23 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     try:
         intent, installer = build()
         if _other_installation(home, envelope):
-            # Set up again cancelled that earlier enrollment, so what it left here is dead; the installer
-            # refuses a different one on top of it, which would be a dead end.
+            # Only what Set up again cancelled may be removed: ask the site about the earlier setup first. A healthy
+            # approved runner of another pairing is never uninstalled behind its owner's back.
+            alive = _earlier_alive(home, hub)
+            if alive is None:
+                out(
+                    "This machine could not reach the site to check the earlier setup on this account."
+                )
+                out(
+                    "Nothing was changed. Check the internet connection, then run the command again."
+                )
+                return 1
+            if alive:
+                out(f"This account already runs machine {_manifest_label(home)}.")
+                out(
+                    "Remove it under Compute first, then run the command again. Nothing was changed."
+                )
+                return 1
             out("Removing the earlier unfinished setup on this machine ...")
             if installer.uninstall() != 0:
                 raise RuntimeError("earlier setup could not be removed")
@@ -389,21 +453,29 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
             )  # a fresh one: the old object still remembers what it removed
         installer.install(intent, accepted=True, code_source=lambda: code)
     except Exception as exc:
-        return _failed(exc, installer, home, hub, out, ask)
+        return _failed(exc, installer, home, hub, out, ask, lines, code)
     token = _token(home)
-    state = installer.host.state()
-    results = [("files", True), ("service", bool(state["enabled"] and state["active"]))]
+    try:
+        state = installer.host.state()
+        running = bool(state["enabled"] and state["active"])
+    except Exception:
+        running = False
+    results = [
+        ("files", True, None),
+        ("service", running, None if running else "The background service is not running."),
+    ]
     try:
         installer.verify()
-        results.append(("check", True))
-    except Exception:
-        results.append(("check", False))
+        results.append(("check", True, None))
+    except Exception as exc:
+        why = _reason_lines(exc, [], code)
+        results.append(("check", False, why[-1] if why else "The final check did not pass."))
     causes = {"files": "unknown", "service": "service_failed", "check": "check_failed"}
     # The fingerprint is on the screen before the app can show the last step as done, so the person can compare.
-    for line in lines:
-        if line.startswith("Machine fingerprint:"):
-            out(line)
-    for step, ok in results:
+    printed = [line for line in lines if line.startswith("Machine fingerprint:")]
+    for line in printed:
+        out(line)
+    for step, ok, _why in results:
         body = (
             {"step": step, "state": "ok"}
             if ok
@@ -411,17 +483,24 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
         )
         if token and not _report(hub, token, body):
             out("Could not tell the app about the " + step + " step. It will show it as waiting.")
-    if not all(ok for _, ok in results):
+    if not all(ok for _, ok, _ in results):
         out("The machine was installed, but one check failed. The app shows which.")
+        for _step, ok, why in results:
+            if not ok and why:
+                out(why)
         out(AGAIN)
         return 1
     out("Done on this machine. Go back to Compute in the app: it shows this machine and")
-    out("asks you to approve it. Compare the fingerprint above with the one on that screen.")
+    out(
+        "asks you to approve it. Compare the fingerprint above with the one on that screen."
+        if printed
+        else "asks you to approve it. Its fingerprint was printed the first time this command ran."
+    )
     return 0
 
 
-def _failed(exc, installer, home, hub, out, ask):
-    """Say what happened, tell the app the step it reached, and give the one next step."""
+def _failed(exc, installer, home, hub, out, ask, lines, code):
+    """Say what happened and why, tell the app the step it reached, and give the one next step."""
     try:
         from commonplace.runner.installer import EnrollmentRefused
     except ImportError:  # pragma: no cover - the program only gets here with the runner program
@@ -434,6 +513,7 @@ def _failed(exc, installer, home, hub, out, ask):
             out(str(answer.get("text") or "The site did not accept the code."))
             out(str(answer.get("next") or AGAIN))
         return 1
+    why = _reason_lines(exc, lines, code)
     if token:
         # The machine's own credential exists: the step it reached is reported with it.
         step, cause = (
@@ -441,11 +521,13 @@ def _failed(exc, installer, home, hub, out, ask):
         )
         _report(hub, token, {"step": step, "state": "failed", "cause": cause})
         out("Setup did not finish on this machine.")
+        for line in why:
+            out(line)
         out(AGAIN)
         return 1
-    unreachable = "delivery unavailable" in str(exc)
-    if unreachable:
-        report = {"step": "prerequisites", "state": "failed", "cause": "cannot_reach_hub"}
+    # Checks passed, so a lost connection at the exchange is the files step, not the pre-flight one.
+    if "delivery unavailable" in str(exc):
+        report = {"step": "files", "state": "failed", "cause": "cannot_reach_hub"}
     else:
         disk = getattr(exc, "errno", None) == errno.ENOSPC
         report = {"step": "files", "state": "failed", "cause": "disk_full" if disk else "unknown"}
@@ -455,6 +537,8 @@ def _failed(exc, installer, home, hub, out, ask):
     out("Setup did not finish on this machine.")
     if spent:
         out("The one-time code was used, but this machine could not save what it needs.")
+    for line in why:
+        out(line)
     out(AGAIN)
     return 1
 

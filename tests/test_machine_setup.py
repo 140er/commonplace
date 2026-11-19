@@ -560,15 +560,18 @@ def test_a_check_that_fails_after_install_is_reported_as_the_check_step(machine)
         inst.verify = verify
         return intent, inst
 
+    lines = []
     status = machine_setup.main(
         [m.setup["envelope"]],
         code=m.setup["code"],
         probe=m.probe,
         hub=m.hub,
         make_installer=make,
-        out=lambda line: None,
+        out=lines.append,
     )
     assert status == 1
+    # The final-check failure prints its reason in the window too, not only in the app.
+    assert "Reason: verification failed" in lines and machine_setup.AGAIN in lines
     item = view(m)
     assert item["state"] == "failed" and item["cause"]["step"] == "check"
     assert item["cause"]["code"] == "check_failed"
@@ -927,7 +930,10 @@ def test_a_write_that_fails_after_the_code_is_spent_says_so_and_the_page_is_neve
     assert [s["state"] for s in item["steps"]][1:] == ["pending"] * 3, (
         "nothing past the checks is reported"
     )
-    assert item["can_accept"] is True
+    assert item["can_accept"] is False
+    # The window says why, in the installer's fixed words, and never the code.
+    assert "Reason: Input/output error" in lines
+    assert m.setup["code"] not in "\n".join(lines)
 
 
 def test_a_refused_exchange_is_not_called_a_lost_connection(machine):
@@ -960,6 +966,8 @@ def test_a_dead_network_at_the_exchange_is_a_lost_connection_and_is_reported_as_
     assert status == 1 and machine_setup.AGAIN in lines
     item = view(m)
     assert item["state"] == "failed" and item["cause"]["code"] == "cannot_reach_hub"
+    # The checks passed and the files were never written: the files step, not the pre-flight one.
+    assert item["cause"]["step"] == "files"
 
 
 def test_set_up_again_after_a_half_finished_install_replaces_what_the_first_try_left(machine):
@@ -999,3 +1007,171 @@ def test_set_up_again_after_a_half_finished_install_replaces_what_the_first_try_
     assert status == 0, lines
     assert "Removing the earlier unfinished setup on this machine ..." in lines
     assert view(m)["state"] == "connected" and [s["state"] for s in view(m)["steps"]] == ["ok"] * 4
+
+
+# ---- review round 2: the window gives the reason, a healthy earlier machine survives, the right step ------
+
+
+def test_a_failure_after_the_code_was_spent_prints_its_reason_in_the_window(machine):
+    """The app says the reason is on the last lines of the window, so the window must have it."""
+
+    class Refusing(FakeHost):
+        def change(self, action):
+            if action == "enable":
+                raise installer.InstallError("noninteractive linger permission is required")
+            super().change(action)
+
+    m = machine
+    m.host = Refusing()
+    status, lines = run_with(m)
+    assert status == 1
+    assert "Reason: noninteractive linger permission is required" in lines
+    assert machine_setup.AGAIN in lines
+    assert lines.index("Reason: noninteractive linger permission is required") < lines.index(
+        machine_setup.AGAIN
+    )
+    assert m.setup["code"] not in "\n".join(lines) and "cmmn_" not in "\n".join(lines)
+    assert view(m)["cause"]["step"] == "service"
+
+
+def test_a_service_that_is_not_running_after_install_says_so_in_the_window(machine):
+    class Silent(FakeHost):
+        def change(self, action):
+            super().change(action)
+            if action == "enable":
+                self.active = False
+
+    m = machine
+    m.host = Silent()
+    # verify() checks the service too, so the install itself refuses; the window carries the installer's reason.
+    status, lines = run_with(m)
+    assert status == 1
+    assert any(line.startswith("Reason: ") for line in lines)
+    assert machine_setup.AGAIN in lines
+
+
+def test_a_healthy_approved_earlier_machine_is_never_uninstalled_by_a_new_command(machine):
+    m = machine
+    assert run_with(m)[0] == 0
+    item = view(m)
+    pairing.accept(
+        m.db,
+        m.owner,
+        item["id"],
+        {
+            "request_id": "ok",
+            "expected_version": item["version"],
+            "identity_digest": item["identity_digest"],
+        },
+    )
+    before = {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()}
+    token = (m.home / ".commonplace-runner" / "machine.token").read_text()
+    _, second, setup = pairing.create(
+        m.db,
+        None,
+        m.owner,
+        {
+            "request_id": "req-2",
+            "kind": "runner",
+            "label": "second-box",
+            "projects": ["demo"],
+            "topics": ["worker"],
+            "wings": ["shared"],
+        },
+    )
+    first_item = m.item
+    m.item, m.setup = second, setup
+    status, lines = run_with(m)
+    assert status == 1
+    assert "This account already runs machine build-box." in lines
+    assert (
+        "Remove it under Compute first, then run the command again. Nothing was changed." in lines
+    )
+    assert not any("Removing the earlier" in line for line in lines)
+    assert {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()} == before, (
+        "no file was touched"
+    )
+    # The earlier machine is still approved, enabled and reporting.
+    m.item = first_item
+    assert view(m)["state"] == "ready"
+    assert m.hub.status(token.strip(), {"step": "probe"})["ok"] is True
+    row = registry.get_machine(m.db, m.owner.workspace_id, "build-box")
+    assert row["enabled"] == 1 and row["revoked_at"] is None
+
+
+def test_an_earlier_setup_the_site_cannot_confirm_is_left_alone(machine):
+    class Silent:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def check(self, body):
+            return self.inner.check(body)
+
+        def status(self, token, body):
+            raise machine_setup.Unreachable
+
+    m = machine
+    assert run_with(m)[0] == 0
+    first_item = m.item
+    pairing.close(
+        m.db, m.owner, first_item["id"], {"request_id": "c", "expected_version": view(m)["version"]}
+    )
+    _, second, setup = pairing.create(
+        m.db,
+        None,
+        m.owner,
+        {
+            "request_id": "req-3",
+            "kind": "runner",
+            "label": "build-box",
+            "projects": ["demo"],
+            "topics": ["worker"],
+            "wings": ["shared"],
+        },
+    )
+    m.item, m.setup = second, setup
+    m.hub = Silent(m.hub)
+    status, lines = run_with(m)
+    assert status == 1 and (m.home / ".commonplace-runner" / "manifest.json").exists()
+    assert (
+        "This machine could not reach the site to check the earlier setup on this account." in lines
+    )
+
+
+def test_a_missing_runner_program_asks_for_it_instead_of_pointing_at_a_guide(tmp_path):
+    with pytest.raises(machine_setup.Failure) as raised:
+        machine_setup.prerequisites(FakeProbe(tmp_path, imports={"cryptography"}))
+    text = raised.value.message + " " + raised.value.then
+    assert "Ask the person who runs this site for the runner program" in text
+    assert "guide" not in text.lower() and "does not install it yet" in text
+    assert "guide" not in pairing.CAUSES["missing_runner_program"][1].lower()
+    assert "Ask the person who runs this site" in pairing.CAUSES["missing_runner_program"][1]
+
+
+def test_a_server_error_is_no_answer_and_a_local_failure_is_still_said_when_the_site_is_silent(
+    tmp_path,
+):
+    import urllib.error
+
+    hub = machine_setup.Hub("https://hub.example.test")
+
+    class Down:
+        def open(self, request, timeout=None):
+            raise urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b'{"error": "unavailable"}'))
+
+    hub.opener = Down()
+    with pytest.raises(machine_setup.Unreachable):
+        hub.check({"workspace_id": "w", "pairing_id": "p", "code": CODE})
+    lines = []
+    status = machine_setup.main(
+        [encode(ENVELOPE)],
+        code=CODE,
+        probe=FakeProbe(tmp_path, python=(3, 9)),
+        hub=ScriptedHub({"check": machine_setup.Unreachable()}),
+        make_installer=_refuse_install,
+        out=lines.append,
+    )
+    assert status == 1
+    assert "Python 3.10 or later is required." in lines, (
+        "the machine's own problem is said even when the site is silent"
+    )
