@@ -151,7 +151,8 @@ def test_busy_runner_shows_runs_in_progress_the_age_and_a_full_blocker(api, flee
     fleet.job(made, "queued", task=2)
     busy = by_name(read(api))["runner-busy"]
     assert busy["status"]["code"] == "busy"
-    assert busy["status"]["detail"] == "It has runs in progress."
+    assert busy["status"]["label"] == "Online · Busy"
+    assert busy["status"]["detail"] == "1 of 1 runs at once is in progress."
     assert busy["last_seen"]["label"] == "Last seen 20 seconds ago"
     assert busy["usage"]["runs"]["running"] == 1 and busy["usage"]["runs"]["queued"] == 1
     assert [b["code"] for b in busy["health"]["blockers"]] == ["full"]
@@ -176,7 +177,7 @@ def test_a_drained_runner_with_an_old_open_run_never_claims_none_is_in_progress(
     assert status == 200
     item = by_name(read(api))["runner-old-drain"]
     assert item["status"]["code"] == "drained"
-    assert "none is known to be in progress" in item["status"]["detail"]
+    assert "None is known to be in progress" in item["status"]["detail"]
     assert "may still be open" in item["status"]["detail"]
 
 
@@ -560,3 +561,135 @@ def test_the_action_route_checks_the_owner_before_it_looks_at_a_record(api):
             403,
             {"error": "owner_required", "reason": "member"},
         )
+
+
+# round 1 of the #615 review: copy that matches what the screen can do, honest machine blockers, one bad row
+
+
+def _all_text(value):
+    """Every string in a served answer, to check a phrase appears nowhere."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for inner in value.values():
+            yield from _all_text(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            yield from _all_text(inner)
+
+
+def test_an_unverified_or_expired_machine_names_what_it_blocks(api):
+    _, node = api.enrolled()
+    machine = by_name(read(api))[node["name"]]
+    assert [b["code"] for b in machine["health"]["blockers"]] == ["not_verified"]
+    assert machine["health"]["blockers"][0]["text"] == (
+        "Not verified: cloud workspaces placed here cannot start until it is verified."
+    )
+    assert machine["status"]["next"].startswith("Verify it under Advanced")
+    env = api.env
+    with env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+        conn.execute(
+            "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,receipt_digest,verified_at,expires_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (node["id"], "g", "e", "d" * 64, env.clock.now - 60, env.clock.now + 600),
+        )
+    assert by_name(read(api))[node["name"]]["health"]["blockers"] == []
+    after(env, 1200)
+    expired = by_name(read(api))[node["name"]]
+    assert [b["code"] for b in expired["health"]["blockers"]] == ["verification_expired"]
+    assert "verified again" in expired["health"]["blockers"][0]["text"]
+
+
+def test_one_unreadable_machine_row_does_not_fail_the_whole_overview(api, fleet):
+    _, node = api.enrolled()
+    fleet.enroll("runner-still-listed")
+    with api.env.store._journal() as conn:
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", ("{not json", node["id"]))
+    result = read(api)
+    items = by_name(result)
+    assert items["Machine"]["status"]["code"] == "not_verified"
+    assert "runner-still-listed" in items
+
+
+def test_no_sentence_promises_a_control_the_screen_does_not_have(api, fleet):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Queued box")
+    made = fleet.enroll("runner-copy", max_in_flight=1)
+    fleet.seen(made, 5)
+    fleet.job(made, "uncertain", task=3)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    result = read(api)
+    queued = by_name(result)["Queued box"]
+    assert queued["status"]["code"] == "start_requested"
+    assert queued["status"]["detail"].endswith(
+        "It expires after 24 hours if no machine picks it up. Withdrawing it is not available in this version."
+    )
+    texts = list(_all_text(result))
+    texts += list(_all_text(api.request(path=f"{BASE}/runner/{made['machine_id']}")[1]))
+    for forbidden in (
+        "You can withdraw",
+        "Resume to use it again",
+        "until you resume",
+        "wait for the owner to resolve",
+        "Ask again",
+        "no new runs start",
+        "No new runs start",
+    ):
+        assert not [t for t in texts if forbidden in t], forbidden
+    runner_item = by_name(result)["runner-copy"]
+    assert runner_item["status"]["detail"].startswith(overview.DRAIN_SCOPE)
+    assert overview.DRAIN_SCOPE == (
+        "No new card runs start here. Chat and Coworker sessions can still start here."
+    )
+    assert "Resuming it is not available in this version." in runner_item["status"]["detail"]
+
+
+def test_an_offline_runner_does_not_say_zero_runs_and_has_one_next_step(api, fleet):
+    made = fleet.enroll("runner-quiet")
+    fleet.seen(made, 4000)
+    item = by_name(read(api))["runner-quiet"]
+    assert item["status"]["code"] == "offline"
+    assert item["usage"]["runs"]["text"].startswith(
+        "0 runs recorded in progress; more may be running while it is offline"
+    )
+    assert "0 runs in progress" not in item["usage"]["summary"]
+    assert item["status"]["next"].startswith("Check that the machine is on")
+    slow = fleet.enroll("runner-slowish")
+    fleet.seen(slow, 400)
+    assert by_name(read(api))["runner-slowish"]["status"]["next"].startswith("Wait a little")
+
+
+def test_a_removed_runner_is_not_shown_as_seen_now(api, fleet):
+    made = fleet.enroll("runner-gone")
+    fleet.seen(made, 21)
+    revoke_machine(api.env, made)
+    item = by_name(read(api))["runner-gone"]
+    assert item["status"]["code"] == "revoked"
+    assert item["last_seen"]["label"] == "Last contact 21 seconds ago, before it was removed"
+    assert (item["last_seen"]["prefix"], item["last_seen"]["suffix"]) == (
+        "Last contact",
+        ", before it was removed",
+    )
+
+
+def test_a_stale_resource_report_is_called_stale_in_the_row_and_the_offline_limit_is_the_configured_one(
+    api, fleet, monkeypatch
+):
+    made = fleet.enroll("runner-stale-res")
+    fleet.seen(made, 4000)
+    fleet.resources(made, seconds_ago=1200)
+    item = by_name(read(api))["runner-stale-res"]
+    assert "Resources last reported 20 minutes ago (stale)" in item["usage"]["summary"]
+    monkeypatch.setenv("COMMONPLACE_TOPOLOGY_RED_S", "7200")
+    fleet.seen(made, 9000)
+    blockers = by_name(read(api))["runner-stale-res"]["health"]["blockers"]
+    text = [b["text"] for b in blockers if b["code"] == "offline"]
+    assert text and "for over 2 hours" in text[0]

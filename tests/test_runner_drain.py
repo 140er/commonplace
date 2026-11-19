@@ -72,12 +72,19 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
     act(api, made, "drain")
     item = runner(api, made)
     assert item["status"]["code"] == "draining" and item["status"]["tone"] == "wait"
-    assert "1 run in progress will finish" in item["status"]["detail"]
+    assert item["status"]["detail"] == (
+        "No new card runs start here. Chat and Coworker sessions can still start here. "
+        "1 run in progress will finish. Resuming it is not available in this version."
+    )
     assert [b["code"] for b in item["health"]["blockers"]] == ["draining"]
     with fleet.store().transaction() as conn:
         conn.execute("UPDATE runner_jobs SET state='failed'")
     assert runner(api, made)["status"]["code"] == "drained"
-    assert "Resume to use it again" in runner(api, made)["status"]["detail"]
+    drained = runner(api, made)["status"]["detail"]
+    assert (
+        "No new card runs start here. Chat and Coworker sessions can still start here." in drained
+    )
+    assert "Resume to use it again" not in drained
 
 
 def test_an_offline_drained_runner_still_says_offline_and_mentions_the_drain(api, fleet):
@@ -99,7 +106,7 @@ def test_preview_states_what_happens_to_running_work_before_the_confirm(api, fle
     assert preview["running_work"] == "1 run in progress will finish normally; none is cancelled."
     assert "Queued runs (1) wait in the queue" in preview["effect"][0]
     assert any(
-        "Chat and Coworker sessions are not affected" in line for line in preview["will_not"]
+        "Chat and Coworker sessions can still start here" in line for line in preview["will_not"]
     )
     assert any("does not shut the machine down" in line for line in preview["will_not"])
     assert preview["basis"] == {"seq": 0}
@@ -238,7 +245,7 @@ def test_the_drain_flag_and_its_log_line_are_one_transaction(api, fleet):
         assert [r["action"] for r in drain.log(conn, made["machine_id"], 10)] == ["drain"]
     # The activity list says so in words.
     texts = [e["text"] for e in runner(api, made)["activity"]]
-    assert "Drain started: no new runs start here" in texts
+    assert "Drain started: no new card runs start here" in texts
 
 
 def test_a_drain_table_made_before_request_ids_existed_is_upgraded_in_place(api, fleet):
@@ -249,3 +256,87 @@ def test_a_drain_table_made_before_request_ids_existed_is_upgraded_in_place(api,
         )
     status, result = act(api, made, "drain", request_id="old")
     assert status == 200 and result["item"]["draining"] is True
+
+
+# round 1 of the #615 review: drain says what it stops, and the hub-wide audit goes with the change
+
+
+def test_a_failed_hub_audit_leaves_no_drain_nobody_recorded(api, fleet, monkeypatch):
+    made = fleet.enroll("runner-audit")
+
+    def refuse(**_):
+        raise OSError("hub audit down")
+
+    monkeypatch.setattr(api.env.db, "audit", refuse)
+    status, result = act(api, made, "drain")
+    assert (status, result) == (503, {"error": "authority_unavailable", "reason": "audit"})
+    monkeypatch.undo()
+    assert runner(api, made)["draining"] is False
+    with fleet.store().connection() as conn:
+        assert drain.log(conn, made["machine_id"], 10) == []
+        assert drain.state(conn, made["machine_id"])["seq"] == 0
+
+
+def test_the_hub_audit_line_is_written_before_the_drain_commits(api, fleet, monkeypatch):
+    made = fleet.enroll("runner-order")
+    seen = {}
+    real = api.env.db.audit
+
+    def spy(**fields):
+        # At this moment the drain transaction is still open: its flag is not visible to another connection.
+        with fleet.store().connection() as conn:
+            seen["draining_when_audited"] = drain.is_drained(conn, made["machine_id"])
+        return real(**fields)
+
+    monkeypatch.setattr(api.env.db, "audit", spy)
+    assert act(api, made, "drain")[0] == 200
+    assert seen == {"draining_when_audited": False}
+    assert runner(api, made)["draining"] is True
+
+
+def test_the_poll_reads_runs_through_indexes_and_opens_the_runner_store_once(
+    api, fleet, monkeypatch
+):
+    made = fleet.enroll("runner-index")
+    fleet.job(made, "started", task=1)
+    with fleet.store().connection() as conn:
+        names = {r[1] for r in conn.execute("PRAGMA index_list(runner_jobs)")}
+        assert {"runner_jobs_machine_state", "runner_jobs_starting"} <= names
+        plan = " ".join(
+            row[3]
+            for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT machine_id,state,count(*) FROM runner_jobs "
+                "WHERE state IN ('queued','started') GROUP BY machine_id,state"
+            )
+        )
+        assert "runner_jobs_machine_state" in plan
+    opened = []
+    real = jobs.JobStore.__init__
+
+    def counting(self, *a, **k):
+        opened.append(1)
+        real(self, *a, **k)
+
+    monkeypatch.setattr(jobs.JobStore, "__init__", counting)
+    assert api.request(path=BASE)[0] == 200
+    assert len(opened) == 1
+    opened.clear()
+    assert runner(api, made)["id"] == made["machine_id"]
+    # The detail reads the facts and the activity: one open each, not one per query.
+    assert len(opened) <= 2
+
+
+def test_drain_is_stated_to_stop_card_runs_only(api, fleet):
+    made = fleet.enroll("runner-scope")
+    fleet.seen(made, 5)
+    act(api, made, "drain")
+    detail = runner(api, made)
+    scope = "No new card runs start here. Chat and Coworker sessions can still start here."
+    assert detail["status"]["detail"].startswith(scope)
+    # Chat and Coworker leases do not read the flag: pinned here so the sentence cannot drift from the code.
+    import inspect
+
+    from commonplace.runner import chat_relay, sessions
+
+    for module in (chat_relay, sessions):
+        assert "drain" not in inspect.getsource(module)

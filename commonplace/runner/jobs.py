@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
 CREATE UNIQUE INDEX IF NOT EXISTS runner_jobs_one_active ON runner_jobs(task_number)
  WHERE state IN ('queued','leased','starting','uncertain');
 CREATE INDEX IF NOT EXISTS runner_jobs_board_state ON runner_jobs(board_slug,state);
+CREATE INDEX IF NOT EXISTS runner_jobs_machine_state ON runner_jobs(machine_id,state);
+CREATE INDEX IF NOT EXISTS runner_jobs_starting ON runner_jobs(starting_at);
 CREATE UNIQUE INDEX IF NOT EXISTS runner_jobs_request
  ON runner_jobs(task_number,requested_by,request_key) WHERE request_key IS NOT NULL;
 """

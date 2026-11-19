@@ -15,6 +15,7 @@ Docs: docs/system/compute-overview.md.
 from __future__ import annotations
 
 import re
+import secrets
 
 from . import workspaces
 from .control import StoreError
@@ -199,6 +200,18 @@ def _clear_expired(conn, workspace_id, life, now):
     return life_of(conn, workspace_id, now)
 
 
+def request_waiting(conn, workspace_id, now):
+    """True while a start, stop or restart request waits for a machine to pick it up (an expired one does not
+    count: it is not carried out). A claimed request is not waiting: the machine holds its own copy of the
+    machine and settings revision, and an edit after that is reported as "restart needed"."""
+    life = life_of(conn, workspace_id, now)
+    return (
+        life["request_action"] is not None
+        and life["claimed_at"] is None
+        and not request_expired(life, now)
+    )
+
+
 def _check_token(value, name, *, minimum):
     if type(value) is not int or value < minimum:
         raise workspaces.refuse(name, "invalid")
@@ -252,10 +265,16 @@ def request(
         type(request_id) is not str or not _REQUEST_ID.fullmatch(request_id)
     ):
         raise workspaces.refuse("request_id", "invalid")
+    # An expired request is cleared and audited in a transaction of its own, committed before the decision: a
+    # refusal below rolls its own transaction back, and the expiry record must not go with it.
+    with store._transaction(principal, session_hash) as (conn, _):
+        workspaces._row(conn, workspace_id)
+        now = store._now()
+        _clear_expired(conn, workspace_id, life_of(conn, workspace_id, now), now)
     with store._transaction(principal, session_hash) as (conn, current):
         row = workspaces._row(conn, workspace_id)
         now = store._now()
-        life = _clear_expired(conn, workspace_id, life_of(conn, workspace_id, now), now)
+        life = life_of(conn, workspace_id, now)
         if request_id is not None and life["last_request_id"] == request_id:
             if life["last_request_action"] != action:
                 raise conflict("request_reused", "request_id")
@@ -269,12 +288,23 @@ def request(
             raise conflict(refusal)
         _ensure_row(conn, workspace_id, now)
         if action == "withdraw":
+            claimed = life["claimed_at"] is not None
             conn.execute(
                 "UPDATE cloud_workspace_lifecycle SET request_action=NULL,requested_by=NULL,"
                 "requested_at=NULL,claimed_by=NULL,claimed_at=NULL,claim_token=NULL,seq=seq+1,"
                 "last_request_id=?,last_request_action=? WHERE workspace_id=?",
                 (request_id, action, workspace_id),
             )
+            if claimed:
+                # A machine picked the request up and then went quiet: nothing is going to report on it any
+                # more, so the phase it left (starting or stopping) would never end. It ends as failed, the
+                # machine could not be reached, and the owner can start, stop or restart from there.
+                conn.execute(
+                    "UPDATE cloud_workspace_lifecycle SET phase='failed',reason='machine_unreachable',"
+                    "phase_at=? WHERE workspace_id=?",
+                    (now, workspace_id),
+                )
+                workspaces.set_state(conn, workspace_id, "failed", "machine_unreachable")
             store._audit(conn, current, workspace_id, "workspace.request_withdrawn")
         else:
             conn.execute(
@@ -325,11 +355,14 @@ def claim(conn, executor_id, now):
     target = "starting" if action == "start" else "stopping"
     if target not in _MOVES.get(row["phase"], {}):
         raise conflict("cannot_claim")
-    token = row["seq"] + 1
+    # The claim token is a secret of the claim, not a function of the counter: an executor that was never
+    # handed this claim cannot guess it. It stays below 2**62 so SQLite keeps it as an integer.
+    token = secrets.randbits(61) + 1
+    seq = row["seq"] + 1
     conn.execute(
         "UPDATE cloud_workspace_lifecycle SET claimed_by=?,claimed_at=?,claim_token=?,phase=?,"
         "reason=NULL,phase_at=?,reported_at=?,seq=? WHERE workspace_id=?",
-        (executor_id, now, token, target, now, now, token, row["workspace_id"]),
+        (executor_id, now, token, target, now, now, seq, row["workspace_id"]),
     )
     conn.execute(
         "INSERT INTO audit(object_id,action,user_id,created_at) VALUES (?,?,?,?)",

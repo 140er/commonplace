@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS run_ledger (
 INDEXES = (
     "CREATE INDEX IF NOT EXISTS run_ledger_task ON run_ledger(task_number)",
     "CREATE INDEX IF NOT EXISTS run_ledger_created ON run_ledger(created_at)",
+    "CREATE INDEX IF NOT EXISTS run_ledger_started ON run_ledger(started_at)",
 )
 _MISSING = (
     "SELECT j.* FROM runner_jobs j "
