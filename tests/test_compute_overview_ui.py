@@ -35,6 +35,8 @@ import pytest
         "scope-and-state",
         "rows-patched-in-place",
         "attention-filter-resets",
+        "overrides-keep-the-mark",
+        "filters-repaint-when-load-resets-them",
         "member",
         "in-compute",
         "isolation",

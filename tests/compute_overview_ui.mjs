@@ -662,7 +662,7 @@ const cases = {
     release(failure(500, { error: 'boom' })); await again;
     assert.equal(broken.nodes.tries.textContent, 'Tried 2 times.', 'the count is plain text beside the alert');
     assert.equal(broken.nodes.state.writes, alertWrites, 'the alert node is not rewritten by a second failure (it would be spoken again)');
-    assert.equal(broken.nodes.announce.textContent, 'Trying again…', 'one thing is said at the start of a retry; the failure is the alert');
+    assert.equal(broken.nodes.announce.textContent, 'Could not load it again. Tried 2 times.', 'a retry the person made gets its answer with the count (the alert itself is not rewritten)');
     assert.equal(broken.nodes.summary.textContent, 'Overview not loaded.');
   },
 
@@ -696,6 +696,47 @@ const cases = {
     assert.equal(f.ui.state.status, 'all');
     assert.match(f.html(), /<option value="all" selected>/);
     assert.equal((f.html().match(/data-ov-id=/g) || []).length, 5, 'and the list shows everything, not nothing');
+  },
+
+  async 'overrides-keep-the-mark'() {
+    const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
+    const steps = { offline: 'Check that the machine is on and the runner program is running there.', slow: 'Wait a little.' };
+    const [online] = fleet();
+    // The clock made it Offline: it carries the server's Offline next step and, after a failed refresh, says it is old.
+    const off = ov.viewOf(online, { nowS: clock + 1000, thresholds: th, nextSteps: steps, failedAt: '10:42:07' });
+    assert.equal(off.status.code, 'offline');
+    assert.equal(off.status.label, 'Last known: Offline');
+    assert.match(off.status.detail, /^As of 10:42:07: Nothing has been heard from it for 17 minutes\./);
+    assert.equal(off.status.next, steps.offline);
+    const slow = ov.viewOf(online, { nowS: clock + 200, thresholds: th, nextSteps: steps, failedAt: '10:42:07' });
+    assert.equal(slow.status.label, 'Last known: Slow to report'); assert.equal(slow.status.next, steps.slow);
+    // Without a failure the clock's change is plain, with the next step.
+    const plain = ov.viewOf(online, { nowS: clock + 1000, thresholds: th, nextSteps: steps });
+    assert.equal(plain.status.label, 'Offline'); assert.equal(plain.status.next, steps.offline);
+    // Paused: a row the clock changed says it comes from an old read; a row it did not change is left as it is.
+    const paused = ov.viewOf(online, { nowS: clock + 1000, thresholds: th, nextSteps: steps, pausedAt: '10:42:07' });
+    assert.equal(paused.status.label, 'Last known: Offline');
+    assert.equal(ov.viewOf(online, { nowS: clock + 10, thresholds: th, nextSteps: steps, pausedAt: '10:42:07' }).status.label, 'Online');
+    // And on screen the payload's steps reach the row.
+    const f = fixture({ data: overviewOf(fleet(), { next_steps: steps }) });
+    f.ui.start();
+    await f.ui.load();
+    f.bump(1000 * 1000);
+    await f.fire(10000);
+    assert.match(f.html(), /Next step: Check that the machine is on and the runner program is running there\./);
+  },
+
+  async 'filters-repaint-when-load-resets-them'() {
+    const f = fixture();
+    await f.ui.load();
+    f.select('attention');
+    f.flags.statusFocused = true; // the status list has focus: a plain refresh does not rewrite it
+    const writes = f.nodes.filters.writes;
+    f.state.answers.set('/api/compute/overview', overviewOf(fleet().map(i => ({ ...i, health: { ...i.health, state: 'ok' } }))));
+    await f.ui.load({ quiet: true });
+    assert.equal(f.ui.state.status, 'all');
+    assert.ok(f.nodes.filters.writes > writes, 'a reset is shown even while the select has focus, so the control and the list agree');
+    assert.match(f.html(), /<option value="all" selected>/);
   },
 
   async member() {

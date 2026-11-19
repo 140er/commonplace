@@ -147,6 +147,13 @@ class Fleet:
         finally:
             conn.close()
 
+    def disable(self, made):
+        """The owner turned the runner off (the machine is still enrolled; it just starts nothing)."""
+        with self.env.db._lock:
+            self.env.db._conn.execute(
+                "UPDATE runner_machines SET enabled=0 WHERE id=?", (made["machine_id"],)
+            )
+
     def end(self, job_id, *, minutes_ago=0):
         """The machine reported the run's end: the run ledger learns of it (the job row stays ``started``)."""
         at = iso(self.env.clock.now - minutes_ago * 60)

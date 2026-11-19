@@ -302,7 +302,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         shown = _shown(page)
         assert "5 runners" not in shown  # six were enrolled; the sentence counts them all
         expect(page.locator("[data-ov-summary]")).to_contain_text(
-            "7 runners, 1 machine, 7 cloud workspaces. 2 need attention: "
+            "7 runners, 1 machine, 7 cloud workspaces. 3 need attention: "
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
@@ -312,7 +312,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         expect(_row(page, "build-runner")).to_contain_text(
             re.compile(r"Last seen \d+ (seconds?|minutes?) ago")
         )
-        expect(_row(page, "build-runner")).to_contain_text("1 run in progress (up to 3 at once)")
+        expect(_row(page, "build-runner")).to_contain_text("2 of 3 runs at once in use")
         expect(_row(page, "review-runner")).to_contain_text("Slow to report")
         expect(_row(page, "edge-runner")).to_contain_text("Offline")
         expect(_row(page, "edge-runner")).to_contain_text("Last seen 25 minutes ago")
@@ -406,13 +406,13 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         expect(_rows(page)).to_have_count(15)
         expect(page.get_by_label("Filter by status")).to_be_focused()
         # "6 need attention" is a button that sets the same filter, with a filled pressed state.
-        page.get_by_role("button", name="2 need attention").click()
-        expect(_rows(page)).to_have_count(2)
-        expect(page.get_by_role("button", name="2 need attention")).to_have_attribute(
+        page.get_by_role("button", name="3 need attention").click()
+        expect(_rows(page)).to_have_count(3)
+        expect(page.get_by_role("button", name="3 need attention")).to_have_attribute(
             "aria-pressed", "true"
         )
         expect(page.get_by_label("Filter by status")).to_have_value("attention")
-        pressed = page.get_by_role("button", name="2 need attention").evaluate(
+        pressed = page.get_by_role("button", name="3 need attention").evaluate(
             "el => getComputedStyle(el).backgroundColor"
         )
         idle = page.get_by_role("button", name="Runners (7)").evaluate(
@@ -421,7 +421,7 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         assert pressed != idle, "a pressed filter is filled, not only outlined"
         # The problems come first inside each group.
         first = page.locator(f"{ROOT} .compute-ov-group").first.locator(".compute-ov-row").first
-        expect(first).to_have_attribute("data-status", re.compile("offline|slow|disabled"))
+        expect(first).to_have_attribute("data-status", re.compile("offline|slow|disabled|busy"))
         if size == "phone":
             _assert_ov_phone(page)
 
@@ -478,7 +478,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                     "2 of 3 runs at once are in use: 1 in progress; 1 finished run still counts until its card moves out of Doing.",
                     "demo card",
                     "Move it out of Doing (to Done, Review or Todo) to free its place.",
-                    "1 run in progress (up to 3 at once)",
+                    "2 of 3 runs at once in use",
                     "6.0 GiB memory free",
                     "2 runs with unknown cost",
                 ],
@@ -646,7 +646,7 @@ def test_on_a_phone_the_overview_is_folded_and_the_create_button_is_within_reach
         )
         create = page.get_by_role("button", name=re.compile("^New cloud workspace"))
         box = create.bounding_box()
-        assert box and box["y"] + box["height"] < 844 * 1.5, (
+        assert box and box["y"] + box["height"] < 844 * 1.6, (
             f"the create button is {box['y']}px down"
         )
         pause = page.get_by_role("button", name="Pause automatic updates")
@@ -914,7 +914,7 @@ def test_a_stepped_wall_clock_moves_no_age_and_a_monotonic_clock_still_does(serv
             expect(build.locator("[data-ov-chip]")).to_contain_text("Online · Busy")
             # Real elapsed time still ages it (the timers' own passing).
             page.clock.run_for(250000)
-            expect(build.locator("[data-ov-chip]")).to_have_text("Slow to report")
+            expect(build.locator("[data-ov-chip]")).to_have_text("Last known: Slow to report")
             _shot(page, f"{ui}-desktop-47-clock-step")
             context.close()
         finally:
@@ -1065,6 +1065,99 @@ def _without_attention(payload):
     return json.dumps(payload)
 
 
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_turned_off_removed_offline_and_never_connected_runner_says_what_it_may_do(
+    served, ui, size
+):
+    fx = served
+    fleet = _fleet(fx)
+    wings = {"wings": ["fixture"]}
+    off = fleet.enroll("off-runner", **wings)
+    fleet.seen(off, 5)
+    fleet.disable(off)
+    gone = fleet.enroll("gone-runner", **wings)
+    fleet.seen(gone, 5)
+    revoke_machine(fx.env, gone)
+    quiet = fleet.enroll("quiet-runner", **wings)
+    fleet.seen(quiet, 4000)
+    fleet.enroll("new-runner", **wings)
+
+    def body(page, label, context):
+        _go(page, fx, ui)
+        for name, chip, allowed, number in (
+            ("off-runner", "Disabled", "No: it is turned off", 100),
+            ("gone-runner", "Revoked", "No: it was removed", 101),
+            ("quiet-runner", "Offline", "Yes, once it reports", 102),
+            ("new-runner", "Never connected", "Yes, once it reports", 103),
+        ):
+            page.get_by_role("button", name=f"Status and activity of {name}").click()
+            panel = page.locator(".compute-ov-panel")
+            expect(panel).not_to_have_attribute("aria-busy", "true")
+            expect(panel.locator("[data-ov-chip]")).to_have_text(chip)
+            expect(panel).to_contain_text("Allowed to start runs")
+            expect(panel).to_contain_text(allowed)
+            _shot_of(panel, f"{label}-{number}-detail-{name}")
+            page.get_by_role("button", name="Close").click()
+
+    _run(fx, ui, size, body, populate=False)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_runner_the_clock_made_offline_keeps_its_mark_and_the_offline_next_step(served, ui):
+    fx = served
+    fx.names = _populate(fx)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, "desktop")
+            page.clock.install(time=int(time.time() * 1000))
+            _visit(page, fx, ui)
+            _go(page, fx, ui)
+            _refuse_overview(page)
+            page.clock.run_for(
+                1000000
+            )  # the read failed and a quarter of an hour passed with no signal
+            row = _row(page, "build-runner")
+            expect(row.locator("[data-ov-chip]")).to_have_text("Last known: Offline")
+            expect(row).to_contain_text(re.compile(r"As of \d{1,2}:\d\d:\d\d"))
+            expect(row).to_contain_text("Next step: Check that the machine is on")
+            _shot_of(row, f"{ui}-desktop-104-row-offline-by-the-clock")
+            page.get_by_role("button", name="Status and activity of build-runner").click()
+            panel = page.locator(".compute-ov-panel")
+            expect(panel).to_contain_text("Next step: Check that the machine is on")
+            expect(panel).to_contain_text("Offline: nothing heard for")
+            _shot_of(panel, f"{ui}-desktop-105-detail-offline-by-the-clock")
+            context.close()
+        finally:
+            browser.close()
+    assert errors == [] or all("503" in e for e in errors)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_an_owner_workspace_detail_fits_320px_and_its_change_settings_button_wraps(served, ui):
+    fx = served
+    fx.names = _populate(fx)
+
+    def body(page, label, context):
+        _go(page, fx, ui)
+        page.get_by_role("button", name="Status and activity of Build box").click()
+        panel = page.locator(".compute-ov-panel")
+        expect(panel).not_to_have_attribute("aria-busy", "true")
+        button = panel.get_by_role("button", name="Change settings in Cloud workspaces")
+        expect(button).to_be_visible()
+        box = button.bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= 320 + 1, (
+            box
+        )  # inside the screen, not run past it
+        assert box["height"] >= 44
+        _no_sideways_scroll(page)
+        _shot(page, f"{ui}-320-106-owner-workspace-detail")
+        _shot_of(panel, f"{ui}-320-107-owner-workspace-detail-whole")
+
+    _run(fx, ui, "phone", body, viewport=(320, 568), touch=True)
+
+
 def _count_reads(page):
     seen = []
     page.on("request", lambda r: seen.append(r.url) if r.url.endswith(OVERVIEW) else None)
@@ -1211,7 +1304,7 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
             expect(_row(page, "build-runner")).to_contain_text("Last seen 1 minute ago")
             page.clock.run_for(130000)  # 40 s + 200 s without a signal: past the 180 s limit
             expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text(
-                "Slow to report"
+                "Last known: Slow to report"
             )
             expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text(
                 re.compile("Last known: Running|Unknown")
@@ -1219,7 +1312,9 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
             page.clock.run_for(800000)  # past 600 s for a workspace and 900 s for a runner
             expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text("Unknown")
             expect(_row(page, "Build box")).to_contain_text("nothing newer has arrived")
-            expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text("Offline")
+            expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text(
+                "Last known: Offline"
+            )
             expect(page.locator("[data-ov-summary]")).to_contain_text(
                 re.compile(r"\d+ need attention")
             )

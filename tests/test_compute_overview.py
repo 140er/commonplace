@@ -729,7 +729,7 @@ def test_no_sentence_promises_a_control_the_screen_does_not_have(api, fleet):
     ):
         assert not [t for t in texts if forbidden in t], forbidden
     runner_item = by_name(result)["runner-copy"]
-    assert runner_item["status"]["detail"].startswith(overview.DRAIN_SCOPE)
+    assert runner_item["status"]["detail"].startswith("Draining. " + overview.DRAIN_SCOPE)
     assert overview.DRAIN_SCOPE == (
         "No new card runs start here. Chat and Coworker sessions can still start here."
     )
@@ -1091,7 +1091,7 @@ def test_allowed_to_start_runs_follows_the_drain_and_the_approval(api, fleet):
 
     assert allowed() == "Yes"
     api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
-    assert allowed() == "No: it is draining"
+    assert allowed() == "No: it is drained"  # drained: nothing is running
     loose = fleet.enroll("runner-loose", attest=False)
     status, result = api.request(path=f"{BASE}/runner/{loose['machine_id']}")
     assert {f["label"]: f["value"] for f in result["item"]["facts"]}["Allowed to start runs"] == (
@@ -1101,3 +1101,102 @@ def test_allowed_to_start_runs_follows_the_drain_and_the_approval(api, fleet):
 
 def test_the_payload_serves_the_one_drain_sentence_for_the_screens_own_overrides(api):
     assert read(api)["drain_scope"] == overview.DRAIN_SCOPE
+
+
+def _allowed(api, made):
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    item = result["item"]
+    return item["status"]["code"], {f["label"]: f["value"] for f in item["facts"]}[
+        "Allowed to start runs"
+    ]
+
+
+def test_allowed_to_start_runs_follows_the_status_the_chip_shows_one_case_per_status(api, fleet):
+    # online and busy
+    online = fleet.enroll("allowed-online")
+    fleet.seen(online, 5)
+    assert _allowed(api, online) == ("online", "Yes")
+    busy = fleet.enroll("allowed-busy", max_in_flight=2)
+    fleet.seen(busy, 5)
+    fleet.job(busy, "started", task=fleet.work(busy))
+    assert _allowed(api, busy) == ("busy", "Yes")
+    full = fleet.enroll("allowed-full", max_in_flight=1)
+    fleet.seen(full, 5)
+    fleet.job(full, "started", task=fleet.work(full))
+    assert _allowed(api, full) == ("full", "Yes")
+    # slow to report still takes work when it comes back
+    slow = fleet.enroll("allowed-slow")
+    fleet.seen(slow, 400)
+    assert _allowed(api, slow) == ("slow", "Yes")
+    # offline and never connected: yes, once it reports
+    offline = fleet.enroll("allowed-offline")
+    fleet.seen(offline, 4000)
+    assert _allowed(api, offline) == ("offline", "Yes, once it reports")
+    never = fleet.enroll("allowed-never")
+    assert _allowed(api, never) == ("never_connected", "Yes, once it reports")
+    # draining and drained
+    draining = fleet.enroll("allowed-draining", max_in_flight=2)
+    fleet.seen(draining, 5)
+    fleet.job(draining, "started", task=fleet.work(draining))
+    api.request("POST", f"{BASE}/runner/{draining['machine_id']}/drain", {"expected_seq": 0})
+    assert _allowed(api, draining) == ("draining", "No: it is draining")
+    drained = fleet.enroll("allowed-drained")
+    fleet.seen(drained, 5)
+    api.request("POST", f"{BASE}/runner/{drained['machine_id']}/drain", {"expected_seq": 0})
+    assert _allowed(api, drained) == ("drained", "No: it is drained")
+    # a draining runner that is also offline is still not allowed
+    both = fleet.enroll("allowed-drain-offline")
+    fleet.seen(both, 4000)
+    api.request("POST", f"{BASE}/runner/{both['machine_id']}/drain", {"expected_seq": 0})
+    assert _allowed(api, both) == ("offline", "No: it is draining")
+    # turned off and removed
+    off = fleet.enroll("allowed-off")
+    fleet.seen(off, 5)
+    fleet.disable(off)
+    assert _allowed(api, off) == ("disabled", "No: it is turned off")
+    gone = fleet.enroll("allowed-gone")
+    fleet.seen(gone, 5)
+    revoke_machine(api.env, gone)
+    assert _allowed(api, gone) == ("revoked", "No: it was removed")
+    # not approved yet
+    loose = fleet.enroll("allowed-loose", attest=False)
+    fleet.seen(loose, 5)
+    assert _allowed(api, loose)[1] == "No: it is not set up and approved yet"
+
+
+def test_a_finished_card_in_doing_needs_attention_and_the_row_count_includes_it(api, fleet):
+    made = fleet.enroll("runner-holds", max_in_flight=3)
+    fleet.seen(made, 5)
+    card = fleet.work(made)
+    fleet.end(fleet.job(made, "started", minutes_ago=60, task=card), minutes_ago=50)
+    fleet.job(made, "started", minutes_ago=5, task=fleet.work(made))
+    result = read(api)
+    item = by_name(result)["runner-holds"]
+    assert item["health"]["state"] == "attention" and result["counts"]["attention"] == 1
+    assert item["usage"]["summary"].startswith(
+        "2 of 3 runs at once in use"
+    )  # the finished run is in the count
+    assert "up to 3 at once" not in item["usage"]["summary"] + item["usage"]["runs"]["text"]
+
+
+def test_a_draining_or_drained_runner_holding_a_finished_card_names_the_card_and_the_action(
+    api, fleet
+):
+    made = fleet.enroll("runner-drain-holds", max_in_flight=2)
+    fleet.seen(made, 5)
+    card = fleet.work(made)
+    fleet.end(fleet.job(made, "started", minutes_ago=60, task=card), minutes_ago=50)
+    api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    status = by_name(read(api))["runner-drain-holds"]["status"]
+    assert status["code"] == "drained" and status["detail"].startswith("Drained. ")
+    assert status["next"] == (
+        f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
+        "to free its place."
+    )
+
+
+def test_the_payload_serves_the_offline_and_slow_next_steps_for_the_screens_overrides(api):
+    steps = read(api)["next_steps"]
+    assert steps["offline"].startswith("Check that the machine is on")
+    assert steps["slow"].startswith("Wait a little")

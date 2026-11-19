@@ -52,7 +52,7 @@ const timeOf = iso => {
  * marked "as of" because the last refresh failed. `clock` is { nowS, thresholds, failedAt } (all optional).
  */
 export function viewOf(item, clock = {}) {
-  const { nowS = null, thresholds = {}, failedAt = "", drainScope = "" } = clock;
+  const { nowS = null, thresholds = {}, failedAt = "", pausedAt = "", drainScope = "", nextSteps = {} } = clock;
   let status = item.status, health = item.health, blockers = item.health?.blockers || [];
   const last = item.last_seen;
   let seen = last?.label || "", age = null;
@@ -70,14 +70,17 @@ export function viewOf(item, clock = {}) {
       overridden = true;
     } else if (item.kind === "runner" && ["online", "busy", "full", "draining", "drained", "slow"].includes(status.code)) {
       const was = status.label, drain = item.draining ? ` It is also set to drain. ${drainScope || "No new card runs start here."}` : "";
-      if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.${drain}`, next: status.next }; overridden = true; }
-      else if (status.code !== "slow" && age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: status.next }; overridden = true; }
+      if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.${drain}`, next: nextSteps.offline || status.next }; overridden = true; }
+      else if (status.code !== "slow" && age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: nextSteps.slow || status.next }; overridden = true; }
     }
   }
   // Only Offline asks something of a person (it is something to check); Slow to report and Unknown only wait.
   if (overridden) health = { ...health, state: status.code === "offline" ? "attention" : health.state, blockers };
-  const stale = Boolean(failedAt) && !overridden;
-  if (stale) status = { ...status, label: status.code === "unknown" ? status.label : `Last known: ${status.label}`, detail: `As of ${failedAt}: ${status.detail}` };
+  // After a failed refresh every row says it is old, a row the clock aged included ("Last known: Offline", "As of 10:42:07:
+  // ..."); on a paused screen the rows the clock changed say so too, since the data they came from has not been read again.
+  const markedAt = failedAt || (overridden ? pausedAt : "");
+  const stale = Boolean(markedAt);
+  if (stale) status = { ...status, label: status.code === "unknown" ? status.label : `Last known: ${status.label}`, detail: `As of ${markedAt}: ${status.detail}` };
   return { status, health, seen, stale };
 }
 
@@ -197,6 +200,7 @@ export function detailBody(item, { loading = false, failed = false, manage = fal
  */
 export function createOverview(ctx) {
   const timers = ctx.timers || globalThis;
+  let forceFilters = false, filterShown = { kind: "all", status: "all" };
   let data = null, loadError = "", loading = false, fetchedAt = 0, fetchedMono = 0, tries = 0, refreshFailed = false, failedSaid = false, paused = false, foldOpen = null;
   let kind = "all", status = "all", detail = null, detailBusy = false, detailFailed = false, opener = "", timer = null, clockTimer = null, previous = null, seenSignature = "";
   // What each slot of the section holds right now, so a repaint writes only what changed.
@@ -215,7 +219,7 @@ export function createOverview(ctx) {
   const mono = () => (typeof ctx.mono === "function" ? ctx.mono() : ctx.now());
   const sinceRead = () => Math.max(0, (mono() - fetchedMono) / 1000);
   const serverNow = () => { const read = data ? epochOf(data.as_of) : null; return read === null ? null : read + sinceRead(); };
-  const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "", drainScope: data?.drain_scope || "" });
+  const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "", pausedAt: paused && data ? timeOf(data.as_of) : "", drainScope: data?.drain_scope || "", nextSteps: data?.next_steps || {} });
   const items = () => (data?.items || []).map(item => withView(item, clock()));
   const narrow = () => ctx.doc?.defaultView?.matchMedia?.(NARROW)?.matches === true;
   // Closed on a phone and above a handful of items (the summary names what needs attention); open for the person's own choice,
@@ -400,7 +404,7 @@ export function createOverview(ctx) {
     setText(host.querySelector("[data-ov-summary]"), summaryLine());
     setText(host.querySelector("[data-ov-meta]"), metaText());
     // Until the person chooses, the fold follows what it holds: closed above a handful of items, open for a failed first read.
-    if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = isOpen(); if (fold && fold.open !== want) fold.open = want; }
+    if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = isOpen(); if (fold && fold.open !== want && !(fold.open && fold.contains?.(host.ownerDocument?.activeElement))) fold.open = want; }
     const top = host.querySelector("[data-ov-top]");
     if (top && painted.top !== topHTML()) { painted.top = topHTML(); top.innerHTML = topHTML(); }
     const banner = host.querySelector("[data-ov-stale]");
@@ -421,7 +425,7 @@ export function createOverview(ctx) {
     }
     // An open status list is never rewritten under the pointer: new counts wait until it closes.
     const selectOpen = host.querySelector?.("#compute-ov-status")?.matches?.(":focus") === true;
-    if (!selectOpen || focus) setHTML("filters", values.filters);
+    if (!selectOpen || focus || forceFilters) { setHTML("filters", values.filters); forceFilters = false; filterShown = { kind, status }; }
     if (setHTML("list", values.list)) refreshAges();
     let target = focus ? focusTarget(host, focus) : key ? host.querySelector(key) : null;
     // The focused control went away (a "Try again" that worked): focus lands on the section's heading, not on the page.
@@ -480,6 +484,7 @@ export function createOverview(ctx) {
       if (status !== "all" && status !== "attention" && !result.items.some(item => item.status.code === status)) status = "all";
       // The attention filter with nothing left to show would read "All statuses" over an empty list: back to all.
       if (status === "attention" && !items().some(item => item.health?.state === "attention")) status = "all";
+      if (status !== filterShown.status || kind !== filterShown.kind) forceFilters = true; // a reset must show even while the list is focused
       const gone = detail && !find(detail.id);
       if (gone) { announce("That item is no longer in the overview."); detail = null; detailBusy = false; }
       paint(gone ? "opener" : "");
@@ -493,6 +498,7 @@ export function createOverview(ctx) {
       tries++;
       // Said again each time, so pressing "Try again" visibly does something even when it fails again.
       loadError = LOAD_ERROR; paint();  // the alert speaks (once: its text never changes); the count is plain text beside it
+      if (say && tries > 1) announce(`Could not load it again. Tried ${tries} times.`); // a retry the person made gets its answer
     }
     if (detail && data && !detailBusy && !failure) void loadDetail(detail.kind, detail.id, { quiet: true });
     schedule();

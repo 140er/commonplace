@@ -136,7 +136,12 @@
 @media (pointer: coarse), (max-width: 699px) {
   .compute .btn, .compute summary, .compute input:not([type="checkbox"]), .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
   /* Body text in the overview is 14px where the pointer is coarse (rows, hints, lists), never 13px. */
-  .compute-ov .compute-quiet, .compute-ov-row p, .compute-ov-list, .compute-ov-list li, .compute-ov dl { font-size: 14px; }
+  .compute-ov .compute-quiet, .compute-ov-row p, .compute-ov-list, .compute-ov-list li, .compute-ov dl,
+  .compute-ov .compute-plain, .compute-ov .compute-empty, .compute-ov .compute-ov-status-filter, .compute-ov-chip,
+  .compute-ov-eyebrow, .compute-ov .compute-ov-showing, .compute .compute-notice { font-size: 14px; }
+  /* A long action label wraps (and may fill the width) instead of running past the edge of a 320px screen. */
+  .compute-ov .btn { white-space: normal; height: auto; text-align: center; line-height: 1.25; padding-block: 8px; }
+  .compute-ov-panel .compute-actions .btn { width: 100%; justify-content: center; }
   /* Every text control on the screen (the Advanced settings included) is 16px where the pointer is coarse, so a phone does not zoom in. */
   .compute input:not([type="checkbox"]), .compute textarea, .compute select { font-size: 16px; }
   .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain, .compute .compute-ws .compute-field > label, .compute-ws .compute-preset-size { font-size: 14px; }
