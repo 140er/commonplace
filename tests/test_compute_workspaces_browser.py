@@ -154,11 +154,12 @@ def served_empty(tmp_path, monkeypatch):
     yield from _serve(tmp_path, monkeypatch, machine=False)
 
 
-def _open(browser, fx, ui, size, cookie=None, viewport=None):
+def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=None):
     width, height = viewport or SIZES[size]
     phone = width < 700
+    touch = phone if touch is None else touch  # a tablet can be touch without being a phone width
     context = browser.new_context(
-        viewport={"width": width, "height": height}, has_touch=phone, is_mobile=phone
+        viewport={"width": width, "height": height}, has_touch=touch, is_mobile=touch
     )
     context.add_cookies([{"name": sessions.COOKIE, "value": cookie or fx.cookie, "url": fx.origin}])
     page = context.new_page()
@@ -181,11 +182,11 @@ def _open(browser, fx, ui, size, cookie=None, viewport=None):
     return context, page, errors
 
 
-def _run(fx, ui, size, body, cookie=None, viewport=None):
+def _run(fx, ui, size, body, cookie=None, viewport=None, touch=None):
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
-            context, page, errors = _open(browser, fx, ui, size, cookie, viewport)
+            context, page, errors = _open(browser, fx, ui, size, cookie, viewport, touch)
             body(page, f"{ui}-{size}", context)
             assert errors == []
             context.close()
@@ -265,7 +266,8 @@ def _assert_touch_targets(page, inputs=True):
 
 def _assert_small_text_is_14px(page):
     sizes = page.locator(
-        ".compute-ws small:visible, .compute-ws .compute-quiet:visible"
+        ".compute-ws small:visible, .compute-ws .compute-quiet:visible,"
+        " .compute-ws .compute-field > label:visible, .compute-ws .compute-preset-size:visible"
     ).evaluate_all("els => els.map(el => parseFloat(getComputedStyle(el).fontSize))")
     assert sizes and min(sizes) >= 14, (
         f"hints and errors are 14px on the phone: {sorted(sizes)[:3]}"
@@ -328,7 +330,12 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(summary).to_be_focused()  # the summary takes focus; its links jump to the fields
         assert section.locator('[aria-invalid="true"]').count() == 1
         expect(page.locator("#ws-error-name")).to_contain_text("Give it a name of 1 to 60")
-        summary.get_by_role("link", name="Name:").click()
+        link = summary.get_by_role("link", name="Name:")
+        # The whole list item is the target: at least 24px anywhere (WCAG 2.5.8), 44px for a finger.
+        assert link.bounding_box()["height"] >= (TOUCH if size == "phone" else 24)
+        # Programmatic focus draws a ring (the summary has just been focused).
+        assert summary.evaluate("el => getComputedStyle(el).outlineStyle") != "none"
+        link.click()
         expect(name).to_be_focused()
         _shot(page, f"{label}-03-blank-name")
         # Own image: example, definition, and the error lands on the address control, not the select.
@@ -585,6 +592,15 @@ def test_every_status_and_discarding_read_plainly(served, ui, size):
         expect(keep).to_be_focused()
         confirm = page.get_by_role("button", name="Discard workspace", exact=True)
         assert "danger" in confirm.get_attribute("class")
+        # The fixed labels fit their row on a phone: one line each, inside the row, side by side or stacked.
+        row_box = rows["Pending box"].bounding_box()
+        for button in (confirm, keep):
+            box = button.bounding_box()
+            assert (
+                box["x"] >= row_box["x"] - 1
+                and box["x"] + box["width"] <= row_box["x"] + row_box["width"] + 1
+            )
+            assert box["height"] <= 50, ("a label wrapped", box)
         assert confirm.bounding_box()["height"] >= 32 and keep.bounding_box()["height"] >= 32
         assert len(fx.listed()) == 7
         _shot(page, f"{label}-14-discard-confirm")
@@ -816,8 +832,54 @@ def test_deck_control_borders_buttons_and_placeholders_are_readable(served):
         )
         assert tokens["control"].lower() == "#6b6b73"
         assert tokens["root"].lower() != "#6b6b73", tokens
+        # The token lives in Deck's own stylesheet; compute.css only uses it (with the global line as the Classic fallback).
+        static = Path(__file__).resolve().parents[1] / "commonplace" / "web" / "static"
+        assert "--control-line: #6B6B73" in (static / "deck-capy.css").read_text()
+        assert "#6B6B73" not in (static / "compute.css").read_text()
 
     _run(fx, "deck", "desktop", body)
+
+
+def test_deck_danger_button_has_a_visible_edge_and_one_line_label(served):
+    fx = served
+    fx.make(name="Danger box", node_id=fx.node["id"])
+
+    def body(page, label, context):
+        page.get_by_role("button", name="Details for Danger box").click()
+        discard = page.locator(".compute-ws-detail").get_by_role("button", name="Discard")
+        style = discard.evaluate(
+            "el => { const s = getComputedStyle(el); return {border: s.borderTopColor, width: s.borderTopWidth,"
+            " background: getComputedStyle(el.closest('.compute-editor')).backgroundColor, height: el.getBoundingClientRect().height}; }"
+        )
+        assert style["width"] != "0px"
+        assert _contrast(_rgb(style["border"]), _rgb(style["background"])) >= 3, style
+        assert style["height"] <= 40, ("the label wrapped", style)
+        _shot(page, f"{label}-31-danger-button")
+
+    _run(fx, "deck", "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_touch_tablet_gets_the_phone_sizes(served, ui):
+    """At 768px (not a phone width) a touch device still gets 44px targets, 16px inputs and 14px text: the rules follow
+    the pointer, not only the width."""
+    fx = served
+    fx.make(name="Tablet box", node_id=fx.node["id"])
+
+    def body(page, label, context):
+        assert page.evaluate("() => matchMedia('(pointer: coarse)').matches")
+        _assert_touch_targets(page, inputs=False)
+        _shot(page, f"{label}-768-list")
+        page.get_by_role("button", name="New cloud workspace").click()
+        _assert_touch_targets(page)
+        _assert_small_text_is_14px(page)
+        page.get_by_role("textbox", name="Name", exact=True).fill("")
+        page.get_by_role("button", name="Review and create").click()
+        link = page.locator("[data-ws-summary]").get_by_role("link", name="Name:")
+        assert link.bounding_box()["height"] >= TOUCH
+        _shot(page, f"{label}-768-form-errors")
+
+    _run(fx, ui, "desktop", body, viewport=(768, 1024), touch=True)
 
 
 @pytest.mark.parametrize("ui", UIS)
@@ -1010,6 +1072,15 @@ def test_escape_steps_back_and_saving_keeps_focus_on_the_button(served, ui):
         expect(page.get_by_role("button", name="Saving…")).to_have_attribute(
             "aria-disabled", "true"
         )
+        # An aria-disabled button looks disabled (it used to look live).
+        assert (
+            float(
+                page.get_by_role("button", name="Saving…").evaluate(
+                    "el => getComputedStyle(el).opacity"
+                )
+            )
+            < 1
+        )
         assert page.locator("[data-ws-notice]").inner_text() == "Saving…"
         notice = page.locator("[data-ws-notice]")
         expect(notice).to_contain_text("Saved “Escape box”")
@@ -1112,6 +1183,7 @@ def test_no_machines_enrolled_says_what_to_do(served_empty, ui, size):
         page.get_by_role("button", name="Confirm and create").click()
         expect(page.locator("[data-ws-id]").first).to_contain_text("Saved, not started")
         expect(page.locator("[data-ws-id]").first).to_contain_text("Machine: not chosen yet")
+        _shot(page, f"{label}-26b-no-machines-row")
         page.get_by_role("button", name="Details for Machine-less").click()
         expect(page.locator(".compute-ws-detail")).to_contain_text(
             "Choose a machine for it with Change settings."
