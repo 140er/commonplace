@@ -135,6 +135,8 @@
    gets the same 44px targets, 16px inputs and 14px text as a phone. */
 @media (pointer: coarse), (max-width: 699px) {
   .compute .btn, .compute summary, .compute input:not([type="checkbox"]), .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
+  /* Body text in the overview is 14px where the pointer is coarse (rows, hints, lists), never 13px. */
+  .compute-ov .compute-quiet, .compute-ov-row p, .compute-ov-list, .compute-ov-list li, .compute-ov dl { font-size: 14px; }
   /* Every text control on the screen (the Advanced settings included) is 16px where the pointer is coarse, so a phone does not zoom in. */
   .compute input:not([type="checkbox"]), .compute textarea, .compute select { font-size: 16px; }
   .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain, .compute .compute-ws .compute-field > label, .compute-ws .compute-preset-size { font-size: 14px; }
@@ -175,8 +177,7 @@
 .compute-ov-fold > summary { font-size: 15px; font-weight: 600; cursor: pointer; padding: 6px 0; }
 .compute-ov-fold > :not(summary) { margin-top: 12px; }
 .compute-ov-fold > summary + * { margin-top: 4px; }
-.compute-ov-fold[data-plain] > summary { list-style: none; cursor: default; }
-.compute-ov-fold[data-plain] > summary::-webkit-details-marker { display: none; }
+.compute-ov-headline { font-size: 15px; font-weight: 600; margin: 0; padding: 6px 0; }
 .compute-ov [data-ov-slot] { display: grid; gap: 12px; }
 .compute-ov [data-ov-slot]:empty, .compute-ov [data-ov-stale][hidden] { display: none; }
 .compute-ov-next { font-size: 14px; margin: 4px 0; }

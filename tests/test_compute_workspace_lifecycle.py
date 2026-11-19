@@ -681,3 +681,25 @@ def test_a_running_workspace_that_fails_can_be_reported_without_a_claim(api):
     ws2 = make(api, name="Second")
     with pytest.raises(StoreError):
         executor.fail(ws2["id"], "out_of_memory")
+
+
+def test_a_workspace_shown_as_unknown_cannot_be_restarted_but_can_be_stopped(api):
+    executor = FakeExecutor(api.env)
+    ws = make(api)
+    ask(api, ws, "start")
+    executor.run(executor.claim(), "running")
+    assert {a["action"]: a["allowed"] for a in item(api, ws)["actions"]}["restart"] is True
+    api.env.clock.now += lifecycle.REPORT_STALE_S + 5
+    unknown = item(api, ws)
+    assert unknown["status"]["code"] == "unknown"
+    allowed = {a["action"]: a for a in unknown["actions"]}
+    assert (
+        allowed["restart"]["allowed"] is False and allowed["restart"]["reason"] == "state_unknown"
+    )
+    assert "no recent report" in allowed["restart"]["refusal"]
+    assert (
+        allowed["stop"]["allowed"] is True
+    )  # stopping something nobody knows about is still possible
+    conflict(ask(api, ws, "restart"), "state_unknown")
+    status, _ = ask(api, ws, "stop")
+    assert status == 202

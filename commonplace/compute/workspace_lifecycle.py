@@ -261,6 +261,13 @@ def decide(row, life, action, now):
     if pending:
         return "request_pending"
     allowed = {"start": _START_FROM, "stop": _STOP_FROM, "restart": _RESTART_FROM}[action]
+    if (
+        action == "restart"
+        and phase in ("running", "starting", "stopping")
+        and not phase_trusted(life, now)
+    ):
+        # Shown as Unknown (its report is old): a restart would stop something nobody knows is there. Stop is still allowed.
+        return "state_unknown"
     if phase in allowed:
         return None
     return _REFUSED[action].get(phase, "not_running")

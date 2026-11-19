@@ -34,6 +34,7 @@ import pytest
         "every-runner-status-ages",
         "scope-and-state",
         "rows-patched-in-place",
+        "attention-filter-resets",
         "member",
         "in-compute",
         "isolation",

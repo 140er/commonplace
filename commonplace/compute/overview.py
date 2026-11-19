@@ -61,6 +61,7 @@ REFUSAL_TEXT = {
     "already_stopping": "It is already stopping.",
     "not_started": "It has not been started yet. Start it first.",
     "not_running": "Only a running workspace can be restarted. Use Start for a stopped one.",
+    "state_unknown": "Its state is not known right now (no recent report from its machine), so it can't be restarted. This clears when the machine reports again.",
     "nothing_to_withdraw": "No request is waiting.",
     "already_picked_up": "A machine picked this request up and is reporting on it, so it can't be withdrawn yet. If the machine goes quiet for ten minutes it can be.",
     "already_draining": "It is already draining.",
@@ -133,13 +134,13 @@ def ago(seconds):
 NEXT_STEP_MEMBER = {"unknown": "Nothing to do yet; this clears when the machine reports again."}
 
 
-def _status(code, tone, label, detail, *, manage=True):
+def _status(code, tone, label, detail, *, manage=True, next_text=None):
     return {
         "code": code,
         "tone": tone,
         "label": label,
         "detail": detail,
-        "next": (NEXT_STEP if manage else NEXT_STEP_MEMBER).get(code),
+        "next": next_text or (NEXT_STEP if manage else NEXT_STEP_MEMBER).get(code),
     }
 
 
@@ -148,11 +149,34 @@ def _runs(count):
 
 
 def _holding(count):
-    """A finished run whose card is still Doing holds a slot (the lease counts it) until the card moves on."""
+    """A finished run whose card is still Doing still counts toward the machine's runs at once (the lease counts it)
+    until the card moves out of Doing."""
     one = count == 1
     return (
-        f"{count} finished run{'' if one else 's'} still hold{'s' if one else ''} a slot until "
-        f"{'its' if one else 'their'} card{'' if one else 's'} move{'s' if one else ''} on."
+        f"{count} finished run{'' if one else 's'} still count{'s' if one else ''} until "
+        f"{'its' if one else 'their'} card{'' if one else 's'} move{'s' if one else ''} out of Doing."
+    )
+
+
+def _in_use(running, held, cap):
+    """The one count of a machine's runs at once, the same words in the sentence and the blocker."""
+    used = running + held
+    parts = [f"{running} in progress"] if running else []
+    if held:
+        parts.append(_holding(held).rstrip("."))
+    return (
+        f"{used} of {cap} runs at once {'is' if used == 1 else 'are'} in use: {'; '.join(parts)}."
+    )
+
+
+def _holding_step(cards):
+    """What to do about finished runs whose cards are still Doing, naming the cards."""
+    one = len(cards) == 1
+    names = ", ".join(cards[:3]) + (f" and {len(cards) - 3} more" if len(cards) > 3 else "")
+    return (
+        f"{names} {'has' if one else 'have'} finished but {'is' if one else 'are'} still in Doing. Move "
+        f"{'it' if one else 'them'} out of Doing (to Done, Review or Todo) to free {'its' if one else 'their'} "
+        "place."
     )
 
 
@@ -566,6 +590,7 @@ def blank_facts():
         "running": 0,
         "end_unreported": 0,
         "finished_holding": 0,
+        "holding_cards": [],
         "uncertain": 0,
         "queued": 0,
         "starts_hour": 0,
@@ -662,6 +687,7 @@ def _count_slots(store, conn, machines, of, started_since):
         for row in rows:
             if row["state"] == "started" and row["id"] in ended:
                 entry["finished_holding"] += 1
+                entry["holding_cards"].append(f"{row['project']} card {row['task_number']}")
             else:
                 entry["running"] += 1
                 if row["state"] == "uncertain":
@@ -809,17 +835,17 @@ def runner_status(machine, record, facts, now):
             + (f" {_holding(held)}" if held else "")
             + f" {NO_RESUME}",
         )
-    if running or held:
+    used, cap = running + held, machine["max_in_flight"]
+    if used:
+        # One word and one count everywhere (chip, sentence, blocker): "Full" when every one of its runs at once is in
+        # use, "Busy" when some are, and the same "used of cap" in the sentence and the blocker.
+        full = used >= cap
         return _status(
-            "busy",
+            "full" if full else "busy",
             "ok",
-            "Online · Busy",
-            (
-                f"{running} of {machine['max_in_flight']} runs at once {'is' if running == 1 else 'are'} in progress."
-                if running
-                else f"None is in progress, but the machine is busy: {_holding(held)}"
-            )
-            + (f" {_holding(held)}" if running and held else ""),
+            "Online · Full" if full else "Online · Busy",
+            _in_use(running, held, cap) + (" New runs wait." if full else ""),
+            next_text=_holding_step(facts["holding_cards"]) if held else None,
         )
     return _status("online", "ok", "Online", "Waiting for work.")
 
@@ -880,9 +906,9 @@ def runner_blockers(machine, record, facts, red_after_s=900):
         blockers.append(
             {
                 "code": "full",
-                "text": f"Full: {_runs(facts['running'])} in progress"
-                + (f" and {_holding(held).rstrip('.')}" if held else "")
-                + f"; it runs up to {machine['max_in_flight']} at once. New runs wait for a slot.",
+                "text": "Full: "
+                + _in_use(facts["running"], held, machine["max_in_flight"])
+                + " New runs wait.",
             }
         )
     if facts["starts_hour"] >= machine["max_starts_per_hour"]:
@@ -1275,6 +1301,7 @@ def read(store, principal, *, session_hash):
         "as_of": _dt(now).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "refresh_seconds": REFRESH_SECONDS,
         "thresholds": thresholds(),
+        "drain_scope": DRAIN_SCOPE,  # the one sentence about what drain stops, for the screen's own overrides
         "can_manage": manage,
         "executor": {
             "available": executor,
@@ -1455,7 +1482,13 @@ def detail(store, principal, kind, item_id, *, session_hash):
         {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
         {
             "label": "Allowed to start runs",
-            "value": "Yes" if machine["binding_state"] == "owner_attested" else "No",
+            "value": (
+                "No: it is not set up and approved yet"
+                if machine["binding_state"] != "owner_attested"
+                else "No: it is draining"
+                if item["draining"]
+                else "Yes"
+            ),
         },
         {
             "label": "Logs",
