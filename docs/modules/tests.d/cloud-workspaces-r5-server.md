@@ -1,0 +1,1 @@
+- **Owns:** `tests/test_compute_workspaces.py` also pins the round 5 server rules: a rename into the name of a legacy suffixed duplicate is `name_taken`, a stored image reference that cannot be parsed is listed as `image_unreadable` while the rest of the list is served, and the control journal turns only protocol refusals into a store error.
