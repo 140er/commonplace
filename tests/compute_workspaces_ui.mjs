@@ -13,7 +13,10 @@ const rewrite = (text, extra = {}) => Object.entries({ './api.js': apiURL, ...ex
 const workspacesURL = moduleURL(rewrite(source('compute-workspaces')));
 const ws = await import(workspacesURL);
 const overviewURL = moduleURL(rewrite(source('compute-overview')));
-const { createCompute } = await import(moduleURL(rewrite(source('compute'), { './compute-workspaces.js': workspacesURL, './compute-overview.js': overviewURL })));
+// Add a machine is a section of the same screen: its module is part of the controller, and these suites ask it nothing.
+const pairingURL = moduleURL(rewrite(source('compute-pairing'), { './wing-label.js': moduleURL(source('wing-label')) }));
+const emptyPairings = { pairings: [], total: 0, setup_enabled: true };
+const { createCompute } = await import(moduleURL(rewrite(source('compute'), { './compute-workspaces.js': workspacesURL, './compute-overview.js': overviewURL, './compute-pairing.js': pairingURL })));
 const flush = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
 const clock = 1800000000;
 const failure = (status, payload) => Object.assign(new Error(payload?.error || String(status)), { status, payload });
@@ -52,7 +55,7 @@ function fixture({ list = { workspaces: [], can_manage: true }, config = options
   const api = (path, request = {}) => {
     calls.push([request.method || 'GET', path, request.body]);
     if (request.method === 'POST') { state.writes.push([path, request.body]); const out = state.next.length ? state.next.shift() : null; if (typeof out === 'function') return out(); return out instanceof Error ? Promise.reject(out) : Promise.resolve(structuredClone(out)); }
-    const answer = path === '/api/compute/workspaces' ? state.list : path === '/api/compute/workspaces/images' ? state.config : path === '/api/compute' ? (owner ? inventory(nodes) : failure(403, { error: 'owner_required' })) : path === '/api/boards' ? { boards: [] } : path === '/api/compute/discoveries' ? { discoveries: [], capabilities: {} } : path === '/api/compute/scripts' ? { scripts: [] } : path === '/api/compute/credentials' ? { credentials: [], status: 'ready' } : null;
+    const answer = path === '/api/compute/pairings' ? emptyPairings : path === '/api/compute/pairings/options' ? { kinds: [] } : path === '/api/compute/workspaces' ? state.list : path === '/api/compute/workspaces/images' ? state.config : path === '/api/compute' ? (owner ? inventory(nodes) : failure(403, { error: 'owner_required' })) : path === '/api/boards' ? { boards: [] } : path === '/api/compute/discoveries' ? { discoveries: [], capabilities: {} } : path === '/api/compute/scripts' ? { scripts: [] } : path === '/api/compute/credentials' ? { credentials: [], status: 'ready' } : null;
     return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(structuredClone(answer));
   };
   let counter = 0;

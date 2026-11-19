@@ -972,3 +972,58 @@ def test_options_serve_every_text_the_screen_needs(flow):
     )
     assert result["setup_enabled"] is True and "shared" in result["wings"]
     assert result["code_minutes"] == 15 and result["steps"] == list(pairing.STEPS)
+
+
+class LockedOnly:
+    """The control connection, refusing every statement made without the control lock held."""
+
+    def __init__(self, db):
+        self._db, self._real = db, db._conn
+
+    def execute(self, *args, **kwargs):
+        assert self._db._lock._is_owned(), f"unlocked statement: {args[0][:60]}"
+        return self._real.execute(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_every_route_reads_the_shared_connection_only_under_the_control_lock(flow):
+    """One shared connection serves every request thread: a read outside the lock raced others (SQLITE_MISUSE) and
+    showed a signed-in person the sign-in page in a real browser."""
+    from types import SimpleNamespace
+
+    from commonplace import sessions
+
+    made = flow.made()
+    pid = made["pairing"]["id"]
+    db = flow.hub.db
+    store = SimpleNamespace(gateway=flow.hub.gateway)
+    owner = sessions.person_principal(db, flow.owner["user_id"], flow.owner["workspace"])
+    sent = []
+
+    def handler(command):
+        return SimpleNamespace(command=command)
+
+    from commonplace.compute import pairing_routes
+
+    real_send = pairing_routes.send_json
+    pairing_routes.send_json = lambda h, status, body: sent.append((status, body))
+    db._conn = LockedOnly(db)
+    try:
+        auth = {"session_hash": "unused"}
+        for parts in ([], ["options"], [pid]):
+            pairing_routes.dispatch(handler("GET"), store, owner, parts, auth, None)
+        reader = lambda h, fields, optional: {"request_id": "r", "expected_version": 99}  # noqa: E731
+        for action in ("accept", "close"):
+            with pytest.raises(Exception) as refused:
+                pairing_routes.dispatch(handler("POST"), store, owner, [pid, action], auth, reader)
+            assert getattr(refused.value, "reason", None) in (
+                "stale_version",
+                "identity_digest",
+                "required",
+            )
+    finally:
+        db._conn = db._conn._real
+        pairing_routes.send_json = real_send
+    assert [status for status, _ in sent] == [200, 200, 200]

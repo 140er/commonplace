@@ -81,7 +81,7 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks.",
-        "Coworkers can run here only after a provider is connected and the machine is attested on the Runners screen.",
+        "Coworkers can run here only after a provider is connected and the machine is attested under Runner machines in Admin.",
         "This machine is set up. Coworkers can run on it after the owner connects a provider.",
     ),
     "offline": (
