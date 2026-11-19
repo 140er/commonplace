@@ -140,7 +140,8 @@ def parse(files) -> list:
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            continue
+            # Not text, but a credential can sit in any file: scan the bytes as Latin-1.
+            text = data.decode("latin-1")
         found = redact.find_kinds(text, SECRET_KINDS)
         if found:
             raise Refused("contains_secret_like_text", file=_shown(path), kind=found[0])

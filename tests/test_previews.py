@@ -522,7 +522,7 @@ def test_the_rule_is_off_by_default_and_only_the_owner_sets_it(console_hub):
 def test_listing_by_pull_request_finds_the_cards_previews_and_records_the_pull_request(console_hub):
     h = console_hub
     number = card(h)
-    url = "https://github.com/140er/mempalace/pull/9"
+    url = "https://github.com/example/app/pull/9"
     head = "a" * 40
     with service(h, h.person(h.hub.admin)).store.transaction() as conn:
         conn.execute("UPDATE tasks SET pr_url=?, pr_head=? WHERE id=?", (url, head, number))
@@ -530,7 +530,7 @@ def test_listing_by_pull_request_finds_the_cards_previews_and_records_the_pull_r
     status, body, _ = previews(h, pr=url)
     assert status == 200 and [p["name"] for p in body["previews"]] == ["home"]
     assert body["previews"][0]["pr"] == {"url": url, "head": head}
-    status, body, _ = previews(h, pr="https://github.com/140er/mempalace/pull/404")
+    status, body, _ = previews(h, pr="https://github.com/example/app/pull/404")
     assert status == 200 and body["previews"] == []
     assert h.request(h.other, "GET", f"/api/previews?pr={url}")[1]["previews"] == []
 
@@ -582,3 +582,46 @@ def test_bad_paths_are_refused(path):
     with pytest.raises(bundle.Refused) as caught:
         bundle.clean_path(path)
     assert caught.value.reason == "bad_path"
+
+
+def test_a_token_that_lost_write_access_cannot_stop_or_reopen(console_hub):
+    h = console_hub
+    number = card(h)
+    token = h.hub.token(
+        "readonly",
+        user=h.hub.admin,
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["shared"],
+        write_wings=[],
+        trust="standard",
+    )
+    now = store.stamp(store.clock())
+    with h.db._lock, h.db._tx() as conn:
+        conn.execute(
+            "INSERT INTO previews(id,workspace_id,card,name,state,reason,actor,published_by,by_person,"
+            "created_at,updated_at) VALUES ('pv_ro',?,?,'ro','ready','published','conn:readonly','readonly',0,?,?)",
+            (h.workspace, number, now, now),
+        )
+    ok, text = mcp(h, token, "preview_stop", id="pv_ro")
+    assert not ok and "cannot" in text
+    assert prow(h, "pv_ro")["state"] == "ready"
+
+
+def test_a_credential_in_a_file_that_is_not_utf8_is_still_refused(console_hub):
+    h = console_hub
+    number = card(h)
+    leak = ("ghp_" + "Zz9" * 12).encode()
+    data = base64.b64encode(b"\xff\xfe" + leak).decode()
+    ok, text = publish(h, h.t1, number, files=[INDEX, {"path": "blob.bin", "base64": data}])
+    assert not ok and "[contains_secret_like_text]" in text and "blob.bin" in text
+
+
+def test_the_publish_attempt_is_reserved_before_the_bundle_is_read(console_hub, monkeypatch):
+    h = console_hub
+    monkeypatch.setattr(store, "MAX_PER_CARD_HOUR", 1)
+    number = card(h)
+    # A bundle that fails still used its attempt.
+    refused(h, number, [{"path": "nope.html", "text": "x"}], "no_index_html", "one")
+    ok, text = publish(h, h.t1, number, name="two")
+    assert not ok and "[rate_limited]" in text

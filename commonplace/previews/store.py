@@ -204,7 +204,7 @@ def attempts_last_hour(conn, workspace_id, card) -> int:
     since = stamp(clock() - timedelta(hours=1))
     return conn.execute(
         "SELECT count(*) FROM preview_events WHERE workspace_id=? AND card=? AND at>=? "
-        "AND kind IN ('published','publish_failed')",
+        "AND kind='publish_started'",
         (workspace_id, card, since),
     ).fetchone()[0]
 

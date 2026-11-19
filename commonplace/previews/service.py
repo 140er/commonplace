@@ -161,8 +161,10 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
     db, workspace = gateway.db, principal.workspace_id
     who, by_person = _who(principal)
     with db._lock, db._tx() as conn:
+        # Check and reserve in one transaction, so racing publishes cannot both slip under it.
         if store.attempts_last_hour(conn, workspace, info["number"]) >= store.MAX_PER_CARD_HOUR:
             raise Refused("rate_limited")
+        store.event(conn, workspace, "", info["number"], "publish_started", principal.actor)
     try:
         items = bundle.parse(files)
     except Refused as exc:
@@ -308,13 +310,14 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
 
 def _authorize(gateway, principal, preview_id) -> None:
     """``NotFound`` unless the preview is in the caller's workspace and the caller can open its
-    card. The board is read before any control-database lock is taken, never inside one."""
+    card; ``Forbidden`` when an agent token no longer holds write access to the card's wing. The
+    board is read before any control-database lock is taken, never inside one."""
     db = gateway.db
     with db._lock:
         row = store.row_by_id(db._conn, principal.workspace_id, preview_id)
     if row is None:
         raise NotFound(str(preview_id))
-    card_info(gateway, principal, row["card"])
+    card_info(gateway, principal, row["card"], write=True)
 
 
 def _held(conn, principal, preview_id):
@@ -346,8 +349,8 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
         numbers = None
     with db._lock:
         rows = db._conn.execute(
-            "SELECT * FROM previews WHERE workspace_id=? ORDER BY updated_at DESC, id DESC LIMIT ?",
-            (workspace, store.MAX_ROWS),
+            "SELECT * FROM previews WHERE workspace_id=? ORDER BY updated_at DESC, id DESC",
+            (workspace,),
         ).fetchall()
     if numbers is None:
         allowed = _visible_cards(gateway, principal, sorted({r["card"] for r in rows}))

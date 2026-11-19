@@ -361,7 +361,6 @@ The following paths deliberately remain open, retaining existing authorization:
 - `task_heartbeat`: mechanical claim renewal.
 - `rules_feedback`: evidence about a rule is a report, not an instruction; it never changes work or rules.
 - `orch_heartbeat`, `orch_release`: mechanical orchestrator lease renewal and release.
-- `preview_publish`, `preview_stop`: a preview is a published artifact for a card; it changes neither the work nor its instructions, and the owner can still set either tool to ask or off.
 - `webhook_add`, `webhook_remove`, `webhook_test`: configuration and outbound automation.
 - `mempalace_add_drawer`, `mempalace_update_drawer`, `mempalace_diary_write`,
   `mempalace_kg_add`, `mempalace_kg_invalidate`, `mempalace_kg_supersede`,
