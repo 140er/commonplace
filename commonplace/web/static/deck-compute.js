@@ -7,7 +7,7 @@ import { ENROLL_ROUTE, computePanel, addMachineHTML, watchComputeMotion, compute
 import { runnerNodes, runnerIds, workModel, statusText, jobsHTML, createWorkReader } from './deck-compute-work.js';
 import { computePresentation, computeFrame, routePreference } from './deck-compute-scene.js';
 
-export const TITLE = 'Compute';
+export const TITLE = 'Cloud workspaces';
 const HUB = 'commonplace-hub';
 const STATES = { ready: 'Ready', waiting: 'Waiting for attestation', off: 'Off' };
 // The runners fallback speaks in enrollment states, never in liveness: Ready is "owner attested and enabled".
@@ -32,6 +32,7 @@ function styles(doc) {
     stylesheet = new CSSStyleSheet();
     stylesheet.replaceSync(`
 .deck-compute#content { gap: 0; overflow: auto; padding: 24px max(24px, calc((100% - 1200px) / 2)) 24px; color: var(--text); }
+.deck-compute .dc-explain { margin: 0; color: var(--text-2); grid-column: 1; }
 .deck-compute .dc-title { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px; margin-bottom: 20px; }
 .deck-compute h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.02em; }
 .deck-compute .dc-summary { margin: 0; color: var(--text-2); font-size: 14px; }
@@ -268,7 +269,7 @@ export function mount(context) {
   function frame() {
     if (tabs && !tabsHome) tabsHome = { parent: tabs.parentNode, next: tabs.nextSibling };
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
-    root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
+    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
     topAdd ??= mountComputeTopAction(shell, hash=>ctx.go(hash));
     placeActions(); framed = true; actions();
@@ -328,8 +329,8 @@ export function mount(context) {
       if (error?.status === 403) {
         topAdd?.stop(); topAdd = null;
         map?.stop(); map = null; built = ''; framed = false; rows = []; general = null; bots = []; work = workModel([]); latest = null;
-        root.innerHTML = '<h1>Compute</h1><p class="dc-notice">Only workspace owners can see the machines.</p>';
-      } else if (!note(GENERIC_FAILURE)) root.innerHTML = `<h1>Compute</h1><p class="dc-notice" role="status">${GENERIC_FAILURE}</p>`;
+        root.innerHTML = '<h1>Cloud workspaces</h1><p class="dc-notice">Only workspace owners can see the machines.</p>';
+      } else if (!note(GENERIC_FAILURE)) root.innerHTML = `<h1>Cloud workspaces</h1><p class="dc-notice" role="status">${GENERIC_FAILURE}</p>`;
     }
   }
   function click(event) {
@@ -343,7 +344,7 @@ export function mount(context) {
     } catch { note('The message could not be prepared. Try again.'); }
   }
   root.addEventListener('click', click);
-  root.innerHTML = '<h1>Compute</h1><p class="dc-notice" role="status">Loading machines…</p>';
+  root.innerHTML = '<h1>Cloud workspaces</h1><p class="dc-notice" role="status">Loading machines…</p>';
   void refresh();
   return { refresh, stop() {
     if (stopped) return;

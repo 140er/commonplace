@@ -646,7 +646,7 @@ test('when the topology appears later the screen switches to it', async () => {
 
 test('real screen: title, shell header handling, cleanup', async () => {
   const f = harness(); await flush();
-  assert.match(f.root.html, /<h1>Compute<\/h1>/);
+  assert.match(f.root.html, /<h1>Cloud workspaces<\/h1>/);
   assert.equal(f.header.hidden, true); assert.equal(f.phoneBar.hidden, true); assert.equal(f.phoneTabs.style.position, 'fixed');
   f.ui.stop(); f.ui.stop();
   assert.equal(f.handlers.size, 0); assert.equal(f.header.hidden, false); assert.equal(f.classes.size, 0);

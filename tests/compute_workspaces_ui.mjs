@@ -35,9 +35,9 @@ const record = (extra = {}) => ({
 });
 const onMachine = (extra = {}) => record({ node_id: 'n-one', machine_name: 'Fixture machine', machine_assigned: true, status: 'pending', ...extra });
 const startedRow = (extra = {}) => onMachine({ status: 'ready', started: true, applied_revision: 1, discardable: false, ...extra });
-const inventory = () => ({ gateways: [], nodes: [machine], scopes: [], executions: [], can_manage: true, capabilities: { transport: false, passive_discovery: false, scripts: false } });
+const inventory = (nodes = [machine]) => ({ gateways: [], nodes, scopes: [], executions: [], can_manage: true, capabilities: { transport: false, passive_discovery: false, scripts: false } });
 
-function fixture({ list = { workspaces: [], can_manage: true }, config = options, owner = true } = {}) {
+function fixture({ list = { workspaces: [], can_manage: true }, config = options, owner = true, nodes = [machine] } = {}) {
   let html = '', hash = '#/compute';
   const user = { workspace: 'w', actor: 'user:u', can_admin: true };
   const listeners = new Map(), calls = [], doc = new EventTarget(), events = new EventTarget(), focused = [], status = { text: '' };
@@ -52,7 +52,7 @@ function fixture({ list = { workspaces: [], can_manage: true }, config = options
   const api = (path, request = {}) => {
     calls.push([request.method || 'GET', path, request.body]);
     if (request.method === 'POST') { state.writes.push([path, request.body]); const out = state.next.length ? state.next.shift() : null; if (typeof out === 'function') return out(); return out instanceof Error ? Promise.reject(out) : Promise.resolve(structuredClone(out)); }
-    const answer = path === '/api/compute/workspaces' ? state.list : path === '/api/compute/workspaces/images' ? state.config : path === '/api/compute' ? (owner ? inventory() : failure(403, { error: 'owner_required' })) : path === '/api/boards' ? { boards: [] } : path === '/api/compute/discoveries' ? { discoveries: [], capabilities: {} } : path === '/api/compute/scripts' ? { scripts: [] } : path === '/api/compute/credentials' ? { credentials: [], status: 'ready' } : null;
+    const answer = path === '/api/compute/workspaces' ? state.list : path === '/api/compute/workspaces/images' ? state.config : path === '/api/compute' ? (owner ? inventory(nodes) : failure(403, { error: 'owner_required' })) : path === '/api/boards' ? { boards: [] } : path === '/api/compute/discoveries' ? { discoveries: [], capabilities: {} } : path === '/api/compute/scripts' ? { scripts: [] } : path === '/api/compute/credentials' ? { credentials: [], status: 'ready' } : null;
     return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(structuredClone(answer));
   };
   let counter = 0;
@@ -76,7 +76,7 @@ const alerts = html => (html.match(/role="alert"/g) || []).length;
 const cases = {
   async pure() {
     assert.equal(ws.gib(4096), '4 GiB'); assert.equal(ws.gib(512), '0.5 GiB'); assert.equal(ws.gib(1536), '1.5 GiB'); assert.equal(ws.gib(4608), '4.5 GiB', 'GiB everywhere, never MiB');
-    assert.equal(ws.resourcePreview(2, 4096, 20, 'Fixture machine'), '2 CPU cores, 4 GiB memory, 20 GiB storage. Planned machine: Fixture machine');
+    assert.equal(ws.resourcePreview(2, 4096, 20, 'Fixture machine'), '2 CPU cores, 4 GiB memory, 20 GiB storage. Machine: Fixture machine');
     assert.equal(ws.resourcePreview(1, 4096, 20, null), '1 CPU core, 4 GiB memory, 20 GiB storage. Machine: not chosen yet');
     assert.equal(ws.parseImage('ghcr.io/acme/tools@sha256:' + 'a'.repeat(64)).pinned, true);
     assert.equal(ws.parseImage('ubuntu:24.04').pinned, false);
@@ -131,7 +131,7 @@ const cases = {
     // Loading first: the section never renders empty.
     f.ui.show(); assert.match(text(f.host.innerHTML), /Loading Compute inventory/); await flush();
     const t = text(f.host.innerHTML);
-    for (const phrase of ['Saved, not started', 'Private image', 'Changes waiting', 'Up to date', 'Failed', '2 CPU cores, 4 GiB memory, 20 GiB storage', 'Planned machine: Fixture machine', 'Machine: not chosen yet']) assert.ok(t.includes(phrase), phrase);
+    for (const phrase of ['Saved, not started', 'Private image', 'Changes waiting', 'Settings applied', 'Failed', '2 CPU cores, 4 GiB memory, 20 GiB storage', 'Machine: Fixture machine', 'Machine: not chosen yet']) assert.ok(t.includes(phrase), phrase);
     // One vocabulary: nothing says a workspace is ready, running or restarting while no start exists to run it.
     assert.doesNotMatch(section(f.host.innerHTML).replace(/<[^>]*>/g, ' '), /\bReady\b|Restart needed|Not started\./, 'old status words are gone');
     assert.doesNotMatch(t, /It will run on/);
@@ -157,10 +157,10 @@ const cases = {
       assert.doesNotMatch(shown, /Saved, not started\. Saved, not started|Not started\. Not started/, `${row.name}: the status is said once`);
     }
     // Statuses say what to do now: nothing is a dead end.
-    assert.match(detailOf('b'), /This image is private and Commonplace can't store registry logins yet\. Choose a public image\./);
-    assert.match(detailOf('e'), /The new settings apply the next time it starts\. Starting is not available yet, so there is nothing to do now\./);
-    assert.match(detailOf('f'), /ran out of memory at 4 GiB\. Raise the memory limit with Change settings/); assert.match(detailOf('g'), /Failed for a reason this page does not recognise\. Check the machine, then reload this list\./);
-    assert.match(detailOf('d'), /Up to date\. The machine holds the saved settings\./); assert.match(detailOf('f'), /Its last start failed\./); assert.doesNotMatch(detailOf('f'), /running copy/);
+    assert.match(detailOf('b'), /This image is private and Commonplace can't store sign-ins for private images yet\. Choose a public image\./);
+    assert.match(detailOf('e'), /The saved settings are newer than the ones a machine applied\. Starting is not available yet, so they are kept for its next start\./);
+    assert.match(detailOf('f'), /The last recorded start failed\. It ran out of memory at 4 GiB\. Raise the memory limit with Change settings/); assert.match(detailOf('g'), /Failed for a reason this page does not recognise\. Check the machine, then reload this list\./);
+    assert.match(detailOf('d'), /Settings applied\. A machine recorded that it applied the saved settings\./); assert.match(detailOf('f'), /The last recorded start failed\./); assert.doesNotMatch(detailOf('f'), /running copy/);
     assert.match(detailOf('h'), /Locked to one exact version/); assert.match(detailOf('i'), /Official image\. The publisher can update its version over time/); assert.match(detailOf('a'), /The publisher can update this version over time/);
     assert.match(detailOf('c'), new RegExp(`Saved, not started\\. ${ws.NOT_STARTED_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'the one not-started sentence, reused');
     assert.match(detailOf('c'), /Machine Fixture machine/);
@@ -169,15 +169,15 @@ const cases = {
     assert.match(detailOf('e'), /Edited once\. Changes are waiting for the next start\./); assert.match(detailOf('a'), /Not edited since it was created\./);
     // Every detail button names its workspace.
     f.click('detail', 'c'); for (const label of ['Change settings for C pending', 'Discard C pending', 'Close details of C pending']) assert.match(f.host.innerHTML, new RegExp(`aria-label="${label}"`)); f.click('close');
-    assert.match(detailOf('c'), /Hosted on GitHub Container Registry \(ghcr\.io\)/); assert.match(detailOf('i'), /Hosted on Docker Hub \(docker\.io\)/);
-    assert.match(detailOf('j'), /Its last start failed\./, 'a failed first start says so in History');
+    assert.match(detailOf('c'), /Comes from GitHub Container Registry \(ghcr\.io\)/); assert.match(detailOf('i'), /Comes from Docker Hub \(docker\.io\)/);
+    assert.match(detailOf('j'), /The last recorded start failed\./, 'a failed first start says so in History');
     // The private-image status offers its fix: Change image opens the form on the image.
     f.click('edit', 'b', { focus: 'image' }); assert.ok(f.focused.includes('[data-ws-control="image"]'), 'Change image puts focus on the image'); f.click('close');
     f.ui.stop();
     // Empty states say who can act, once, and disappear while a form is open or any workspace exists.
     const empty = fixture(); await empty.open();
     assert.match(text(empty.host.innerHTML), /No cloud workspaces yet\. Choose New cloud workspace to create one\./);
-    assert.equal((text(empty.host.innerHTML).match(/isolated environment/g) || []).length, 1, 'the definition appears once');
+    assert.equal((text(empty.host.innerHTML).match(/a separate place on one of your machines where Coworkers can run/g) || []).length, 1, 'the definition appears once, and says what it is meant to be, not that it runs');
     empty.click('create'); assert.doesNotMatch(text(empty.host.innerHTML), /No cloud workspaces yet/, 'no stale empty sentence under an open form');
     empty.ui.stop();
   },
@@ -247,9 +247,9 @@ const cases = {
     assert.doesNotMatch(f.host.innerHTML, /name="ws_image"[^>]*placeholder/, 'an empty box is not dressed up as a filled one');
     t = text(f.host.innerHTML);
     assert.ok(t.includes('An image is the ready-made software a workspace starts from.') || t.includes('Paste the address of your own image below.'));
-    assert.ok(t.includes('Paste the address your image provider gave you, for example ubuntu:24.04. Not sure? Pick a ready-made image above.') && t.includes('Where do I find it?'));
+    assert.ok(t.includes('The name of the image, for example ubuntu:24.04. Not sure? Pick a ready-made image above.') && t.includes('Where do I find it?'));
     const help = f.host.innerHTML.slice(f.host.innerHTML.indexOf('<details class="compute-ws-help">'), f.host.innerHTML.indexOf('</details>', f.host.innerHTML.indexOf('compute-ws-help')));
-    assert.ok(text(help).includes('docker pull') && text(help).includes('A registry is the website that stores images.') && text(help).includes('anyone must be able to download them without signing in'), 'the jargon lives in the disclosure, with one definition');
+    assert.ok(text(help).includes('docker pull') && text(help).includes('A registry is a website that stores images.') && text(help).includes('anyone must be able to download them without signing in'), 'the jargon lives in the disclosure, with one definition');
     assert.equal((text(f.host.innerHTML.replace(help, '')).match(/docker pull|registry/gi) || []).length, 0, 'docker pull and registry appear nowhere else on the form');
     assert.doesNotMatch(t, /@sha256:…|Pin it|Only public images work for now\./);
     // The image control is the one that carries the image error, not the select.
@@ -266,7 +266,7 @@ const cases = {
     fill(f, { ws_cpu_cores: '2', ws_memory_gib: '4', ws_storage_gib: '20', ws_node_id: 'n-one' });
     f.submit('create');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Create “Acceptance”?') && t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage. Planned machine: Fixture machine'), 'resource preview before confirm');
+    assert.ok(t.includes('Create “Acceptance”?') && t.includes('2 CPU cores, 4 GiB memory, 20 GiB storage. Machine: Fixture machine'), 'resource preview before confirm');
     assert.ok(t.includes('the publisher can update its version over time') && t.includes('Confirming saves these settings in Commonplace only. Starting is not available yet, so nothing is sent to a machine.'));
     assert.doesNotMatch(t, /can't be discarded yet|Saved, not started/, 'the review says what confirming does once, without the long status sentence');
     assert.match(f.host.innerHTML, /<ul class="compute-ws-review" role="list">/);
@@ -353,8 +353,8 @@ const cases = {
     await again(failure(409, { error: 'conflict', field: 'name', reason: 'name_taken' }), /That name is taken\. Choose another, for example Build box 2\./);
     await again(failure(400, { error: 'invalid_request', field: 'name', reason: 'no_letter' }), /Use at least one letter or digit in the name\./);
     await again(failure(400, { error: 'invalid_request', field: 'image', reason: 'registry_private' }), /local or private network/);
-    await again(failure(400, { error: 'invalid_request', field: 'image', reason: 'registry_no_path' }), /Add the image name after the registry address/);
-    await again(failure(400, { error: 'invalid_request', field: 'private_registry', reason: 'unavailable' }), /This image is private and Commonplace can't store registry logins yet\. Choose a public image\./);
+    await again(failure(400, { error: 'invalid_request', field: 'image', reason: 'registry_no_path' }), /Add the image name after the website name/);
+    await again(failure(400, { error: 'invalid_request', field: 'private_registry', reason: 'unavailable' }), /This image is private and Commonplace can't store sign-ins for private images yet\. Choose a public image\./);
     // A form-level refusal is the summary's, never pinned on the Name field.
     await again(failure(409, { error: 'conflict', field: 'request_id', reason: 'request_reused' }), /already sent with different values/);
     assert.equal((f.host.innerHTML.match(/aria-invalid="true"/g) || []).length, 0, 'no field is marked invalid for a form-level error'); assert.ok(f.focused.at(-1) === '[data-ws-summary]');
@@ -380,7 +380,7 @@ const cases = {
     f.submit('edit'); assert.match(text(f.host.innerHTML), /You haven't changed anything yet\./); assert.equal(f.state.writes.length, 0, 'an edit with no change sends nothing');
     fill(f, { ws_memory_gib: '8' }); f.submit('edit');
     t = text(f.host.innerHTML);
-    assert.ok(t.includes('Confirm the change to “Build box”') && t.includes('Memory: 4 GiB → 8 GiB') && t.includes('2 CPU cores, 8 GiB memory, 20 GiB storage. Planned machine: Fixture machine') && t.includes(ws.STARTED));
+    assert.ok(t.includes('Confirm the change to “Build box”') && t.includes('Memory: 4 GiB → 8 GiB') && t.includes('2 CPU cores, 8 GiB memory, 20 GiB storage. Machine: Fixture machine') && t.includes(ws.STARTED));
     f.state.next = [{ workspace: { ...row, memory_mib: 8192, version: 2, revision: 2, restart_needed: true, status: 'restart_needed' } }]; f.click('confirm'); await flush();
     assert.equal(f.state.writes[0][0], '/api/compute/workspaces/w-one');
     assert.deepEqual(f.state.writes[0][1], { memory_mib: 8192, expected_revision: 1 }, 'only the changed field, with the version the form opened at');
@@ -484,7 +484,7 @@ const cases = {
     assert.doesNotMatch(f.host.innerHTML, /data-ws-action="bind"/);
     assert.match(text(f.host.innerHTML), /Private image/);
     f.click('bind', 'w-old'); assert.doesNotMatch(f.host.innerHTML, /data-ws-form="bind"|ws_credential/);
-    f.click('detail', 'w-old'); assert.match(text(f.host.innerHTML), /needs a login, which can't be added yet/); assert.match(text(f.host.innerHTML), /Choose a public image\./); assert.match(f.host.innerHTML, /data-focus="image"[^>]*>Change image<\/button>/); f.click('close');
+    f.click('detail', 'w-old'); assert.match(text(f.host.innerHTML), /it needs a sign-in, which can't be added yet/); assert.match(text(f.host.innerHTML), /Choose a public image\./); assert.match(f.host.innerHTML, /data-focus="image"[^>]*>Change image<\/button>/); f.click('close');
     f.click('create'); f.input('ws_image_choice', 'custom'); fill(f, valid); f.submit('create');
     f.state.next = [{ workspace: record({ id: 'w-n', name: 'Acceptance', created_at: clock + 1 }) }]; f.click('confirm'); await flush();
     assert.equal('private_registry' in f.state.writes[0][1], false); assert.equal(JSON.stringify(f.state.writes).includes('credential'), false);
@@ -592,7 +592,7 @@ const cases = {
     f.change('ws_cpu_cores', '64'); assert.match(await repaint(), /aria-invalid="true"/, 'committing the value records its problem'); assert.match(text(f.host.innerHTML), /Enter a number of cores from 0\.5 to 32\./);
     // Fixing a recorded problem clears it, per keystroke.
     f.input('ws_cpu_cores', '4'); assert.doesNotMatch(await repaint(), /aria-invalid="true"/);
-    f.change('ws_image', 'ghcr.io'); assert.match(await repaint().then(text), /Add the image name after the registry address/);
+    f.change('ws_image', 'ghcr.io'); assert.match(await repaint().then(text), /Add the image name after the website name/);
     f.change('ws_image', 'ghcr.io/acme/tools:1.2'); assert.doesNotMatch(await repaint().then(text), /Add the image name/);
     f.ui.stop();
   },
@@ -623,6 +623,105 @@ const cases = {
     f.click('confirm'); assert.equal(f.calls.length, original + 1, 'a second press while saving sends nothing');
     resolve(structuredClone({ workspace: record({ id: 'w-b', name: 'Acceptance', created_at: clock + 1 }) })); await flush();
     assert.match(f.status.text, /^Saved “Acceptance”/); assert.ok(api.writes.length === 1);
+    f.ui.stop();
+  },
+
+  // With no machine anywhere the screen says so once and never tells the owner to choose one that cannot be chosen.
+  async 'no-machines'() {
+    const none = fixture({ list: { workspaces: [record({ id: 'w-none', name: 'No box' })], can_manage: true }, nodes: [] }); await none.open();
+    none.click('detail', 'w-none');
+    const detail = fixtureHTML => { const at = fixtureHTML.indexOf('compute-ws-statusline'); return text(fixtureHTML.slice(at, fixtureHTML.indexOf('</p>', at))); };
+    let t = detail(none.host.innerHTML);
+    assert.ok(t.includes(ws.NO_MACHINES_SENTENCE), 'the dead end is explained: nothing to choose, starting will need one');
+    assert.doesNotMatch(t, /Choose a machine/, 'no instruction that cannot be followed');
+    none.click('edit', 'w-none');
+    const form = none.host.innerHTML.slice(none.host.innerHTML.indexOf('data-ws-field="node_id"'));
+    assert.ok(text(form).includes('No machines set up yet'), 'the Machine field says there are none');
+    assert.match(form, /<select name="ws_node_id"[^>]*disabled/, 'nothing to pick');
+    assert.doesNotMatch(text(form.slice(0, form.indexOf('data-ws-error'))), /Choose a machine|Advanced|Targets/, 'no instruction and no pointer to SSH settings'); assert.doesNotMatch(form, /<option[^>]*>Choose later/, 'the empty field offers no choice');
+    none.ui.stop();
+    // With a machine the instruction is back, and the field offers "Choose later" and the machine.
+    const some = fixture({ list: { workspaces: [record({ id: 'w-some', name: 'Some box' })], can_manage: true } }); await some.open();
+    some.click('detail', 'w-some'); t = detail(some.host.innerHTML);
+    assert.ok(t.includes('Choose a machine for it with Change settings.') && !t.includes(ws.NO_MACHINES_SENTENCE));
+    some.click('edit', 'w-some');
+    const field = some.host.innerHTML.slice(some.host.innerHTML.indexOf('data-ws-field="node_id"'));
+    assert.ok(text(field).includes('Choose later') && text(field).includes('Fixture machine') && !text(field).includes('No machines set up yet'));
+    assert.doesNotMatch(field, /<select name="ws_node_id"[^>]*disabled/);
+    some.ui.stop();
+    // A member is never told to act: the owner chooses.
+    const member = fixture({ list: { workspaces: [record({ id: 'w-m', name: 'M box' })], can_manage: false }, owner: false, nodes: [] }); await member.open();
+    member.click('detail', 'w-m'); t = detail(member.host.innerHTML);
+    assert.ok(t.includes('The workspace owner can choose a machine.') && !/Change settings|Choose later/.test(t));
+    member.ui.stop();
+  },
+  // The states a start would produce are worded as what a machine recorded; "Starting is not available yet" is said once per screen.
+  async 'once-per-screen'() {
+    const rows = [record({ id: 'a', name: 'A none' }), onMachine({ id: 'b', name: 'B pending' }), onMachine({ id: 'c', name: 'C changes', status: 'restart_needed', started: true, applied_revision: 1, revision: 2, restart_needed: true, discardable: false }), startedRow({ id: 'd', name: 'D ready' }), onMachine({ id: 'e', name: 'E failed', status: 'failed', status_reason: 'start_failed', started: true, discardable: false })];
+    const f = fixture({ list: { workspaces: rows, can_manage: true } }); await f.open();
+    const said = () => (text(f.host.innerHTML).match(/starting is not available yet/gi) || []).length;
+    assert.ok(said() <= 1, `the list says it ${said()} times`);
+    for (const id of ['a', 'b', 'c']) { f.click('detail', id); assert.ok(said() <= 1, `detail ${id} says it ${said()} times`); f.click('close'); }
+    f.click('create'); assert.ok(said() <= 1, `the create form says it ${said()} times`); f.input('ws_name', 'Once'); f.click('close'); f.click('leave');
+    f.click('edit', 'a'); assert.ok(said() <= 1, `the edit form says it ${said()} times`);
+    f.input('ws_cpu_cores', '4'); f.submit('edit'); assert.ok(said() <= 1, `the review says it ${said()} times`);
+    f.ui.stop();
+    // No screen claims that anything started, failed or is up to date as a fact of this page.
+    const all = fixture({ list: { workspaces: rows, can_manage: true } }); await all.open();
+    for (const id of ['d', 'e', 'c']) { all.click('detail', id); const t = text(all.host.innerHTML); assert.doesNotMatch(t, /Up to date|Its last start failed|Its settings are up to date|^Started\./, id); all.click('close'); }
+    const list = text(all.host.innerHTML);
+    assert.doesNotMatch(list, /Up to date/); assert.match(list, /Settings applied/);
+    assert.doesNotMatch(list, /isolated environment|Planned machine/);
+    all.ui.stop();
+  },
+  // A refused discard says in the row's own status that the record moved on, in the same render.
+  async 'refused-row'() {
+    const f = fixture({ list: { workspaces: [onMachine({ id: 'w-one', name: 'Build box' })], can_manage: true } }); await f.open();
+    f.click('discard', 'w-one'); assert.match(f.host.innerHTML, /compute-ws-status" data-tone="quiet">Saved, not started</);
+    f.state.next = [failure(409, { error: 'conflict', reason: 'already_started' })]; f.click('confirm'); await flush();
+    const row = f.host.innerHTML.slice(f.host.innerHTML.indexOf('data-ws-id="w-one"'));
+    assert.ok(text(row).includes('It started after you opened this'), 'the refusal is shown');
+    assert.doesNotMatch(row, /Saved, not started/, 'the status above it no longer says the opposite');
+    assert.match(row, /compute-ws-status" data-tone="wait">Changed since you opened it</);
+    f.ui.stop();
+  },
+  // One tone per status, one machine label, and a record whose image cannot be read still lists.
+  async 'status-tone'() {
+    const f = fixture({ list: { workspaces: [record({ id: 'a', name: 'A none' }), onMachine({ id: 'b', name: 'B pending' }), record({ id: 'c', name: 'C bad', image: '', image_registry: null, image_unreadable: true })], can_manage: true } }); await f.open();
+    const html = f.host.innerHTML;
+    for (const id of ['a', 'b']) assert.match(html.slice(html.indexOf(`data-ws-id="${id}"`)), /compute-ws-status" data-tone="quiet">Saved, not started</, `${id}: one colour for one status`);
+    assert.doesNotMatch(html, /Planned machine/); assert.match(html, /Machine: Fixture machine/); assert.match(html, /Machine: not chosen yet/);
+    const bad = html.slice(html.indexOf('data-ws-id="c"'));
+    assert.match(bad, />Image unreadable</); assert.match(bad, /Image: not readable/);
+    f.click('detail', 'c'); assert.match(text(f.host.innerHTML), /The saved image address can't be read\. Choose the image again with Change settings\./); assert.doesNotMatch(f.host.innerHTML, /Comes from[^<]*<\/dt><dd>null/);
+    f.ui.stop();
+  },
+
+  // A background reload repaints the top part (heading and New button) too: focus that was on it comes back.
+  async 'background-reload-focus'() {
+    const focused = [];
+    const stub = path => ({ focus() { focused.push(path); }, setAttribute() {}, removeAttribute() {}, querySelector: child => stub(`${path} ${child}`) });
+    const top = { innerHTML: '' }, root = { innerHTML: '' };
+    const control = { matches: () => false, dataset: { wsAction: 'create' }, closest: () => null, focus() {} };
+    const host = { querySelector: selector => selector === '[data-ws-root]' ? root : selector === '[data-ws-top]' ? top : selector === '.compute-ws :focus' ? control : stub(selector) };
+    const request = async path => path.endsWith('/images') ? options : { workspaces: [record()], total: 1, can_manage: true };
+    const w = ws.createWorkspaces({ request, epoch: () => 1, valid: () => true, denied: () => false, rerender() {}, host: () => host, machines: () => [machine], requestId: () => 'r-1', doc: null });
+    await w.load();
+    assert.ok(top.innerHTML.includes('New cloud workspace'), 'the top part was painted');
+    assert.ok(focused.includes('[data-ws-action="create"]'), 'focus on the New button comes back after the repaint');
+    w.reset();
+  },
+  // A ready-made image has no address box: the error is shown on and read from the list the person can see.
+  async 'curated-image-error'() {
+    const f = fixture(); await f.open();
+    f.click('create');
+    f.state.next = [failure(400, { error: 'invalid_request', field: 'image', reason: 'not_curated' })];
+    f.input('ws_name', 'Curated'); f.submit('create'); f.click('confirm'); await flush();
+    const html = f.host.innerHTML, choice = html.slice(html.indexOf('data-ws-field="image_choice"'), html.indexOf('data-ws-field="image"'));
+    assert.match(choice, /<select name="ws_image_choice"[^>]*aria-invalid="true"/, 'the visible list is marked invalid');
+    assert.match(choice, /id="ws-error-image_choice"[^>]*>Pick one of the listed images/, 'its own message slot carries the text');
+    const address = html.slice(html.indexOf('data-ws-field="image"'), html.indexOf('data-ws-field="image"') + 900);
+    assert.doesNotMatch(address, /aria-invalid="true"/, 'the hidden address box is not the one marked');
     f.ui.stop();
   },
 };

@@ -161,11 +161,11 @@ export function computeFrame() {
   return `<section class="topo" data-topology aria-label="Compute map"><div class="topo-stage" data-topo="stage" tabindex="0" role="group" aria-label="Map canvas. Drag nodes to arrange. Arrow keys pan; plus and minus zoom; 0 fits everything."><svg class="topo-svg" aria-label="Topology"><g data-topo="world"></g></svg><div class="topo-note" data-topo="note"></div><div class="dc-map-controls" role="group" aria-label="Map controls">${control('fit','Fit',fitIcon)}${control('reset','Reset layout',resetIcon)}</div></div><select data-topo="route" hidden aria-label="Highlighted route"></select><p data-topo="path" class="topo-path" role="status" hidden></p><span data-topo="live" class="topo-live" role="status"></span></section>`;
 }
 
-/** The route picker lives in Management; the map reads only its remembered site name. */
+/** The route picker lives on the Map tab, beside the map that shows the route; the map reads its remembered site name. */
 export const routePreference = value => {
   try { if (value !== undefined) sessionStorage.setItem('cmmn.compute.route',value); return sessionStorage.getItem('cmmn.compute.route') || ''; } catch { return ''; }
 };
-export function mountComputeRoutes({ root, api, go }) {
+export function mountComputeRoutes({ root, api, go, show = () => go('#/compute') }) {
   if (!root) return { stop() {} };
   const controller = new AbortController();
   root.innerHTML = '<p role="status">Loading routes…</p>';
@@ -175,7 +175,7 @@ export function mountComputeRoutes({ root, api, go }) {
     root.innerHTML = `<section class="dc-route-management"><h2>Route</h2><label>Highlight a site route<select data-compute-route><option value="">None</option>${routes.map(route => `<option value="${e(route.site)}">${e(route.site)}</option>`).join('')}</select></label><button type="button" class="btn" data-compute-show-route>Show on map</button></section>`;
     root.querySelector('[data-compute-route]').value = routePreference();
   }).catch(() => { if (!controller.signal.aborted) root.textContent = 'Routes could not be loaded.'; });
-  root.addEventListener('click',event => { if (event.target.closest?.('[data-compute-show-route]')) { routePreference(root.querySelector('[data-compute-route]').value); go('#/compute'); } },{ signal: controller.signal });
+  root.addEventListener('click',event => { if (event.target.closest?.('[data-compute-show-route]')) { routePreference(root.querySelector('[data-compute-route]').value); show(); } },{ signal: controller.signal });
   return { stop() { controller.abort(); } };
 }
 

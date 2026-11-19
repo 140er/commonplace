@@ -32,6 +32,12 @@ import pytest
         "busy",
         "validation-timing",
         "image-choice",
+        "no-machines",
+        "once-per-screen",
+        "refused-row",
+        "status-tone",
+        "background-reload-focus",
+        "curated-image-error",
     ],
 )
 def test_compute_workspaces_ui(case):

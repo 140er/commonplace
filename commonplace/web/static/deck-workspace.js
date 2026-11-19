@@ -9,7 +9,7 @@ import { createCoworkers } from './coworkers.js';
 import { statusMark } from './topology-map.js';
 import { mount as mountCapyCoworkers } from './deck-coworkers.js';
 
-export const TITLE = 'Compute';
+export const TITLE = 'Cloud workspaces';
 const enc = encodeURIComponent;
 export const COWORKERS = '#/bots/-/coworkers';
 export const coworkerLink = bot => `#/bots/${enc(bot)}/coworkers`;
@@ -48,20 +48,26 @@ export function mount(context) {
   if (navStyle) Object.assign(navStyle, { position: 'fixed', bottom: '0', left: '0', right: '0', zIndex: '10' });
   const region = name => root.querySelector(`[data-workspace="${name}"]`);
   const host = '<div data-workspace="content"></div>';
+  // The session's role, or (when it carries none) whether it may administer the workspace.
+  const isMember = me => !!me && (me.role ? me.role === 'member' : me.can_admin === false);
+  const member = isMember(ctx.me), managing = page.screen === 'compute' && (page.management || member);
   if (page.screen === 'compute') {
     const mapLink = doc?.documentElement?.dataset?.ui === 'deck' ? '#/compute' : '#/compute-map';
-    root.innerHTML = `<nav class="dw-tabs" aria-label="Compute views"><a href="${mapLink}"${page.management ? '' : ' aria-current="page"'}>Map</a><a href="#/compute/management"${page.management ? ' aria-current="page"' : ''}>Management</a></nav>${host}`;
-    if (page.management) {
+    // The map shows the machines, which only owners can read: a member gets the one page that is theirs (the
+    // read-only list of cloud workspaces), with no tab bar to a screen that has nothing for them.
+    root.innerHTML = `${member ? '' : `<nav class="dw-tabs" aria-label="Cloud workspaces views"><a href="${mapLink}"${managing ? '' : ' aria-current="page"'}>Map</a><a href="#/compute/management"${managing ? ' aria-current="page"' : ''}>Management</a></nav>`}${host}`;
+    if (managing) {
       child = createCompute({ mount: () => region('content'), api: (...args) => ctx.api(...args), current: () => ctx.me, route: () => globalThis.location?.hash || ctx.route, expectedRoute: ctx.route, title: 'Compute', doc });
       child.show();
       tabPlacement = placeManagementTabs(region('content'), root.querySelector('.dw-tabs'));
-      if (doc?.documentElement?.dataset?.ui === 'deck' && root.insertAdjacentHTML) {
-        root.insertAdjacentHTML('beforeend','<div data-compute-routes></div>');
-        routePicker = mountComputeRoutes({ root: root.querySelector('[data-compute-routes]'), api: (...args) => ctx.api(...args), go: hash => ctx.go(hash) });
-      }
     } else {
       root.classList.add('dw-map');
       child = mountMap({ ...ctx, root: region('content'), shell: root.parentElement });
+      // The route highlight belongs with the map it highlights on (Deck only); showing it remounts the map, which reads the remembered route.
+      if (doc?.documentElement?.dataset?.ui === 'deck' && root.insertAdjacentHTML) {
+        root.insertAdjacentHTML('beforeend','<div data-compute-routes></div>');
+        routePicker = mountComputeRoutes({ root: root.querySelector('[data-compute-routes]'), api: (...args) => ctx.api(...args), go: hash => ctx.go(hash), show: () => { child?.stop?.(); child = mountMap({ ...ctx, root: region('content'), shell: root.parentElement }); } });
+      }
     }
   } else {
     root.innerHTML = `<nav class="dw-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span data-workspace="parent"></span><a href="${page.bot ? coworkerLink(page.bot) : COWORKERS}"${page.conversations ? '' : ' aria-current="page"'}>Coworkers</a>${page.conversations ? '<span>Conversations</span>' : ''}</nav><header class="dw-title"><div><h1>Coworkers</h1><p>Each Coworker works under a Bot, owns its project’s code and uses subagents.</p></div>${page.conversations ? '' : `<div class="dw-controls"><nav class="dw-switch" aria-label="Coworker scope">${page.bot ? `<a href="${coworkerLink(page.bot)}" aria-current="page">This Bot</a>` : '<span aria-disabled="true">This Bot</span>'}<a href="${COWORKERS}"${page.bot ? '' : ' aria-current="page"'}>All Bots</a></nav><a class="btn" href="${COWORKERS}/conversations">Open conversation</a></div>`}</header>${host}`;
@@ -76,7 +82,9 @@ export function mount(context) {
   async function refresh(next = {}) {
     ctx = { ...ctx, ...next };
     if (stopped) return;
-    if (child) { child.refresh?.(page.screen === 'compute' && !page.management ? ctx : undefined); return; }
+    // Who the person is can arrive after the page mounted: a member on the map is sent to the one page that is theirs.
+    if (page.screen === 'compute' && !managing && isMember(ctx.me)) { ctx.go?.('#/compute/management'); return; }
+    if (child) { child.refresh?.(page.screen === 'compute' && !managing ? ctx : undefined); return; }
     const mine = ++epoch;
     request?.abort(); request = new AbortController();
     const options = { signal: request.signal, timeoutMs: 10000 };

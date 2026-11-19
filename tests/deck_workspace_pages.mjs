@@ -78,6 +78,23 @@ test('Management uses the existing controller and restores the shell and phone d
     assert.equal(f.root.innerHTML, '');
   }
 });
+test('a member gets the read-only cloud workspaces page without a tab bar, an owner gets Map and Management', () => {
+  const run = (me, route) => {
+    const f = hostFixture();
+    f.root.ownerDocument = { documentElement: { dataset: { ui: 'deck' } }, addEventListener() {}, removeEventListener() {} };
+    f.root.parentElement = { querySelector: () => ({ hidden: false, style: {} }) };
+    const ui = mount({ root: f.root, route, me, api: () => new Promise(() => {}) });
+    const html = f.root.innerHTML, content = f.regions.get('content').innerHTML;
+    ui.stop();
+    return { html, content };
+  };
+  const member = run({ workspace: 'w', actor: 'u', role: 'member' }, '#/compute');
+  assert.doesNotMatch(member.html, /dw-tabs|Management/, 'no tab bar for a member');
+  assert.match(member.content, /<h1>Cloud workspaces<\/h1>/, 'the member lands on the page that is theirs, even from the map address');
+  const owner = run({ workspace: 'w', actor: 'u', role: 'owner' }, '#/compute/management');
+  assert.match(owner.html, /aria-label="Cloud workspaces views"[^>]*><a href="#\/compute">Map<\/a><a href="#\/compute\/management" aria-current="page">Management<\/a>/);
+  assert.doesNotMatch(owner.html, /data-compute-routes/, 'the route card is not on the Management tab');
+});
 test('Coworkers puts the parent scope switch and conversation action in its title row', () => {
   for (const bot of ['bot-1', '-']) {
     const f = hostFixture();
