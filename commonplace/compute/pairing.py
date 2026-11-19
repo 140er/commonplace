@@ -31,7 +31,9 @@ CHECK_PER_MINUTE = 10
 REPORT_PER_MINUTE = 60
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
 PAIRING_ID = re.compile(r"pair_[0-9a-f]{16}")
-HUB = re.compile(r"https?://[A-Za-z0-9.\-]{1,253}(?::[0-9]{1,5})?")
+HUB = re.compile(
+    r"https://[A-Za-z0-9.\-]{1,253}(?::[0-9]{1,5})?|http://(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?"
+)
 STEPS = ("prerequisites", "files", "service", "check")
 HEARTBEAT = "heartbeat"
 DEFAULTS = {"max_runtime_mode": "approval-required", "max_in_flight": 1, "max_starts_per_hour": 6}
@@ -70,7 +72,7 @@ STATES = {
         "Machine connected, waiting for your approval",
         "The machine used the code and connected. It cannot do anything until you approve it.",
         "Compare the machine's name and fingerprint, then approve or choose This is not my machine.",
-        "The machine connected. The owner has to approve it.",
+        "Waiting for the owner's approval.",
     ),
     "approved": (
         "Approved",
@@ -80,7 +82,7 @@ STATES = {
     ),
     "ready": (
         "Set up and checked",
-        "The machine passed its setup checks.",
+        "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
         "Coworkers can run here only after a provider is connected and the machine is attested under Runner machines in Admin.",
         "This machine is set up. Coworkers can run on it after the owner connects a provider.",
     ),
@@ -93,8 +95,8 @@ STATES = {
     "failed": (
         "A step failed",
         "A setup step failed on the machine.",
-        "Read the cause below, fix it and run the same command again, or set the machine up again.",
-        "A setup step failed on this machine. The owner can retry it.",
+        "Open it to see the cause, then choose Set up again.",
+        "A setup step failed on this machine. The owner can set it up again.",
     ),
     "expired": (
         "Code expired",
@@ -121,55 +123,66 @@ STATES = {
         "This machine's access was removed.",
     ),
 }
+# Where the sentence says "you", a member reads the same fact about the owner.
+MEMBER_SENTENCE = {
+    "connected": "The machine connected and is waiting for the owner's approval. It cannot do anything until then.",
+    "approved": "The owner approved this machine. It is finishing its setup.",
+    "declined": "The owner did not approve this machine. Its access was removed.",
+}
+STALLED = (
+    "This setup has not finished.",
+    "Remove this machine and set it up again.",
+    "The owner can remove this machine and set it up again.",
+)
 # Fixed causes a machine may report for a failed step: (what happened, what to do).
 CAUSES = {
     "run_as_root": (
         "The command was run as root.",
-        "Run it again as the normal account that should own the runner, without sudo.",
+        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Compute in the app and choose Set up again.",
     ),
     "unsupported_os": (
         "This system is not supported. Ubuntu 24.04 and Debian 12 or later are.",
-        "Use a supported system.",
+        "Use a supported system, then open Compute in the app and choose Set up again.",
     ),
     "missing_python": (
         "A supported Python is not installed.",
-        "Install Python 3.10 or later, then run the command again.",
+        "Install Python 3.10 or later on the machine, then open Compute in the app and choose Set up again.",
     ),
     "missing_prerequisite": (
         "A required program is missing.",
-        "Install what the machine printed, then run the command again.",
+        "Install what the machine printed, then open Compute in the app and choose Set up again.",
     ),
     "missing_runner_program": (
         "The runner program is not installed on this machine, and this command does not install it yet.",
-        "Install the runner program first (see the runner guide), then run the command again.",
+        "Install the runner program first (see the runner guide), then open Compute in the app and choose Set up again.",
     ),
     "missing_privilege": (
         "The account is not allowed to set up its background service.",
-        "Allow the account to keep a service running when logged out, then run the command again.",
+        "Allow the account to keep a service running when logged out, then open Compute in the app and choose Set up again.",
     ),
     "no_service_manager": (
         "The machine has no running user service manager.",
-        "Log in on the machine with a normal session, then run the command again.",
+        "Log in on the machine with a normal session, then open Compute in the app and choose Set up again.",
     ),
     "disk_full": (
         "There is not enough free disk space.",
-        "Free some space, then run the command again.",
+        "Free some space, then open Compute in the app and choose Set up again.",
     ),
     "cannot_reach_hub": (
         "The machine could not reach this site.",
-        "Check the machine's internet connection, then run the command again.",
+        "Check the machine's internet connection, then open Compute in the app and choose Set up again.",
     ),
     "service_failed": (
         "The background service did not start.",
-        "Run the command again. If it fails again, set the machine up again.",
+        "The window where you ran the command shows the reason on its last lines. Then choose Set up again.",
     ),
     "check_failed": (
         "The machine's own check did not pass.",
-        "Run the command again. If it fails again, set the machine up again.",
+        "The window where you ran the command shows the reason on its last lines. Then choose Set up again.",
     ),
     "unknown": (
         "A step failed for a reason this page does not recognise.",
-        "Read what the machine printed, then run the command again.",
+        "The window where you ran the command shows the reason on its last lines. Then choose Set up again.",
     ),
 }
 # Fixed reasons for every refusal: (what happened, what to do next).
@@ -251,6 +264,7 @@ MEMBER_VIEW = (
     "state_label",
     "sentence",
     "next",
+    "stalled",
     "cause",
     "steps",
     "last_report_at",
@@ -339,6 +353,9 @@ def derive(row, steps, now_stamp):
             expired = row["code_expires_at"] <= row["code_revoked_at"]
             return ("expired" if expired else "cancelled"), None
         return "revoked", None
+    # A code that ran out unused is expired whatever a check reported before: it cannot work any more.
+    if row["consumed_at"] is None and row["code_expires_at"] <= now_stamp:
+        return "expired", None
     failed = next((s for s in STEPS if s in steps and steps[s]["state"] == "failed"), None)
     if failed:
         return "failed", failed
@@ -351,8 +368,6 @@ def derive(row, steps, now_stamp):
         return "ready", None
     if row["consumed_at"]:
         return "connected", None
-    if row["code_expires_at"] <= now_stamp:
-        return "expired", None
     return "waiting", None
 
 
@@ -407,7 +422,17 @@ def view(db, row, now_stamp, *, owner):
     steps = _steps(db, row["id"])
     state, failed = derive(row, steps, now_stamp)
     label, sentence, next_owner, next_member = STATES[state]
+    if not owner:
+        sentence = MEMBER_SENTENCE.get(state, sentence)
     cause = _cause(steps, failed)
+    stalled = (
+        state in ("connected", "approved")
+        and row["consumed_at"] is not None
+        and not all(s in steps and steps[s]["state"] == "ok" for s in STEPS)
+        and _age(row["consumed_at"], now_stamp) > OFFLINE_SECONDS
+    )
+    if stalled:
+        sentence, next_owner, next_member = STALLED
     result = {
         "id": row["id"],
         "kind": row["kind"],
@@ -416,6 +441,7 @@ def view(db, row, now_stamp, *, owner):
         "state_label": label,
         "sentence": sentence,
         "next": next_owner if owner else next_member,
+        "stalled": stalled,
         "cause": cause,
         "steps": _step_view(steps),
         "last_report_at": row["last_report_at"],
@@ -441,7 +467,7 @@ def view(db, row, now_stamp, *, owner):
         identity_digest=identity_digest(row) if row["consumed_at"] else None,
         accepted_at=row["accepted_at"],
         binding_state=machine["binding_state"] if machine and not machine["revoked_at"] else None,
-        can_accept=state == "connected",
+        can_accept=state == "connected" and not stalled,
         can_close=state in ("waiting", "connected", "approved", "ready", "offline", "failed"),
         retry=_retry(row) if closed or state == "failed" else None,
     )
@@ -513,7 +539,11 @@ def options(db, gateway, principal, *, owner):
         "code_minutes": CODE_MINUTES,
         "offline_after_seconds": OFFLINE_SECONDS,
         "states": {
-            key: {"label": v[0], "sentence": v[1], "next": v[2 if owner else 3]}
+            key: {
+                "label": v[0],
+                "sentence": v[1] if owner else MEMBER_SENTENCE.get(key, v[1]),
+                "next": v[2 if owner else 3],
+            }
             for key, v in STATES.items()
         },
         "causes": {key: {"text": v[0], "next": v[1]} for key, v in CAUSES.items()},
@@ -634,12 +664,14 @@ def _envelope(hub, workspace, pairing_id, enrollment_id, label, digest):
 def render_command(hub, envelope, code):
     """The one command. The code goes in on standard input; the envelope has public values only.
 
-    The leading space keeps the line out of history on shells that honour it. The line holds the
-    one-time code, which is useless after first use or expiry.
+    The launcher is fetched first and the rest runs only if that worked: a failed download stops here
+    with curl's own message instead of running an empty script. The leading space keeps the line out of
+    history on shells that honour it. The line holds the one-time code, which is useless after first
+    use or expiry.
     """
     return (
-        f" printf '%s' '{code}' | sh -c \"$(curl -fsSL '{hub}/machine-setup.sh')\" "
-        f"machine-setup '{envelope}'"
+        f" S=$(curl -fsSL '{hub}/machine-setup.sh') && printf '%s' '{code}' | "
+        f"sh -c \"$S\" machine-setup '{envelope}'"
     )
 
 
@@ -917,7 +949,7 @@ def check(db, data):
         raise ValueError("invalid check")
     step = state = cause = None
     if "report" in data:
-        step, state, cause = _step_report(data["report"], allowed=("prerequisites",))
+        step, state, cause = _step_report(data["report"], allowed=("prerequisites", "files"))
         if step == "heartbeat":
             raise ValueError("invalid check")
     workspace = data["workspace_id"]
@@ -951,6 +983,8 @@ def _check_reason(db, row, workspace, code, stamp):
         return "not_for_this_workspace"
     if not enrollment.enabled(db, workspace):
         return "setup_off"
+    if row["consumed_at"] is None and row["code_expires_at"] <= stamp and not row["closed_reason"]:
+        return "expired"
     state, _failed = derive(row, _steps(db, row["id"]), stamp)
     if row["consumed_at"] and not row["code_revoked_at"] and not row["closed_reason"]:
         return "used"

@@ -15,12 +15,13 @@ import re
 import socket
 import stat
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from commonplace import sessions
+from commonplace import control_db, sessions
 from commonplace.compute import pairing, pairing_routes
 from commonplace.control_db import ControlDB
 from commonplace.runner import enrollment, installer, machine_setup, registry
@@ -537,21 +538,7 @@ def test_a_failed_service_start_shows_its_cause_and_a_rerun_finishes(machine):
     assert item["state"] == "failed"
     assert item["cause"]["step"] == "service" and item["cause"]["code"] == "service_failed"
     assert item["cause"]["next"] == pairing.CAUSES["service_failed"][1]
-    assert any("Run the same command again" in line for line in lines)
-    assert (
-        pairing.accept(
-            m.db,
-            m.owner,
-            item["id"],
-            {
-                "request_id": "a",
-                "expected_version": item["version"],
-                "identity_digest": item["identity_digest"],
-            },
-        )
-        if False
-        else True
-    )
+    assert machine_setup.AGAIN in lines and not any("continues from" in line for line in lines)
     m.host.broken = False
     assert machine_setup.main([m.setup["envelope"]], make_installer=make, **args) == 0
     assert view(m)["state"] == "connected"
@@ -822,3 +809,193 @@ def test_a_machine_without_python_shows_up_in_the_app_as_failed_with_its_cause(f
     }
     # The code was not spent: the same command works once Python is there.
     assert flow.check(made)[1]["usable"] is True
+
+
+# ---- review round 1: the step a failure reached, a refusal that is not a lost connection -----------------
+
+
+class FakeOpener:
+    """The production Transport's HTTP opener, answering the way a real site or a dead network does."""
+
+    def __init__(self, error, before=None):
+        self.error, self.before = error, before
+
+    def open(self, request, timeout=None):
+        if self.before:
+            self.before()
+        raise self.error
+
+
+def production_transport(error, before=None):
+    transport = installer.Transport("https://hub.example.test")
+    transport.opener = FakeOpener(error, before)
+    return transport
+
+
+def refusal():
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "https://hub.example.test/api/runner-enrollment/exchange",
+        403,
+        "Forbidden",
+        {},
+        io.BytesIO(b'{"error": "enrollment refused"}'),
+    )
+
+
+def lost_connection():
+    import urllib.error
+
+    return urllib.error.URLError("network is unreachable")
+
+
+def run_with(m, transport=None, lines=None):
+    lines = [] if lines is None else lines
+
+    def make(envelope, out):
+        intent = installer.intent_from(
+            SimpleNamespace(
+                hub=envelope["hub"],
+                workspace=envelope["workspace_id"],
+                label=envelope["label"],
+                manifest_digest=envelope["manifest_digest"],
+                enrollment_id=envelope["enrollment_id"],
+            )
+        )
+        return intent, installer.Installer(m.home, m.host, transport or m.transport, out=out)
+
+    status = machine_setup.main(
+        [m.setup["envelope"]],
+        code=m.setup["code"],
+        probe=m.probe,
+        hub=m.hub,
+        make_installer=make,
+        out=lines.append,
+    )
+    return status, lines
+
+
+def test_a_write_that_fails_before_the_code_is_spent_is_the_files_step_and_the_code_survives(
+    machine, monkeypatch
+):
+    import errno
+
+    m = machine
+    real = installer.Installer.file
+
+    def broken(self, path, data):
+        if path == installer.KEY:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(self, path, data)
+
+    monkeypatch.setattr(installer.Installer, "file", broken)
+    status, lines = run_with(m)
+    assert status == 1
+    item = view(m)
+    assert item["state"] == "failed"
+    assert (item["cause"]["step"], item["cause"]["code"]) == ("files", "disk_full")
+    assert item["cause"]["step"] != "prerequisites", "the checks passed; the write is what failed"
+    assert machine_setup.AGAIN in lines and not any("continues" in line for line in lines)
+    assert not any("one-time code was used" in line for line in lines)
+    assert m.hub.check(
+        {"workspace_id": m.owner.workspace_id, "pairing_id": m.item["id"], "code": m.setup["code"]}
+    )["usable"]
+    monkeypatch.setattr(installer.Installer, "file", real)
+    assert run_with(m)[0] == 0 and view(m)["state"] == "connected"
+
+
+def test_a_write_that_fails_after_the_code_is_spent_says_so_and_the_page_is_never_told_it_is_fine(
+    machine, monkeypatch
+):
+    m = machine
+    real = installer.Installer.file
+
+    def broken(self, path, data):
+        if path == installer.DELIVERY:
+            raise OSError(5, "Input/output error")
+        return real(self, path, data)
+
+    monkeypatch.setattr(installer.Installer, "file", broken)
+    status, lines = run_with(m)
+    assert status == 1
+    assert "The one-time code was used, but this machine could not save what it needs." in lines
+    assert machine_setup.AGAIN in lines and not any("continues" in line for line in lines)
+    item = view(m)
+    # Nothing could be reported (the machine holds no credential) and the app says nothing false.
+    assert item["state"] == "connected"
+    assert [s["state"] for s in item["steps"]][1:] == ["pending"] * 3, (
+        "nothing past the checks is reported"
+    )
+    assert item["can_accept"] is True
+
+
+def test_a_refused_exchange_is_not_called_a_lost_connection(machine):
+    m = machine
+    status, lines = run_with(m, production_transport(refusal()))
+    text = "\n".join(lines)
+    assert status == 1
+    assert "could not reach" not in text and "delivery unavailable" not in text
+    assert "The site did not accept the code." in lines and machine_setup.AGAIN in lines
+    assert view(m)["state"] == "waiting", "a refusal reports nothing as a failed step"
+
+
+def test_a_code_that_expired_between_the_check_and_the_exchange_says_expired(machine, monkeypatch):
+    m = machine
+    now = control_db._now()
+    transport = production_transport(
+        refusal(),
+        before=lambda: monkeypatch.setattr(control_db, "_now", lambda: now + timedelta(minutes=20)),
+    )
+    status, lines = run_with(m, transport)
+    assert status == 1
+    assert pairing.REASONS["expired"][0] in lines and pairing.REASONS["expired"][1] in lines
+    assert not any("could not reach" in line for line in lines)
+    assert view(m)["state"] == "expired"
+
+
+def test_a_dead_network_at_the_exchange_is_a_lost_connection_and_is_reported_as_one(machine):
+    m = machine
+    status, lines = run_with(m, production_transport(lost_connection()))
+    assert status == 1 and machine_setup.AGAIN in lines
+    item = view(m)
+    assert item["state"] == "failed" and item["cause"]["code"] == "cannot_reach_hub"
+
+
+def test_set_up_again_after_a_half_finished_install_replaces_what_the_first_try_left(machine):
+    class Stubborn(FakeHost):
+        broken = True
+
+        def change(self, action):
+            if action == "enable" and self.broken:
+                raise OSError("unit refused")
+            super().change(action)
+
+    m = machine
+    m.host = Stubborn()
+    status, _ = run_with(m)
+    assert status == 1 and view(m)["cause"]["step"] == "service"
+    # The owner chooses Set up again: the first enrollment is cancelled and a new command is made.
+    first = view(m)
+    pairing.close(
+        m.db, m.owner, m.item["id"], {"request_id": "again", "expected_version": first["version"]}
+    )
+    _, item, setup = pairing.create(
+        m.db,
+        None,
+        m.owner,
+        {
+            "request_id": "req-2",
+            "kind": "runner",
+            "label": "build-box",
+            "projects": ["demo"],
+            "topics": ["worker"],
+            "wings": ["shared"],
+        },
+    )
+    m.host.broken = False
+    m.item, m.setup = item, setup
+    status, lines = run_with(m)
+    assert status == 0, lines
+    assert "Removing the earlier unfinished setup on this machine ..." in lines
+    assert view(m)["state"] == "connected" and [s["state"] for s in view(m)["steps"]] == ["ok"] * 4
