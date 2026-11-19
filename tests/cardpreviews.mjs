@@ -91,9 +91,9 @@ const cases = {
     assert.deepEqual(calls, ['/api/previews?card=7']);
     assert.equal(slot.hidden, false);
     assert.ok(slot.innerHTML.includes('Ready'));
-    // The panel's next draw shows the last list at once.
-    assert.ok(cardPreviewsSlot(card).includes('Ready') && !cardPreviewsSlot(card).includes(' hidden'));
-    assert.ok(cardPreviewsSlot({ ...card, number: 99 }).includes(' hidden'));
+    // No module-level cache: a fresh slot is always empty and hidden, whatever was shown before.
+    assert.ok(!cardPreviewsSlot(card).includes('Ready') && cardPreviewsSlot(card).includes(' hidden'));
+    assert.ok(cardPreviewsSlot(card).includes('data-card-key="atlas/7"'));
   },
   async refused() {
     // A card this person cannot see: the section stays away, as for a missing card.
@@ -116,9 +116,10 @@ const cases = {
     handlers.click({ target: { closest: (selector) => selector === '[data-preview-retry]' ? {} : null } });
     await wait(); await wait();
     assert.ok(slot.innerHTML.includes('Ready'));
-    // With a list shown before, a failed refresh keeps it and says so.
+    // With a list shown, a failed action and refresh keep it and say so.
     fail = true;
-    await attachCardPreviews(mount, { ...card, number: 20 }, { api: async () => { throw Object.assign(new Error('down'), { status: 502 }); } });
+    handlers.click({ target: { closest: (selector) => selector === '[data-preview-stop]' ? { dataset: { previewStop: 'pv_0123456789abcdef' }, closest: () => null } : null } });
+    await wait(); await wait();
     assert.ok(slot.innerHTML.includes('Ready') && slot.innerHTML.includes('Could not refresh the previews'));
   },
   async stop() {
@@ -172,6 +173,30 @@ const cases = {
     await wait(); await wait();
     assert.deepEqual(puts, [['/api/previews/rules', 'PUT', { stop_days_after_pr: 7, max_age_days: null }]]);
     assert.ok(slot.innerHTML.includes('Saved the stop rule.'));
+  },
+  async redraw() {
+    // A redraw of the same card repaints what the panel showed a moment ago, then refreshes;
+    // another card's list is never shown, and nothing is kept between components.
+    const shown = { key: 'atlas/30', html: cardPreviewsHTML(found([preview()])) };
+    const first = fakeSlot();
+    let release;
+    const pending = attachCardPreviews(first.mount, { ...card, number: 30 }, { api: () => new Promise((done) => { release = done; }), previous: shown });
+    assert.equal(first.slot.hidden, false);
+    assert.ok(first.slot.innerHTML.includes('Ready'));
+    release(found([]));
+    await pending;
+    assert.ok(first.slot.innerHTML.includes('No preview yet'));
+    const other = fakeSlot();
+    const later = attachCardPreviews(other.mount, { ...card, number: 31 }, { api: () => new Promise(() => {}), previous: shown });
+    assert.equal(other.slot.hidden, true);
+    assert.equal(other.slot.innerHTML, '');
+    void later;
+    // The repainted list stays, with a note, when the refresh cannot reach the server.
+    const third = fakeSlot();
+    third.slot.querySelector = (selector) => selector === '.run-note' ? third.slot.note : null;
+    await attachCardPreviews(third.mount, { ...card, number: 30 }, { api: async () => { throw Object.assign(new Error('down'), { status: 0 }); }, previous: shown });
+    assert.ok(third.slot.innerHTML.includes('Ready'));
+    assert.equal(third.slot.note.textContent, 'Could not refresh the previews. Showing the last list.');
   },
   async stale() {
     const { slot, mount } = fakeSlot();

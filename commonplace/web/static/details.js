@@ -1,7 +1,7 @@
 import { api as request, escape as e, actor } from "./api.js";
 import { loadCardLinks, placeCardLinks } from "./cardlinks.js";
 import { attachCardRuns, cardRunsSlot } from "./cardruns.js";
-import { attachCardPreviews, cardPreviewsSlot } from "./cardpreviews.js";
+import { attachCardPreviews, cardPreviewsSlot, previousPreviews } from "./cardpreviews.js";
 import { blockersSection } from "./blockers.js";
 import { waitingSection } from "./waiting.js";
 import { cardTypeRows, saveCardType } from "./tasktypes.js";
@@ -215,6 +215,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     const snoozeAt = mount.querySelector("[data-card-snooze-at]")?.value;
     const selectedGoal = mount.querySelector("[data-card-goal]")?.value;
     const goalDraft = selectedGoal !== oldControls?.dataset.goalId ? selectedGoal : null;
+    const previews = previousPreviews(mount);
     mount.innerHTML = renderDetails(current, options);
     if (commentDraft != null && mount.querySelector("[name=text]")) mount.querySelector("[name=text]").value = commentDraft;
     const snooze = mount.querySelector("[data-card-snooze]");
@@ -237,7 +238,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     if (controls && controlsOpen) controls.open = true;
     if (options.tab === "details") placeCardLinks(mount, links);
     void attachCardRuns(mount, current, { api });
-    void attachCardPreviews(mount, current, { api });
+    void attachCardPreviews(mount, current, { api, previous: previews });
     if (options.tab === "details") afterDraw(mount, current);
   };
   function selectTab(tab, focus = false) {

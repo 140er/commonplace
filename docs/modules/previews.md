@@ -23,7 +23,7 @@
 
   - Nothing outside the revision folder is read: decoded paths follow the published-path rules, links are never followed, and the state pages quote nothing from the request.
 
-  - The card's Previews section never shows an empty panel: no previews says so, a server it cannot reach says so with Try again (or keeps the last list and says it is old), and a card the person cannot see shows no section at all. Only the server's own `/p/<id>/` address is ever a link.
+  - The card's Previews section keeps no module-level cache (a redraw repaints only what the same panel showed a moment ago, so nothing carries over to another session or workspace) and never shows an empty panel: no previews says so, a server it cannot reach says so with Try again (or keeps the last list and says it is old), and a card the person cannot see shows no section at all. Only the server's own `/p/<id>/` address is ever a link.
 
 - **How it fails:**
 

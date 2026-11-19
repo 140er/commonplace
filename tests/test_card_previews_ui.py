@@ -19,6 +19,7 @@ CASES = [
     "stop",
     "refusal",
     "rulesave",
+    "redraw",
     "stale",
     "panel",
     "loads",

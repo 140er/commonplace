@@ -118,15 +118,27 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
     ]
     shell.open_board(page, cards=cards)
     writes = []
+    states = {
+        number: (label, [dict(p) for p in previews or []] if previews is not None else None)
+        for number, (label, previews) in STATES.items()
+    }
 
     def previews_api(route):
         url = urlsplit(route.request.url)
         if url.path != "/api/previews":
             writes.append((url.path, route.request.method))
+            if url.path.endswith("/stop"):
+                ready = states[6][1][0]
+                ready.update(
+                    state="stopped",
+                    reason="stopped_by_person",
+                    reason_text="Stopped by a person. The files are kept.",
+                    next="Use Open again to serve it.",
+                )
             route.fulfill(json={})
             return
         number = int(parse_qs(url.query)["card"][0])
-        label, previews = STATES[number]
+        label, previews = states[number]
         if label == "offline":
             route.abort()
         elif label == "refused":
@@ -190,7 +202,13 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
     # The keyboard reaches Stop and uses it.
     stop = panel.locator("[data-preview-stop]")
     stop.focus()
-    page.keyboard.press("Enter")
-    page.wait_for_function("() => true")
+    with page.expect_request("**/api/previews/pv_0123456789abcdef/stop") as sent:
+        page.keyboard.press("Enter")
+    assert sent.value.method == "POST"
+    # The list reloads and shows what is true now, with the result in words.
+    section = panel.locator("[data-card-previews]")
+    section.get_by_text("Stopped. The files are kept; Open again serves them again.").wait_for()
+    section.locator("[data-preview-reopen]").wait_for()
+    assert section.locator('[data-state="stopped"] .run-state').inner_text() == "Stopped"
     assert ("/api/previews/pv_0123456789abcdef/stop", "POST") in writes
     assert errors == [], json.dumps(errors)

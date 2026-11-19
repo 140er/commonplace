@@ -85,12 +85,18 @@ export function cardPreviewsHTML(found, note = "") {
 
 export const offlineHTML = (note = "") => `<div class="sec-h"><h3>Previews</h3></div><p class="run-empty" data-preview-offline>Could not load the previews. Check the connection and try again.</p><button class="btn sm" type="button" data-preview-retry>Try again</button><p class="run-note" role="status" aria-live="polite">${e(note)}</p>`;
 
-const slotHTML = (inner = "") => `<section class="card-previews" data-card-previews aria-label="Previews"${inner ? "" : " hidden"}>${inner}</section>`;
-const cache = new Map();
 const keyOf = (card) => `${card.board}/${card.number}`;
 
-// The one insertion renderDetails makes: an empty, hidden section, or the last known list.
-export const cardPreviewsSlot = (card) => slotHTML(cache.has(keyOf(card)) ? cardPreviewsHTML(cache.get(keyOf(card))) : "");
+// The one insertion renderDetails makes: an empty, hidden section that attachCardPreviews fills.
+// There is no module-level cache: a list is only ever repainted from the panel that showed it a
+// moment ago (see `previous`), so nothing can carry over to another session or workspace.
+export const cardPreviewsSlot = (card) => `<section class="card-previews" data-card-previews data-card-key="${e(keyOf(card))}" aria-label="Previews" hidden></section>`;
+
+// What the panel showed before a redraw, so the same card's list does not blink away and back.
+export function previousPreviews(mount) {
+  const slot = mount?.querySelector?.("[data-card-previews]");
+  return slot && !slot.hidden && slot.innerHTML ? { key: slot.dataset?.cardKey, html: slot.innerHTML } : null;
+}
 
 const days = (value) => {
   const text = String(value ?? "").trim();
@@ -98,17 +104,20 @@ const days = (value) => {
 };
 
 // Load the card's previews into the slot inside `mount` and wire Stop, Open again and the rule.
-export async function attachCardPreviews(mount, card, { api = request } = {}) {
+export async function attachCardPreviews(mount, card, { api = request, previous = null } = {}) {
   const slot = mount.querySelector?.("[data-card-previews]");
   if (!slot || card?.number == null) return;
   const key = keyOf(card);
-  let revision = 0;
+  let revision = 0, last = null;
   const live = (token) => token === revision && slot.isConnected;
   const show = (found, note = "") => {
-    cache.set(key, found);
+    last = found;
     slot.innerHTML = cardPreviewsHTML(found, note);
     slot.hidden = false;
   };
+  // A redraw of the same card shows what the panel showed a moment ago until the load answers.
+  const painted = previous?.key === key && Boolean(previous.html);
+  if (painted) { slot.innerHTML = previous.html; slot.hidden = false; }
   async function load(note = "") {
     const token = ++revision;
     try {
@@ -117,9 +126,12 @@ export async function attachCardPreviews(mount, card, { api = request } = {}) {
     } catch (error) {
       if (!live(token)) return;
       // A card this person cannot see (or no longer exists): show nothing, as for a missing card.
-      if ([403, 404].includes(error?.status)) { cache.delete(key); slot.hidden = true; slot.innerHTML = ""; return; }
-      if (cache.has(key)) show(cache.get(key), "Could not refresh the previews. Showing the last list.");
-      else { slot.innerHTML = offlineHTML(note); slot.hidden = false; }
+      if ([403, 404].includes(error?.status)) { last = null; slot.hidden = true; slot.innerHTML = ""; return; }
+      if (last) show(last, "Could not refresh the previews. Showing the last list.");
+      else if (painted && slot.innerHTML === previous.html) {
+        const status = slot.querySelector?.(".run-note");
+        if (status) status.textContent = "Could not refresh the previews. Showing the last list.";
+      } else { slot.innerHTML = offlineHTML(note); slot.hidden = false; }
     }
   }
   async function act(control, path, method, body, done) {
