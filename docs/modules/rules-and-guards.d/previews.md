@@ -1,0 +1,1 @@
+- **Owns:** `redact.find_kinds(text, kinds)` reports which of the chosen credential kinds occur in text of any length without changing it (used to refuse a published bundle that holds a credential), and `enforce.EXEMPT_WRITES` names `preview_publish` and `preview_stop` with the reason.

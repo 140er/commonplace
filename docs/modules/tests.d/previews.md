@@ -1,0 +1,1 @@
+- **Owns:** `tests/spaces_surfaces.json` pins the three preview tools in the standard and full profiles, and `tests/test_commonplace_public_surface.py` classifies `/api/previews` and its prefix as authenticated.

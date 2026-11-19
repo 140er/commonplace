@@ -33,6 +33,11 @@ EXEMPT_WRITES = {
         "Mechanical Coworker lease renewal and release.",
     ),
     **dict.fromkeys(
+        "preview_publish preview_stop".split(),
+        "A preview is a published artifact for a card; it changes neither the work nor its "
+        "instructions, and the owner can still set either tool to ask or off.",
+    ),
+    **dict.fromkeys(
         "webhook_add webhook_remove webhook_test".split(),
         "Webhook configuration and outbound automation remain open in this version.",
     ),

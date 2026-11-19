@@ -1362,6 +1362,113 @@
           "name": "orch_void_step"
         },
         {
+          "description": "List the previews of a card (or of a pull request URL) that you can see, with state and the reason for it, and the workspace's preview usage.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "description": "The card number.",
+                "oneOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "maxLength": 20,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ]
+              },
+              "pr": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "preview_list"
+        },
+        {
+          "description": "Publish a built web bundle as a preview of a card, so people who can open the card reopen it from the card after your session ends. Send card, a name and files (each {path, text} or {path, base64}); index.html is required. Up to 5 MiB and 500 files. Publishing the same name again adds a revision. Only signed-in people who can open the card can open it; it is never public. Files holding credentials are refused.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "description": "The card number.",
+                "oneOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "maxLength": 20,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ]
+              },
+              "files": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "base64": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 500,
+                "minItems": 1,
+                "type": "array"
+              },
+              "name": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "card",
+              "name",
+              "files"
+            ],
+            "type": "object"
+          },
+          "name": "preview_publish"
+        },
+        {
+          "description": "Stop serving a preview you published. Its files are kept; a person can open it again. You cannot delete files or change the stop rule.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "name": "preview_stop"
+        },
+        {
           "description": "Check rule keys and statuses changed since a sequence, without fetching text.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2592,6 +2699,9 @@
       "orch_resume",
       "orch_void_step",
       "orchestrator_inbox",
+      "preview_list",
+      "preview_publish",
+      "preview_stop",
       "rules_changed",
       "rules_feedback",
       "rules_get",
@@ -5222,6 +5332,113 @@
           "name": "orch_void_step"
         },
         {
+          "description": "List the previews of a card (or of a pull request URL) that you can see, with state and the reason for it, and the workspace's preview usage.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "description": "The card number.",
+                "oneOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "maxLength": 20,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ]
+              },
+              "pr": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "preview_list"
+        },
+        {
+          "description": "Publish a built web bundle as a preview of a card, so people who can open the card reopen it from the card after your session ends. Send card, a name and files (each {path, text} or {path, base64}); index.html is required. Up to 5 MiB and 500 files. Publishing the same name again adds a revision. Only signed-in people who can open the card can open it; it is never public. Files holding credentials are refused.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "card": {
+                "description": "The card number.",
+                "oneOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "maxLength": 20,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ]
+              },
+              "files": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "base64": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "maxLength": 255,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 500,
+                "minItems": 1,
+                "type": "array"
+              },
+              "name": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "card",
+              "name",
+              "files"
+            ],
+            "type": "object"
+          },
+          "name": "preview_publish"
+        },
+        {
+          "description": "Stop serving a preview you published. Its files are kept; a person can open it again. You cannot delete files or change the stop rule.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "name": "preview_stop"
+        },
+        {
           "description": "Check rule keys and statuses changed since a sequence, without fetching text.",
           "inputSchema": {
             "additionalProperties": false,
@@ -6445,6 +6662,9 @@
       "orch_resume",
       "orch_void_step",
       "orchestrator_inbox",
+      "preview_list",
+      "preview_publish",
+      "preview_stop",
       "rules_changed",
       "rules_feedback",
       "rules_get",

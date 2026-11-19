@@ -46,7 +46,7 @@ The Overview will list previews as a read-only family beside machines, runners a
 #### URL shape and who can open it
 
 - Preview URL: `/p/<preview_id>/` on the app's own origin, with files below it (`/p/<preview_id>/assets/app.js`). The id is `pv_` plus 16 random hex digits. It is a name, not a secret: access control does not rely on the id being unguessable.
-- **Who can open it:** a signed-in person in the same workspace who can open the card the preview belongs to. A preview for a pull request with no card resolves the card through `board_repos`; if there is none it is visible to workspace members. Access is checked on every file request from the session cookie or bearer token (a session-checked serving route, not a signed link, so revoking a membership or hiding a card closes access at once).
+- **Who can open it:** a signed-in person in the same workspace who can open the card the preview belongs to. Access is checked on every file request from the session cookie or bearer token (a session-checked serving route, not a signed link, so revoking a membership or hiding a card closes access at once).
 - **Never public.** Slice 1 has no public switch. Making a preview public would be an owner-only, per-preview setting needing the project owner's decision first; it is listed under open questions and is not built.
 - **Uniform refusal.** An unknown id, another workspace's id and a card the caller cannot see all return the same 404 with the same body. A caller with no session gets the gateway's normal 401; the serving route answers a browser navigation with a small "Sign in to open this preview" page instead of bare JSON.
 - **Isolation from the app (the main risk).** Preview files are agent-built and run in the browser on the same origin as the app, so they must never act as the signed-in person. The serving route therefore sends `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob:; connect-src 'none'; frame-ancestors 'self'`, plus `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: private, no-store` and `Cross-Origin-Resource-Policy: same-origin`. The `sandbox` directive without `allow-same-origin` gives the page an opaque origin: it cannot read app cookies or storage, and its requests do not carry the Lax session cookie and fail the gateway's same-origin `Origin` rule. Scripts, styles, images and fonts load from the preview itself; a preview that needs to call a server API is out of scope for `static`. Slice 2 tests this with a hostile fixture bundle. A dedicated preview origin on a separate registrable domain, with a short-lived signed link that sets a preview-only cookie, is the stronger option for `app` previews and is an open question.
@@ -114,11 +114,23 @@ Each slice is its own pull request against develop under 300000 bytes of diff, w
 
 A later slice (separate card, after the Compute start slice) adds `app` previews on a Compute cloud workspace.
 
-#### Open questions for the project owner
+#### Decisions (accepted by the project owner, 19 Nov 2026)
 
-1. **Hub-hosted static first, or wait for Compute?** The plan hosts static bundles on the hub because Compute cannot serve HTTP yet. Is that acceptable as "reusing Compute" for slice 1, with running apps following the Compute start slice?
-2. **Same origin with a sandbox, or a separate preview origin?** The sandbox needs no new domain or certificate but forbids previews that call server APIs. A separate origin needs a domain and a signed-link exchange.
-3. **Default lifetime.** Serve until stopped (the plan), or switch on a default such as 7 days after the pull request is merged or closed? Stopping is not deleting; deleting files stays manual either way.
-4. **Quota numbers.** 25 ready previews, 500 MiB per workspace and 5 MiB per bundle: right sizes?
-5. **Public links.** Never built unless the owner says so; confirm that none is wanted in this goal.
-6. **Automatic purge of stopped previews.** Not planned; confirm it stays off until the owner approves it.
+1. **Hub-hosted static first.** Slice 1 hosts static bundles on the hub; running apps follow the Compute start slice.
+2. **Same origin with the sandbox.** Slice 1 serves previews on the app's own origin under the sandbox policy above; previews that need to call server APIs are out of scope for `static`. A separate preview origin is not built.
+3. **Serve until stopped; the stop rule is off.** No timer is on by default. The owner may switch the rule on later; stopping never deletes.
+4. **Quota: 25 ready previews, 500 MiB per workspace, 5 MiB per bundle.**
+5. **No public links.** Nothing in this goal makes a preview public.
+6. **No automatic purge.** Files are deleted only by an owner's explicit action.
+
+#### Slice 1 as built (differences from the plan above)
+
+- Rows live in the control database (tables `previews`, `preview_revisions`, `preview_events`, `preview_rules`, keyed by workspace) and the files under `<workspace dir>/previews/<id>/r<n>/`, not in a separate `previews.sqlite3`: the control database is where per-workspace feature tables (such as the scheduled prompts) already live and it is part of the existing backup. The files are plain files; workspace-level SQLite encryption does not cover them.
+- The tools use the existing `memory:read` and `memory:write` scopes and the standard and full profiles, like the card tools, instead of new `previews:*` scopes that no existing token would hold. The write tools are hidden from untrusted tokens, and a token that cannot write the card's wing cannot publish for it.
+- The people routes refuse agent tokens (403); Coworkers use the tools. Every preview belongs to a card (publishing needs one), so the "pull request with no card" case does not exist.
+- A rate limit of 10 publish attempts per card per hour counts failed attempts too, and at most 200 preview rows (failed ones included) are kept per workspace as a safety bound.
+- Reasons added to the list: `rate_limited` (not stored), `files_deleted` (a stopped preview whose files an owner deleted).
+- The stop rule can be read and set (owner) and is shown, but is not applied until the serving slice; `stops_at` is null until then.
+- The URL `/p/<id>/` is returned but nothing answers it until slice 2.
+
+For slice 2: the serving route applies the same token scope and wing checks as the API; and its acceptance includes that `'self'` in the sandbox policy lets a preview load its own scripts and styles while app cookies and `/api/` calls fail, and that a token without `memory:read` is refused.

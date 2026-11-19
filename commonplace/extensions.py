@@ -64,6 +64,7 @@ MODULES = (
     "commonplace.topology.extension",
     "commonplace.pipeline",
     "commonplace.person_actions",
+    "commonplace.previews",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})

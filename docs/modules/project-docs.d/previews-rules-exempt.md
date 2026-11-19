@@ -1,0 +1,1 @@
+- **Owns:** `docs/design/RULES.md` lists `preview_publish` and `preview_stop` among the writes that stay open to the rules freshness check, with the reason, and `docs/system/previews.md` records the owner's six decisions and how slice 1 differs from the plan.
