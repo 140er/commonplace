@@ -22,7 +22,8 @@ from . import bundle
 MAX_READY = 25
 MAX_WORKSPACE_BYTES = 500 * 1024 * 1024
 MAX_PER_CARD_HOUR = 10
-MAX_ROWS = 200  # a safety bound on rows (failed ones included), not a number users plan for
+MAX_ROWS = 200  # previews a workspace keeps; refused attempts and deleted previews do not count
+MAX_FAILED = 50  # refused attempts that never published anything are kept this many, newest first
 BUILDING_STALE = timedelta(minutes=15)
 MAX_NAME = 80
 
@@ -87,6 +88,15 @@ REASONS = {
         "Publishing did not finish.",
         "Publish again.",
     ),
+    "too_many_previews": (
+        "This workspace keeps at most 200 previews, and it holds that many.",
+        "Delete the files of previews you no longer need, then publish again.",
+    ),
+    "changed_meanwhile": (
+        "A person stopped or deleted this preview while it was being published, so nothing "
+        "was changed.",
+        "Look at the preview's current state, then publish again if it is still wanted.",
+    ),
     "rate_limited": (
         "Too many publishes for this card in the last hour (limit 10).",
         "Wait before publishing again.",
@@ -98,6 +108,7 @@ LIMITS = {
     "max_files": bundle.MAX_FILES,
     "max_ready": MAX_READY,
     "max_workspace_bytes": MAX_WORKSPACE_BYTES,
+    "max_previews": MAX_ROWS,
     "max_publishes_per_card_hour": MAX_PER_CARD_HOUR,
 }
 
@@ -174,11 +185,17 @@ def revision_dir(gateway, workspace_id, preview_id, revision) -> Path:
     return root(gateway, workspace_id) / preview_id / f"r{int(revision)}"
 
 
+def label(actor: str) -> str:
+    """What the append-only record keeps of an actor: a connection's name, or the words "a
+    person". The record outlives an account (a purge keeps it), so it never holds a user id."""
+    return "a person" if actor.startswith("user:") else actor
+
+
 def event(conn, workspace_id, preview_id, card, kind, actor, reason="") -> None:
     conn.execute(
         "INSERT INTO preview_events(workspace_id,preview_id,card,kind,actor,reason,at) "
         "VALUES (?,?,?,?,?,?,?)",
-        (workspace_id, preview_id, card, kind, actor, reason, stamp(clock())),
+        (workspace_id, preview_id, card, kind, label(actor), reason, stamp(clock())),
     )
 
 
@@ -194,10 +211,32 @@ def usage(conn, workspace_id) -> dict:
     return {"ready": ready, "bytes": size}
 
 
-def row_count(conn, workspace_id) -> int:
+def counts_live(row) -> bool:
+    """Whether a preview counts toward ``MAX_ROWS``: not a refused attempt that never published
+    and not one whose files a person deleted."""
+    if row["state"] == "failed" and row["current_revision"] == 0:
+        return False
+    return not (row["state"] == "stopped" and row["reason"] == "files_deleted")
+
+
+def live_rows(conn, workspace_id) -> int:
     return conn.execute(
-        "SELECT count(*) FROM previews WHERE workspace_id=?", (workspace_id,)
+        "SELECT count(*) FROM previews WHERE workspace_id=? "
+        "AND NOT (state='failed' AND current_revision=0) "
+        "AND NOT (state='stopped' AND reason='files_deleted')",
+        (workspace_id,),
     ).fetchone()[0]
+
+
+def prune_failed(conn, workspace_id) -> None:
+    """Keep the newest ``MAX_FAILED`` refused attempts that never published. They hold no files
+    and no revision; the append-only events keep the history."""
+    conn.execute(
+        "DELETE FROM previews WHERE workspace_id=? AND state='failed' AND current_revision=0 "
+        "AND id NOT IN (SELECT id FROM previews WHERE workspace_id=? AND state='failed' "
+        "AND current_revision=0 ORDER BY updated_at DESC, id DESC LIMIT ?)",
+        (workspace_id, workspace_id, MAX_FAILED),
+    )
 
 
 def attempts_last_hour(conn, workspace_id, card) -> int:
@@ -251,14 +290,21 @@ def revision_rows(conn, preview_id) -> list:
     ).fetchall()
 
 
-def view(conn, row, *, revisions=False) -> dict:
-    """The public shape of a preview. It names no path, host or environment value."""
-    state, reason = effective(row)
-    text, nxt = REASONS[reason]
+def snapshot(conn, row, *, revisions=False) -> tuple:
+    """What ``shape`` needs for one row, read in one go: its current revision row and, when
+    asked, all its revisions."""
     current = conn.execute(
         "SELECT * FROM preview_revisions WHERE preview_id=? AND revision=?",
         (row["id"], row["current_revision"]),
     ).fetchone()
+    return current, (revision_rows(conn, row["id"]) if revisions else None)
+
+
+def shape(row, current, revisions=None) -> dict:
+    """The public shape of a preview, from rows already read. It names no path, host or
+    environment value."""
+    state, reason = effective(row)
+    text, nxt = REASONS[reason]
     shown = {
         "id": row["id"],
         "card": row["card"],
@@ -283,7 +329,7 @@ def view(conn, row, *, revisions=False) -> dict:
         if current is not None and current["deleted_at"] is None
         else None,
     }
-    if revisions:
+    if revisions is not None:
         shown["revisions"] = [
             {
                 "revision": r["revision"],
@@ -293,9 +339,13 @@ def view(conn, row, *, revisions=False) -> dict:
                 "published_at": r["published_at"],
                 "files_deleted": r["deleted_at"] is not None,
             }
-            for r in revision_rows(conn, row["id"])
+            for r in revisions
         ]
     return shown
+
+
+def view(conn, row, *, revisions=False) -> dict:
+    return shape(row, *snapshot(conn, row, revisions=revisions))
 
 
 def write_files(gateway, workspace_id, preview_id, items) -> Path:

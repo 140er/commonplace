@@ -690,3 +690,207 @@ def test_a_delete_that_cannot_remove_every_file_says_so_and_records_it(console_h
     )
     assert status == 200 and "files_remaining" not in body
     assert not (store.root(h.gateway, h.workspace) / identity).exists()
+
+
+# ── delete and publish racing, the row cap, and the small ends ──
+
+
+def interleave(monkeypatch, action):
+    """Run ``action`` once, in the gap between a publish writing its files and committing."""
+    original = store.write_files
+    done = []
+
+    def written(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if not done:
+            done.append(action())
+        return result
+
+    monkeypatch.setattr(store, "write_files", written)
+    return done
+
+
+def served_has_files(h, identity):
+    """A ready preview must have its current revision's files on disk."""
+    shown = h.request(h.owner, "GET", f"/api/previews/{identity}")[1]
+    if shown["state"] != "ready":
+        return True
+    return (
+        store.revision_dir(h.gateway, h.workspace, identity, shown["revision"]) / "index.html"
+    ).is_file()
+
+
+def test_a_delete_between_a_republish_writing_and_committing_never_leaves_a_ready_preview_without_files(
+    console_hub, monkeypatch
+):
+    h = console_hub
+    number = card(h)
+    assert publish(h, h.t1, number)[0]
+    identity = one(h, number)["id"]
+    done = interleave(
+        monkeypatch,
+        lambda: h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0],
+    )
+    changed = [INDEX, {"path": "assets/app.css", "text": "body{color:#000}"}]
+    ok, text = publish(h, h.t1, number, files=changed)
+    assert done == [200]
+    assert not ok and "[changed_meanwhile]" in text
+    shown = one(h, number)
+    assert (shown["state"], shown["reason"]) == ("stopped", "files_deleted")
+    assert served_has_files(h, identity)
+    folder = store.root(h.gateway, h.workspace)
+    assert not list(folder.glob("*/r*")) and not list(folder.glob("*/.tmp-*"))
+    assert h.request(h.owner, "GET", "/api/previews")[1]["usage"] == {"ready": 0, "bytes": 0}
+    # The same publish sent again afterwards is an ordinary republish and works.
+    assert publish(h, h.t1, number, files=changed)[0]
+    assert one(h, number)["state"] == "ready" and served_has_files(h, identity)
+
+
+def test_a_stop_during_a_republish_is_not_undone_by_it(console_hub, monkeypatch):
+    h = console_hub
+    number = card(h)
+    assert publish(h, h.t1, number)[0]
+    identity = one(h, number)["id"]
+    done = interleave(
+        monkeypatch, lambda: h.request(h.owner, "POST", f"/api/previews/{identity}/stop", {})[0]
+    )
+    ok, text = publish(h, h.t1, number, files=[{"path": "index.html", "text": "newer"}])
+    assert done == [200] and not ok and "[changed_meanwhile]" in text
+    shown = one(h, number)
+    assert (shown["state"], shown["reason"], shown["revision"]) == (
+        "stopped",
+        "stopped_by_person",
+        1,
+    )
+    assert not list(store.root(h.gateway, h.workspace).glob("*/.tmp-*"))
+
+
+def test_a_delete_of_a_preview_still_being_built_is_refused_and_the_publish_completes(
+    console_hub, monkeypatch
+):
+    from commonplace.previews import service
+
+    h = console_hub
+    number = card(h)
+    owner = h.person(h.hub.admin)
+
+    def try_delete():
+        identity = next(iter(h.db._conn.execute("SELECT id FROM previews")))[0]
+        try:
+            service.delete_files(h.gateway, owner, identity, identity)
+        except service.Refused as exc:
+            return exc.reason
+
+    done = interleave(monkeypatch, try_delete)
+    assert publish(h, h.t1, number)[0]
+    assert done == ["validating"]
+    shown = one(h, number)
+    assert shown["state"] == "ready" and served_has_files(h, shown["id"])
+
+
+def test_refused_attempts_and_deleted_previews_do_not_count_toward_the_cap(
+    console_hub, monkeypatch
+):
+    from commonplace.previews import service
+
+    h = console_hub
+    monkeypatch.setattr(store, "MAX_ROWS", 2)
+    monkeypatch.setattr(store, "MAX_PER_CARD_HOUR", 1000)
+    number = card(h)
+    person = h.person(h.hub.admin)
+    for index in range(5):  # a workspace full of refused attempts
+        refused(h, number, [{"path": "x.html", "text": "x"}], "no_index_html", f"bad{index}")
+    assert publish(h, h.t1, number, name="a")[0] and publish(h, h.t1, number, name="b")[0]
+    with pytest.raises(service.Refused) as caught:
+        service.publish(h.gateway, person, number, "c", PAGE)
+    assert caught.value.reason == "too_many_previews"
+    text = service.refusal_payload(caught.value)
+    assert "at most 200 previews" in text["error"] and "Delete the files" in text["next"]
+    assert "25" not in text["error"] and "MiB" not in text["error"]
+    assert caught.value.detail["preview"]["state"] == "failed"  # recorded, never silently dropped
+    # Deleting the files of one frees a place (it no longer counts), and publishing works again.
+    identity = one(h, number, "a")["id"]
+    assert (
+        h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0] == 200
+    )
+    assert publish(h, h.t1, number, name="c")[0]
+    # Reviving the deleted name takes a place again, so it is refused while the cap is full.
+    ok, text = publish(h, h.t1, number, name="a")
+    assert not ok and "[too_many_previews]" in text
+
+
+def test_only_the_newest_refused_attempts_that_never_published_are_kept(console_hub, monkeypatch):
+    h = console_hub
+    monkeypatch.setattr(store, "MAX_FAILED", 3)
+    monkeypatch.setattr(store, "MAX_PER_CARD_HOUR", 1000)
+    number = card(h)
+    moment = store.clock()
+    for index in range(6):
+        monkeypatch.setattr(store, "clock", lambda i=index: moment + timedelta(seconds=i))
+        refused(h, number, [{"path": "x.html", "text": "x"}], "no_index_html", f"bad{index}")
+    kept = {p["name"] for p in previews(h, card=number)[1]["previews"]}
+    assert kept == {"bad3", "bad4", "bad5"}
+    assert publish(h, h.t1, number, name="good")[0]
+    assert one(h, number, "good")["state"] == "ready"
+    # What was refused stays in the append-only record.
+    with h.db._lock:
+        failures = h.db._conn.execute(
+            "SELECT count(*) FROM preview_events WHERE kind='publish_failed'"
+        ).fetchone()[0]
+    assert failures == 6
+
+
+def test_a_commit_that_fails_after_the_files_are_placed_leaves_no_files(console_hub, monkeypatch):
+    from contextlib import contextmanager
+
+    h = console_hub
+    number = card(h)
+    armed = []
+    original_place, original_tx = store.place, h.db._tx
+
+    def placing(tmp, final):
+        original_place(tmp, final)
+        armed.append(True)
+
+    @contextmanager
+    def tx():
+        with original_tx() as conn:
+            yield conn
+        if armed:
+            armed.clear()
+            raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(store, "place", placing)
+    monkeypatch.setattr(h.db, "_tx", tx)
+    person = h.person(h.hub.admin)
+    from commonplace.previews import service
+
+    with pytest.raises(sqlite3.OperationalError):
+        service.publish(h.gateway, person, number, "home", PAGE)
+    assert not list(store.root(h.gateway, h.workspace).glob("*/r*"))
+    assert not list(store.root(h.gateway, h.workspace).glob("*/.tmp-*"))
+
+
+def test_a_malformed_request_does_not_use_a_rate_limit_attempt(console_hub, monkeypatch):
+    h = console_hub
+    monkeypatch.setattr(store, "MAX_PER_CARD_HOUR", 1)
+    number = card(h)
+    ok, _text = mcp(h, h.t1, "preview_publish", card=number, name="m", files="nope")
+    assert not ok
+    assert publish(h, h.t1, number)[0]
+
+
+def test_the_event_record_names_connections_and_never_a_user_id(console_hub):
+    h = console_hub
+    number = card(h)
+    assert publish(h, h.t1, number)[0]
+    identity = one(h, number)["id"]
+    assert h.request(h.owner, "POST", f"/api/previews/{identity}/stop", {})[0] == 200
+    assert h.request(h.owner, "PUT", "/api/previews/rules", {"max_age_days": 30})[0] == 200
+    assert (
+        h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0] == 200
+    )
+    with h.db._lock:
+        actors = {r[0] for r in h.db._conn.execute("SELECT actor FROM preview_events")}
+    assert actors == {"conn:a1", "a person"}
+    assert not any("user:" in a or h.hub.admin in a for a in actors)

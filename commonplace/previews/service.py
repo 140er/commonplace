@@ -107,7 +107,8 @@ def _history(gateway, principal, card, text) -> None:
 
 def _failure(gateway, principal, info, name, exc) -> dict:
     """Record a refused publish: a new name gets a failed row the card shows, an existing
-    preview keeps serving what it had. Returns the preview's view (None when not stored)."""
+    preview keeps serving what it had. Returns the preview's view; refused attempts that never
+    published are kept newest first (``store.MAX_FAILED``) and do not count toward the cap."""
     db = gateway.db
     workspace = principal.workspace_id
     who, by_person = _who(principal)
@@ -115,8 +116,6 @@ def _failure(gateway, principal, info, name, exc) -> dict:
     with db._lock, db._tx() as conn:
         row = store.row_by_name(conn, workspace, info["number"], name)
         if row is None:
-            if store.row_count(conn, workspace) >= store.MAX_ROWS:
-                return None
             identity = store.new_id()
             conn.execute(
                 "INSERT INTO previews(id,workspace_id,card,name,state,reason,pr_url,pr_head,actor,"
@@ -152,7 +151,9 @@ def _failure(gateway, principal, info, name, exc) -> dict:
             principal.actor,
             exc.reason,
         )
-        return store.view(conn, row)
+        shown = store.view(conn, row)
+        store.prune_failed(conn, workspace)
+        return shown
 
 
 def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
@@ -165,16 +166,19 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
     info = card_info(gateway, principal, card, write=True)
     db, workspace = gateway.db, principal.workspace_id
     who, by_person = _who(principal)
+    # A malformed request is an input error and uses no attempt; a bundle that breaks a limit does.
+    try:
+        items, broken = bundle.parse(files), None
+    except Refused as exc:
+        items, broken = None, exc
     with db._lock, db._tx() as conn:
         # Check and reserve in one transaction, so racing publishes cannot both slip under it.
         if store.attempts_last_hour(conn, workspace, info["number"]) >= store.MAX_PER_CARD_HOUR:
             raise Refused("rate_limited")
         store.event(conn, workspace, "", info["number"], "publish_started", principal.actor)
-    try:
-        items = bundle.parse(files)
-    except Refused as exc:
-        exc.detail["preview"] = _failure(gateway, principal, info, name, exc)
-        raise
+    if broken is not None:
+        broken.detail["preview"] = _failure(gateway, principal, info, name, broken)
+        raise broken
     size = sum(len(data) for _path, data in items)
     digest = bundle.digest(items)
     now = store.stamp(store.clock())
@@ -192,8 +196,10 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
             store.check_room(
                 conn, workspace, size, needs_ready_slot=row is None or row["state"] != "ready"
             )
-            if row is None and store.row_count(conn, workspace) >= store.MAX_ROWS:
-                raise Refused("workspace_quota_full")
+            if (row is None or not store.counts_live(row)) and store.live_rows(
+                conn, workspace
+            ) >= store.MAX_ROWS:
+                raise Refused("too_many_previews")
         except Refused as exc:
             refusal = exc
         before = None
@@ -268,23 +274,42 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
     except Refused as exc:
         settle(exc)
         raise
-    with db._lock, db._tx() as conn:
-        row = store.row_by_id(conn, workspace, identity)
-        failed = None
-        try:
-            # The workspace may have filled while the files were written; look again.
-            store.check_room(conn, workspace, size, needs_ready_slot=row["state"] != "ready")
-            revision = conn.execute(
-                "SELECT coalesce(max(revision),0)+1 FROM preview_revisions WHERE preview_id=?",
-                (identity,),
-            ).fetchone()[0]
-            final = store.revision_dir(gateway, workspace, identity, revision)
-            store.place(tmp, final)
-        except Refused as exc:
-            _remove_tree(tmp)
-            failed = exc
-        if failed is None:
-            try:
+    failed = changed = final = None
+    try:
+        with db._lock, db._tx() as conn:
+            row = store.row_by_id(conn, workspace, identity)
+            # Someone may have stopped or deleted this preview while the files were written. A
+            # preview that was ready must still be ready; one this publish started must still be
+            # building (or already ready through a racing publish of the same name).
+            if row["state"] not in (("ready",) if keep else ("building", "ready")):
+                changed = Refused("changed_meanwhile")
+                store.event(
+                    conn,
+                    workspace,
+                    identity,
+                    info["number"],
+                    "publish_failed",
+                    principal.actor,
+                    "changed_meanwhile",
+                )
+                changed.detail["preview"] = store.view(conn, row)
+            else:
+                try:
+                    # The workspace may have filled while the files were written; look again.
+                    store.check_room(
+                        conn, workspace, size, needs_ready_slot=row["state"] != "ready"
+                    )
+                    revision = conn.execute(
+                        "SELECT coalesce(max(revision),0)+1 FROM preview_revisions "
+                        "WHERE preview_id=?",
+                        (identity,),
+                    ).fetchone()[0]
+                    target = store.revision_dir(gateway, workspace, identity, revision)
+                    store.place(tmp, target)
+                    final = target
+                except Refused as exc:
+                    failed = exc
+            if failed is None and changed is None:
                 now = store.stamp(store.clock())
                 conn.execute(
                     "INSERT INTO preview_revisions(preview_id,revision,digest,size_bytes,file_count,"
@@ -307,11 +332,17 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                 )
                 store.event(conn, workspace, identity, info["number"], "published", principal.actor)
                 shown = store.view(conn, store.row_by_id(conn, workspace, identity))
-            except Exception:
-                # The row rolls back with the transaction; the placed files must not outlive it.
-                _remove_tree(final)
-                raise
+    except Exception:
+        # Nothing was committed: the placed files, and the ones still waiting, must not outlive it.
+        if final is not None:
+            _remove_tree(final)
+        _remove_tree(tmp)
+        raise
+    if changed is not None:
+        _remove_tree(tmp)
+        raise changed
     if failed is not None:
+        _remove_tree(tmp)
         settle(failed)
         raise failed
     _history(
@@ -350,7 +381,8 @@ def get(gateway, principal, preview_id) -> dict:
         raise NotFound(str(preview_id))
     card_info(gateway, principal, row["card"])
     with db._lock:
-        return store.view(db._conn, row, revisions=True)
+        current, revisions = store.snapshot(db._conn, row, revisions=True)
+    return store.shape(row, current, revisions)
 
 
 def listing(gateway, principal, *, card=None, pr=None) -> dict:
@@ -371,10 +403,19 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
         allowed = _visible_cards(gateway, principal, sorted({r["card"] for r in rows}))
     else:
         allowed = set(numbers)
+    # One query for every current revision, then the shaping happens outside the lock.
     with db._lock:
-        shown = [store.view(db._conn, r) for r in rows if r["card"] in allowed]
+        current = {
+            r["preview_id"]: r
+            for r in db._conn.execute(
+                "SELECT r.* FROM preview_revisions r JOIN previews p ON p.id=r.preview_id "
+                "AND r.revision=p.current_revision WHERE p.workspace_id=?",
+                (workspace,),
+            )
+        }
         held = store.usage(db._conn, workspace)
         rule = rules(db._conn, workspace)
+    shown = [store.shape(r, current.get(r["id"])) for r in rows if r["card"] in allowed]
     return {"previews": shown, "usage": held, "limits": store.LIMITS, "rule": rule}
 
 
@@ -437,7 +478,12 @@ def reopen(gateway, principal, preview_id) -> dict:
 
 def delete_files(gateway, principal, preview_id, confirm) -> dict:
     """Delete every revision's files. A signed-in workspace owner only, and only with the
-    preview's own id repeated as confirmation; never called by a timer or a Coworker."""
+    preview's own id repeated as confirmation; never called by a timer or a Coworker.
+
+    The rows and the files change under one hold of the control-database lock, the same lock a
+    publish takes to place and commit a revision, so a publish never lands between them. Only
+    the revision folders go: files a publish is still writing are left for that publish, which
+    then refuses itself (``changed_meanwhile``) because the preview was deleted under it."""
     if not principal.person or principal.role != "owner":
         raise Forbidden("owner")
     _authorize(gateway, principal, preview_id)
@@ -459,16 +505,23 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
             (now, row["id"]),
         )
         store.event(conn, workspace, row["id"], row["card"], "files_deleted", principal.actor)
-        shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]), revisions=True)
-    folder = store.root(gateway, workspace) / row["id"]
-    _remove_tree(folder)
-    if folder.exists():
-        # The rows say deleted but some files remain: record it and say so; asking again retries.
-        log.warning("preview files could not be fully removed for %s", row["id"])
-        with db._lock, db._tx() as conn:
+        folder = store.root(gateway, workspace) / row["id"]
+        for revision in sorted(folder.glob("r[0-9]*")):
+            _remove_tree(revision)
+        remaining = any(folder.glob("r[0-9]*"))
+        if remaining:
+            # The rows say deleted but some files remain: record it and say so; asking again retries.
+            log.warning("preview files could not be fully removed for %s", row["id"])
             store.event(
                 conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
             )
+        else:
+            try:
+                folder.rmdir()  # only when nothing is waiting in it
+            except OSError:
+                pass
+        shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]), revisions=True)
+    if remaining:
         shown["files_remaining"] = True
     return shown
 
@@ -547,6 +600,8 @@ def set_rules(gateway, principal, body) -> dict:
 
 REFUSAL_STATUS = {
     "rate_limited": 429,
+    "too_many_previews": 409,
+    "changed_meanwhile": 409,
     "workspace_quota_full": 409,
     "validating": 409,
     "files_deleted": 409,
