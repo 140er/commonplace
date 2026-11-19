@@ -169,12 +169,12 @@ export function workspacePayload(values) {
 }
 /** Create body: every value plus the request id that makes a retry after a lost answer safe. */
 export const createPayload = (values, requestId) => requestId ? { ...workspacePayload(values), request_id: requestId } : workspacePayload(values);
-/** Edit body: only the fields that differ from the values the form opened with, plus the revision it opened at. */
-export function editPayload(values, baseValues, revision) {
+/** Edit body: only the fields that differ from the values the form opened with, plus the version it opened at. */
+export function editPayload(values, baseValues, version) {
   const now = workspacePayload(values), before = workspacePayload(baseValues), body = {};
   for (const key of Object.keys(now)) if (now[key] !== before[key]) body[key] = now[key];
   if ("image" in body || "image_source" in body) { body.image = now.image; body.image_source = now.image_source; }
-  return Object.keys(body).length ? { ...body, expected_revision: revision } : null;
+  return Object.keys(body).length ? { ...body, expected_revision: version } : null;
 }
 
 const machineOf = (row, manage) => manage ? (row.machine_name || (row.node_id ? "the chosen machine" : "")) : (row.machine_assigned ? "an assigned machine" : "");
@@ -194,7 +194,7 @@ export function statusView(row, { manage = true } = {}) {
 }
 export const imageNote = row => row.image_pinned ? "Locked to one exact version." : row.image_source === "curated" ? "Official image. The publisher can update its version over time." : "The publisher can update this version over time.";
 const deleteNote = row => row.discardable ? `You can change this later, or discard it because it was never started. ${DELETE_NOTE}` : `You can change this later. ${DELETE_NOTE}`;
-const editsOf = row => { const n = Math.max(0, (row.revision || 1) - 1); return n === 0 ? "Not changed since it was created" : `Changed ${n} time${n === 1 ? "" : "s"} since it was created`; };
+const editsOf = row => { const n = Math.max(0, (row.version || 1) - 1); return n === 0 ? "Not changed since it was created" : `Changed ${n} time${n === 1 ? "" : "s"} since it was created`; };
 
 const aria = (label, name) => ` aria-label="${e(`${label} ${name}`)}"`;
 
@@ -406,7 +406,7 @@ export function createWorkspaces(ctx) {
     mode = kind; step = "edit"; selected = id || null; errors = {}; formError = ""; say("");
     values = kind === "create" ? blankValues(options) : kind === "edit" ? blankValues(options, row) : {};
     baseValues = kind === "edit" ? { ...values } : null;
-    base = row ? { revision: row.revision, updated_at: row.updated_at } : null;
+    base = row ? { version: row.version, updated_at: row.updated_at } : null;
     requestId = kind === "create" ? ctx.requestId() : "";
     paint("heading");
   }
@@ -432,11 +432,11 @@ export function createWorkspaces(ctx) {
     if (busy) return;
     const page = ctx.epoch(), id = selected, kind = mode, row = find(id);
     let path, body;
-    if (kind === "discard") { path = `${BASE}/${enc(id)}/discard`; body = { expected_revision: row.revision }; }
+    if (kind === "discard") { path = `${BASE}/${enc(id)}/discard`; body = { expected_revision: row.version }; }
     else if (kind === "edit") {
       // The list may have been reloaded while this form was open: never overwrite a newer saved state.
-      if (!row || row.revision !== base.revision || row.updated_at !== base.updated_at) { formError = STALE; step = "edit"; paint("summary"); return; }
-      body = editPayload(values, baseValues, base.revision); path = `${BASE}/${enc(id)}`;
+      if (!row || row.version !== base.version || row.updated_at !== base.updated_at) { formError = STALE; step = "edit"; paint("summary"); return; }
+      body = editPayload(values, baseValues, base.version); path = `${BASE}/${enc(id)}`;
       if (!body) { formError = GENERAL.no_changes(); step = "edit"; paint("summary"); return; }
     } else { path = BASE; body = createPayload(values, requestId); }
     busy = true; formError = ""; paint();
@@ -506,7 +506,7 @@ export function createWorkspaces(ctx) {
     errors = validate(values, options);
     const first = Object.keys(errors)[0];
     if (first) { formError = "Fix the highlighted fields, then review again."; paint(CONTROL_KEY[first]); return true; }
-    if (mode === "edit" && !editPayload(values, baseValues, base.revision)) { formError = GENERAL.no_changes(); paint("summary"); return true; }
+    if (mode === "edit" && !editPayload(values, baseValues, base.version)) { formError = GENERAL.no_changes(); paint("summary"); return true; }
     formError = ""; step = "review"; paint("heading");
     return true;
   }

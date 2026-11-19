@@ -1,5 +1,8 @@
 """Cloud workspace records on the owner Compute REST: validation, status, access and edits."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from commonplace import sessions
@@ -12,6 +15,10 @@ from tests.test_compute_control import (  # noqa: F401 -- shared real-store fixt
 )
 
 BASE = "/workspaces"
+# One list of accepted and refused input, read by this suite and by the browser-rule suite.
+INPUTS = json.loads(
+    Path(__file__).with_name("fixtures").joinpath("compute_workspace_inputs.json").read_text()
+)
 
 
 @pytest.fixture
@@ -96,18 +103,7 @@ def test_curated_image_is_known_and_labelled(api):
 DIGEST = "sha256:" + "a" * 64
 
 
-@pytest.mark.parametrize(
-    "reference",
-    [
-        "ubuntu",
-        "ubuntu:24.04",
-        "library/ubuntu:24.04",
-        "docker.io/library/ubuntu:24.04",
-        "ghcr.io/acme/tools@" + DIGEST,
-        "ghcr.io/acme/tools:1.2@" + DIGEST,
-        "registry.example.com:5000/team/app/sub-name_x:v1.0-rc1",
-    ],
-)
+@pytest.mark.parametrize("reference", INPUTS["images"]["accepted"])
 def test_valid_image_references_are_accepted_and_pinning_is_reported(api, reference):
     item = create(api, image=reference)
     assert item["image"] == reference
@@ -115,60 +111,7 @@ def test_valid_image_references_are_accepted_and_pinning_is_reported(api, refere
     assert item["image_digest"] == (DIGEST if "@" in reference else None)
 
 
-@pytest.mark.parametrize(
-    "reference,reason",
-    [
-        ("", "empty"),
-        ("a" * 256, "too_long"),
-        ("ubuntu; rm -rf /", "characters"),
-        ("ubuntu && id", "characters"),
-        ("ubuntu`id`", "characters"),
-        ("ubuntu$(id)", "characters"),
-        ("ubuntu|cat", "characters"),
-        ("ubuntu\nwhoami", "characters"),
-        ("ubuntu\x00", "characters"),
-        ("ubuntu image", "characters"),
-        ("ubuntu'", "characters"),
-        ('ubuntu"', "characters"),
-        ("--privileged", "characters"),
-        ("-v/:/host", "characters"),
-        ("/etc/passwd", "characters"),
-        ("../../etc", "characters"),
-        (".hidden", "characters"),
-        ("https://evil.example/app", "scheme"),
-        ("docker://ubuntu", "scheme"),
-        ("user@host.example/app", "digest"),
-        ("ubuntu@sha256:abc", "digest"),
-        ("ubuntu@sha512:" + "a" * 128, "digest"),
-        ("ubuntu@" + DIGEST + "@" + DIGEST, "digest"),
-        ("Ubuntu", "name"),
-        ("ubuntu//x", "name"),
-        ("ubuntu/..", "name"),
-        ("ubuntu:", "tag"),
-        ("ubuntu:-x", "tag"),
-        ("ubuntu:" + "a" * 129, "tag"),
-        ("Registry.Example/app", "registry"),
-        ("host.example:99999/app", "registry"),
-        ("host.example:0/app", "registry"),
-        ("héllo/app", "characters"),
-        # Registries on local or private networks, IP literals in any notation, and no path.
-        ("localhost/app", "registry_private"),
-        ("localhost:5000/app:latest", "registry_private"),
-        ("127.0.0.1:5000/app", "registry_private"),
-        ("169.254.169.254/app:1", "registry_private"),
-        ("10.0.0.5/team/app", "registry_private"),
-        ("192.168.1.10:5000/app", "registry_private"),
-        ("172.16.0.1/app", "registry_private"),
-        ("0x7f.0.0.1/app", "registry_private"),
-        ("registry:5000/app", "registry_private"),
-        ("registry.local/app", "registry_private"),
-        ("build.internal:5000/app", "registry_private"),
-        ("foo.localhost/app", "registry_private"),
-        ("ghcr.io:443", "registry_no_path"),
-        ("ghcr.io", "registry_no_path"),
-        ("registry.example.com:5000", "registry_no_path"),
-    ],
-)
+@pytest.mark.parametrize("reference,reason", sorted(INPUTS["images"]["refused"].items()))
 def test_malformed_and_injected_image_references_are_refused_and_never_stored(
     api, reference, reason
 ):
@@ -253,7 +196,7 @@ def test_unknown_missing_and_server_owned_fields_are_refused(api, payload, reaso
         ("\u200b", "characters"),
         ("\u200b\u200b\u200b", "characters"),
         ("a\u200bb", "characters"),
-        ("\u2800\u2800", "no_letter"),
+        ("\u2800\u2800", "characters"),
         ("\u202eevil", "characters"),
         ("abc\u202c", "characters"),
         ("\u2066x\u2069", "characters"),
@@ -274,6 +217,21 @@ def test_names_are_validated(api, name, field_reason):
         400,
         {"error": "invalid_request", "field": "name", "reason": field_reason},
     )
+
+
+@pytest.mark.parametrize("name", INPUTS["names"]["accepted"])
+def test_the_shared_accepted_names_are_stored(api, name):
+    assert create(api, name=name)["name"]
+
+
+@pytest.mark.parametrize("name,reason", sorted(INPUTS["names"]["refused"].items()))
+def test_the_shared_refused_names_are_refused_and_never_stored(api, name, reason):
+    status, result = api.request("POST", BASE, body(name=name))
+    assert (status, result) == (
+        400,
+        {"error": "invalid_request", "field": "name", "reason": reason},
+    )
+    assert api.request(path=BASE)[1]["total"] == 0
 
 
 def test_names_are_unique_ignoring_case(api):
@@ -423,18 +381,70 @@ def test_stored_references_from_before_the_stricter_rules_still_list(api):
     assert api.request(path=f"{BASE}/{item['id']}")[0] == 200
 
 
-def test_edit_bumps_the_revision_only_for_what_needs_a_restart(api):
+def test_edit_bumps_the_revision_only_for_what_needs_a_restart_and_the_version_for_every_edit(api):
     item = create(api)
     url = f"{BASE}/{item['id']}"
+    assert (item["version"], item["revision"]) == (1, 1)
     renamed = api.request("POST", url, {"expected_revision": 1, "name": "Renamed"})[1]["workspace"]
-    assert renamed["name"] == "Renamed" and renamed["revision"] == 1
+    # A rename moves the version (stale writes are caught) but not the revision (no restart).
+    assert renamed["name"] == "Renamed" and (renamed["version"], renamed["revision"]) == (2, 1)
     resized = api.request(
-        "POST", url, {"expected_revision": 1, "cpu_cores": 4, "memory_mib": 8192}
+        "POST", url, {"expected_revision": 2, "cpu_cores": 4, "memory_mib": 8192}
     )[1]["workspace"]
-    assert (resized["cpu_cores"], resized["memory_mib"], resized["revision"]) == (4, 8192, 2)
+    assert (resized["cpu_cores"], resized["memory_mib"]) == (4, 8192)
+    assert (resized["version"], resized["revision"]) == (3, 2)
     assert resized["restart_needed"] is False  # never started: applies when it starts
-    same = api.request("POST", url, {"expected_revision": 2, "cpu_cores": 4})[1]["workspace"]
-    assert same["revision"] == 2 and same["updated_at"] == resized["updated_at"]
+    same = api.request("POST", url, {"expected_revision": 3, "cpu_cores": 4})[1]["workspace"]
+    assert (same["version"], same["revision"]) == (3, 2) and same["updated_at"] == resized[
+        "updated_at"
+    ]
+
+
+def test_a_stale_rename_is_refused_and_changes_nothing(api):
+    item = create(api)
+    url = f"{BASE}/{item['id']}"
+    # Two people open version 1; the first renames, the second must not overwrite that.
+    assert api.request("POST", url, {"expected_revision": 1, "name": "First"})[0] == 200
+    status, result = api.request("POST", url, {"expected_revision": 1, "name": "Second"})
+    assert (status, result["reason"]) == (409, "stale_revision")
+    assert api.request(path=url)[1]["workspace"]["name"] == "First"
+    # A stale resize after a rename is refused too, and so is a stale discard.
+    assert api.request("POST", url, {"expected_revision": 1, "cpu_cores": 8})[0] == 409
+    assert api.request("POST", url + "/discard", {"expected_revision": 1})[1]["reason"] == (
+        "stale_revision"
+    )
+    assert api.request("POST", url + "/discard", {"expected_revision": 2})[0] == 200
+
+
+def test_a_failed_start_counts_as_started_everywhere(api):
+    _, first = api.enrolled()
+    second_gateway = api.request("POST", "/gateways", gateway_payload(name="Second"))[1]["gateway"]
+    second = api.request("POST", "/nodes", node_payload(second_gateway["id"], name="Second"))[1][
+        "node"
+    ]
+    item = create(api, node_id=first["id"])
+    # The start failed before anything was applied: it may have left a container or a volume behind.
+    set_state(api, item["id"], "failed", "image_pull_failed")
+    shown = api.request(path=f"{BASE}/{item['id']}")[1]["workspace"]
+    assert shown["applied_revision"] is None
+    assert (shown["started"], shown["discardable"], shown["restart_needed"]) == (True, False, False)
+    assert shown["status"] == "failed"
+    # One meaning: the machine is locked, the discard is refused, and the projection agrees.
+    url = f"{BASE}/{item['id']}"
+    locked = api.request("POST", url, {"expected_revision": 1, "node_id": second["id"]})
+    assert locked == (409, {"error": "conflict", "field": "node_id", "reason": "machine_locked"})
+    assert api.request("POST", url + "/discard", {"expected_revision": 1})[1]["reason"] == (
+        "already_started"
+    )
+    # A record that never started is the opposite on all three counts.
+    fresh = create(api, name="Fresh", image="ghcr.io/acme/b:1", node_id=first["id"])
+    assert (fresh["started"], fresh["discardable"]) == (False, True)
+    assert (
+        api.request(
+            "POST", f"{BASE}/{fresh['id']}", {"expected_revision": 1, "node_id": second["id"]}
+        )[0]
+        == 200
+    )
 
 
 def test_a_started_workspace_says_restart_needed_after_an_edit(api):
@@ -507,7 +517,7 @@ def test_member_reads_but_never_writes_and_sees_no_machine_or_registry_reference
     assert detail["workspace"]["machine_name"] is None and detail["workspace"]["node_id"] is None
     assert node["name"] not in str(result) + str(detail)
     assert ask(path=BASE + "/images")[0] == 200
-    denied = (403, {"error": "owner_required"})
+    denied = (403, {"error": "owner_required", "reason": "member"})
     assert ask("POST", BASE, body(name="Mine")) == denied
     assert ask("POST", f"{BASE}/{item['id']}", {"expected_revision": 1, "name": "Mine"}) == denied
     assert ask("POST", f"{BASE}/{item['id']}/credential", {}) == denied
@@ -517,8 +527,9 @@ def test_member_reads_but_never_writes_and_sees_no_machine_or_registry_reference
         assert ask("POST", path, raw=b"not json") == denied
         assert ask("POST", path, {"unknown": 1}) == denied
     # Everything else in Compute stays owner-only for a member.
+    # (These are not cloud workspace routes, so they keep their fixed bare shape.)
     for path in ("", "/nodes", "/credentials", "/workspaces-x"):
-        assert ask(path=path) == denied
+        assert ask(path=path) == (403, {"error": "owner_required"})
     assert api.request(path=f"{BASE}/{item['id']}")[1]["workspace"]["name"] == item["name"]
     owner_view = api.request(path=f"{BASE}/{item['id']}")[1]["workspace"]
     assert owner_view["machine_name"] == node["name"] and owner_view["node_id"] == node["id"]
@@ -554,7 +565,7 @@ def test_a_personal_access_token_never_reaches_workspaces_even_with_the_owner_co
     for method, path, payload in calls:
         assert api.request(method, path, payload, headers=headers) == (
             403,
-            {"error": "owner_required"},
+            {"error": "owner_required", "reason": "member"},
         ), (method, path)
         # Without the cookie the token alone is just as unable to act.
         status, result = api.request(method, path, payload, headers=headers, cookie=False)
@@ -564,7 +575,10 @@ def test_a_personal_access_token_never_reaches_workspaces_even_with_the_owner_co
 
 def test_signed_out_and_foreign_people_are_refused_consistently(api):
     item = create(api)
-    assert api.request(path=BASE, cookie=False)[0] == 401
+    assert api.request(path=BASE, cookie=False) == (
+        401,
+        {"error": "sign_in", "reason": "session"},
+    )
     assert api.request("POST", BASE, body(name="Z"), cookie=False)[0] == 401
     foreign = sessions.start_session(api.env.db, api.env.foreign, api.env.other_workspace)
     # A person of another workspace reads their own (empty) list and cannot reach this one's ids.
@@ -572,16 +586,21 @@ def test_signed_out_and_foreign_people_are_refused_consistently(api):
         200,
         {"workspaces": [], "total": 0, "can_manage": True},
     )
-    assert api.request(path=f"{BASE}/{item['id']}", cookie=foreign) == (404, {"error": "not_found"})
-    assert api.request(
-        "POST", f"{BASE}/{item['id']}", {"expected_revision": 1, "name": "X"}, cookie=foreign
-    ) == (404, {"error": "not_found"})
-    assert api.request("POST", f"{BASE}/{item['id']}", raw=b"[]", cookie=foreign) == (
-        404,
-        {"error": "not_found"},
+    gone = (404, {"error": "not_found", "reason": "record"})
+    assert api.request(path=f"{BASE}/{item['id']}", cookie=foreign) == gone
+    assert (
+        api.request(
+            "POST", f"{BASE}/{item['id']}", {"expected_revision": 1, "name": "X"}, cookie=foreign
+        )
+        == gone
     )
-    assert api.request(path=f"{BASE}/{'0' * 32}")[0] == 404
-    assert api.request(path=f"{BASE}/bad-id")[0] == 404
+    assert api.request("POST", f"{BASE}/{item['id']}", raw=b"[]", cookie=foreign) == gone
+    assert api.request(path=f"{BASE}/{'0' * 32}") == gone
+    # A malformed id is not "not found": it names the identifier as the problem.
+    assert api.request(path=f"{BASE}/bad%20id") == (
+        400,
+        {"error": "invalid_request", "reason": "identifier"},
+    )
 
 
 def test_routes_are_exact(api):
@@ -743,6 +762,7 @@ def test_the_stored_name_key_is_backfilled_for_records_from_before_it_existed(ap
         conn.execute("DROP INDEX cloud_workspaces_name_key")
         conn.execute("UPDATE cloud_workspaces SET name_key=NULL")
         conn.execute("UPDATE cloud_workspaces SET name='STRASSE' WHERE id=?", (second["id"],))
+        conn.execute("PRAGMA user_version=0")  # as a database from before the migration is
         workspaces.schema(conn)
         keys = dict(conn.execute("SELECT id,name_key FROM cloud_workspaces").fetchall())
     assert keys[first["id"]] == "strasse"
@@ -777,3 +797,153 @@ def test_records_beyond_the_list_limit_are_counted_not_silently_dropped(api):
     assert status == 200 and len(result["workspaces"]) == 100 and result["total"] == 103
     assert api.request("POST", BASE, body(name="New"))[1]["reason"] == "limit_reached"
     assert api.request(path=f"{BASE}/{3:032x}")[0] == 200  # a record outside the list still opens
+
+
+def test_replaying_a_create_after_its_discard_answers_409_and_never_brings_the_record_back(api):
+    first = api.request("POST", BASE, body(request_id="req-gone"))
+    assert first[0] == 201
+    item = first[1]["workspace"]
+    # Before the discard a replay still returns the same record.
+    assert api.request("POST", BASE, body(request_id="req-gone"))[0] == 200
+    url = f"{BASE}/{item['id']}/discard"
+    assert api.request("POST", url, {"expected_revision": item["version"]})[0] == 200
+    status, result = api.request("POST", BASE, body(request_id="req-gone"))
+    assert (status, result) == (
+        409,
+        {"error": "conflict", "field": "request_id", "reason": "request_discarded"},
+    )
+    assert api.request(path=BASE)[1]["total"] == 0
+    # Another id with the same values is a fresh, deliberate create.
+    assert api.request("POST", BASE, body(request_id="req-new"))[0] == 201
+    # The tombstone is kept for good: the table refuses deletes and edits.
+    with api.env.store._journal() as conn:
+        assert conn.execute("SELECT count(*) FROM cloud_workspace_tombstones").fetchone()[0] == 1
+        for statement in (
+            "DELETE FROM cloud_workspace_tombstones",
+            "UPDATE cloud_workspace_tombstones SET request_id='x'",
+        ):
+            with pytest.raises(Exception, match="tombstones"):
+                conn.execute(statement)
+
+
+def test_a_record_without_a_request_id_leaves_no_tombstone(api):
+    item = create(api)
+    assert api.request("POST", f"{BASE}/{item['id']}/discard", {"expected_revision": 1})[0] == 200
+    with api.env.store._journal() as conn:
+        assert conn.execute("SELECT count(*) FROM cloud_workspace_tombstones").fetchone()[0] == 0
+
+
+def test_every_refusal_on_a_workspace_route_has_a_reason(api):
+    item = create(api)
+    url = f"{BASE}/{item['id']}"
+    foreign = sessions.start_session(api.env.db, api.env.foreign, api.env.other_workspace)
+    calls = [
+        ("GET", BASE + "?x=1", None, {}),  # query string
+        ("GET", BASE + "#frag", None, {}),
+        ("GET", f"{BASE}/bad%20id", None, {}),  # identifier
+        ("POST", f"{BASE}/bad%20id/discard", {"expected_revision": 1}, {}),
+        ("GET", f"{BASE}/{'0' * 32}", None, {}),  # record
+        ("GET", url + "/extra", None, {}),  # route
+        ("GET", BASE + "/", None, {}),
+        ("POST", BASE, body(cpu_cores=10**400), {}),  # huge integer: range, never a crash
+        ("POST", BASE, body(memory_mib=10**400), {}),
+        ("POST", BASE, body(storage_gib=-(10**400)), {}),
+        ("POST", url, {"expected_revision": 10**400, "name": "x"}, {}),
+        ("GET", BASE, None, {"cookie": False}),  # session
+        ("GET", BASE, None, {"cookie": foreign, "member": True}),
+    ]
+    for method, path, payload, extra in calls:
+        extra = {key: value for key, value in extra.items() if key != "member"}
+        status, result = api.request(method, path, payload, **extra)
+        if status < 400:
+            continue  # the foreign person's own (empty) list is a success
+        assert result.get("reason"), (method, path, status, result)
+    # A non-owner member too.
+    status, result = member_api(api)("POST", BASE, body(name="Mine"))
+    assert (status, result["reason"]) == (403, "member")
+    # The huge integers are refused as out of range, with the field named.
+    for field in ("cpu_cores", "memory_mib", "storage_gib"):
+        status, result = api.request("POST", BASE, body(**{field: 10**400}))
+        assert (status, result) == (
+            400,
+            {"error": "invalid_request", "field": field, "reason": "range"},
+        )
+    status, result = api.request(
+        "POST", BASE, raw=b'{"name":"x","image_source":"custom","image":"a","cpu_cores":1e999}'
+    )
+    assert (status, result["field"], result["reason"]) == (400, "cpu_cores", "range")
+    assert api.request("GET", BASE + "?x=1")[1] == {"error": "invalid_request", "reason": "query"}
+
+
+def test_an_encoded_path_is_judged_as_the_route_it_is(api):
+    item = create(api)
+    ask = member_api(api)
+    # /%77orkspaces is /workspaces: a member reads it exactly as the plain path.
+    assert ask(path="/%77orkspaces")[0] == 200
+    assert ask(path="/%77orkspaces")[1] == ask(path=BASE)[1]
+    assert ask(path=f"/%77orkspaces/{item['id']}")[0] == 200
+    assert ask("POST", "/%77orkspaces", body(name="Mine"))[0] == 403
+
+
+def test_the_migration_runs_once_and_backfills_the_version(api):
+    create(api)
+    with api.env.store._journal() as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == workspaces.SCHEMA_VERSION
+        # A database from before the version column existed: the column is added and filled from the revision.
+        conn.execute("UPDATE cloud_workspaces SET revision=3")
+        conn.execute("ALTER TABLE cloud_workspaces DROP COLUMN version")
+        conn.execute("PRAGMA user_version=0")
+        workspaces.schema(conn)
+        assert conn.execute("SELECT version FROM cloud_workspaces").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == workspaces.SCHEMA_VERSION
+        # Once done it is not repeated: a changed table is left alone.
+        conn.execute("UPDATE cloud_workspaces SET version=9")
+        workspaces.schema(conn)
+        assert conn.execute("SELECT version FROM cloud_workspaces").fetchone()[0] == 9
+
+
+def test_listing_names_each_machine_with_one_query(api):
+    _, node = api.enrolled()
+    for number in range(3):
+        create(
+            api, name=f"On machine {number}", image=f"ghcr.io/acme/a{number}:1", node_id=node["id"]
+        )
+    create(api, name="Nowhere", image="ghcr.io/acme/z:1")
+    shown = {item["name"]: item["machine_name"] for item in api.request(path=BASE)[1]["workspaces"]}
+    assert shown == {
+        "On machine 0": node["name"],
+        "On machine 1": node["name"],
+        "On machine 2": node["name"],
+        "Nowhere": None,
+    }
+
+
+def test_presets_are_served_and_sit_inside_the_limits(api):
+    served = api.request(path=BASE + "/images")[1]["presets"]
+    assert [item["id"] for item in served] == ["small", "standard", "large"]
+    limits = workspaces.LIMITS
+    for item in served:
+        assert limits["cpu_cores"]["min"] <= item["cpu_cores"] <= limits["cpu_cores"]["max"]
+        assert limits["memory_mib"]["min"] <= item["memory_mib"] <= limits["memory_mib"]["max"]
+        assert limits["storage_gib"]["min"] <= item["storage_gib"] <= limits["storage_gib"]["max"]
+        # Every preset is a value the form could have sent: it creates cleanly.
+        created = api.request(
+            "POST",
+            BASE,
+            body(
+                name=f"Preset {item['id']}",
+                image=f"ghcr.io/acme/{item['id']}:1",
+                cpu_cores=item["cpu_cores"],
+                memory_mib=item["memory_mib"],
+                storage_gib=item["storage_gib"],
+            ),
+        )
+        assert created[0] == 201
+    standard = next(item for item in served if item["id"] == "standard")
+    assert (standard["cpu_cores"], standard["memory_mib"], standard["storage_gib"]) == (2, 4096, 20)
+
+
+def test_a_private_looking_name_that_only_resolves_elsewhere_is_accepted_and_documented(api):
+    # The app cannot see DNS: a name that merely resolves to a private address is accepted here.
+    # Pulling an image is the lifecycle card's job and it must check the address it resolved; nothing pulls yet.
+    assert create(api, image="127.0.0.1.nip.io/app:1")["image_registry"] == "127.0.0.1.nip.io"

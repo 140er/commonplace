@@ -26,7 +26,7 @@ const machine = { id: 'n-one', name: 'Fixture machine', state: 'pending_verifica
 const record = (extra = {}) => ({
   id: 'w-one', name: 'Build box', image_source: 'custom', image: 'ghcr.io/acme/tools:1.2', image_registry: 'ghcr.io', image_tag: '1.2', image_digest: null, image_pinned: false, curated_label: null,
   private_registry: false, credential_bound: false, cpu_cores: 2, memory_mib: 4096, storage_gib: 20, network: 'outbound',
-  node_id: null, machine_name: null, machine_assigned: false, status: 'no_machine', status_reason: null, started: false, revision: 1, applied_revision: null, restart_needed: false, discardable: true, created_at: clock, updated_at: clock, ...extra,
+  node_id: null, machine_name: null, machine_assigned: false, status: 'no_machine', status_reason: null, started: false, version: 1, revision: 1, applied_revision: null, restart_needed: false, discardable: true, created_at: clock, updated_at: clock, ...extra,
 });
 const onMachine = (extra = {}) => record({ node_id: 'n-one', machine_name: 'Fixture machine', machine_assigned: true, status: 'pending', ...extra });
 const startedRow = (extra = {}) => onMachine({ status: 'ready', started: true, applied_revision: 1, discardable: false, ...extra });
@@ -110,7 +110,7 @@ const cases = {
       record({ id: 'b', name: 'B cred', status: 'needs_credential', private_registry: true, node_id: 'n-one', machine_name: 'Fixture machine', machine_assigned: true, discardable: false }),
       onMachine({ id: 'c', name: 'C pending' }),
       startedRow({ id: 'd', name: 'D ready' }),
-      startedRow({ id: 'e', name: 'E restart', status: 'restart_needed', revision: 2, restart_needed: true }),
+      startedRow({ id: 'e', name: 'E restart', status: 'restart_needed', version: 2, revision: 2, restart_needed: true }),
       startedRow({ id: 'f', name: 'F oom', status: 'failed', status_reason: 'out_of_memory' }),
       startedRow({ id: 'g', name: 'G odd', status: 'failed', status_reason: null }),
       record({ id: 'h', name: 'H pinned', image_pinned: true, image_digest: 'sha256:' + 'b'.repeat(64) }),
@@ -287,7 +287,7 @@ const cases = {
     fill(f, { ws_memory_gib: '8' }); f.submit('edit');
     t = text(f.host.innerHTML);
     assert.ok(t.includes('Confirm the change to Build box') && t.includes('Memory: 4 GiB → 8 GiB') && t.includes('2 CPU cores, 8 GiB memory, 20 GiB storage on Fixture machine') && t.includes('keeps its old settings until it is restarted'));
-    f.state.next = [{ workspace: { ...row, memory_mib: 8192, revision: 2, restart_needed: true, status: 'restart_needed' } }]; f.click('confirm'); await flush();
+    f.state.next = [{ workspace: { ...row, memory_mib: 8192, version: 2, revision: 2, restart_needed: true, status: 'restart_needed' } }]; f.click('confirm'); await flush();
     assert.equal(f.state.writes[0][0], '/api/compute/workspaces/w-one');
     assert.deepEqual(f.state.writes[0][1], { memory_mib: 8192, expected_revision: 1 }, 'only the changed field, with the revision the form opened at');
     t = text(f.host.innerHTML);
@@ -305,10 +305,10 @@ const cases = {
 
   async conflict() {
     // Tab A opens the editor at revision 1; tab B raises the CPU (revision 2); A reloads the list and saves memory.
-    const mine = onMachine({ id: 'w-one', revision: 1, updated_at: clock });
+    const mine = onMachine({ id: 'w-one', version: 1, revision: 1, updated_at: clock });
     const f = fixture({ list: { workspaces: [mine], can_manage: true } }); await f.open();
     f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '8' }); f.submit('edit');
-    f.state.list = { workspaces: [{ ...mine, cpu_cores: 8, revision: 2, updated_at: clock + 5 }], can_manage: true };
+    f.state.list = { workspaces: [{ ...mine, cpu_cores: 8, version: 2, revision: 2, updated_at: clock + 5 }], can_manage: true };
     await f.ui.refresh(); await flush();
     f.click('confirm'); await flush();
     assert.equal(f.state.writes.length, 0, 'a form opened before the list changed never sends');
@@ -318,7 +318,7 @@ const cases = {
     assert.ok(f.focused.includes('[data-ws-summary]'));
     // Closing and reopening picks up the new state, and the change then carries the new revision.
     f.click('close'); f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '8' }); f.submit('edit');
-    f.state.next = [{ workspace: { ...mine, cpu_cores: 8, memory_mib: 8192, revision: 3, updated_at: clock + 6 } }]; f.click('confirm'); await flush();
+    f.state.next = [{ workspace: { ...mine, cpu_cores: 8, memory_mib: 8192, version: 3, revision: 3, updated_at: clock + 6 } }]; f.click('confirm'); await flush();
     assert.deepEqual(f.state.writes[0][1], { memory_mib: 8192, expected_revision: 2 });
     f.ui.stop();
     // A record deleted elsewhere while its form is open closes the form and says so.
@@ -417,7 +417,7 @@ const cases = {
     // From the details, Change settings keeps the original opener for the way back.
     f.click('detail', 'w-one'); f.click('edit', 'w-one'); f.key('Escape'); assert.equal(f.focused.at(-1), '[data-ws-id="w-one"] [data-ws-action="detail"]');
     // Escape does nothing while a save is in flight.
-    f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '8' }); f.submit('edit'); f.state.next = [onMachine({ memory_mib: 8192, revision: 2 })]; f.click('confirm');
+    f.click('edit', 'w-one'); fill(f, { ws_memory_gib: '8' }); f.submit('edit'); f.state.next = [onMachine({ memory_mib: 8192, version: 2, revision: 2 })]; f.click('confirm');
     assert.equal(f.key('Escape').prevented, false); await flush();
     // The top Reload inventory button gets focus back once the reload ends.
     f.focused.length = 0;

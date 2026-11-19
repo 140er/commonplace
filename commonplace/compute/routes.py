@@ -75,6 +75,32 @@ def _body(h, maximum=8192):
         raise StoreError() from None
 
 
+# The reason a cloud workspace route gives when the code that refused did not name one itself.
+_WORKSPACE_REASON = {
+    "sign_in": "session",
+    "owner_required": "member",
+    "not_found": "route",
+    "invalid_request": "request",
+    "authority_unavailable": "authority",
+}
+
+
+def _tail_parts(path):
+    """The decoded segments after /api/compute, or None when the path is not a clean one.
+
+    Pure: the permission check and the router both read the path through this, so an encoded
+    segment (``/%77orkspaces``) is judged as the route it really is.
+    """
+    prefix = "/api/compute"
+    tail = path[len(prefix) :] if path == prefix or path.startswith(prefix + "/") else None
+    if tail is None or tail.endswith("/") or "//" in tail:
+        return None
+    parts = [unquote(part) for part in tail.split("/") if part]
+    if any(not part or "/" in part for part in parts):
+        return None
+    return parts
+
+
 def _workspace_body(h, allowed, optional):
     """Parse a workspace write body; every refusal names a reason (and the field, when it is one)."""
     from . import workspaces
@@ -82,12 +108,12 @@ def _workspace_body(h, allowed, optional):
     try:
         body = _body(h)
     except StoreError:
-        raise workspaces._bad(None, "body") from None
+        raise workspaces.refuse(None, "body") from None
     if set(body) - set(allowed):
-        raise workspaces._bad(None, "unknown_field")
+        raise workspaces.refuse(None, "unknown_field")
     missing = sorted(set(allowed) - set(optional) - set(body))
     if missing:
-        raise workspaces._bad(missing[0], "required")
+        raise workspaces.refuse(missing[0], "required")
     return body
 
 
@@ -116,7 +142,9 @@ def _workspaces(h, store, principal, parts, auth):
         if len(parts) == 1:
             store.get_workspace(principal, parts[0], **auth)
             body = _workspace_body(
-                h, workspaces._EDITABLE | {"expected_revision"}, workspaces._EDITABLE
+                h,
+                workspaces.EDITABLE_FIELDS | {"expected_revision"},
+                workspaces.EDITABLE_FIELDS,
             )
             item = store.update_workspace(principal, parts[0], **auth, **body)
             return send_json(h, 200, {"workspace": item})
@@ -133,9 +161,24 @@ def _workspaces(h, store, principal, parts, auth):
     raise StoreError("not_found", 404)
 
 
+def _with_reason(payload, workspace_route):
+    """On a cloud workspace route every refusal carries a reason; others keep their fixed shape."""
+    if workspace_route and "reason" not in payload:
+        payload = {**payload, "reason": _WORKSPACE_REASON.get(payload["error"], "request")}
+    return payload
+
+
 def handle(gateway, handler):
     """Serve only the frozen /api/compute management surface."""
     h = handler
+    # Cloud workspace routes name a reason on every refusal (``_WORKSPACE_REASON`` fills the gaps).
+    path = urlsplit(h.path).path
+    parts = _tail_parts(path)
+    workspace_route = [unquote(item) for item in path.split("/") if item][:3] == [
+        "api",
+        "compute",
+        "workspaces",
+    ]
     try:
         principal, cookie = _person(gateway, h)
         # Reject ambiguous cookies in a single header too.
@@ -144,30 +187,20 @@ def handle(gateway, handler):
             raise StoreError("sign_in", 401)
         session_hash = sessions._hash(cookie)
         store = open_store(gateway, principal.workspace_id)
-        path = urlsplit(h.path).path
         # Cloud workspace records are readable by every current member; all else is owner-only.
-        member_read = h.command == "GET" and (
-            path == "/api/compute/workspaces" or path.startswith("/api/compute/workspaces/")
-        )
+        member_read = h.command == "GET" and workspace_route
         with gateway.db._lock:
             (store._member if member_read else store._owner)(principal, session_hash)
         write = h.command != "GET"
         if write:
             _write_boundary(gateway, h)
         parsed = urlsplit(h.path)
-        prefix = "/api/compute"
-        tail = (
-            parsed.path[len(prefix) :]
-            if parsed.path == prefix or parsed.path.startswith(prefix + "/")
-            else None
-        )
-        if tail is None or tail.endswith("/") or "//" in tail:
+        if parts is None:
             raise StoreError("not_found", 404)
         if parsed.query or parsed.fragment:
-            raise StoreError()
-        parts = [unquote(part) for part in tail.split("/") if part]
-        if any(not part or "/" in part for part in parts):
-            raise StoreError("not_found", 404)
+            from . import workspaces
+
+            raise workspaces.refuse(None, "query") if workspace_route else StoreError()
         auth = {"session_hash": session_hash}
         if parts and parts[0] == "workspaces":
             return _workspaces(h, store, principal, parts[1:], auth)
@@ -244,21 +277,23 @@ def handle(gateway, handler):
         return send_json(
             h,
             401 if code == "sign_in" else 403 if code == "owner_required" else 400,
-            {"error": code},
+            _with_reason({"error": code}, workspace_route),
         )
     except FenceDenied:
         h.close_connection = True
-        return send_json(h, 503, {"error": "authority_unavailable"})
+        return send_json(h, 503, _with_reason({"error": "authority_unavailable"}, workspace_route))
     except ControlError:
         h.close_connection = True
-        return send_json(h, 401, {"error": "sign_in"})
+        return send_json(h, 401, _with_reason({"error": "sign_in"}, workspace_route))
     except StoreError as exc:
         if h.command != "GET":
             h.close_connection = True
         detail = {
             key: value for key, value in (("field", exc.field), ("reason", exc.reason)) if value
         }
-        return send_json(h, exc.status, {"error": exc.code, **detail})
+        return send_json(
+            h, exc.status, _with_reason({"error": exc.code, **detail}, workspace_route)
+        )
 
 
 def install(gateway):
