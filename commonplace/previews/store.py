@@ -317,7 +317,12 @@ def write_files(gateway, workspace_id, preview_id, items) -> Path:
 
 
 def place(tmp: Path, final: Path) -> None:
+    """Move the written files into ``final``. The caller has just taken ``final``'s revision
+    number from the database, so a directory already there is left by a publish that died
+    after this step: no row names it, and it is replaced."""
     try:
+        if final.exists():
+            shutil.rmtree(final)
         os.replace(tmp, final)
     except OSError:
         shutil.rmtree(tmp, ignore_errors=True)

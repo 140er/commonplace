@@ -269,33 +269,39 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                 "SELECT coalesce(max(revision),0)+1 FROM preview_revisions WHERE preview_id=?",
                 (identity,),
             ).fetchone()[0]
-            store.place(tmp, store.revision_dir(gateway, workspace, identity, revision))
+            final = store.revision_dir(gateway, workspace, identity, revision)
+            store.place(tmp, final)
         except Refused as exc:
             shutil.rmtree(tmp, ignore_errors=True)
             failed = exc
         if failed is None:
-            now = store.stamp(store.clock())
-            conn.execute(
-                "INSERT INTO preview_revisions(preview_id,revision,digest,size_bytes,file_count,"
-                "published_by,by_person,published_at) VALUES (?,?,?,?,?,?,?,?)",
-                (identity, revision, digest, size, len(items), who, by_person, now),
-            )
-            conn.execute(
-                "UPDATE previews SET state='ready',reason='published',current_revision=?,"
-                "pr_url=?,pr_head=?,actor=?,published_by=?,by_person=?,updated_at=? WHERE id=?",
-                (
-                    revision,
-                    info["pr_url"],
-                    info["pr_head"],
-                    principal.actor,
-                    who,
-                    by_person,
-                    now,
-                    identity,
-                ),
-            )
-            store.event(conn, workspace, identity, info["number"], "published", principal.actor)
-            shown = store.view(conn, store.row_by_id(conn, workspace, identity))
+            try:
+                now = store.stamp(store.clock())
+                conn.execute(
+                    "INSERT INTO preview_revisions(preview_id,revision,digest,size_bytes,file_count,"
+                    "published_by,by_person,published_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (identity, revision, digest, size, len(items), who, by_person, now),
+                )
+                conn.execute(
+                    "UPDATE previews SET state='ready',reason='published',current_revision=?,"
+                    "pr_url=?,pr_head=?,actor=?,published_by=?,by_person=?,updated_at=? WHERE id=?",
+                    (
+                        revision,
+                        info["pr_url"],
+                        info["pr_head"],
+                        principal.actor,
+                        who,
+                        by_person,
+                        now,
+                        identity,
+                    ),
+                )
+                store.event(conn, workspace, identity, info["number"], "published", principal.actor)
+                shown = store.view(conn, store.row_by_id(conn, workspace, identity))
+            except Exception:
+                # The row rolls back with the transaction; the placed files must not outlive it.
+                shutil.rmtree(final, ignore_errors=True)
+                raise
     if failed is not None:
         settle(failed)
         raise failed
@@ -445,7 +451,16 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
         )
         store.event(conn, workspace, row["id"], row["card"], "files_deleted", principal.actor)
         shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]), revisions=True)
-    shutil.rmtree(store.root(gateway, workspace) / row["id"], ignore_errors=True)
+    folder = store.root(gateway, workspace) / row["id"]
+    shutil.rmtree(folder, ignore_errors=True)
+    if folder.exists():
+        # The rows say deleted but some files remain: record it and say so; asking again retries.
+        log.warning("preview files could not be fully removed for %s", row["id"])
+        with db._lock, db._tx() as conn:
+            store.event(
+                conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
+            )
+        shown["files_remaining"] = True
     return shown
 
 

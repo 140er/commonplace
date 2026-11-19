@@ -625,3 +625,68 @@ def test_the_publish_attempt_is_reserved_before_the_bundle_is_read(console_hub, 
     refused(h, number, [{"path": "nope.html", "text": "x"}], "no_index_html", "one")
     ok, text = publish(h, h.t1, number, name="two")
     assert not ok and "[rate_limited]" in text
+
+
+def test_a_publish_that_dies_after_the_files_are_placed_leaves_nothing_and_can_be_retried(
+    console_hub, monkeypatch
+):
+    from commonplace.previews import service
+
+    h = console_hub
+    number = card(h)
+    person = h.person(h.hub.admin)
+    original = store.event
+
+    def dying(conn, workspace, preview_id, card_number, kind, *args, **kwargs):
+        if kind == "published":
+            raise RuntimeError("database went away")
+        return original(conn, workspace, preview_id, card_number, kind, *args, **kwargs)
+
+    monkeypatch.setattr(store, "event", dying)
+    with pytest.raises(RuntimeError):
+        service.publish(h.gateway, person, number, "home", PAGE)
+    monkeypatch.setattr(store, "event", original)
+    assert not any(store.root(h.gateway, h.workspace).glob("*/r*"))
+    shown, created = service.publish(h.gateway, person, number, "home", PAGE)
+    assert created and shown["state"] == "ready" and shown["revision"] == 1
+
+
+def test_a_directory_left_by_an_earlier_crash_does_not_block_the_next_publish(console_hub):
+    h = console_hub
+    number = card(h)
+    assert publish(h, h.t1, number)[0]
+    identity = one(h, number)["id"]
+    stale = store.revision_dir(h.gateway, h.workspace, identity, 2)
+    stale.mkdir(parents=True)
+    (stale / "left-over.txt").write_text("from a publish that died")
+    assert publish(h, h.t1, number, files=[{"path": "index.html", "text": "second"}])[0]
+    assert one(h, number)["revision"] == 2
+    assert (stale / "index.html").read_text() == "second" and not (stale / "left-over.txt").exists()
+
+
+def test_a_delete_that_cannot_remove_every_file_says_so_and_records_it(console_hub, monkeypatch):
+    from commonplace.previews import service
+
+    h = console_hub
+    number = card(h)
+    assert publish(h, h.t1, number)[0]
+    identity = one(h, number)["id"]
+    monkeypatch.setattr(service.shutil, "rmtree", lambda *args, **kwargs: None)
+    status, body, _ = h.request(
+        h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity}
+    )
+    assert status == 200 and body["reason"] == "files_deleted" and body["files_remaining"] is True
+    with h.db._lock:
+        kinds = [
+            r[0]
+            for r in h.db._conn.execute(
+                "SELECT kind FROM preview_events WHERE preview_id=?", (identity,)
+            )
+        ]
+    assert "delete_incomplete" in kinds
+    monkeypatch.undo()
+    status, body, _ = h.request(
+        h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity}
+    )
+    assert status == 200 and "files_remaining" not in body
+    assert not (store.root(h.gateway, h.workspace) / identity).exists()

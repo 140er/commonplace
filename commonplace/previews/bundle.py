@@ -53,7 +53,7 @@ class Refused(Exception):
 def clean_path(raw) -> str:
     """The stored form of a path, or ``Refused('bad_path')``.
 
-    Relative, forward slashes only, no empty, dot or hidden segments, no control characters,
+    Relative, forward slashes only, no colon, no empty, dot or hidden segments, no control characters,
     at most ``MAX_DEPTH`` segments and ``MAX_PATH_BYTES`` bytes."""
     if not isinstance(raw, str) or not raw:
         raise Refused("bad_path", file=_shown(raw))
@@ -67,6 +67,7 @@ def clean_path(raw) -> str:
         or len(parts) > MAX_DEPTH
         or raw.startswith("/")
         or "\\" in raw
+        or ":" in raw
         or any(ord(c) < 32 or ord(c) == 127 for c in raw)
         or any(p == "" or p.startswith(".") for p in parts)
     )
