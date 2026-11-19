@@ -136,6 +136,37 @@ def test_selection_is_sorted_and_deduplicated(tree):
     assert got.files == ("tests/test_guards_stacks.py", "tests/test_stacks_extra.py")
 
 
+def test_gate_tests_appends_existing_guard_files_after_affected_tests(tree):
+    for name in prepush.GUARD_TESTS:
+        _write(tree / name)
+    got = prepush.gate_tests(tree, ["commonplace/guards/stacks.py"], guards=True)
+    assert got.files == ("tests/test_guards_stacks.py",) + prepush.GUARD_TESTS
+
+
+def test_gate_tests_without_the_ci_flag_stays_on_affected_tests(tree):
+    for name in prepush.GUARD_TESTS:
+        _write(tree / name)
+    got = prepush.gate_tests(tree, ["commonplace/guards/stacks.py"], guards=False)
+    assert got.files == ("tests/test_guards_stacks.py",)
+
+
+def test_gate_tests_does_not_repeat_a_guard_file_that_changed(tree):
+    for name in prepush.GUARD_TESTS:
+        _write(tree / name)
+    got = prepush.gate_tests(tree, ["tests/test_eval_guards.py"], guards=True)
+    assert got.files.count("tests/test_eval_guards.py") == 1
+    assert got.files[1:] == prepush.GUARD_TESTS[1:]
+
+
+def test_ci_workflow_calls_the_prepush_entrypoint_and_not_the_full_suite():
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "python -m commonplace.guards.prepush --ci" in workflow
+    assert "pytest tests/ -v" not in workflow
+    assert "pytest tests/ --ignore" not in workflow
+
+
 # ── budget ─────────────────────────────────────────────────────────────
 
 
@@ -214,6 +245,16 @@ def test_budget_runs_out_mid_check_and_the_rest_is_reported_skipped(repo, monkey
     assert "QUICK CHECK PASSED" not in text
     assert "not a pass for those" in text
     assert report.total_seconds < 10
+
+
+def test_strict_mode_fails_when_a_step_is_cut_off(repo, monkeypatch):
+    _fake_ruff(repo)
+    monkeypatch.setenv("TOOL_SLEEP", "30")
+    report, text = _run(repo, budget=1.0, strict=True)
+    assert report.exit_code == 1
+    assert report.failed is False
+    assert "CI GATE FAILED" in text
+    assert "not a pass" in text
 
 
 def test_budget_runs_out_mid_tests_and_names_what_was_not_confirmed(repo, monkeypatch):
@@ -332,6 +373,17 @@ def test_main_with_only_a_delete_has_nothing_to_check(repo, monkeypatch, capsys)
     stdin = io.StringIO(f"(delete) {'0' * 40} refs/heads/old {head}\n")
     assert prepush.main(["origin", "url"], stdin=stdin) == 0
     assert "nothing to check" in capsys.readouterr().err
+
+
+def test_ci_flag_runs_the_hook_entrypoint(repo, monkeypatch, capsys):
+    _fake_ruff(repo)
+    monkeypatch.chdir(repo)
+    code = prepush.main(["--ci", "--base", "main", "--budget", "20"])
+    err = capsys.readouterr().err
+    assert code == 0, err
+    assert "commonplace CI gate" in err
+    assert "CI GATE PASSED" in err
+    assert "not the full test suite and not CI" not in err
 
 
 def test_a_bad_budget_value_does_not_block_the_push(repo, monkeypatch, capsys):
