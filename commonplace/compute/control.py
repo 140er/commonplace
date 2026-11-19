@@ -101,6 +101,23 @@ CREATE TABLE IF NOT EXISTS executions (
  approved_by TEXT, approval_session_hash TEXT,
  UNIQUE(user_id,request_id)
 );
+CREATE TABLE IF NOT EXISTS cloud_workspaces (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+ node_id TEXT REFERENCES nodes(id),
+ image_source TEXT NOT NULL CHECK(image_source IN ('curated','custom')),
+ image_reference TEXT NOT NULL,
+ private_registry INTEGER NOT NULL DEFAULT 0 CHECK(private_registry IN (0,1)),
+ registry_credential_id TEXT, registry_credential_version INTEGER,
+ cpu_millicores INTEGER NOT NULL CHECK(cpu_millicores BETWEEN 500 AND 32000),
+ memory_mib INTEGER NOT NULL CHECK(memory_mib BETWEEN 512 AND 131072),
+ storage_gib INTEGER NOT NULL CHECK(storage_gib BETWEEN 1 AND 2048),
+ network TEXT NOT NULL CHECK(network IN ('outbound','none')),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','ready','failed')),
+ state_reason TEXT,
+ revision INTEGER NOT NULL DEFAULT 1, applied_revision INTEGER,
+ created_by TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit (
  id INTEGER PRIMARY KEY, object_id TEXT NOT NULL, action TEXT NOT NULL,
  user_id TEXT NOT NULL, created_at REAL NOT NULL
@@ -147,8 +164,9 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN
 class StoreError(ValueError):
     """A fixed public error code, without request text or private bindings."""
 
-    def __init__(self, code="invalid_request", status=400):
-        self.code, self.status = code, status
+    def __init__(self, code="invalid_request", status=400, *, field=None, reason=None):
+        # ``field`` and ``reason`` are fixed codes naming the form field and why (workspaces only).
+        self.code, self.status, self.field, self.reason = code, status, field, reason
         super().__init__(code)
 
 
@@ -263,7 +281,7 @@ class Store:
     def _now(self):
         return finite(self.clock())
 
-    def _owner(self, principal, session_hash):
+    def _member(self, principal, session_hash):
         if (
             not isinstance(principal, Principal)
             or not principal.person
@@ -294,12 +312,17 @@ class Store:
             current = None
         if current is None:
             raise StoreError("sign_in", 401)
+        return current
+
+    def _owner(self, principal, session_hash):
+        current = self._member(principal, session_hash)
         if current.role != "owner":
             raise StoreError("owner_required", 403)
         return current
 
     @contextmanager
-    def _transaction(self, principal, session_hash):
+    def _transaction(self, principal, session_hash, *, member=False):
+        """Owner-only unless ``member``: then any current member of this workspace (reads)."""
         guard = (
             _held(self._authority_fence, self.workspace_id, local=True)
             if self._authority_fence is not None
@@ -307,7 +330,7 @@ class Store:
         )
         with guard:
             with self.gateway.db._lock:
-                current = self._owner(principal, session_hash)
+                current = (self._member if member else self._owner)(principal, session_hash)
                 with self._journal() as conn:
                     yield conn, current
 
@@ -1150,6 +1173,38 @@ class Store:
     def get_execution(self, principal, execution_id, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
             return self._get_public(conn, current, "executions", execution_id)
+
+    def list_workspaces(self, principal, *, session_hash):
+        """Cloud workspace records; any current member may read (owners also manage)."""
+        from .workspaces import list_workspaces
+
+        return list_workspaces(self, principal, session_hash=session_hash)
+
+    def get_workspace(self, principal, workspace_id, *, session_hash):
+        from .workspaces import get_workspace
+
+        return get_workspace(self, principal, workspace_id, session_hash=session_hash)
+
+    def create_workspace(self, principal, **kwargs):
+        from .workspaces import create_workspace
+
+        return create_workspace(self, principal, **kwargs)
+
+    def update_workspace(self, principal, workspace_id, **kwargs):
+        from .workspaces import update_workspace
+
+        return update_workspace(self, principal, workspace_id, **kwargs)
+
+    def bind_workspace_credential(self, principal, workspace_id, **kwargs):
+        from .workspaces import bind_registry_credential
+
+        return bind_registry_credential(self, principal, workspace_id, **kwargs)
+
+    def _set_workspace_state(self, conn, workspace_id, state, reason=None, **kwargs):
+        """Lifecycle seam for the later start/stop code (no REST path)."""
+        from .workspaces import set_state
+
+        set_state(conn, workspace_id, state, reason, **kwargs)
 
     def create_script(self, principal, **kwargs):
         """Create an immutable task/node-bound script; return (metadata, created)."""

@@ -1,4 +1,5 @@
 import { escape as e } from "./api.js";
+import { createWorkspaces } from "./compute-workspaces.js";
 
 const BASE = "/api/compute";
 const intro = "The machines agents can reach, what they may look at, and tasks waiting for your approval.";
@@ -170,7 +171,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   let discoveries = [], discoveryAvailable = false, discoveryError = "";
   let scripts = [], scriptDetail = null, scriptsError = "";
   let credentials = [], credentialStatus = "unknown", copyNote = "";
-  let advancedOpen = false;
+  let advancedOpen = false, memberView = false;
   let editor = "", values = {}, selected = null, approvalDigest = "", attempt = null, bindCollection = "gateways";
   const requests = new Set();
   const eligible = () => live && current() === session && current()?.workspace === workspace && current()?.actor === identity && route() === expectedRoute;
@@ -187,11 +188,15 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   function denied(failure) {
     if (failure?.status === 401) { stop(); return true; }
     if ([403, 404].includes(failure?.status)) {
+      // A member is refused the owner inventory but may still read cloud workspaces, so keep that section.
+      memberView = failure.status === 403 && failure.payload?.error === "owner_required";
+      if (!memberView) workspaces.reset();
       revision++; abort(); scripts = []; scriptDetail = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; attempt = null; approvalDigest = "";
       credentials = []; credentialStatus = "unknown"; reading = false; busy = false; error = errorText(failure); notice = ""; render(); return true;
     }
     return false;
   }
+  const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, machines: () => inventory?.nodes || [] });
   const rowById = (name, id) => inventory?.[name]?.find(row => same(row.id, id));
   const executionAvailability = () => inventory?.capabilities?.transport === true
     ? "The automatic execution worker is available. Approval permits automatic background execution over SSH without another dispatch confirmation. Each attempt still requires valid authority, bindings and target verification."
@@ -330,7 +335,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       const gatewayRows = inventory.gateways.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)))}</p>${credentialNote(row)}${bindButton(row, "gateway", busy || reading || uncertain)}<details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
       const nodeRows = inventory.nodes.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)), e(row.interface))}</p><p>Gateway ${e(rowById("gateways", row.gateway_id)?.name || row.gateway_id)}</p>${credentialNote(row)}${bindButton(row, "node", busy || reading || uncertain)}<details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
       const scopeRows = inventory.scopes.map(row => `<li class="compute-row"><header><strong>${parts(e(row.context?.project), e(row.context?.gateway))}</strong><span class="compute-state">${row.revoked ? "Revoked" : Number(row.expires_at) <= now() ? "Expired" : "Passive grant recorded"}</span></header><p>${parts(e((row.cidrs || []).join(", ")), e((row.interfaces || []).join(", ")))}</p><p>${parts(row.methods?.length ? `Methods: ${e(row.methods.join(", "))}` : "", taskHTML({ task_number: row.context?.task }), row.context?.agent ? `Actor ${e(row.context.agent)}` : "")}</p><p>Expires: ${e(Number.isFinite(Number(row.expires_at)) ? new Date(Number(row.expires_at) * 1000).toLocaleString() : "Unknown")}</p><details><summary>Scope limits and context</summary><dl><dt>Scope</dt><dd>${e(row.id)}</dd><dt>User</dt><dd>${e(row.context?.user)}</dd>${limitsHTML(row.limits)}</dl></details>${!row.revoked && Number(row.expires_at) > now() ? button("revoke", "Revoke passive scope", busy || reading || uncertain, row.id) : ""}</li>`);
-      body = `${editorHTML()}<div class="compute-inventories"><details class="compute-advanced compute-wide" data-compute-advanced${advancedOpen ? " open" : ""}><summary class="compute-advanced-summary">${ADVANCED.label}</summary><p class="compute-quiet">${ADVANCED.intro}</p><div class="compute-inventories">`
+      body = `${editorHTML()}<div class="compute-inventories">${workspaces.html()}<details class="compute-advanced compute-wide" data-compute-advanced${advancedOpen ? " open" : ""}><summary class="compute-advanced-summary">${ADVANCED.label}</summary><p class="compute-quiet">${ADVANCED.intro}</p><div class="compute-inventories">`
         + inventorySection("gateways", "Gateways", gatewayRows, "No gateways added yet.", "gateway", "Add gateway", projects.length > 0, boardError || (!projects.length ? "Create a project before adding a gateway." : ""), "Add an existing project’s numeric management endpoint and explicitly confirm its full public host key.", ADVANCED.gateways)
         + inventorySection("nodes", "Targets", nodeRows, "No targets enrolled yet.", "node", "Enroll target", inventory.gateways.length > 0, !inventory.gateways.length ? "Add a gateway before enrolling a target." : "", "Enrollment uses an existing gateway and a separately confirmed public host key.", ADVANCED.nodes)
         + inventorySection("scopes", "Passive scopes", scopeRows, "No scopes granted yet.", "scope", "Grant scope", inventory.gateways.length > 0, "", "Each scope binds exact networks, interfaces, actor, task, bounds and expiry.", ADVANCED.scopes)
@@ -339,13 +344,15 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + inventorySection("discoveries", "Passive observations", discoveries.map(row => `<li class="compute-row"><header><strong>${parts(e(row.board), taskHTML(row))}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(row.scope_id ? `Scope ${e(row.scope_id)}` : "", e(row.reason))}</p><details><summary>${e(row.observations?.length || 0)} observations and usage</summary><pre>${e(JSON.stringify({ observations: row.observations || [], usage: row.usage || {} }, null, 2))}</pre></details>${discoveryCancellable(row) ? button("discovery-cancel", "Request cancellation", busy || reading || uncertain, row.id) + "<p>A cancellation request does not confirm remote termination.</p>" : ""}${row.reason === "cancellation_requested" ? "<p>Cancellation requested; remote termination is unconfirmed.</p>" : ""}${row.state === "uncertain" ? "<p>Outcome unknown. Capacity remains reserved; this attempt will not automatically repeat.</p>" : ""}</li>`), "No observations collected yet.", "discovery", "Collect observations", discoveryAvailable && inventory.scopes.some(row => !row.revoked && Number(row.expires_at) > now()), discoveryError || (!discoveryAvailable ? "Observation collection is not available yet." : ""), (discoveryAvailable ? "Collection reads approved gateway caches in the background. Reload to check progress." : "Passive collection is unavailable until its gateway and admission channel are configured."))
         + inventorySection("executions", "Execution proposals", inventory.executions.map(row => computeExecutionHTML(row, { busy: busy || reading || uncertain })), "No tasks waiting for approval.", "proposal", "Propose system info", inventory.nodes.length > 0, "", "The fixed system information operation requires a target and a canonical task.")
         + '</div><details class="compute-capabilities" aria-labelledby="compute-capabilities"><summary id="compute-capabilities">Access and execution details</summary><div><h3>Automatic execution</h3><p id="compute-transport-reason">' + e(executionAvailability()) + '</p></div><div><button class="btn" disabled aria-describedby="compute-passive-reason">Collect observations</button><p id="compute-passive-reason">Collection availability is shown with Passive observations. A scope grant never enrolls devices.</p></div><div><button class="btn" disabled aria-describedby="compute-script-reason">Scripts</button><p id="compute-script-reason">Script availability is shown with Workspace scripts. Saving a bundle never runs it.</p></div></details>';
-    } else if (inventory) body = '<p>Compute management requires the current workspace owner.</p>';
-    host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? `<h1>${e(title)}</h1>` : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Reload inventory", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error ? `<p class="compute-error" role="alert">${e(error)}</p>` : ""}${body}</div>`;
+    } else if (inventory) body = `<p>Compute management requires the current workspace owner.</p><div class="compute-inventories">${workspaces.html()}</div>`;
+    else if (memberView) body = `<div class="compute-inventories">${workspaces.html()}</div>`;
+    host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? `<h1>${e(title)}</h1>` : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Reload inventory", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error && !memberView ? `<p class="compute-error" role="alert">${e(error)}</p>` : ""}${memberView ? '<p class="compute-notice">Compute management requires the current workspace owner. You can still look at the cloud workspaces below.</p>' : ""}${body}</div>`;
   }
   async function refresh() {
     if (!eligible() || reading || busy) return;
     const page = epoch, read = ++revision;
-    reading = true; error = ""; render();
+    reading = true; error = ""; memberView = false; render();
+    void workspaces.load();
     const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`), request(`${BASE}/scripts`), request(`${BASE}/credentials`)]);
     if (!valid(page) || read !== revision) return;
     reading = false;
@@ -431,6 +438,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     } finally { if (valid(page)) { busy = false; render(); } }
   }
   function submit(event) {
+    if (workspaces.submit(event)) return;
     const form = event.target.closest("[data-compute-form]");
     if (!form) return;
     event.preventDefault(); event.stopPropagation();
@@ -456,6 +464,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     } catch (failure) { error = failure.message; render(); }
   }
   function click(event) {
+    if (eligible() && workspaces.click(event)) return;
     // The native toggle opens or closes the section; remember it so a re-render keeps it as the person left it.
     if (event.target.closest("[data-compute-advanced] > summary")) { advancedOpen = !advancedOpen; return; }
     const target = event.target.closest("[data-compute-action]");
@@ -494,6 +503,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (spot) spot.innerHTML = credentialStatusHTML(); else render();
   }
   function input(event) {
+    if (eligible() && workspaces.input(event)) return;
     const field = event.target;
     if (!editor || !eligible() || !field.name) return;
     values[field.name] = field.type === "checkbox" ? field.checked : field.value;
@@ -515,6 +525,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     host?.removeEventListener("click", click); host?.removeEventListener("submit", submit); host?.removeEventListener("input", input); host?.removeEventListener("change", input);
     events?.removeEventListener("hashchange", routeChanged); events?.removeEventListener("pagehide", stop); doc?.removeEventListener("session-expired", stop);
     if (host) host.innerHTML = "";
+    workspaces.reset(); memberView = false;
     host = null; session = null; workspace = null; identity = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; approvalDigest = ""; attempt = null;
     discoveries = []; discoveryAvailable = false; discoveryError = "";
     scripts = []; scriptDetail = null; scriptsError = "";
