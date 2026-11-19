@@ -556,6 +556,21 @@ def test_accept_enables_the_machine_but_never_attests_it(flow):
     assert len(row) == 1 and item["id"] in row[0]["target_ids"]
 
 
+def test_a_null_request_id_is_refused_for_accept_and_close(flow):
+    made = flow.made()
+    credentials = flow.connect(made)
+    flow.finish_steps(credentials)
+    item = flow.get(made)
+    base = {"expected_version": item["version"], "identity_digest": item["identity_digest"]}
+    for action, body in (
+        ("accept", {**base, "request_id": None}),
+        ("close", {"expected_version": item["version"], "request_id": None}),
+    ):
+        got, result = flow.call("POST", f"/{item['id']}/{action}", body)
+        assert (got, result["field"], result["reason"]) == (400, "request_id", "invalid")
+    assert flow.get(made)["state"] == "connected" and flow.get(made)["version"] == item["version"]
+
+
 def test_accept_replays_by_request_id_and_refuses_a_second_decision(flow):
     made = flow.made()
     flow.connect(made)
@@ -743,7 +758,7 @@ def test_a_closed_pairing_takes_no_more_reports(flow):
     assert flow.close(made)[0] == 200
     status, _ = flow.report(credentials, {"step": "files", "state": "ok"})
     # Closing revoked the machine's credential, so the gateway stops the report first.
-    assert status in (401, 404, 409)
+    assert status == 401
     with flow.hub.db._lock:
         assert (
             flow.hub.db._conn.execute("SELECT count(*) FROM machine_pairing_steps").fetchone()[0]
@@ -1224,7 +1239,7 @@ def test_a_probe_only_asks_whether_the_setup_is_still_open(flow):
     assert flow.check(made, report={"step": "probe"})[0] == 400
     flow.close(made)
     status, result = flow.report(credentials, {"step": "probe"})
-    assert status != 200 or result.get("ok") is not True, "a closed setup does not answer ok"
+    assert (status, result) == (401, {"error": "unauthorized"}), "closing revoked the credential"
 
 
 def test_a_refused_check_is_in_the_audit_trail_and_a_wrong_typed_cause_is_a_bad_request(flow):

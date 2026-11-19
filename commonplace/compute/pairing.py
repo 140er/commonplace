@@ -815,9 +815,10 @@ def _fields(body, allowed, required):
         raise refuse(None, "unknown_field")
     for key in sorted(required - set(body)):
         raise refuse(key, "required")
-    request = body.get("request_id")
-    if request is not None and (not isinstance(request, str) or not REQUEST_ID.fullmatch(request)):
-        raise refuse("request_id", "invalid")
+    if "request_id" in body:
+        request = body["request_id"]
+        if not isinstance(request, str) or not REQUEST_ID.fullmatch(request):
+            raise refuse("request_id", "invalid")
 
 
 def accept(db, principal, pairing_id, body):

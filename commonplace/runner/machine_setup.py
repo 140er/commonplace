@@ -276,6 +276,12 @@ def prerequisites(probe):
 
 
 AGAIN = "Open Compute in the app and choose Set up again."
+# The code is spent and this machine holds no credential, so the app cannot be told: it shows the setup as not
+# finished after 15 minutes, and only then offers Set up again.
+SPENT_AGAIN = (
+    "The app cannot be told about this. After 15 minutes Compute shows this setup as not finished;",
+    "then open Compute in the app and choose Set up again.",
+)
 
 
 def _phase(installer):
@@ -374,13 +380,13 @@ def _reason_lines(exc, lines, code):
     return from_installer + (["Reason: " + reason] if reason else [])
 
 
-def _earlier_alive(home, hub):
+def _earlier_alive(home, envelope, hub):
     """Is the installation here still open on the site? True, False, or None when the site cannot say.
 
     No credential means it never connected: nothing healthy to protect. A closed or cancelled setup answers
     closed (or its credential no longer works); an open one answers ok. The probe writes nothing.
     """
-    token = _token(home)
+    token = _token(home, envelope)
     if not token:
         return False
     try:
@@ -428,9 +434,17 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     try:
         intent, installer = build()
         if _other_installation(home, envelope):
+            other = _manifest_hub(home)
+            if other is not None and other != str(envelope["hub"]).rstrip("/"):
+                # Another site's machine: its credential is never sent here and nothing of it is removed from here.
+                out(f"This machine already has a runner set up for another site ({other}).")
+                out(
+                    "Nothing was changed. Remove that machine under Compute on that site, then run the command again."
+                )
+                return 1
             # Only what Set up again cancelled may be removed: ask the site about the earlier setup first. A healthy
             # approved runner of another pairing is never uninstalled behind its owner's back.
-            alive = _earlier_alive(home, hub)
+            alive = _earlier_alive(home, envelope, hub)
             if alive is None:
                 out(
                     "This machine could not reach the site to check the earlier setup on this account."
@@ -453,8 +467,8 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
             )  # a fresh one: the old object still remembers what it removed
         installer.install(intent, accepted=True, code_source=lambda: code)
     except Exception as exc:
-        return _failed(exc, installer, home, hub, out, ask, lines, code)
-    token = _token(home)
+        return _failed(exc, installer, home, hub, out, ask, lines, code, envelope)
+    token = _token(home, envelope)
     try:
         state = installer.host.state()
         running = bool(state["enabled"] and state["active"])
@@ -499,13 +513,13 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     return 0
 
 
-def _failed(exc, installer, home, hub, out, ask, lines, code):
+def _failed(exc, installer, home, hub, out, ask, lines, code, envelope):
     """Say what happened and why, tell the app the step it reached, and give the one next step."""
     try:
         from commonplace.runner.installer import EnrollmentRefused
     except ImportError:  # pragma: no cover - the program only gets here with the runner program
         EnrollmentRefused = ()
-    phase, token = _phase(installer), _token(home)
+    phase, token = _phase(installer), _token(home, envelope)
     if isinstance(exc, EnrollmentRefused):
         # The site answered and said no: ask it why, in the app's own words, instead of calling it a lost connection.
         answer = ask()
@@ -539,7 +553,11 @@ def _failed(exc, installer, home, hub, out, ask, lines, code):
         out("The one-time code was used, but this machine could not save what it needs.")
     for line in why:
         out(line)
-    out(AGAIN)
+    if spent:
+        for line in SPENT_AGAIN:
+            out(line)
+    else:
+        out(AGAIN)
     return 1
 
 
@@ -570,7 +588,19 @@ def _other_installation(home, envelope):
     return not _resumable(home, envelope)
 
 
-def _token(home):
+def _manifest_hub(home):
+    """The site the installation here was made for, or None when there is no readable manifest."""
+    try:
+        journal = json.loads((Path(home) / ".commonplace-runner" / "manifest.json").read_text())
+        return str(journal["intent"]["hub_url"]).rstrip("/")
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _token(home, envelope):
+    """The machine's own credential, only for the site that issued it: never for another one."""
+    if _manifest_hub(home) != str(envelope["hub"]).rstrip("/"):
+        return None
     try:
         raw = (Path(home) / ".commonplace-runner" / "machine.token").read_text().strip()
     except OSError:

@@ -923,8 +923,13 @@ def test_a_write_that_fails_after_the_code_is_spent_says_so_and_the_page_is_neve
     status, lines = run_with(m)
     assert status == 1
     assert "The one-time code was used, but this machine could not save what it needs." in lines
-    assert machine_setup.AGAIN in lines and not any("continues" in line for line in lines)
+    assert not any("continues" in line for line in lines)
+    # The app cannot be told, and it shows Approve/Decline only until 15 minutes pass: the window must not send the
+    # person to a Set up again that is not there yet.
+    assert machine_setup.AGAIN not in lines
+    assert list(machine_setup.SPENT_AGAIN) == lines[-2:]
     item = view(m)
+    assert item["stalled"] is False and not item.get("retry")
     # Nothing could be reported (the machine holds no credential) and the app says nothing false.
     assert item["state"] == "connected"
     assert [s["state"] for s in item["steps"]][1:] == ["pending"] * 3, (
@@ -944,6 +949,21 @@ def test_a_refused_exchange_is_not_called_a_lost_connection(machine):
     assert "could not reach" not in text and "delivery unavailable" not in text
     assert "The site did not accept the code." in lines and machine_setup.AGAIN in lines
     assert view(m)["state"] == "waiting", "a refusal reports nothing as a failed step"
+
+
+def test_a_site_error_at_the_exchange_is_unavailable_not_a_refused_code(machine):
+    import urllib.error
+
+    m = machine
+    broken = urllib.error.HTTPError("u", 503, "Unavailable", {}, io.BytesIO(b"{}"))
+    status, lines = run_with(m, production_transport(broken))
+    assert status == 1
+    assert "The site did not accept the code." not in lines
+    item = view(m)
+    assert item["state"] == "failed" and item["cause"]["code"] == "cannot_reach_hub"
+    assert m.hub.check(
+        {"workspace_id": m.owner.workspace_id, "pairing_id": m.item["id"], "code": m.setup["code"]}
+    )["usable"], "the code was never spent"
 
 
 def test_a_code_that_expired_between_the_check_and_the_exchange_says_expired(machine, monkeypatch):
@@ -1175,3 +1195,58 @@ def test_a_server_error_is_no_answer_and_a_local_failure_is_still_said_when_the_
     assert "Python 3.10 or later is required." in lines, (
         "the machine's own problem is said even when the site is silent"
     )
+
+
+def copy_setup_for_site(setup, origin):
+    """The same command, but for another site: the envelope names that site."""
+    envelope = machine_setup.parse_envelope(setup["envelope"]) | {"hub": origin}
+    raw = base64.urlsafe_b64encode(json.dumps(envelope, separators=(",", ":")).encode())
+    return setup | {"envelope": raw.decode().rstrip("=")}
+
+
+def test_a_command_for_another_site_never_sends_the_old_token_and_changes_nothing(machine):
+    m = machine
+    assert run_with(m)[0] == 0
+    token = (m.home / ".commonplace-runner" / "machine.token").read_text().strip()
+    before = {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()}
+    units = list(m.host.__dict__.items())
+    _, new_item, new_setup = pairing.create(
+        m.db,
+        None,
+        m.owner,
+        {
+            "request_id": "req-other",
+            "kind": "runner",
+            "label": "other-box",
+            "projects": ["demo"],
+            "topics": ["worker"],
+            "wings": ["shared"],
+        },
+    )
+    second = copy_setup_for_site(new_setup, "https://other-site.example")
+    m.item = new_item
+    sent, real = [], m.hub
+
+    class Watching:
+        def check(self, body):
+            sent.append(("check", None, body))
+            return real.check(body)
+
+        def status(self, token_, body):
+            sent.append(("status", token_, body))
+            return real.status(token_, body)
+
+    m.hub = Watching()
+    m.setup = second
+    status, lines = run_with(m)
+    m.hub = real
+    assert status == 1
+    assert not [row for row in sent if row[1] == token], (
+        "the old credential went to a different site"
+    )
+    assert any("another site" in line and HUB in line for line in lines), lines
+    assert "Nothing was changed." in " ".join(lines)
+    assert not any("Removing the earlier" in line for line in lines)
+    assert {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()} == before
+    assert list(m.host.__dict__.items()) == units
+    assert token not in "\n".join(lines)
