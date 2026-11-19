@@ -1,0 +1,4 @@
+- **Owns:** Classification of `machine_pairings` (workspace-scoped, child of `runner_enrollments`) and `machine_pairing_steps` (child of a pairing) for export and deletion.
+- **Promises:** A workspace purge removes pairings and their reported steps before the enrollments they point at; neither table holds a code, key or secret.
+- **How it fails:** An unclassified control table fails the account-table guard.
+- **Tests:** `tests/test_compute_pairing.py` (classification) and `tests/test_commonplace_account_tables.py`.

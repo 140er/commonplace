@@ -26,6 +26,8 @@ PIN_PUBLIC = {
     ("POST", "/api/runner-enrollment/exchange"),
     # Lost-response recovery authenticates a single-use challenge with the bound key.
     ("POST", "/api/runner-enrollment/recover"),
+    # Pairing check: the pairing id and one-time code are the only credential.
+    ("POST", "/api/runner-pairing/check"),
     ("POST", "/app/auth/"),
     ("POST", "/app/auth/email"),
     ("POST", "/app/auth/email/verify"),

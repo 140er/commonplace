@@ -88,6 +88,8 @@ RULES = {
     "ingest_cadence": Rule(user=("account_id",)),
     "ingest_requests": Rule(user=("account_id",), connection=_C),
     "login_links": Rule(user=_U),
+    "machine_pairing_steps": Rule(parent=("pairing_id", "machine_pairings", "id")),
+    "machine_pairings": Rule(workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")),
     "memberships": Rule(user=_U, workspace=_W),
     "meta": Rule(),
     "oauth_clients": Rule(),

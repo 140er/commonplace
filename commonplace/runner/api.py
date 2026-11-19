@@ -23,6 +23,9 @@ def install(gateway):
     trust.configure(gateway)
     registry.ensure(gateway.db)
     enrollment_api.install(gateway)
+    from commonplace.compute import pairing_routes
+
+    pairing_routes.install(gateway)
     install_receipts.ensure(gateway.db)
     chat_relay.ensure_schema(gateway.db)
     owner_api.register(gateway)

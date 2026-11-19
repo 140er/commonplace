@@ -183,8 +183,14 @@ def _overview(h, store, principal, parts, auth):
     return overview_routes.dispatch(h, store, principal, parts, auth, _workspace_body)
 
 
+def _pairings(h, store, principal, parts, auth):
+    from . import pairing_routes
+
+    return pairing_routes.dispatch(h, store, principal, parts, auth, _workspace_body)
+
+
 # Route families that share the cloud workspace rules (members read, a reason on every refusal).
-_FAMILIES = {"workspaces": _workspaces, "overview": _overview}
+_FAMILIES = {"workspaces": _workspaces, "overview": _overview, "pairings": _pairings}
 
 
 def _with_reason(payload, workspace_route):
@@ -199,6 +205,7 @@ def _workspace_route(path):
     return [unquote(item) for item in path.split("/") if item][:3] in (
         ["api", "compute", "workspaces"],
         ["api", "compute", "overview"],
+        ["api", "compute", "pairings"],
     )
 
 
