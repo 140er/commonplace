@@ -161,7 +161,12 @@ def freeze(monkeypatch, **offset):
 
 
 def clock(monkeypatch):
-    """Move time from one fixed start: ``at(seconds=...)`` sets the clock to start + that."""
+    """Move time from one fixed start: ``at(seconds=...)`` sets the clock to start + that.
+
+    The clock stands still from the moment the fixture runs. If it kept running until the first ``at``, whatever
+    the test did first (a slow machine can take seconds over a few requests) would be older than the offset
+    assumes, and a rule at a 15-minute boundary would read one second short.
+    """
     start = control_db._now()
 
     def at(**offset):
@@ -169,7 +174,21 @@ def clock(monkeypatch):
         monkeypatch.setattr(control_db, "_now", lambda: now)
         return now
 
+    at()
     return at
+
+
+def test_the_clock_fixture_stands_still_until_it_is_moved(monkeypatch):
+    # A slow machine: every look at the clock is a second later than the last.
+    begin = control_db._now()
+    ticking = iter([begin + timedelta(seconds=n) for n in range(10_000)])
+    monkeypatch.setattr(control_db, "_now", lambda: next(ticking))
+    at = clock(monkeypatch)
+    first = control_db._now()
+    assert control_db._now() == first
+    assert at(seconds=pairing.OFFLINE_SECONDS + 1) - first == timedelta(
+        seconds=pairing.OFFLINE_SECONDS + 1
+    ), "the offset is from where the test started, not from a later reading"
 
 
 # ---- creating: the code lifecycle -----------------------------------------------------------
