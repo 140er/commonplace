@@ -222,9 +222,9 @@ def _assert_ov_phone(page):
     _assert_fits(page)
 
 
-def _open(browser, fx, ui, size, cookie=None, viewport=None):
+def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=False):
     width, height = viewport or SIZES[size]
-    phone = width < 700
+    phone = width < 700 or touch
     context = browser.new_context(
         viewport={"width": width, "height": height}, has_touch=phone, is_mobile=phone
     )
@@ -250,13 +250,15 @@ def _visit(page, fx, ui):
     page.locator("#compute-overview").wait_for()
 
 
-def _run(fx, ui, size, body, cookie=None, viewport=None, populate=True, expect_errors=False):
+def _run(
+    fx, ui, size, body, cookie=None, viewport=None, populate=True, expect_errors=False, touch=False
+):
     if populate and not hasattr(fx, "env"):
         fx.names = _populate(fx)
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
-            context, page, errors = _open(browser, fx, ui, size, cookie, viewport)
+            context, page, errors = _open(browser, fx, ui, size, cookie, viewport, touch)
             _visit(page, fx, ui)
             body(page, f"{ui}-{size}", context)
             if not expect_errors:
@@ -509,6 +511,7 @@ def test_a_member_reads_cloud_workspaces_only_and_is_offered_no_action(served, u
         expect(page.locator(ROOT)).to_contain_text(
             "Machines and runners are visible to the workspace owner."
         )
+        _shot(page, f"{label}-29-member-list")
         text = page.locator(".compute").inner_text()
         for hidden in (
             "build-runner",
@@ -719,6 +722,25 @@ def test_the_page_shows_a_loading_state_with_the_real_words_while_the_list_loads
         finally:
             browser.close()
     assert errors == []
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize(
+    "viewport,touch,name", [((320, 568), True, "320"), ((768, 1024), True, "768-touch")]
+)
+def test_the_overview_fits_320px_and_a_touch_tablet(served, ui, viewport, touch, name):
+    fx = served
+
+    def body(page, label, context):
+        _go(page, fx, ui)
+        _shot(page, f"{ui}-{name}-80-list")
+        _assert_ov_phone(page)
+        page.get_by_role("button", name="Status and activity of edge-runner").click()
+        _shot(page, f"{ui}-{name}-81-detail")
+        _assert_ov_phone(page)
+        page.get_by_role("button", name="Close").click()
+
+    _run(fx, ui, "phone", body, viewport=viewport, touch=touch)
 
 
 def _count_reads(page):
