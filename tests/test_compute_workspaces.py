@@ -1177,3 +1177,77 @@ def test_listing_runs_the_same_number_of_statements_however_many_records_there_a
     seen.clear()
     api.request(path=f"{BASE}/{result['workspaces'][0]['id']}")
     assert len([text for text in seen if "cloud_workspaces" in text and "SELECT" in text]) == 1
+
+
+def _legacy_duplicate(api):
+    """Two records whose names fold to one key, as a store from before the NFKC key can hold them."""
+    first = create(api, name="Box 1")
+    second = create(api, name="Other", image="ghcr.io/a/b:1")
+    with api.env.store._journal() as conn:
+        conn.execute("DROP INDEX cloud_workspaces_name_key")
+        conn.execute(
+            "UPDATE cloud_workspaces SET name='Box ①',name_key='box ①' WHERE id=?", (second["id"],)
+        )
+        conn.execute("UPDATE cloud_workspaces SET created_at=1 WHERE id=?", (first["id"],))
+        conn.execute("UPDATE cloud_workspaces SET created_at=2 WHERE id=?", (second["id"],))
+        conn.execute("PRAGMA user_version=2")
+        workspaces.schema(conn)
+    return first, second
+
+
+def test_renaming_into_the_name_of_a_legacy_suffixed_duplicate_is_name_taken_not_a_server_error(
+    api,
+):
+    first, second = _legacy_duplicate(api)
+    third = create(api, name="Third", image="ghcr.io/a/c:1")
+    # The record holding the plain key moves away, so only the suffixed duplicate still holds the name.
+    assert (
+        api.request("POST", f"{BASE}/{first['id']}", {"expected_revision": 1, "name": "Moved"})[0]
+        == 200
+    )
+    for taken in ("Box ①", "BOX 1", "Box 1"):
+        status, result = api.request(
+            "POST", f"{BASE}/{third['id']}", {"expected_revision": 1, "name": taken}
+        )
+        assert (status, result["reason"], result["field"]) == (409, "name_taken", "name"), taken
+    shown = api.request(path=f"{BASE}/{third['id']}")[1]["workspace"]
+    assert shown["name"] == "Third" and shown["version"] == 1
+
+
+def test_a_stored_image_reference_that_cannot_be_read_does_not_fail_the_whole_list(api):
+    good = create(api, name="Good")
+    bad = create(api, name="Bad", image="ghcr.io/a/b:1")
+    with api.env.store._journal() as conn:
+        conn.execute(
+            "UPDATE cloud_workspaces SET image_reference='ftp://broken host' WHERE id=?",
+            (bad["id"],),
+        )
+    status, result = api.request(path=BASE)
+    assert status == 200, result
+    rows = {row["id"]: row for row in result["workspaces"]}
+    assert set(rows) == {good["id"], bad["id"]}
+    assert rows[good["id"]]["image_unreadable"] is False
+    broken = rows[bad["id"]]
+    assert broken["image_unreadable"] is True
+    assert broken["image"] == "" and broken["image_registry"] is None
+    assert broken["image_tag"] is None and broken["image_digest"] is None
+    assert broken["image_pinned"] is False
+    # The same row on its own page and for a member: still a fixed projection, never an error.
+    assert api.request(path=f"{BASE}/{bad['id']}")[0] == 200
+    assert member_api(api)("GET", BASE)[0] == 200
+
+
+def test_the_control_journal_only_turns_protocol_denials_into_a_store_error(api):
+    from commonplace.compute.control import StoreError
+
+    with pytest.raises(TypeError):
+        with api.env.store._journal():
+            raise TypeError("a bug in the caller")
+    with pytest.raises(OverflowError):
+        with api.env.store._journal():
+            raise OverflowError("a bug in the caller")
+    from commonplace.compute.protocol import ProtocolDenied
+
+    with pytest.raises(StoreError):
+        with api.env.store._journal():
+            raise ProtocolDenied("bad")

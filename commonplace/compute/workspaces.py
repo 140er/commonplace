@@ -16,6 +16,7 @@ import ipaddress
 import json
 import math
 import re
+import sqlite3
 import unicodedata
 import uuid
 
@@ -488,14 +489,22 @@ def status_of(row):
 def public(row, *, manage):
     """Explicit projection. A member sees neither a machine name nor an id, and nobody gets a
     registry login reference back (none can be stored yet)."""
-    parsed = parse_image(row["image_reference"], strict=False)
+    try:
+        parsed = parse_image(row["image_reference"], strict=False)
+        unreadable = False
+    except StoreError:
+        # One record that cannot be read must not turn the whole list into an error: it is shown as a
+        # fixed state of its own (no image, no parts) and the rest of the list stays.
+        parsed = {"registry": None, "tag": None, "digest": None, "pinned": False}
+        unreadable = True
     status, reason = status_of(row)
     started = has_started(row)
     return {
         "id": row["id"],
         "name": row["name"],
         "image_source": row["image_source"],
-        "image": row["image_reference"],
+        "image": "" if unreadable else row["image_reference"],
+        "image_unreadable": unreadable,
         "image_registry": parsed["registry"],
         "image_tag": parsed["tag"],
         "image_digest": parsed["digest"],
@@ -560,11 +569,12 @@ def get_workspace(store, principal, workspace_id, *, session_hash):
 
 
 def _taken(conn, key, except_id=""):
-    found = conn.execute(
-        "SELECT 1 FROM cloud_workspaces WHERE name_key=? AND id<>?", (key, except_id)
-    ).fetchone()
-    if found is not None:
-        raise _conflict("name_taken", "name")
+    """Refuse a name another record already has. The stored key of a record that was kept apart by the
+    migration carries its id (``key\\x00id``), so every other record's name is folded again here: a
+    duplicate is a duplicate whichever key it was stored under."""
+    for row in conn.execute("SELECT name,name_key FROM cloud_workspaces WHERE id<>?", (except_id,)):
+        if key in (row["name_key"], name_key(row["name"])):
+            raise _conflict("name_taken", "name")
 
 
 def create_workspace(
@@ -719,30 +729,34 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
         if all(values[key] == row[key] for key in stored):
             return public(row, manage=True)
         revision = row["revision"] + (any(values[key] != row[key] for key in runtime))
-        conn.execute(
-            "UPDATE cloud_workspaces SET name=?,name_key=?,node_id=?,image_source=?,"
-            "image_reference=?,private_registry=?,registry_credential_id=?,"
-            "registry_credential_version=?,cpu_millicores=?,memory_mib=?,storage_gib=?,network=?,"
-            "revision=?,version=?,updated_at=? WHERE id=?",
-            (
-                values["name"],
-                values["name_key"] or name_key(values["name"]),
-                values["node_id"],
-                values["image_source"],
-                values["image_reference"],
-                values["private_registry"],
-                values["registry_credential_id"],
-                values["registry_credential_version"],
-                values["cpu_millicores"],
-                values["memory_mib"],
-                values["storage_gib"],
-                values["network"],
-                revision,
-                row["version"] + 1,
-                store._now(),
-                workspace_id,
-            ),
-        )
+        try:
+            conn.execute(
+                "UPDATE cloud_workspaces SET name=?,name_key=?,node_id=?,image_source=?,"
+                "image_reference=?,private_registry=?,registry_credential_id=?,"
+                "registry_credential_version=?,cpu_millicores=?,memory_mib=?,storage_gib=?,network=?,"
+                "revision=?,version=?,updated_at=? WHERE id=?",
+                (
+                    values["name"],
+                    values["name_key"] or name_key(values["name"]),
+                    values["node_id"],
+                    values["image_source"],
+                    values["image_reference"],
+                    values["private_registry"],
+                    values["registry_credential_id"],
+                    values["registry_credential_version"],
+                    values["cpu_millicores"],
+                    values["memory_mib"],
+                    values["storage_gib"],
+                    values["network"],
+                    revision,
+                    row["version"] + 1,
+                    store._now(),
+                    workspace_id,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            # The name column is unique on its own; a collision the key check missed is still name_taken.
+            raise _conflict("name_taken", "name") from None
         store._audit(conn, current, workspace_id, "workspace.updated")
         return public(_row(conn, workspace_id), manage=True)
 

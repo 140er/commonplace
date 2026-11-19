@@ -376,7 +376,8 @@ class Store:
                         conn.commit()
                 finally:
                     conn.close()
-        except (ProtocolDenied, ScopeDenied, TypeError, OverflowError):
+        except (ProtocolDenied, ScopeDenied):
+            # Only the protocol's own refusals; a TypeError or OverflowError is a bug and must show as one.
             raise StoreError() from None
 
     def _authority(self, principal, board, task_number=None):
