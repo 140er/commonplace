@@ -52,6 +52,8 @@ export const REASONS = {
     scheme: () => "Leave out https:// . An image address is just the name, like ghcr.io/acme/tools:1.2.",
     registry: () => "The registry address before the first / is not valid. Example: ghcr.io/acme/tools:1.2.",
     registry_private: () => "That registry address is on a local or private network. Use an image from a public registry such as ghcr.io.",
+    registry_ip: () => "Use the registry's name, not an IP address. Example: ghcr.io/acme/tools:1.2.",
+    user_info: () => "Remove the login (the part before @). Images must be public, and a login must never be typed into an address. Example: ghcr.io/acme/tools:1.2.",
     registry_no_path: () => "Add the image name after the registry address, like ghcr.io/acme/tools:1.2.",
     name: () => "The image name must be lowercase letters and digits separated by . _ or -.",
     tag: () => "The version after the colon is not valid. Example: ubuntu:24.04.",
@@ -91,9 +93,23 @@ const TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const SAFE = /^[A-Za-z0-9._:/@-]+$/;
 const NUMERIC_LABEL = /^(?:0x[0-9a-f]+|[0-9]+)$/;
-const LOCAL_SUFFIX = /\.(?:local|localhost|internal|lan|home|corp|intranet|private|home\.arpa)$/;
-// A host with no dot, a local suffix or an IP address in any notation names a private network.
-const privateHost = host => { const name = host.split(":")[0]; return !name.includes(".") || LOCAL_SUFFIX.test(name) || NUMERIC_LABEL.test(name.split(".").pop()); };
+const LOCAL_SUFFIX = /\.(?:local|localhost|internal|lan|home|corp|intranet|private|home\.arpa|localdomain|svc|ts\.net|consul)$/;
+const LOCAL_LABEL = /^(?:localhost|localdomain)[0-9]*$/;
+const DOTTED_QUAD = /^(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}$/;
+// Not public: "this" network, private, shared, loopback, link-local, protocol and documentation blocks, benchmarking, multicast and reserved.
+const NON_PUBLIC = [[0, 8], [10, 8], [[100, 64], 10], [127, 8], [[169, 254], 16], [[172, 16], 12], [[192, 0, 0], 24], [[192, 0, 2], 24], [[192, 168], 16], [[198, 18], 15], [[198, 51, 100], 24], [[203, 0, 113], 24], [224, 3]];
+const quad = parts => parts.reduce((sum, part) => sum * 256 + part, 0) * 256 ** (4 - parts.length);
+// "registry_private" for a local or private name or address, "registry_ip" for a public IPv4 address, otherwise "".
+// Any other numeric notation (0x7f.0.0.1, 8.8.8) could hide a private address and counts as private.
+function hostRefusal(host) {
+  const name = host.split(":")[0];
+  if (!name.includes(".") || LOCAL_SUFFIX.test(name) || name.split(".").some(label => LOCAL_LABEL.test(label))) return "registry_private";
+  if (!NUMERIC_LABEL.test(name.split(".").pop())) return "";
+  const octets = name.split(".").map(Number);
+  if (!DOTTED_QUAD.test(name) || octets.some(octet => octet > 255)) return "registry_private";
+  const address = quad(octets);
+  return NON_PUBLIC.some(([base, bits]) => Math.floor(address / 2 ** (32 - bits)) === Math.floor(quad([].concat(base)) / 2 ** (32 - bits))) ? "registry_private" : "registry_ip";
+}
 
 /** Same grammar as the server: returns { reason } when refused, or the parts of a valid reference. */
 export function parseImage(value) {
@@ -104,6 +120,7 @@ export function parseImage(value) {
   const at = value.indexOf("@");
   let name = at < 0 ? value : value.slice(0, at);
   const digest = at < 0 ? null : value.slice(at + 1);
+  if (digest !== null && (digest.includes("/") || digest.includes("."))) return { reason: "user_info" };
   if (digest !== null && !DIGEST.test(digest)) return { reason: "digest" };
   if (name.includes("@")) return { reason: "characters" };
   let tag = null;
@@ -114,7 +131,8 @@ export function parseImage(value) {
   if (parts.length > 1 && (/[.:]/.test(parts[0]) || parts[0] === "localhost")) {
     const match = HOST.exec(parts[0]);
     if (!match || (match[1] !== undefined && !(Number(match[1]) >= 1 && Number(match[1]) <= 65535))) return { reason: "registry" };
-    if (privateHost(parts[0])) return { reason: "registry_private" };
+    const refusal = hostRefusal(parts[0]);
+    if (refusal) return { reason: refusal };
     registry = parts[0]; parts = parts.slice(1);
   }
   if (!parts.length || parts.some(part => !COMPONENT.test(part))) return { reason: "name" };
@@ -123,7 +141,7 @@ export function parseImage(value) {
 
 // Names: NFC, counted in code points, nothing hidden or direction-changing (control and format characters,
 // Hangul and braille fillers, combining joiner and variation selectors, any space but U+0020), a letter or digit.
-const BAD_NAME = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]|[ᅟᅠ឴឵⠀ㅤﾠ͏᠋-᠍︀-️\u{E0100}-\u{E01EF}]|(?! )\p{Zs}/u;
+const BAD_NAME = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]|[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180f\ufe00-\ufe0f\u{E0100}-\u{E01EF}]|(?! )\p{Zs}/u;
 const nameOf = value => String(value ?? "").normalize("NFC");
 
 export const blankValues = (options, row = null) => row ? {
