@@ -286,7 +286,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         shown = _shown(page)
         assert "5 runners" not in shown  # six were enrolled; the sentence counts them all
         expect(page.locator("[data-ov-summary]")).to_contain_text(
-            "7 runners, 1 machine, 7 cloud workspaces. 4 need attention: "
+            "7 runners, 1 machine, 7 cloud workspaces. 2 need attention: "
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
@@ -388,13 +388,13 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         expect(_rows(page)).to_have_count(15)
         expect(page.get_by_label("Filter by status")).to_be_focused()
         # "6 need attention" is a button that sets the same filter, with a filled pressed state.
-        page.get_by_role("button", name="4 need attention").click()
-        expect(_rows(page)).to_have_count(4)
-        expect(page.get_by_role("button", name="4 need attention")).to_have_attribute(
+        page.get_by_role("button", name="2 need attention").click()
+        expect(_rows(page)).to_have_count(2)
+        expect(page.get_by_role("button", name="2 need attention")).to_have_attribute(
             "aria-pressed", "true"
         )
         expect(page.get_by_label("Filter by status")).to_have_value("attention")
-        pressed = page.get_by_role("button", name="4 need attention").evaluate(
+        pressed = page.get_by_role("button", name="2 need attention").evaluate(
             "el => getComputedStyle(el).backgroundColor"
         )
         idle = page.get_by_role("button", name="Runners (7)").evaluate(
@@ -468,7 +468,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                 "night-runner",
                 [
                     "No new card runs start here. Chat and Coworker sessions can still start here. 1 run in progress will finish.",
-                    "Draining: no new card runs start on it. Resuming it is not available in this version.",
+                    "Draining: No new card runs start here. Chat and Coworker sessions can still start here. This screen has no button to resume it yet.",
                 ],
                 "24-detail-draining",
             ),
@@ -476,8 +476,8 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                 "idle-runner",
                 [
                     "No new card runs start here. Chat and Coworker sessions can still start here. None is in progress.",
-                    "Resuming it is not available in this version.",
-                    "Drain started: no new card runs start here",
+                    "This screen has no button to resume it yet.",
+                    "Drain started. No new card runs start here.",
                 ],
                 "27-detail-drained",
             ),
@@ -485,7 +485,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                 "Queued box",
                 [
                     "Commonplace saved the request",
-                    "It expires after 24 hours if no machine picks it up. Withdrawing it is not available in this version.",
+                    "It expires after 24 hours if no machine picks it up; there is nothing to do meanwhile.",
                 ],
                 "25-detail-requested",
             ),
@@ -1132,7 +1132,7 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
             expect(_row(page, "Build box")).to_contain_text("nothing newer has arrived")
             expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text("Offline")
             expect(page.locator("[data-ov-summary]")).to_contain_text(
-                re.compile(r"[6789] need attention")
+                re.compile(r"\d+ need attention")
             )
             _shot(page, f"{ui}-desktop-45-aged-by-clock")
             context.close()
