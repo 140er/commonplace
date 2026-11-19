@@ -4,9 +4,9 @@ import { escape as e } from "./api.js";
 // plain words, when Commonplace last heard from it, usage where something reported it, and what blocks new work.
 // One shared module serves the Classic screen and the Deck Management tab: createCompute (compute.js) embeds
 // html() and forwards clicks, changes and keys. This slice only reads. Every sentence comes from the server, which
-// never says "running" or "online" without a fresh report; the clock only ever makes a claim older, never newer:
-// "Last seen" is recomputed from the report time, a running workspace with no report for 600 s reads Unknown and a
-// runner past its thresholds reads Slow or Offline, and after a failed refresh every row says "as of HH:MM:SS".
+// never says "running" or "online" without a fresh report. The browser never decides a status: every row keeps the status
+// of the last read exactly as the server said it, and when that read is old (a refresh failed, or the tab was paused or
+// stalled) each row says "Last known: <status>" and "As of HH:MM:SS", and an age reads "3 minutes before HH:MM:SS".
 // A refresh repaints the rows (and the filter counts when they changed) and nothing else: an open detail keeps its
 // nodes, an open status list is not closed under the pointer and typing in another section is never disturbed.
 
@@ -20,8 +20,7 @@ const DETAIL_ERROR = "The details could not be loaded.";
 const FIRST_RUN = "No machine is set up yet. You can still create a cloud workspace below; it waits for a machine.";
 const MORE_THAN = 5; // above this many items the overview starts folded to its summary, so what follows it is within reach
 const DEFAULT_REFRESH = 30;
-const AGE_PENDING = "…"; // what a row's health line says until refreshAges fills in the age
-const UNKNOWN_STEP = "Nothing to do yet; this clears when the machine reports again."
+const STALE_AFTER_S = 90; // a read older than this (or three refresh intervals) with nothing newer is marked as old
 const CLOCK_SECONDS = 10;
 const NARROW = "(max-width: 699px)";
 // One short name per blocker code, so a row names what blocks new work instead of only counting it.
@@ -46,42 +45,26 @@ const timeOf = iso => {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 };
 
+// An age the server gave, said against the time of the read it came from: "3 minutes before 10:42:07".
+const beforeText = (seconds, at) => (seconds < 5 ? `at ${at}` : `${agoText(seconds).replace(" ago", "")} before ${at}`);
+
 /**
- * What to show for an item now. The server's words are kept; the clock may only make a claim older:
- * { status, health, seen, stale } where seen is the recomputed "Last seen ..." text and stale says the row is
- * marked "as of" because the last refresh failed. `clock` is { nowS, thresholds, failedAt } (all optional).
+ * What to show for an item. The status, health and every other fact are the server's, unchanged. When the read is old
+ * (``clock.staleAt`` is the time of that read, "HH:MM:SS") the row is marked "Last known: <status>" with an "As of" sentence,
+ * and the age of its last signal is said against that time instead of "ago". Nothing is recomputed from this browser's clock.
+ * Returns { status, health, seen, stale }.
  */
 export function viewOf(item, clock = {}) {
-  const { nowS = null, thresholds = {}, failedAt = "", pausedAt = "", drainScope = "", nextSteps = {} } = clock;
-  let status = item.status, health = item.health, blockers = item.health?.blockers || [];
+  const { staleAt = "", asOfS = null } = clock;
+  let status = item.status, seen = item.last_seen?.label || "";
   const last = item.last_seen;
-  let seen = last?.label || "", age = null;
-  const at = last ? epochOf(last.at) : null;
-  if (at !== null && nowS !== null) {
-    age = Math.max(0, nowS - at);
-    seen = `${last.prefix || "Last seen"} ${agoText(age)}${last.suffix || ""}`;
+  if (staleAt && last) {
+    const at = epochOf(last.at);
+    const age = Number.isFinite(last.age_s) ? last.age_s : at !== null && asOfS !== null ? Math.max(0, asOfS - at) : null;
+    if (age !== null) seen = `${last.prefix || "Last seen"} ${beforeText(age, staleAt)}${last.suffix || ""}`;
   }
-  let overridden = false;
-  if (age !== null) {
-    if (item.kind === "workspace" && ["running", "starting", "stopping"].includes(status.code) && age > (thresholds.report_stale_s || 600)) {
-      const word = status.label;
-      status = { code: "unknown", tone: "quiet", label: "Unknown", detail: `Its last report said ${word} ${agoText(age)} and nothing newer has arrived, so it may not be ${word.toLowerCase()} any more.`, next: UNKNOWN_STEP };
-      blockers = [...blockers, { code: "unknown", text: "Not known until the next report: its last report is too old to trust." }];
-      overridden = true;
-    } else if (item.kind === "runner" && ["online", "busy", "full", "draining", "drained", "slow"].includes(status.code)) {
-      const was = status.label, drain = item.draining ? ` It is also set to drain. ${drainScope || "No new card runs start here."}` : "";
-      if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.${drain}`, next: nextSteps.offline || status.next }; overridden = true; }
-      else if (status.code !== "slow" && age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: nextSteps.slow || status.next }; overridden = true; }
-    }
-  }
-  // Only Offline asks something of a person (it is something to check); Slow to report and Unknown only wait.
-  if (overridden) health = { ...health, state: status.code === "offline" ? "attention" : health.state, blockers };
-  // After a failed refresh every row says it is old, a row the clock aged included ("Last known: Offline", "As of 10:42:07:
-  // ..."); on a paused screen the rows the clock changed say so too, since the data they came from has not been read again.
-  const markedAt = failedAt || (overridden ? pausedAt : "");
-  const stale = Boolean(markedAt);
-  if (stale) status = { ...status, label: status.code === "unknown" ? status.label : `Last known: ${status.label}`, detail: `As of ${markedAt}: ${status.detail}` };
-  return { status, health, seen, stale };
+  if (staleAt) status = { ...status, plain: status.label, label: status.code === "unknown" ? status.label : `Last known: ${status.label}`, detail: `As of ${staleAt}: ${status.detail}` };
+  return { status, health: item.health, seen, stale: Boolean(staleAt) };
 }
 
 const withView = (item, clock) => { const v = viewOf(item, clock); return { ...item, status: v.status, health: v.health, seenText: v.seen, stale: v.stale }; };
@@ -99,7 +82,7 @@ export function filterCounts(items) {
   for (const item of items) {
     kinds[item.kind] = (kinds[item.kind] || 0) + 1;
     const code = item.status.code;
-    statuses[code] ||= { label: item.status.label, count: 0 };
+    statuses[code] ||= { label: item.status.plain || item.status.label, count: 0 };
     statuses[code].count++;
     if (item.health?.state === "attention") attention++;
   }
@@ -179,11 +162,12 @@ export function detailBody(item, { loading = false, failed = false, manage = fal
   const blocks = blockers.length ? `<ul class="compute-ov-list" role="list">${blockers.map(b => `<li>${e(b.text)}</li>`).join("")}</ul>` : item.kind === "machine" ? "Nothing known to block new work (not checked live)." : "Nothing is blocking new work.";
   const issues = (v.health?.issues || []).length ? `<ul class="compute-ov-list" role="list">${v.health.issues.map(text => `<li>${e(text)}</li>`).join("")}</ul>` : "";
   const activity = (item.activity || []).length
-    ? `<ul class="compute-ov-list compute-ov-activity" role="list">${item.activity.map(a => `<li>${e(a.text)}${a.age_s == null ? "" : ` <span class="compute-quiet">(${e(agoText(a.age_s))})</span>`}</li>`).join("")}</ul>`
+    ? `<ul class="compute-ov-list compute-ov-activity" role="list">${item.activity.map(a => `<li>${e(a.text)}${a.age_s == null ? "" : ` <span class="compute-quiet">(${e(clock?.staleAt ? beforeText(a.age_s, clock.staleAt) : agoText(a.age_s))})</span>`}</li>`).join("")}</ul>`
     : '<p class="compute-quiet">No recent activity.</p>';
   const change = manage && item.kind === "workspace" ? '<div class="compute-actions"><button type="button" class="btn" data-ov-action="settings">Change settings in Cloud workspaces</button></div>' : "";
   const [seenLabel, seenValue] = seenRow(item, v.seen);
   return `<p class="compute-ov-sentence">${e(v.status.detail)}</p>`
+    + (clock?.staleAt ? `<p class="compute-quiet" data-ov-asof>Everything here is as of ${e(clock.staleAt)}: an age such as "3 minutes ago" counts back from then, not from now.</p>` : "")
     + (v.status.next ? `<p class="compute-ov-next">Next step: ${e(v.status.next)}</p>` : "")
     + (failed ? `<p class="compute-error compute-ov-stale">${e(DETAIL_ERROR)} Showing what the list knew.</p>` : "")
     + `<h4 class="compute-ov-sub-h">Health</h4>${dl([[seenLabel, `<span data-ov-seen>${e(seenValue)}</span>`], ["Blocking new work", blocks], [v.health?.issue_label || "Needs a person", issues]])}`
@@ -201,25 +185,24 @@ export function detailBody(item, { loading = false, failed = false, manage = fal
 export function createOverview(ctx) {
   const timers = ctx.timers || globalThis;
   let forceFilters = false, filterShown = { kind: "all", status: "all" };
-  let data = null, loadError = "", loading = false, fetchedAt = 0, fetchedMono = 0, tries = 0, refreshFailed = false, failedSaid = false, paused = false, foldOpen = null;
+  let data = null, loadError = "", loading = false, fetchedMono = 0, tries = 0, refreshFailed = false, failedSaid = false, paused = false, foldOpen = null;
   let kind = "all", status = "all", detail = null, detailBusy = false, detailFailed = false, opener = "", timer = null, clockTimer = null, previous = null, seenSignature = "";
   // What each slot of the section holds right now, so a repaint writes only what changed.
-  let painted = {}, announced = "";
+  let painted = {}, announced = "", paintedStale = "";
   const find = id => data?.items?.find(item => item.id === id) || null;
   const root = () => ctx.host()?.querySelector?.("[data-ov-root]");
   const slot = name => ctx.host()?.querySelector?.(`[data-ov-slot="${name}"]`);
   const live = () => ctx.host()?.querySelector?.("[data-ov-announce]");
   const announce = text => { announced = text; const node = live(); if (node) node.textContent = text; };
   const interval = () => Math.max(15, Number(data?.refresh_seconds) || DEFAULT_REFRESH);
-  // "Now" is the SERVER's time at the last read plus the time that has passed here since: every timestamp on screen is the
-  // server's, so comparing it with this browser's own clock would make a skewed clock read a healthy runner as Offline
-  // (or a stale one as fresh). Only the elapsed time is taken from the browser.
-  // Elapsed time comes from the monotonic clock (``performance.now``), not the wall clock: a clock that is stepped (an
-  // NTP correction, a laptop waking, a person changing the time) between two reads must not move any age.
+  // Elapsed time comes from the monotonic clock (``performance.now``), not the wall clock: a clock that is stepped (an NTP
+  // correction, a laptop waking, a person changing the time) between two reads must not move anything. It only says how old the
+  // read is; no status, age or count on screen is recomputed from it. "As of" is the SERVER's time of the read, in local time.
   const mono = () => (typeof ctx.mono === "function" ? ctx.mono() : ctx.now());
   const sinceRead = () => Math.max(0, (mono() - fetchedMono) / 1000);
-  const serverNow = () => { const read = data ? epochOf(data.as_of) : null; return read === null ? null : read + sinceRead(); };
-  const clock = () => ({ nowS: serverNow(), thresholds: data?.thresholds || {}, failedAt: refreshFailed && data ? timeOf(data.as_of) : "", pausedAt: paused && data ? timeOf(data.as_of) : "", drainScope: data?.drain_scope || "", nextSteps: data?.next_steps || {} });
+  // The read is old when the last refresh failed, or nothing newer has arrived for three refresh intervals (a paused or stalled tab).
+  const staleAt = () => (data && (refreshFailed || sinceRead() > Math.max(STALE_AFTER_S, interval() * 3)) ? timeOf(data.as_of) : "");
+  const clock = () => ({ staleAt: staleAt(), asOfS: data ? epochOf(data.as_of) : null });
   const items = () => (data?.items || []).map(item => withView(item, clock()));
   const narrow = () => ctx.doc?.defaultView?.matchMedia?.(NARROW)?.matches === true;
   // Closed on a phone and above a handful of items (the summary names what needs attention); open for the person's own choice,
@@ -278,7 +261,8 @@ export function createOverview(ctx) {
     if (data === null) return loadError ? (loading ? "Trying again…" : "Overview not loaded.") : "Loading the overview…";
     const said = summaryText(items()) || (ctx.workspaceSignature?.() ? "The overview is catching up." : data.can_manage ? "Nothing here yet." : "No cloud workspaces yet.");
     // A closed fold must not read as current after a failed refresh.
-    return refreshFailed ? `${said} Could not refresh: data from ${timeOf(data.as_of)}.` : said;
+    const at = staleAt();
+    return at ? `${said} ${refreshFailed ? "Could not refresh: data" : "Not refreshed: data"} from ${at}.` : said;
   }
 
   function metaText() {
@@ -286,15 +270,22 @@ export function createOverview(ctx) {
     const as = epochOf(data.as_of);
     if (refreshFailed) return ""; // the alert above says it once (and the rows say "as of"); a second sentence is the same news
     const age = as === null ? "" : `Updated ${agoText(sinceRead())} (as of ${timeOf(data.as_of)}). `;
-    return paused ? `${age}Automatic updates are paused; statuses and ages keep counting from the last read. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
+    return paused ? `${age}Automatic updates are paused; statuses and ages stay as of that read. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
   }
 
-  const staleText = () => refreshFailed && data ? `Could not refresh. Showing the data from ${timeOf(data.as_of)}; it may be out of date.` : "";
+  const staleText = () => {
+    const at = staleAt();
+    if (!at) return "";
+    return refreshFailed ? `Could not refresh. Showing the data from ${at}; it may be out of date.`
+      : `${paused ? "Automatic updates are paused. " : ""}Showing the data from ${at}; it may be out of date.`;
+  };
   const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn compute-ov-pause" data-ov-action="pause">${paused ? "Resume automatic updates" : "Pause automatic updates"}</button></header>`
-    + '<p class="compute-plain">Every machine, runner and cloud workspace in this workspace. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
+    + (data?.can_manage === false
+      ? '<p class="compute-plain">The cloud workspaces in this workspace and what each is doing. “Last reported” is the last time its machine reported on it, not a live check.</p>'
+      : '<p class="compute-plain">Every machine, runner and cloud workspace in this workspace. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>');
 
   function panelKey() { return detail ? `${detail.kind}:${detail.id}` : ""; }
-  function slots(stable = true) {
+  function slots() {
     const all = data ? items() : [];
     const open = Boolean(detail) && data !== null;
     return {
@@ -303,18 +294,17 @@ export function createOverview(ctx) {
       notes: notesHTML(),
       panel: open ? "keep" : "",
       filters: data && all.length && !open ? filtersHTML(all) : "",
-      // The list's markup does not carry the ages (they move every second and are patched in place by refreshAges), so a
-      // refresh rewrites it only when a row, a status or a name changed: a focused row is not rebuilt under the person.
-      list: data && all.length && !open ? listHTML(stable ? all.map(item => ({ ...item, seenText: item.last_seen ? AGE_PENDING : undefined })) : all) : "",
+      // Everything in a row is from the last read, so a refresh rewrites the list only when a row, a status, a name or the
+      // "old read" marks changed: a focused row is not rebuilt under the person.
+      list: data && all.length && !open ? listHTML(all) : "",
     };
   }
   // The state sentence (loading, failed with "Try again", empty with what to do) sits outside the fold: on a phone a closed
   // fold must not hide the one thing the person can do. While there is nothing to fold the summary shows no disclosure marker.
   const plain = () => data === null || !data.items.length;
   function inner() {
-    // The DOM gets the real ages; what is remembered as painted is the stable markup, so the next refresh compares like with like.
-    const values = slots(false);
-    painted = { ...slots(true), panelKey: panelKey() };
+    const values = slots();
+    painted = { ...values, panelKey: panelKey() };
     const opts = { loading: detailBusy, failed: detailFailed, manage: data?.can_manage, clock: clock() };
     const panel = detail && data ? detailHTML(detail.item, opts) : "";
     if (detail && data) { painted.chip = chipHTML(viewOf(detail.item, opts.clock).status); painted.body = detailBody(detail.item, opts); }
@@ -356,7 +346,8 @@ export function createOverview(ctx) {
     return `<section class="compute-inventory compute-wide compute-ov" aria-labelledby="compute-overview" data-ov><div data-ov-top>${topHTML()}</div>`
       // The refresh state sits above the fold, so a closed fold (a phone) cannot hide a failed refresh.
       + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p>`
-      + `<p class="compute-error compute-ov-stale" role="alert" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
+      + `<p class="compute-error compute-ov-stale" role="${refreshFailed ? "alert" : "status"}" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
+      + `<button type="button" class="btn compute-ov-stale-retry" data-ov-action="refresh" data-ov-stale-retry${staleText() ? "" : " hidden"}>${refreshFailed ? "Try again" : "Refresh now"}</button>`
       + `<p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p>`
       + `<div data-ov-fold-wrap data-fold-key="${foldKey()}">${foldHTML()}</div><div data-ov-slot="state">${slots().state}</div></section>`;
   }
@@ -377,6 +368,8 @@ export function createOverview(ctx) {
     if (control.id === "compute-ov-status") return "#compute-ov-status";
     if (d.ovKindFilter) return `[data-ov-kind-filter="${d.ovKindFilter}"]`;
     if (d.ovAction === "detail" && d.id) return `[data-ov-action="detail"][data-id="${esc(d.id)}"]`;
+    if (d.ovStaleRetry !== undefined) return "[data-ov-stale-retry]"; // the banner's button and the first-read "Try again" share an action
+    if (d.ovAction === "refresh") return '[data-ov-slot="state"] [data-ov-action="refresh"]';
     if (d.ovAction) return `[data-ov-action="${d.ovAction}"]`;
     if (d.ovFoldSummary !== undefined) return "[data-ov-fold-summary]";
     return "";
@@ -408,8 +401,11 @@ export function createOverview(ctx) {
     const top = host.querySelector("[data-ov-top]");
     if (top && painted.top !== topHTML()) { painted.top = topHTML(); top.innerHTML = topHTML(); }
     const banner = host.querySelector("[data-ov-stale]");
-    if (banner) { setText(banner, values.stale); banner.hidden = !values.stale; }
+    if (banner) { setText(banner, values.stale); banner.hidden = !values.stale; banner.setAttribute?.("role", refreshFailed ? "alert" : "status"); }
+    const retryButton = host.querySelector("[data-ov-stale-retry]");
+    if (retryButton) { setText(retryButton, refreshFailed ? "Try again" : "Refresh now"); retryButton.hidden = !values.stale; }
     painted.stale = values.stale;
+    paintedStale = staleAt();
     setText(host.querySelector("[data-ov-tries]"), loadError && tries > 1 ? `Tried ${tries} times.` : "");
     setHTML("state", values.state); setHTML("notes", values.notes);
     // "Try again" is marked busy by attribute, not by markup: rewriting the state slot would speak the alert again.
@@ -426,11 +422,15 @@ export function createOverview(ctx) {
     // An open status list is never rewritten under the pointer: new counts wait until it closes.
     const selectOpen = host.querySelector?.("#compute-ov-status")?.matches?.(":focus") === true;
     if (!selectOpen || focus || forceFilters) { setHTML("filters", values.filters); forceFilters = false; filterShown = { kind, status }; }
-    if (setHTML("list", values.list)) refreshAges();
+    setHTML("list", values.list);
     let target = focus ? focusTarget(host, focus) : key ? host.querySelector(key) : null;
     // The focused control went away (a "Try again" that worked): focus lands on the section's heading, not on the page.
     if (!target && key) target = host.querySelector("#compute-overview");
+    // The "Try again" of the banner went away with the banner (the read worked): focus lands on the section's heading.
+    if (target?.hidden) target = host.querySelector("#compute-overview");
     if (target && target !== host.ownerDocument?.activeElement) target.focus?.({ preventScroll: !focus });
+    // An open panel says "As of" while the read is old and stops when it is fresh again.
+    if (detail && data && painted.panelKey === panelKey() && host.querySelector("[data-ov-panel]")) paintDetail();
   }
   // Repaint only the open panel's body and chip, and only when what they say changed, so a focused heading or Close button keeps its node.
   function paintDetail() {
@@ -466,7 +466,7 @@ export function createOverview(ctx) {
   // refresh after every app event) must not turn into a read each; a button press never passes it.
   async function load({ quiet = false, say = false, within = 0 } = {}) {
     const page = ctx.epoch();
-    if (loading || (within && data && (mono() - fetchedMono < within || ctx.doc?.hidden))) return; // the screen's own reloads never read for a hidden tab
+    if (loading || (within && data && (paused || mono() - fetchedMono < within || ctx.doc?.hidden))) return; // the screen's own reloads never read for a hidden tab or a paused overview
     loading = true;
     if (say && data === null && loadError) announce("Trying again…"); // the one thing said at the start of a retry
     if (!quiet) paint();
@@ -477,7 +477,7 @@ export function createOverview(ctx) {
     if (failure?.status === 401 && ctx.denied(failure)) return;
     if (!failure && Array.isArray(result?.items)) {
       const said = changes(result);
-      data = result; fetchedAt = ctx.now(); fetchedMono = mono(); tries = 0; refreshFailed = false; failedSaid = false; loadError = "";
+      data = result; fetchedMono = mono(); tries = 0; refreshFailed = false; failedSaid = false; loadError = "";
       seenSignature = ctx.workspaceSignature?.() || "";
       previous = new Map(result.items.map(item => [`${item.kind}:${item.id}`, item.status.code]));
       if (kind !== "all" && !result.items.some(item => item.kind === kind)) kind = "all";
@@ -491,6 +491,7 @@ export function createOverview(ctx) {
       if (said) announce(said); else if (say) announce(`Overview updated. ${summaryText(items()) || "Nothing here yet."}`);
     } else if (data !== null) {
       refreshFailed = true; paint();
+      if (say) announce(`Could not refresh. Showing the data from ${timeOf(data.as_of)}.`); // a refresh the person asked for gets its answer
       // Said once when the failure starts, not at every poll while it lasts.
       // The alert above the fold says it (once, when its text appears); a second spoken line would be the same news twice.
       failedSaid = true;
@@ -532,7 +533,8 @@ export function createOverview(ctx) {
     if (ctx.doc?.hidden) { schedule(); return; }
     void load({ quiet: true });
   }
-  // The clock: ages and the "as of" line move on their own, in place, so a row never shows an age the clock has passed.
+  // The clock only says how old the read is: "Updated 12 seconds ago" moves on its own, and when the read turns old the rows
+  // are marked once ("Last known", "As of"). Nothing else on screen changes between two reads.
   function scheduleClock() {
     if (clockTimer !== null) timers.clearTimeout(clockTimer);
     clockTimer = timers.setTimeout(tickClock, CLOCK_SECONDS * 1000);
@@ -542,28 +544,12 @@ export function createOverview(ctx) {
     if (!ctx.doc?.hidden && data) {
       const host = ctx.host();
       setText(host?.querySelector?.("[data-ov-meta]"), metaText());
-      setText(host?.querySelector?.("[data-ov-summary]"), summaryLine());
-      refreshAges();
+      if (staleAt() !== paintedStale) paint();
       // The workspaces list moved (created, renamed, discarded): read the overview again, once.
       const signature = ctx.workspaceSignature?.() || "";
       if (signature !== seenSignature && !loading) { seenSignature = signature; void load({ quiet: true }); }
     }
     scheduleClock();
-  }
-  function refreshAges() {
-    const host = ctx.host();
-    if (!host || !data) return;
-    const now = clock();
-    let rebuilt = false;
-    for (const row of host.querySelectorAll?.("[data-ov-slot='list'] .compute-ov-row") || []) {
-      const item = find(row.dataset.ovId);
-      if (!item) continue;
-      const v = viewOf(item, now);
-      if (row.dataset.status !== v.status.code) { rebuilt = true; break; }
-      setText(row.querySelector("[data-ov-health]"), `${healthLine(item, v.seen)}${blockLine({ ...item, health: v.health })}`);
-    }
-    if (rebuilt) { paint(); return; }
-    if (detail && painted.panelKey === panelKey()) paintDetail();
   }
   function visibility() {
     if (ctx.doc?.hidden || !data || loading || paused) return;
@@ -606,7 +592,7 @@ export function createOverview(ctx) {
     if (action === "pause") {
       paused = !paused;
       paint();
-      if (paused) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } announce("Automatic updates paused. Statuses and ages keep counting from the last read."); }
+      if (paused) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } announce("Automatic updates paused. Statuses and ages stay as of the last read."); }
       else { announce("Automatic updates resumed."); void load({ quiet: true }); }
       return true;
     }
@@ -641,7 +627,7 @@ export function createOverview(ctx) {
     if (timer !== null) { timers.clearTimeout(timer); timer = null; }
     if (clockTimer !== null) { timers.clearTimeout(clockTimer); clockTimer = null; }
     ctx.doc?.removeEventListener?.("visibilitychange", visibility);
-    data = null; loadError = ""; loading = false; fetchedAt = 0; fetchedMono = 0; tries = 0; refreshFailed = false; failedSaid = false; paused = false; foldOpen = null; kind = "all"; status = "all"; detail = null; detailBusy = false; detailFailed = false; opener = ""; previous = null; seenSignature = ""; painted = {}; announced = "";
+    data = null; loadError = ""; loading = false; fetchedMono = 0; tries = 0; refreshFailed = false; failedSaid = false; paused = false; foldOpen = null; kind = "all"; status = "all"; detail = null; detailBusy = false; detailFailed = false; opener = ""; previous = null; seenSignature = ""; painted = {}; announced = ""; paintedStale = "";
   }
   return { html, holdFocus, carry, load, start, click, change, keydown, reset, get state() { return { data, loadError, loading, kind, status, detail, refreshFailed, paused, timer }; } };
 }

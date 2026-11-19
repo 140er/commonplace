@@ -488,7 +488,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                 "night-runner",
                 [
                     "No new card runs start here. Chat and Coworker sessions can still start here. 1 run in progress will finish.",
-                    "Draining: No new card runs start here. Chat and Coworker sessions can still start here. This screen has no button to resume it yet.",
+                    "Draining: No new card runs start here. Chat and Coworker sessions can still start here.",
                 ],
                 "24-detail-draining",
             ),
@@ -496,7 +496,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                 "idle-runner",
                 [
                     "No new card runs start here. Chat and Coworker sessions can still start here. None is in progress.",
-                    "This screen has no button to resume it yet.",
+                    "Resuming is not available in this version.",
                     "Drain started. No new card runs start here.",
                 ],
                 "27-detail-drained",
@@ -912,9 +912,9 @@ def test_a_stepped_wall_clock_moves_no_age_and_a_monotonic_clock_still_does(serv
             page.clock.set_system_time(int((time.time() - 7200) * 1000))
             page.clock.run_for(11000)
             expect(build.locator("[data-ov-chip]")).to_contain_text("Online · Busy")
-            # Real elapsed time still ages it (the timers' own passing).
+            # Real elapsed time still passes: the read is old and the row says so, but it keeps the server's status.
             page.clock.run_for(250000)
-            expect(build.locator("[data-ov-chip]")).to_have_text("Last known: Slow to report")
+            expect(build.locator("[data-ov-chip]")).to_have_text("Last known: Online · Busy")
             _shot(page, f"{ui}-desktop-47-clock-step")
             context.close()
         finally:
@@ -1025,7 +1025,9 @@ def test_fleet_rows_paused_no_match_and_a_whole_runner_detail_are_captured(serve
         )
         # Paused: the button and the line say what it stops and what keeps counting.
         page.get_by_role("button", name="Pause automatic updates").click()
-        expect(page.locator(".compute-ov-meta")).to_contain_text("statuses and ages keep counting")
+        expect(page.locator(".compute-ov-meta")).to_contain_text(
+            "statuses and ages stay as of that read"
+        )
         page.locator("[data-ov-top]").scroll_into_view_if_needed()
         _shot(page, f"{label}-93-paused")
         page.get_by_role("button", name="Resume automatic updates").click()
@@ -1104,34 +1106,104 @@ def test_a_turned_off_removed_offline_and_never_connected_runner_says_what_it_ma
 
 
 @pytest.mark.parametrize("ui", UIS)
-def test_a_runner_the_clock_made_offline_keeps_its_mark_and_the_offline_next_step(served, ui):
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_quarter_of_an_hour_old_read_changes_no_status_and_every_age_is_as_of_the_read(
+    served, ui, size
+):
     fx = served
     fx.names = _populate(fx)
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
-            context, page, errors = _open(browser, fx, ui, "desktop")
+            context, page, errors = _open(browser, fx, ui, size)
             page.clock.install(time=int(time.time() * 1000))
             _visit(page, fx, ui)
             _go(page, fx, ui)
+            row = _row(page, "build-runner")
+            status_before = row.locator("[data-ov-chip]").inner_text()
+            chips_before = page.locator("[data-ov-chip]").all_inner_texts()
             _refuse_overview(page)
             page.clock.run_for(
                 1000000
             )  # the read failed and a quarter of an hour passed with no signal
-            row = _row(page, "build-runner")
-            expect(row.locator("[data-ov-chip]")).to_have_text("Last known: Offline")
+            # The server's status, unchanged and marked: the browser never decides it is Slow or Offline.
+            expect(row.locator("[data-ov-chip]")).to_have_text(f"Last known: {status_before}")
+            # Every chip on the page is the one it had, marked: none is a status the clock made up.
+            expect(page.locator("[data-ov-chip]")).to_have_text(
+                [c if c.startswith("Unknown") else f"Last known: {c}" for c in chips_before]
+            )
             expect(row).to_contain_text(re.compile(r"As of \d{1,2}:\d\d:\d\d"))
-            expect(row).to_contain_text("Next step: Check that the machine is on")
-            _shot_of(row, f"{ui}-desktop-104-row-offline-by-the-clock")
+            expect(row).to_contain_text(
+                re.compile(r"Last seen \d+ (seconds?|minutes?) before \d{1,2}:\d\d:\d\d")
+            )
+            assert "Next step: Check that the machine is on" not in row.inner_text()
+            # The banner keeps its own button.
+            expect(page.locator("[data-ov-stale]")).to_be_visible()
+            expect(page.get_by_role("button", name="Try again")).to_be_visible()
+            row.scroll_into_view_if_needed()
+            _shot_of(row, f"{ui}-{size}-104-row-quarter-hour-old-read")
             page.get_by_role("button", name="Status and activity of build-runner").click()
             panel = page.locator(".compute-ov-panel")
-            expect(panel).to_contain_text("Next step: Check that the machine is on")
-            expect(panel).to_contain_text("Offline: nothing heard for")
-            _shot_of(panel, f"{ui}-desktop-105-detail-offline-by-the-clock")
+            expect(panel).not_to_have_attribute("aria-busy", "true")
+            expect(panel.locator("[data-ov-chip]")).to_have_text(f"Last known: {status_before}")
+            expect(panel).to_contain_text("Everything here is as of")
+            expect(panel).to_contain_text(
+                re.compile(r"\d+ (seconds?|minutes?) before \d{1,2}:\d\d:\d\d")
+            )
+            assert "Offline: nothing heard for" not in panel.inner_text()
+            assert " ago" not in panel.locator("[data-ov-seen]").inner_text()
+            _shot_of(panel, f"{ui}-{size}-105-detail-quarter-hour-old-read")
             context.close()
         finally:
             browser.close()
     assert errors == [] or all("503" in e for e in errors)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_paused_tab_marks_every_row_as_of_its_last_read_and_offers_refresh(served, ui, size):
+    fx = served
+    fx.names = _populate(fx)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, size)
+            page.clock.install()
+            reads = _count_reads(page)
+            _visit(page, fx, ui)
+            _go(page, fx, ui)
+            row = _row(page, "build-runner")
+            status_before = row.locator("[data-ov-chip]").inner_text()
+            page.get_by_role("button", name="Pause automatic updates").click()
+            reads_at_pause = len(reads)
+            expect(page.locator("[data-ov-stale]")).to_be_hidden()
+            page.clock.run_for(900000)  # fifteen minutes with no automatic read
+            assert len(reads) == reads_at_pause, ("paused: nothing was read", reads)
+            expect(row.locator("[data-ov-chip]")).to_have_text(f"Last known: {status_before}")
+            expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text(
+                "Last known: Running"
+            )
+            expect(page.locator("[data-ov-stale]")).to_contain_text(
+                re.compile(
+                    r"Automatic updates are paused\. Showing the data from \d{1,2}:\d\d:\d\d"
+                )
+            )
+            expect(row).to_contain_text(
+                re.compile(r"Last seen \d+ (seconds?|minutes?) before \d{1,2}:\d\d:\d\d")
+            )
+            assert " Offline" not in row.inner_text()
+            page.locator("[data-ov-top]").scroll_into_view_if_needed()
+            _shot(page, f"{ui}-{size}-106-paused-quarter-hour")
+            # Refresh now reads again, drops every mark and takes the button away.
+            with page.expect_request(lambda r: r.url.endswith(OVERVIEW)):
+                page.get_by_role("button", name="Refresh now").click()
+            expect(row.locator("[data-ov-chip]")).to_have_text(status_before)
+            expect(page.locator("[data-ov-stale]")).to_be_hidden()
+            expect(page.get_by_role("button", name="Refresh now")).to_be_hidden()
+            context.close()
+        finally:
+            browser.close()
+    assert errors == []
 
 
 @pytest.mark.parametrize("ui", UIS)
@@ -1284,7 +1356,7 @@ def test_a_refresh_that_fails_keeps_the_old_data_and_marks_every_row_as_old(serv
 
 
 @pytest.mark.parametrize("ui", UIS)
-def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read(served, ui):
+def test_an_old_read_keeps_every_status_and_says_every_age_against_the_read(served, ui):
     fx = served
     fx.names = _populate(fx)
     with sync_playwright() as pw:
@@ -1299,26 +1371,26 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
                 re.compile(r"Last seen \d+ (seconds?|minutes?) ago")
             )
             expect(_row(page, "Build box")).to_contain_text("Running")
-            page.clock.run_for(70000)
-            expect(_row(page, "build-runner")).to_contain_text("Last known: Online")
-            expect(_row(page, "build-runner")).to_contain_text("Last seen 1 minute ago")
-            page.clock.run_for(130000)  # 40 s + 200 s without a signal: past the 180 s limit
-            expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text(
-                "Last known: Slow to report"
+            counts = page.locator("[data-ov-summary]").inner_text()
+            page.clock.run_for(70000)  # the read failed: from here on every row is marked
+            expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_contain_text(
+                "Last known: Online"
+            )
+            expect(_row(page, "build-runner")).to_contain_text(
+                re.compile(r"Last seen \d+ (seconds?|minutes?) before \d{1,2}:\d\d:\d\d")
+            )
+            page.clock.run_for(900000)  # a quarter of an hour and more: nothing else changes
+            expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_contain_text(
+                "Last known: Online"
             )
             expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text(
-                re.compile("Last known: Running|Unknown")
+                "Last known: Running"
             )
-            page.clock.run_for(800000)  # past 600 s for a workspace and 900 s for a runner
-            expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text("Unknown")
-            expect(_row(page, "Build box")).to_contain_text("nothing newer has arrived")
-            expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text(
-                "Last known: Offline"
-            )
-            expect(page.locator("[data-ov-summary]")).to_contain_text(
-                re.compile(r"\d+ need attention")
-            )
-            _shot(page, f"{ui}-desktop-45-aged-by-clock")
+            expect(_row(page, "Build box")).not_to_contain_text("nothing newer has arrived")
+            # Attention follows the server snapshot only: the same counts as before, no runner made Offline by the clock.
+            after = page.locator("[data-ov-summary]").inner_text()
+            assert re.sub(r" Could not refresh.*", "", after) == counts, (counts, after)
+            _shot(page, f"{ui}-desktop-45-old-read")
             context.close()
         finally:
             browser.close()

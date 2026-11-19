@@ -36,14 +36,14 @@ const fleet = () => [
   item('workspace', 'w_2', 'Old box', { code: 'unknown', tone: 'quiet', label: 'Unknown', detail: 'Last reported Running 14 minutes ago and nothing newer since.' }, { attention: true, last_seen: seen(840, { prefix: 'Last reported', label: 'Last reported 14 minutes ago' }) }),
 ];
 const overviewOf = (items = fleet(), extra = {}) => ({
-  as_of: new Date(clock * 1000).toISOString().replace('.000', ''), refresh_seconds: 30, thresholds: { green_within_s: 180, red_after_s: 900, report_stale_s: 600 }, can_manage: true, executor: { available: false, text: 'Starting and stopping cloud workspaces on a machine is not available in this version. Requests are saved and wait.' },
+  as_of: new Date(clock * 1000).toISOString().replace('.000', ''), refresh_seconds: 30, can_manage: true, executor: { available: false, text: 'Starting and stopping cloud workspaces on a machine is not available in this version. Requests are saved and wait.' },
   counts: {}, items, hidden: null, truncated: {}, ...extra,
 });
 const detailOf = (base, extra = {}) => ({ item: { ...base, activity: [{ at: 1, age_s: 60, text: 'Created by the owner' }], facts: [{ label: 'Image', value: 'ghcr.io/acme/tools:1.2' }], ...extra }, can_manage: true });
 
 function fixture({ data = overviewOf(), hidden = false, narrow = false, signature = () => '', skew = 0 } = {}) {
   const slot = () => { const n = { writes: 0, html: '' }; Object.defineProperty(n, 'innerHTML', { get() { return n.html; }, set(v) { n.html = v; n.writes++; } }); return n; };
-  const nodes = { root: slot(), top: slot(), meta: { textContent: '' }, announce: { textContent: '' }, summary: { textContent: '' }, tries: { textContent: '' }, stale: (() => { const n = { text: '', hidden: true, writes: 0 }; Object.defineProperty(n, 'textContent', { get() { return n.text; }, set(v) { n.text = v; n.writes++; } }); return n; })(), state: slot(), notes: slot(), panel: slot(), filters: slot(), list: slot() };
+  const nodes = { root: slot(), top: slot(), meta: { textContent: '' }, announce: { textContent: '' }, summary: { textContent: '' }, tries: { textContent: '' }, retry: { textContent: '', hidden: true }, stale: (() => { const n = { text: '', hidden: true, writes: 0 }; Object.defineProperty(n, 'textContent', { get() { return n.text; }, set(v) { n.text = v; n.writes++; } }); return n; })(), state: slot(), notes: slot(), panel: slot(), filters: slot(), list: slot() };
   const focused = [], timers = [], calls = [], docListeners = new Map(), flags = { statusFocused: false };
   let epoch = 1, timerId = 0;
   const state = { answers: new Map(), delay: new Map(), denied: [], signature };
@@ -65,6 +65,7 @@ function fixture({ data = overviewOf(), hidden = false, narrow = false, signatur
       if (sel === '[data-ov-summary]') return nodes.summary;
       if (sel === '[data-ov-stale]') return nodes.stale;
       if (sel === '[data-ov-tries]') return nodes.tries;
+      if (sel === '[data-ov-stale-retry]') return nodes.retry;
       const m = /^\[data-ov-slot="(\w+)"\]$/.exec(sel);
       if (m) return nodes[m[1]];
       if (sel === '.compute-ov :focus') return null;
@@ -187,7 +188,8 @@ const cases = {
     assert.match(f.nodes.summary.textContent, /2 runners, 1 machine, 2 cloud workspaces\. 2 need attention: edge-runner, Old box\./, 'the closed fold still says what needs attention');
     assert.equal(f.nodes.stale.hidden, true);
     // The one Refresh button is the page's: the overview has no button of its own named for refreshing.
-    assert.doesNotMatch(f.ui.html(), /Update overview|data-ov-action="refresh"/);
+    assert.doesNotMatch(f.ui.html(), /Update overview|data-ov-action="refresh"(?! data-ov-stale-retry)/);
+    assert.equal(f.nodes.retry.hidden, true, 'the banner\'s own button is only there while the data is old');
     // The empty state tells the owner what to do and a member who to ask.
     const empty = fixture({ data: overviewOf([]) }); await empty.ui.load();
     assert.match(empty.shown(), /Nothing here yet\. No machine is set up yet\. You can still create a cloud workspace below; it waits for a machine\./, 'the headline first, then the one next step');
@@ -420,42 +422,48 @@ const cases = {
   },
 
   async staleness() {
-    // The clock only makes a claim older. Pure view first.
-    const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
-    const [online, , , running, unknownBox] = fleet();
-    const at = age => ({ nowS: clock + age, thresholds: th });
-    assert.equal(ov.viewOf(running, at(0)).status.code, 'running');
-    assert.equal(ov.viewOf(running, at(0)).seen, 'Last reported 2 minutes ago');
-    assert.equal(ov.viewOf(running, at(60)).seen, 'Last reported 3 minutes ago', 'the age is recomputed from the report time');
-    const old = ov.viewOf(running, at(600));
-    assert.equal(old.status.code, 'unknown'); assert.equal(old.status.label, 'Unknown'); assert.notEqual(old.health.state, 'attention', 'Unknown only waits for the machine to report again');
-    assert.match(old.status.detail, /Its last report said Running 12 minutes ago and nothing newer has arrived, so it may not be running any more\./);
-    assert.equal(ov.viewOf(online, at(0)).status.code, 'online');
-    assert.equal(ov.viewOf(online, at(200)).status.code, 'slow');
-    assert.equal(ov.viewOf(online, at(1000)).status.code, 'offline');
-    assert.match(ov.viewOf(online, at(1000)).status.detail, /It read Online when this was last checked/);
-    // A stopped or failed workspace is a fact: it does not turn Unknown with age.
-    const stopped = item('workspace', 'w_s', 'Stopped box', { code: 'stopped', tone: 'quiet', label: 'Stopped' }, { last_seen: seen(10, { prefix: 'Last reported' }) });
-    assert.equal(ov.viewOf(stopped, at(5000)).status.code, 'stopped');
-    // A removed runner keeps its own words.
-    const gone = item('runner', 'm_g', 'old', { code: 'revoked', tone: 'bad', label: 'Revoked' }, { last_seen: seen(21, { prefix: 'Last contact', suffix: ', before it was removed' }) });
-    assert.equal(ov.viewOf(gone, at(0)).seen, 'Last contact 21 seconds ago, before it was removed');
-    assert.equal(ov.viewOf(gone, at(0)).status.code, 'revoked');
-    // After a failed refresh every row is marked as of the last good read.
-    const marked = ov.viewOf(online, { ...at(0), failedAt: '10:42:07' });
-    assert.equal(marked.status.label, 'Last known: Online'); assert.match(marked.status.detail, /^As of 10:42:07: /); assert.equal(marked.stale, true);
-    assert.equal(ov.viewOf(unknownBox, { ...at(0), failedAt: '10:42:07' }).status.label, 'Unknown');
-    // On screen: a running workspace the clock has passed turns Unknown by itself, without a new read, and says so aloud nowhere (polite status stays quiet).
+    // The browser never decides a status. Pure view first: with a fresh read the server's words are shown unchanged.
+    const [online, offline, , running, unknownBox] = fleet();
+    const fresh = ov.viewOf(running, {});
+    assert.equal(fresh.status.code, 'running'); assert.equal(fresh.seen, 'Last reported 2 minutes ago'); assert.equal(fresh.stale, false);
+    assert.deepEqual(fresh.status, running.status, 'a fresh row is exactly what the server said');
+    // An old read marks the row and says ages against the time of the read; no status, tone, step or blocker changes.
+    const old = ov.viewOf(running, { staleAt: '10:42:07' });
+    assert.equal(old.status.code, 'running'); assert.equal(old.status.tone, 'ok');
+    assert.equal(old.status.label, 'Last known: Running'); assert.match(old.status.detail, /^As of 10:42:07: Reported running 2 minutes ago\./); assert.equal(old.stale, true);
+    assert.equal(old.seen, 'Last reported 2 minutes before 10:42:07', 'an age is said against the read, never as "ago"');
+    assert.doesNotMatch(old.seen, /ago/);
+    assert.equal(ov.viewOf(online, { staleAt: '10:42:07' }).seen, 'Last seen 40 seconds before 10:42:07');
+    assert.equal(ov.viewOf(item('runner', 'r', 'x', { code: 'online', label: 'Online' }, { last_seen: seen(2) }), { staleAt: '10:42:07' }).seen, 'Last seen at 10:42:07');
+    assert.deepEqual(old.health, running.health); assert.equal(ov.viewOf(online, { staleAt: '10:42:07' }).status.next, online.status.next);
+    // Offline stays Offline and an online runner stays Online however old the read is: nothing is made up from a clock.
+    assert.equal(ov.viewOf(online, { staleAt: '10:42:07' }).status.code, 'online');
+    assert.equal(ov.viewOf(offline, { staleAt: '10:42:07' }).status.label, 'Last known: Offline');
+    assert.equal(ov.viewOf(unknownBox, { staleAt: '10:42:07' }).status.label, 'Unknown', 'a status that already says it is not known gets no second mark');
+    assert.match(ov.viewOf(unknownBox, { staleAt: '10:42:07' }).status.detail, /^As of 10:42:07: /);
+    // The filter list names the server's status, not the mark.
+    assert.equal(ov.filterCounts([ov.viewOf(offline, { staleAt: '10:42:07' })].map(v => ({ ...offline, status: v.status }))).statuses.offline.label, 'Offline');
+    // On screen: a tab that has not read for a long time keeps every row's status and only marks them once.
     const f = fixture();
     f.ui.start();
     await f.ui.load();
     assert.match(f.html(), /data-status="running"/);
+    assert.equal(f.nodes.stale.hidden, true);
     const readsBefore = f.calls.length;
     f.bump(700 * 1000);
     await f.fire(10000);
     assert.equal(f.calls.length, readsBefore, 'the clock tick reads nothing');
-    assert.match(f.html(), /data-status="unknown"[\s\S]{0,300}Build box|Build box[\s\S]{0,600}data-status="unknown"/);
-    assert.doesNotMatch(f.nodes.summary.textContent, /Build box/, 'Unknown only waits: it is not named as needing attention');
+    assert.match(f.html(), /data-status="running"/); assert.match(f.html(), /data-status="online"/); assert.doesNotMatch(f.html(), /data-status="(?:unknown|slow)"[\s\S]*Build box/);
+    assert.match(f.html(), /data-ov-chip>Last known: Running</); assert.match(f.html(), /data-ov-chip>Last known: Online</);
+    assert.match(f.html(), /Last seen 40 seconds before \d{1,2}:\d\d:\d\d/); assert.doesNotMatch(f.html(), /data-ov-health>[^<]* ago/, 'no health line says "ago" while the read is old');
+    assert.match(f.nodes.stale.textContent, /^Showing the data from \d{1,2}:\d\d:\d\d.*; it may be out of date\.$/);
+    assert.equal(f.nodes.stale.hidden, false); assert.equal(f.nodes.retry.hidden, false); assert.equal(f.nodes.retry.textContent, 'Refresh now');
+    assert.match(f.nodes.summary.textContent, /Not refreshed: data from \d{1,2}:\d\d:\d\d/);
+    assert.match(f.nodes.summary.textContent, /2 need attention: edge-runner, Old box\./, 'attention follows the server snapshot only');
+    assert.doesNotMatch(f.nodes.summary.textContent, /Build box|build-runner/);
+    // A read that works takes every mark away.
+    await f.ui.load({ quiet: true });
+    assert.doesNotMatch(f.html(), /Last known|before \d/); assert.equal(f.nodes.stale.hidden, true); assert.equal(f.nodes.retry.hidden, true);
   },
 
   async 'clock-ticks-in-place'() {
@@ -464,11 +472,17 @@ const cases = {
     await f.ui.load();
     assert.match(f.nodes.meta.textContent, /Updated just now/);
     const listWrites = f.nodes.list.writes, panelWrites = f.nodes.panel.writes;
-    f.bump(95 * 1000);
+    f.bump(65 * 1000);
     await f.fire(10000);
     assert.match(f.nodes.meta.textContent, /Updated 1 minute ago/);
-    assert.equal(f.nodes.list.writes, listWrites, 'ages are rewritten in place: the list is not rebuilt when no status changed');
+    assert.equal(f.nodes.list.writes, listWrites, 'only the "Updated" line moves: the list is not rebuilt while the read is young');
     assert.equal(f.nodes.panel.writes, panelWrites);
+    // When the read turns old the rows are marked once, and the clock going on rewrites nothing more.
+    f.bump(40 * 1000);
+    await f.fire(10000);
+    assert.equal(f.nodes.list.writes, listWrites + 1, 'marked once');
+    await f.fire(10000);
+    assert.equal(f.nodes.list.writes, listWrites + 1, 'and not again');
     assert.equal(f.liveTimers(10000).length, 1, 'and the clock goes on');
     // A hidden tab does no work.
     f.doc.hidden = true; f.bump(60000);
@@ -519,12 +533,21 @@ const cases = {
     f.click('pause');
     assert.equal(f.ui.state.paused, true);
     assert.equal(f.liveTimers(30000).length, 0, 'no automatic read while paused');
-    assert.match(f.nodes.meta.textContent, /Automatic updates are paused; statuses and ages keep counting from the last read\. Use Refresh above to read again\./);
+    assert.match(f.nodes.meta.textContent, /Automatic updates are paused; statuses and ages stay as of that read\. Use Refresh above to read again\./);
     assert.match(f.nodes.top.html, />Resume automatic updates</);
-    assert.equal(f.nodes.announce.textContent, 'Automatic updates paused. Statuses and ages keep counting from the last read.');
+    assert.equal(f.nodes.announce.textContent, 'Automatic updates paused. Statuses and ages stay as of the last read.');
     // A visibility change does not read either; pressing the page's Refresh (load) still does.
     f.bump(60000); f.docListeners.get('visibilitychange')(); await flush();
     assert.equal(f.calls.length, 1);
+    await f.ui.load({ quiet: true, within: 5000 }); assert.equal(f.calls.length, 1, 'the screen\'s own reloads do not read while paused');
+    // A paused tab is not marked old at once, only when nothing newer has arrived for a long time (about 15 minutes here):
+    // the rows keep their server status, say "Last known" and "As of", and the banner has its own button.
+    assert.equal(f.nodes.stale.hidden, true);
+    f.bump(15 * 60 * 1000); await f.fire(10000);
+    assert.match(f.html(), /data-status="online"/); assert.match(f.html(), /data-ov-chip>Last known: Online</);
+    assert.match(f.nodes.stale.textContent, /^Automatic updates are paused\. Showing the data from \d{1,2}:\d\d:\d\d.*; it may be out of date\.$/);
+    assert.equal(f.nodes.retry.hidden, false);
+    assert.match(f.nodes.summary.textContent, /Not refreshed: data from /);
     await f.ui.load({ say: true }); assert.equal(f.calls.length, 2);
     assert.equal(f.liveTimers(30000).length, 0, 'still no schedule while paused');
     f.click('pause'); await flush();
@@ -582,21 +605,12 @@ const cases = {
       assert.doesNotMatch(f.html(), /Slow to report|data-status="offline"[\s\S]*build-runner/, `skew ${skew}`);
       assert.match(f.nodes.meta.textContent, /^Updated just now/, `skew ${skew}: the age counts from the read`);
       assert.match(f.html(), /Last seen 40 seconds ago/);
-      // Time that really passes still ages it: 200 s later the runner is slow, whatever the browser clock says.
+      // Real time passing never changes a status, whatever the browser clock says: the rows are marked old and keep their words.
       f.bump(200 * 1000);
       await f.fire(10000);
-      assert.match(f.html(), /data-status="slow"[\s\S]{0,400}build-runner|build-runner[\s\S]{0,400}data-status="slow"/, `skew ${skew}: elapsed time is honoured`);
+      assert.match(f.html(), /data-status="online"[\s\S]{0,400}build-runner|build-runner[\s\S]{0,400}data-status="online"/, `skew ${skew}: the status is still the server's`);
       assert.match(f.nodes.meta.textContent, /^Updated 3 minutes ago/);
     }
-    // The overrides do not leave "Nothing is blocking" beside Offline or Unknown: they name what they are.
-    const [online, , , running] = fleet();
-    const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
-    const off = ov.viewOf(online, { nowS: clock + 1000, thresholds: th });
-    assert.equal(off.status.code, 'offline'); assert.match(off.health.blockers.at(-1).text, /^Offline: nothing heard for 17 minutes, so new card runs would wait\./);
-    const quiet = ov.viewOf(running, { nowS: clock + 660, thresholds: th });
-    assert.equal(quiet.status.code, 'unknown'); assert.equal(quiet.health.blockers.at(-1).code, 'unknown');
-    assert.match(text(ov.detailHTML({ ...online, activity: [], facts: [] }, { clock: { nowS: clock + 1000, thresholds: th } })), /Blocking new work.*Offline: nothing heard for 17 minutes/);
-    assert.doesNotMatch(text(ov.detailHTML({ ...online, activity: [], facts: [] }, { clock: { nowS: clock + 1000, thresholds: th } })), /Nothing is blocking new work/);
   },
 
   async 'clock-step'() {
@@ -613,24 +627,23 @@ const cases = {
     f.step(-5000 * 1000); // and back by more than that
     await f.fire(10000);
     assert.ok(healthy()); assert.match(f.nodes.meta.textContent, /^Updated just now/);
-    // Real time still ages it.
+    // Real time still passes: the read turns old and the row is marked, but it never changes its status.
     f.bump(200 * 1000);
     await f.fire(10000);
-    assert.match(f.html(), /data-status="slow"[\s\S]{0,400}build-runner|build-runner[\s\S]{0,400}data-status="slow"/);
+    assert.ok(healthy()); assert.match(f.html(), /Last known: Online/);
   },
 
   async 'every-runner-status-ages'() {
-    // A draining or drained runner that went quiet does not keep its label: the age override covers every status that
-    // claims a recent signal, and it still says the runner is draining.
-    const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
-    for (const code of ['draining', 'drained', 'busy', 'online', 'slow']) {
-      const runner = item('runner', 'r', 'night-runner', { code, label: code }, { more: { draining: code === 'draining' || code === 'drained' } });
-      const quiet = ov.viewOf(runner, { nowS: clock + 1000, thresholds: th, drainScope: 'No new card runs start here. Chat and Coworker sessions can still start here.' });
-      assert.equal(quiet.status.code, 'offline', code);
-      if (runner.draining) assert.match(quiet.status.detail, /It is also set to drain\. No new card runs start here\. Chat and Coworker sessions can still start here\./);
+    // The screen never turns a status into another one from its clock: every status a runner can have is kept as the server
+    // said it, with its own next step and blockers, and only marked as of the read when the read is old.
+    for (const code of ['draining', 'drained', 'busy', 'full', 'online', 'slow', 'offline', 'disabled', 'revoked', 'never_connected']) {
+      const runner = item('runner', 'r', 'night-runner', { code, label: code, detail: `${code} sentence.` }, { blockers: [{ code, text: `${code} blocker.` }], more: { draining: code === 'draining' || code === 'drained' } });
+      runner.status.next = `${code} step.`;
+      const view = ov.viewOf(runner, { staleAt: '10:42:07' });
+      assert.equal(view.status.code, code); assert.equal(view.status.next, `${code} step.`); assert.deepEqual(view.health, runner.health, code);
+      assert.equal(view.status.label, `Last known: ${code}`); assert.equal(view.status.detail, `As of 10:42:07: ${code} sentence.`);
+      assert.match(ov.detailBody({ ...runner, activity: [], facts: [] }, { clock: { staleAt: '10:42:07' } }), new RegExp(`${code} blocker\\.`));
     }
-    // A removed or disabled runner is left alone: its age is not a claim about its health.
-    for (const code of ['revoked', 'disabled', 'never_connected']) assert.equal(ov.viewOf(item('runner', 'r', 'x', { code, label: code }), { nowS: clock + 1000, thresholds: th }).status.code, code);
   },
 
   async 'scope-and-state'() {
@@ -698,32 +711,41 @@ const cases = {
     assert.equal((f.html().match(/data-ov-id=/g) || []).length, 5, 'and the list shows everything, not nothing');
   },
 
-  async 'overrides-keep-the-mark'() {
-    const th = { green_within_s: 180, red_after_s: 900, report_stale_s: 600 };
-    const steps = { offline: 'Check that the machine is on and the runner program is running there.', slow: 'Wait a little.' };
-    const [online] = fleet();
-    // The clock made it Offline: it carries the server's Offline next step and, after a failed refresh, says it is old.
-    const off = ov.viewOf(online, { nowS: clock + 1000, thresholds: th, nextSteps: steps, failedAt: '10:42:07' });
-    assert.equal(off.status.code, 'offline');
-    assert.equal(off.status.label, 'Last known: Offline');
-    assert.match(off.status.detail, /^As of 10:42:07: Nothing has been heard from it for 17 minutes\./);
-    assert.equal(off.status.next, steps.offline);
-    const slow = ov.viewOf(online, { nowS: clock + 200, thresholds: th, nextSteps: steps, failedAt: '10:42:07' });
-    assert.equal(slow.status.label, 'Last known: Slow to report'); assert.equal(slow.status.next, steps.slow);
-    // Without a failure the clock's change is plain, with the next step.
-    const plain = ov.viewOf(online, { nowS: clock + 1000, thresholds: th, nextSteps: steps });
-    assert.equal(plain.status.label, 'Offline'); assert.equal(plain.status.next, steps.offline);
-    // Paused: a row the clock changed says it comes from an old read; a row it did not change is left as it is.
-    const paused = ov.viewOf(online, { nowS: clock + 1000, thresholds: th, nextSteps: steps, pausedAt: '10:42:07' });
-    assert.equal(paused.status.label, 'Last known: Offline');
-    assert.equal(ov.viewOf(online, { nowS: clock + 10, thresholds: th, nextSteps: steps, pausedAt: '10:42:07' }).status.label, 'Online');
-    // And on screen the payload's steps reach the row.
-    const f = fixture({ data: overviewOf(fleet(), { next_steps: steps }) });
+  async 'stale-states-keep-the-server-snapshot'() {
+    // Failed refresh and paused tab say the same thing: the server's status, marked, with its own next step, with every age
+    // and fact from the one snapshot ("as of", never "ago"), and the detail says so once.
+    const [online, offline] = fleet();
+    const gone = { ...offline, status: { ...offline.status, next: 'Check that the machine is on.' } };
+    const view = ov.viewOf(gone, { staleAt: '10:42:07' });
+    assert.equal(view.status.code, 'offline'); assert.equal(view.status.label, 'Last known: Offline'); assert.equal(view.status.next, 'Check that the machine is on.');
+    assert.equal(view.seen, 'Last seen 25 minutes before 10:42:07');
+    const body = text(ov.detailBody({ ...online, activity: [{ text: 'Started: demo card', age_s: 90 }, { text: 'Finished: demo card', age_s: 2 }], facts: [{ label: 'Allowed to start runs', value: 'Yes' }] }, { clock: { staleAt: '10:42:07' } }));
+    assert.match(body, /As of 10:42:07: Waiting for work\./);
+    assert.match(body, /Everything here is as of 10:42:07: an age such as "3 minutes ago" counts back from then, not from now\./);
+    assert.match(body, /Last seen 40 seconds before 10:42:07/);
+    assert.match(body, /Started: demo card \(1 minute before 10:42:07\)/); assert.match(body, /Finished: demo card \(at 10:42:07\)/);
+    assert.match(body, /Allowed to start runs Yes/);
+    // A fresh detail has none of it.
+    const fresh = text(ov.detailBody({ ...online, activity: [{ text: 'Started: demo card', age_s: 90 }], facts: [] }, { clock: {} }));
+    assert.doesNotMatch(fresh, /As of|before|counts back/); assert.match(fresh, /Started: demo card \(1 minute ago\)/);
+    // On screen after a failed read, with a panel open, and again when the read works.
+    const f = fixture();
     f.ui.start();
     await f.ui.load();
-    f.bump(1000 * 1000);
-    await f.fire(10000);
-    assert.match(f.html(), /Next step: Check that the machine is on and the runner program is running there\./);
+    f.state.answers.set('/api/compute/overview/runner/mach_2', detailOf(gone));
+    f.click('detail', { id: 'mach_2', kind: 'runner' }); await flush();
+    f.state.answers.set('/api/compute/overview', failure(503, { error: 'authority_unavailable' }));
+    await f.ui.load({ quiet: true }); await flush();
+    assert.match(f.chip.html, /Last known: Offline/); assert.match(f.body.html, /data-ov-asof/); assert.match(f.body.html, /Next step: Check that the machine is on\./);
+    assert.equal(f.nodes.retry.textContent, 'Try again'); assert.equal(f.nodes.retry.hidden, false);
+    f.state.answers.delete('/api/compute/overview');
+    f.click('refresh'); await flush();
+    assert.doesNotMatch(f.chip.html, /Last known/); assert.doesNotMatch(f.body.html, /data-ov-asof/); assert.equal(f.nodes.retry.hidden, true);
+    // The refresh a person asked for answers aloud when it fails again.
+    f.state.answers.set('/api/compute/overview', failure(503, { error: 'authority_unavailable' }));
+    f.nodes.announce.textContent = '';
+    await f.ui.load({ say: true });
+    assert.match(f.nodes.announce.textContent, /^Could not refresh\. Showing the data from \d{1,2}:\d\d:\d\d/);
   },
 
   async 'filters-repaint-when-load-resets-them'() {
@@ -745,6 +767,8 @@ const cases = {
     await f.ui.load();
     assert.match(f.shown(), /Machines and runners are visible to the workspace owner\./);
     assert.doesNotMatch(f.shown(), /hidden from members/, 'members are not told about owner-only machinery');
+    assert.match(f.nodes.top.html, /The cloud workspaces in this workspace and what each is doing\./, 'a member\'s intro describes only what a member sees');
+    assert.doesNotMatch(f.nodes.top.html, /runner is a machine|Every machine, runner/);
     assert.equal([...f.html().matchAll(/data-ov-id=/g)].length, 1);
     assert.doesNotMatch(f.html(), /data-ov-kind-filter/, 'one kind needs no kind filter');
     f.state.answers.set('/api/compute/overview/workspace/w_1', detailOf(members[0], { can_manage: false }));
