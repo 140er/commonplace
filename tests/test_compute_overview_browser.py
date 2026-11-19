@@ -236,6 +236,12 @@ def _assert_ov_phone(page):
         "els => els.map(el => parseFloat(getComputedStyle(el).fontSize))"
     )
     assert not sizes or min(sizes) >= 16, "the status filter is 16px on the phone"
+    text_sizes = page.locator(
+        ".compute-ov-row p:visible, .compute-ov-list li:visible"
+    ).evaluate_all("els => els.map(el => parseFloat(getComputedStyle(el).fontSize))")
+    assert not text_sizes or min(text_sizes) >= 14, (
+        f"overview body text is 14px or more on a phone: {sorted(set(text_sizes))}"
+    )
     _no_sideways_scroll(page)
     _assert_fits(page)
 
