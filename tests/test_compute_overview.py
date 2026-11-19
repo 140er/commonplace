@@ -167,23 +167,38 @@ def test_a_started_run_whose_end_was_never_reported_is_its_own_bucket_not_in_pro
     assert "plus 1 run that started and never reported an end" in runs["text"]
 
 
-def test_a_finished_run_is_not_in_progress_not_full_and_not_an_unreported_end(api, fleet):
-    # Reproduced by the round 3 review: a run started 60 minutes ago and reported completed 50 minutes ago stayed
-    # "in progress" (its job row never leaves "started"; only the run ledger learns of the end).
+def test_a_finished_run_whose_card_is_still_doing_holds_a_slot_and_says_so(api, fleet):
+    # The hub's rule, unchanged: a started run holds a slot while its card is Doing, whether or not the machine reported
+    # its end (the job row stays "started"; only the ledger knows). The screen says the same and says why.
     made = fleet.enroll("runner-finished", max_in_flight=1)
     fleet.seen(made, 20)
     job = fleet.job(made, "started", minutes_ago=60, task=fleet.work(made))
     fleet.end(job, minutes_ago=50)
     item = by_name(read(api))["runner-finished"]
-    assert item["status"]["code"] == "online" and item["status"]["detail"] == "Waiting for work."
-    assert item["usage"]["runs"]["running"] == 0 and item["usage"]["runs"]["end_unreported"] == 0
-    assert item["health"]["blockers"] == []
-    # The same run, not yet reported ended and its card still being worked on, is in progress and fills the machine.
-    other = fleet.enroll("runner-working", max_in_flight=1)
+    assert item["status"]["code"] == "busy"
+    assert item["status"]["detail"] == (
+        "None is in progress, but the machine is busy: 1 finished run still holds a slot until its card moves on."
+    )
+    runs = item["usage"]["runs"]
+    assert (runs["running"], runs["finished_holding"], runs["end_unreported"]) == (0, 1, 0)
+    full = [b for b in item["health"]["blockers"] if b["code"] == "full"]
+    assert full and "1 finished run still holds a slot until its card moves on" in full[0]["text"]
+    # Once the card moves on the slot is free, and the finished run is not counted anywhere.
+    other = fleet.enroll("runner-freed", max_in_flight=1)
     fleet.seen(other, 20)
-    fleet.job(other, "started", minutes_ago=60, task=fleet.work(other))
-    working = by_name(read(api))["runner-working"]
-    assert working["status"]["code"] == "busy" and working["usage"]["runs"]["running"] == 1
+    fleet.end(
+        fleet.job(other, "started", minutes_ago=60, task=7), minutes_ago=50
+    )  # no card is being worked on
+    freed = by_name(read(api))["runner-freed"]
+    assert freed["status"]["code"] == "online" and freed["status"]["detail"] == "Waiting for work."
+    assert freed["usage"]["runs"]["running"] == 0 and freed["usage"]["runs"]["end_unreported"] == 0
+    assert freed["health"]["blockers"] == []
+    # And a run not yet reported ended with its card still Doing is in progress.
+    working = fleet.enroll("runner-working", max_in_flight=1)
+    fleet.seen(working, 20)
+    fleet.job(working, "started", minutes_ago=60, task=fleet.work(working))
+    busy = by_name(read(api))["runner-working"]
+    assert busy["status"]["code"] == "busy" and busy["usage"]["runs"]["running"] == 1
 
 
 def test_a_card_that_moved_on_without_an_end_report_is_not_in_progress(api, fleet):
@@ -311,7 +326,7 @@ def test_target_machines_are_never_called_online(api):
     machine = by_name(read(api))[node["name"]]
     assert machine["kind"] == "machine"
     assert machine["status"]["code"] == "not_verified"
-    assert "nothing runs on it" in machine["status"]["detail"]
+    assert "nothing new can start on it" in machine["status"]["detail"]
     assert machine["last_seen"] is None
     assert machine["usage"]["measured"]["known"] is False
     assert machine["usage"]["measured"]["reason"] == "not_collected"
@@ -666,7 +681,7 @@ def test_no_sentence_promises_a_control_the_screen_does_not_have(api, fleet):
     queued = by_name(result)["Queued box"]
     assert queued["status"]["code"] == "start_requested"
     assert queued["status"]["detail"].endswith(
-        "It expires after 24 hours if no machine picks it up. Withdrawing it is not available in this version."
+        "It expires after 24 hours if no machine picks it up; there is nothing to do meanwhile."
     )
     texts = list(_all_text(result))
     texts += list(_all_text(api.request(path=f"{BASE}/runner/{made['machine_id']}")[1]))
@@ -685,7 +700,7 @@ def test_no_sentence_promises_a_control_the_screen_does_not_have(api, fleet):
     assert overview.DRAIN_SCOPE == (
         "No new card runs start here. Chat and Coworker sessions can still start here."
     )
-    assert "Resuming it is not available in this version." in runner_item["status"]["detail"]
+    assert overview.NO_RESUME in runner_item["status"]["detail"]
 
 
 def test_an_offline_runner_does_not_say_zero_runs_and_has_one_next_step(api, fleet):
@@ -872,7 +887,7 @@ def test_blockers_name_themselves_and_a_drained_runner_is_called_drained(api, fl
     assert text["runner-off"]["offline"].startswith("Offline: nothing heard for over 15 minutes")
     assert text["runner-never"]["never_connected"].startswith("Never connected:")
     assert items["runner-drained"]["status"]["label"] == "Drained"
-    assert text["runner-drained"]["draining"].startswith("Drained: no new card runs start on it.")
+    assert text["runner-drained"]["draining"].startswith(f"Drained: {overview.DRAIN_SCOPE}")
     assert never is not None
 
 
@@ -997,3 +1012,36 @@ def test_the_verified_machine_has_nothing_known_to_block_and_an_unverified_one_i
     _, node = api.enrolled()
     unverified = by_name(read(api))[node["name"]]
     assert unverified["health"]["state"] == "idle" and unverified["status"]["next"] is None
+
+
+def test_slow_and_unknown_only_wait_so_they_are_not_attention_states(api, fleet):
+    slow = fleet.enroll("runner-slow-2")
+    fleet.seen(slow, 400)
+    offline = fleet.enroll("runner-offline-2")
+    fleet.seen(offline, 4000)
+    result = read(api)
+    items = by_name(result)
+    assert items["runner-slow-2"]["health"]["state"] == "ok"
+    assert items["runner-offline-2"]["health"]["state"] == "attention"
+    assert items["runner-slow-2"]["usage"]["runs"]["text"].startswith(
+        "0 runs recorded in progress; more may be running while it is slow to report"
+    )
+    assert result["counts"]["attention"] == 1
+    # An unknown workspace report waits for the machine to report again: nothing to act on.
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Waiting box")
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor.run(executor.claim(), "running")
+    after(api.env, 1000)
+    waiting = by_name(read(api))["Waiting box"]
+    assert waiting["status"]["code"] == "unknown" and waiting["health"]["state"] == "idle"
+
+
+def test_a_queued_request_says_there_is_nothing_to_do_and_one_sentence_covers_no_machine(api):
+    assert overview.NO_MACHINES_SENTENCE == (
+        "No machine is set up yet. Starting will need one, which is not available yet."
+    )
+    assert "Choose later" not in overview.NO_MACHINES_SENTENCE

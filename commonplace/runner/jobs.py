@@ -56,6 +56,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS runner_jobs_one_active ON runner_jobs(task_num
 CREATE INDEX IF NOT EXISTS runner_jobs_board_state ON runner_jobs(board_slug,state);
 CREATE INDEX IF NOT EXISTS runner_jobs_machine_state ON runner_jobs(machine_id,state);
 CREATE INDEX IF NOT EXISTS runner_jobs_state_updated ON runner_jobs(state,updated_at,machine_id);
+CREATE INDEX IF NOT EXISTS runner_jobs_machine_updated ON runner_jobs(machine_id,updated_at,id);
 CREATE INDEX IF NOT EXISTS runner_jobs_starting ON runner_jobs(starting_at,machine_id);
 CREATE UNIQUE INDEX IF NOT EXISTS runner_jobs_request
  ON runner_jobs(task_number,requested_by,request_key) WHERE request_key IS NOT NULL;
@@ -460,6 +461,47 @@ def create_in(
     return 201, row
 
 
+IN_FLIGHT_SQL = (
+    "SELECT id,project,state,board_slug,task_number FROM runner_jobs WHERE machine_id=? AND "
+    "state IN ('leased','starting','uncertain','started')"
+)
+
+
+def working_cards(gateway, workspace_id, assignees):
+    """``{assignee: {(board_slug, task_number)}}``: the cards in ``doing`` assigned to each of ``assignees`` (a worker's
+    connection name with the ``conn:`` prefix). Read from committed cards without BoardStore's schema/write lock; board
+    writes acquire runner admission first, so the reverse lock would deadlock."""
+    from commonplace.projects import orchestration as orch
+
+    wanted = set(assignees)
+    result = {name: set() for name in wanted}
+    with orch.board_read(gateway.workspace_dir(workspace_id)) as boards:
+        for row in boards.execute(
+            "SELECT b.slug AS slug,t.id AS id,t.assignee AS assignee FROM tasks t JOIN boards b ON b.id=t.board_id "
+            "WHERE t.status='doing'"
+        ):
+            if row["assignee"] in wanted:
+                result[row["assignee"]].add((row["slug"], row["id"]))
+    return result
+
+
+def in_flight(conn, machine_id, working):
+    """The runs that hold a slot of the machine, the one definition the lease and the overview share: every run that is
+    leased, starting or uncertain, and every ``started`` run whose card is still being worked on by the machine's worker.
+    A started run stays ``started`` in this table after it ends (only the run ledger learns of the end), so what
+    holds the slot is the card, not the run. ``working`` is a callable returning the machine's cards in ``doing``; it is
+    called only when a started run exists."""
+    rows = conn.execute(IN_FLIGHT_SQL, (machine_id,)).fetchall()
+    if any(row["state"] == "started" for row in rows):
+        live = working()
+        rows = [
+            row
+            for row in rows
+            if row["state"] != "started" or (row["board_slug"], row["task_number"]) in live
+        ]
+    return rows
+
+
 def lease(store, machine):
     from commonplace.projects import orchestration as orch
 
@@ -478,31 +520,14 @@ def lease(store, machine):
             else store.transaction()
         ) as conn,
     ):
-        in_flight = conn.execute(
-            "SELECT project,state,board_slug,task_number FROM runner_jobs WHERE machine_id=? AND "
-            "state IN ('leased','starting','uncertain','started')",
-            (machine["id"],),
-        ).fetchall()
-        if any(row["state"] == "started" for row in in_flight):
-            # Read committed cards without BoardStore's schema/write lock; board
-            # writes acquire runner admission first, so the reverse lock would deadlock.
-            with orch.board_read(store.gateway.workspace_dir(store.workspace_id)) as boards:
-                working = {
-                    (row["slug"], row["id"])
-                    for row in boards.execute(
-                        "SELECT b.slug,t.id FROM tasks t JOIN boards b ON b.id=t.board_id "
-                        "WHERE t.status='doing' AND t.assignee=?",
-                        (assignee,),
-                    )
-                }
-            in_flight = [
-                row
-                for row in in_flight
-                if row["state"] != "started" or (row["board_slug"], row["task_number"]) in working
-            ]
-        if len(in_flight) >= machine["max_in_flight"]:
+        slots = in_flight(
+            conn,
+            machine["id"],
+            lambda: working_cards(store.gateway, store.workspace_id, [assignee])[assignee],
+        )
+        if len(slots) >= machine["max_in_flight"]:
             return None
-        projects = {r["project"] for r in in_flight}
+        projects = {r["project"] for r in slots}
         capped_boards = set()
         for row in conn.execute(
             "SELECT * FROM runner_jobs WHERE machine_id=? AND state='queued' ORDER BY created_at,rowid",
@@ -551,7 +576,7 @@ def lease(store, machine):
             from . import capacity
 
             if (
-                len(in_flight) >= current["max_in_flight"]
+                len(slots) >= current["max_in_flight"]
                 or capacity.available(conn, current, now, max_agents=capacity.job_limit(conn, row))
                 <= 0
             ):

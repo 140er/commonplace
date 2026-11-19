@@ -25,7 +25,7 @@ export const STARTED = "A start was recorded for this workspace. Changes to the 
 const LAST_START_FAILED = "The last recorded start failed.";
 // Said when no machine exists at all: there is nothing to choose, and no instruction that cannot be followed.
 // Kept word for word with overview.py (NO_MACHINES_SENTENCE): a test compares the two, and the overview owns the sentence.
-export const NO_MACHINES_SENTENCE = "No machine is set up yet, so this stays on Choose later. Starting will need one; that is not available yet.";
+export const NO_MACHINES_SENTENCE = "No machine is set up yet. Starting will need one, which is not available yet.";
 // The one sentence that says why a private image does not work; every place that mentions it uses this.
 export const PRIVATE_IMAGE = "Private images need a sign-in, and Commonplace can't store sign-ins yet, so only public images work for now.";
 const FAILURES = {

@@ -311,7 +311,7 @@ def test_running_is_never_shown_on_a_stale_report(api):
     assert stale["status"]["code"] == "unknown"
     assert "last report said Running" in stale["status"]["detail"]
     assert "nothing newer has arrived" in stale["status"]["detail"]
-    assert stale["health"]["state"] == "attention"
+    assert stale["health"]["state"] == "idle"  # it only waits for the machine to report again
 
 
 def test_a_workspace_the_old_seam_marked_ready_has_no_report_and_is_unknown(api):

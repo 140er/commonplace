@@ -1230,8 +1230,7 @@ def test_no_machines_enrolled_says_what_to_do(served_empty, ui, size):
         page.get_by_role("button", name="Details for Machine-less").click()
         detail = page.locator(".compute-ws-detail")
         expect(detail).to_contain_text(
-            "No machine is set up yet, so this stays on Choose later. Starting will need one;"
-            " that is not available yet."
+            "No machine is set up yet. Starting will need one, which is not available yet."
         )
         expect(detail).not_to_contain_text("Choose a machine")
         _shot(page, f"{label}-27-no-machine-detail")

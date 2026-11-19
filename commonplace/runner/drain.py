@@ -16,6 +16,7 @@ SCHEMA = (
     "last_request_id TEXT, last_request_action TEXT)"
 )
 # Every change, in the same transaction as the flag: the audit line that cannot be missing.
+LOG_INDEX = "CREATE INDEX IF NOT EXISTS runner_drain_log_machine ON runner_drain_log(machine_id,id)"
 LOG_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS runner_drain_log ("
     "id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT NOT NULL, action TEXT NOT NULL "
@@ -44,6 +45,7 @@ def _ensure(conn):
     """The tables, and the request-id columns on a table made before they existed."""
     conn.execute(SCHEMA)
     conn.execute(LOG_SCHEMA)
+    conn.execute(LOG_INDEX)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_drain)")}
     for name in ("last_request_id", "last_request_action"):
         if name not in columns:
@@ -87,8 +89,9 @@ def change(conn, machine_id, *, draining, expected_seq, by, now, request_id=None
     """Set the flag on the caller's transaction and return ``(state, repeated)``.
 
     Asking for the state the machine is already in is a repeat and changes nothing. A ``request_id`` is
-    kept with the flag: the same id with the same action is a repeat even after the machine moved on, and
-    the same id for the other action is ``request_reused``."""
+    kept with the flag: the same id with the same action is a repeat for as long as it is the machine's last
+    request id (one id per machine, replaced by the next change that carries one), and the same id for the other
+    action is ``request_reused``."""
     _ensure(conn)
     action = "drain" if draining else "resume"
     row = conn.execute(
