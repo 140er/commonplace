@@ -106,6 +106,8 @@ RULES = {
     # Previews belong to a workspace and stay when a person leaves it, like the card history
     # they are noted in; the people named on them are actor labels, not user columns.
     "preview_events": Rule(workspace=_W),
+    # Short-lived page links of one person for one preview: they go with the person.
+    "preview_links": Rule(user=_U, workspace=_W),
     "preview_revisions": Rule(parent=("preview_id", "previews", "id")),
     "preview_rules": Rule(workspace=_W),
     "previews": Rule(workspace=_W),

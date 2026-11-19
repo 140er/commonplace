@@ -236,6 +236,8 @@ PREFIX = {
     ("GET", "/app/auth/"): "public",
     ("POST", "/app/auth/"): "public",
     ("GET", "/s/"): "public",
+    # Preview files check the session in the route, so a signed-out browser gets a sign-in page.
+    ("GET", "/p/"): "public",
     ("GET", "/api/handoffs/"): "authenticated",
     ("POST", "/api/handoffs/"): "authenticated",
     ("GET", "/api/threads/"): "authenticated",

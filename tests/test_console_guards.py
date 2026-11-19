@@ -21,6 +21,9 @@ PIN_PUBLIC = {
     ("GET", "/app/threads/"),
     ("GET", "/oauth/authorize"),
     ("GET", "/s/"),
+    # Preview files: the route checks the session itself, so a signed-out browser gets a
+    # sign-in page instead of a JSON error.
+    ("GET", "/p/"),
     ("GET", "/skills/decks/"),
     # Bootstrap authenticates with a single-use enrollment code before credentials exist.
     ("POST", "/api/runner-enrollment/exchange"),

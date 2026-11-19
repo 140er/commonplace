@@ -1,0 +1,1 @@
+- **Owns:** `account/tables.py` classifies `preview_links` (short-lived page links of one person for one preview, kept as digests) by user and workspace, so they go with the person's account and with a deleted workspace; the digest column is redacted in an export.

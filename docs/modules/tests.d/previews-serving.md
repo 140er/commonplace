@@ -1,0 +1,1 @@
+- **Owns:** `tests/test_console_guards.py` pins `GET /p/` as a public route (the preview route checks the session itself) and `tests/test_commonplace_public_surface.py` classifies it as public.

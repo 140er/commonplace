@@ -2251,7 +2251,7 @@ def _public_route(method: str, path: str) -> bool:
             "/app/login",
             "/oauth/authorize",
             "/machine-setup.sh",
-        ) or path.startswith(("/app/", "/s/", "/.well-known/", "/skills/decks/"))
+        ) or path.startswith(("/app/", "/s/", "/.well-known/", "/skills/decks/", "/p/"))
     return method == "POST" and (
         path.startswith("/app/auth/")
         or path
