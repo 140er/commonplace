@@ -17,9 +17,10 @@ const KIND_ORDER = ["runner", "machine", "workspace"];
 const esc = value => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
 const LOAD_ERROR = "The overview could not be loaded. Nothing is shown rather than a guess.";
 const DETAIL_ERROR = "The details could not be loaded.";
-const FIRST_RUN = "Create a cloud workspace below. A machine can be chosen later.";
+const FIRST_RUN = "No machine is set up yet. You can still create a cloud workspace below; it waits for a machine.";
 const MORE_THAN = 5; // above this many items the overview starts folded to its summary, so what follows it is within reach
 const DEFAULT_REFRESH = 30;
+const AGE_PENDING = "…"; // what a row's health line says until refreshAges fills in the age
 const UNKNOWN_STEP = "Nothing to do yet; this clears when the machine reports again."
 const CLOCK_SECONDS = 10;
 const NARROW = "(max-width: 699px)";
@@ -67,10 +68,10 @@ export function viewOf(item, clock = {}) {
       status = { code: "unknown", tone: "quiet", label: "Unknown", detail: `Its last report said ${word} ${agoText(age)} and nothing newer has arrived, so it may not be ${word.toLowerCase()} any more.`, next: UNKNOWN_STEP };
       blockers = [...blockers, { code: "unknown", text: "Not known until the next report: its last report is too old to trust." }];
       overridden = true;
-    } else if (item.kind === "runner" && ["online", "busy", "draining", "drained"].includes(status.code)) {
+    } else if (item.kind === "runner" && ["online", "busy", "draining", "drained", "slow"].includes(status.code)) {
       const was = status.label, drain = item.draining ? " It is also set to drain: no new card runs start on it." : "";
       if (age > (thresholds.red_after_s || 900)) { blockers = [...blockers.filter(b => b.code !== "offline"), { code: "offline", text: `Offline: nothing heard for ${agoText(age).replace(" ago", "")}, so new card runs would wait.` }]; status = { code: "offline", tone: "bad", label: "Offline", detail: `Nothing has been heard from it for ${agoText(age).replace(" ago", "")}. It read ${was} when this was last checked; runs it started may still be going and new card runs wait.${drain}`, next: status.next }; overridden = true; }
-      else if (age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: status.next }; overridden = true; }
+      else if (status.code !== "slow" && age > (thresholds.green_within_s || 180)) { status = { code: "slow", tone: "wait", label: "Slow to report", detail: `Later than usual: its last contact was ${agoText(age)}. It read ${was} when this was last checked.${drain}`, next: status.next }; overridden = true; }
     }
   }
   if (overridden) health = { ...health, state: "attention", blockers };
@@ -129,7 +130,8 @@ const seenRow = (item, seen) => {
   return [item.kind === "workspace" ? "Last report" : item.kind === "machine" ? "Live check" : "Last seen", healthLine(item, "")];
 };
 const blockLine = item => {
-  const list = item.health?.blockers || [];
+  // "Starting is not available" is said once for the page (above the list), not on every row; the detail still lists it.
+  const list = (item.health?.blockers || []).filter(b => b.code !== "not_available");
   if (!list.length) return "";
   const names = list.map(b => BLOCK_SHORT[b.code]).filter(Boolean);
   return ` · ${plural(list.length, "thing blocks", "things block")} new work${names.length === list.length ? `: ${names.join(", ")}` : ""}`;
@@ -217,7 +219,9 @@ export function createOverview(ctx) {
   const narrow = () => ctx.doc?.defaultView?.matchMedia?.(NARROW)?.matches === true;
   // Closed on a phone and above a handful of items (the summary names what needs attention); open for the person's own choice,
   // and while a failed first read has a "Try again" inside it.
-  const folded = () => foldOpen !== null ? foldOpen : data === null ? Boolean(loadError) : !narrow() && data.items.length <= MORE_THAN;
+  // Open on a desktop; on a phone open for a short list and closed above a handful of items. With nothing to list the
+  // summary is plain text (no disclosure) and closed.
+  const isOpen = () => foldOpen !== null ? foldOpen : plain() ? false : narrow() ? data.items.length <= MORE_THAN : true;
 
   function filtersHTML(all) {
     const { kinds } = filterCounts(all);
@@ -254,7 +258,7 @@ export function createOverview(ctx) {
   }
 
   const stateHTML = () => data === null
-    ? (loadError ? `<p class="compute-error" role="alert">${e(loadError)}</p><div class="compute-actions"><button type="button" class="btn" data-ov-action="refresh">Try again</button></div>` : "")
+    ? (loadError ? `<p class="compute-error" role="alert">${e(loadError)}</p><div class="compute-actions"><button type="button" class="btn" data-ov-action="refresh"${loading ? ' aria-busy="true"' : ""}>Try again</button></div>` : "")
     : (!data.items.length ? emptyHTML() : "");
 
   function noteText() {
@@ -285,7 +289,7 @@ export function createOverview(ctx) {
     + '<p class="compute-plain">Every machine, runner and cloud workspace in this workspace. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>';
 
   function panelKey() { return detail ? `${detail.kind}:${detail.id}` : ""; }
-  function slots() {
+  function slots(stable = true) {
     const all = data ? items() : [];
     const open = Boolean(detail) && data !== null;
     return {
@@ -294,14 +298,18 @@ export function createOverview(ctx) {
       notes: notesHTML(),
       panel: open ? "keep" : "",
       filters: data && all.length && !open ? filtersHTML(all) : "",
-      list: data && all.length && !open ? listHTML(all) : "",
+      // The list's markup does not carry the ages (they move every second and are patched in place by refreshAges), so a
+      // refresh rewrites it only when a row, a status or a name changed: a focused row is not rebuilt under the person.
+      list: data && all.length && !open ? listHTML(stable ? all.map(item => ({ ...item, seenText: item.last_seen ? AGE_PENDING : undefined })) : all) : "",
     };
   }
   // The state sentence (loading, failed with "Try again", empty with what to do) sits outside the fold: on a phone a closed
   // fold must not hide the one thing the person can do. While there is nothing to fold the summary shows no disclosure marker.
-  const plain = () => data === null ? !loadError : !data.items.length;
-  function inner(values = slots()) {
-    painted = { ...values, panelKey: panelKey() };
+  const plain = () => data === null || !data.items.length;
+  function inner() {
+    // The DOM gets the real ages; what is remembered as painted is the stable markup, so the next refresh compares like with like.
+    const values = slots(false);
+    painted = { ...slots(true), panelKey: panelKey() };
     const opts = { loading: detailBusy, failed: detailFailed, manage: data?.can_manage, clock: clock() };
     const panel = detail && data ? detailHTML(detail.item, opts) : "";
     if (detail && data) { painted.chip = chipHTML(viewOf(detail.item, opts.clock).status); painted.body = detailBody(detail.item, opts); }
@@ -335,9 +343,8 @@ export function createOverview(ctx) {
       + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p>`
       + `<p class="compute-error compute-ov-stale" role="alert" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
       + `<p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p>`
-      + `<div data-ov-slot="state">${slots().state}</div>`
-      + `<details class="compute-ov-fold" data-ov-fold${folded() ? " open" : ""}${plain() ? " data-plain" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary>`
-      + `<div data-ov-root>${inner()}</div></details></section>`;
+      + `<details class="compute-ov-fold" data-ov-fold${isOpen() ? " open" : ""}${plain() ? " data-plain" : ""}><summary data-ov-fold-summary><span data-ov-summary>${e(summaryLine())}</span></summary>`
+      + `<div data-ov-root>${inner()}</div></details><div data-ov-slot="state">${slots().state}</div></section>`;
   }
 
   const setText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
@@ -377,7 +384,7 @@ export function createOverview(ctx) {
     setText(host.querySelector("[data-ov-summary]"), summaryLine());
     setText(host.querySelector("[data-ov-meta]"), metaText());
     // Until the person chooses, the fold follows what it holds: closed above a handful of items, open for a failed first read.
-    if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = folded(); if (fold && fold.open !== want) fold.open = want; }
+    if (foldOpen === null) { const fold = host.querySelector("[data-ov-fold]"), want = isOpen(); if (fold && fold.open !== want) fold.open = want; }
     const fold = host.querySelector("[data-ov-fold]");
     if (fold?.toggleAttribute) fold.toggleAttribute("data-plain", plain());
     const top = host.querySelector("[data-ov-top]");
@@ -397,7 +404,7 @@ export function createOverview(ctx) {
     // An open status list is never rewritten under the pointer: new counts wait until it closes.
     const selectOpen = host.querySelector?.("#compute-ov-status")?.matches?.(":focus") === true;
     if (!selectOpen || focus) setHTML("filters", values.filters);
-    setHTML("list", values.list);
+    if (setHTML("list", values.list)) refreshAges();
     let target = focus ? focusTarget(host, focus) : key ? host.querySelector(key) : null;
     // The focused control went away (a "Try again" that worked): focus lands on the section's heading, not on the page.
     if (!target && key) target = host.querySelector("#compute-overview");
@@ -465,6 +472,7 @@ export function createOverview(ctx) {
       tries++;
       // Said again each time, so pressing "Try again" visibly does something even when it fails again.
       loadError = tries > 1 ? `${LOAD_ERROR} Tried ${tries} times.` : LOAD_ERROR; paint();
+      if (say) announce(loadError);
     }
     if (detail && data && !detailBusy && !failure) void loadDetail(detail.kind, detail.id, { quiet: true });
     schedule();
@@ -551,7 +559,7 @@ export function createOverview(ctx) {
 
   function click(event) {
     const summary = event.target?.closest?.("[data-ov-fold-summary]");
-    if (summary && summary.closest?.(".compute-ov")) { foldOpen = !folded(); return true; }
+    if (summary && summary.closest?.(".compute-ov")) { foldOpen = !isOpen(); return true; }
     const filter = event.target?.closest?.("[data-ov-kind-filter]");
     if (filter) {
       kind = filter.dataset.ovKindFilter;

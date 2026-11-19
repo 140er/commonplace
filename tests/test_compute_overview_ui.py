@@ -33,6 +33,7 @@ import pytest
         "clock-step",
         "every-runner-status-ages",
         "scope-and-state",
+        "rows-patched-in-place",
         "member",
         "in-compute",
         "isolation",

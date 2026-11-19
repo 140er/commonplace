@@ -198,7 +198,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     }
     return false;
   }
-  const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, machines: () => inventory?.nodes || [], requestId });
+  const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, machines: () => inventory?.nodes || [], requestId, outage: () => Boolean(overview.state.loadError) || overview.state.refreshFailed });
   // Adding a machine repaints only its own section, even while it checks on the machine.
   // Its own requests: a refusal elsewhere on this screen (a member is refused the inventory) aborts the shared ones, and a check on the machine must not read that as its own failure.
   const pairing = createPairing({ request: async (path, options = {}) => api(path, { ...options, timeoutMs: 10000 }), epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, requestId, copy, schedule, cancel });
