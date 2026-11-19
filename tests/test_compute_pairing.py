@@ -153,6 +153,18 @@ def freeze(monkeypatch, **offset):
     return now
 
 
+def clock(monkeypatch):
+    """Move time from one fixed start: ``at(seconds=...)`` sets the clock to start + that."""
+    start = control_db._now()
+
+    def at(**offset):
+        now = start + timedelta(**offset)
+        monkeypatch.setattr(control_db, "_now", lambda: now)
+        return now
+
+    return at
+
+
 # ---- creating: the code lifecycle -----------------------------------------------------------
 
 
@@ -450,7 +462,8 @@ def test_the_machine_appears_as_it_connects_with_identity_and_grants_in_words(fl
         item["state"] == "connected"
         and item["state_label"] == "Machine connected, waiting for your approval"
     )
-    assert re.fullmatch(r"(?:[0-9a-f]{4} ){5}[0-9a-f]{4}", item["fingerprint"])
+    # Groups of eight over the whole digest, the way the installer prints them.
+    assert re.fullmatch(r"(?:[0-9a-f]{8} ){7}[0-9a-f]{8}", item["fingerprint"])
     assert item["grant"]["wings"] == ["shared"] and item["grant"]["projects"] == ["demo"]
     assert item["grant"]["max_runtime_mode"] == "auto-accept-edits"
     assert item["can_accept"] is True and item["binding_state"] == "unbound"
@@ -585,6 +598,7 @@ def test_two_accepts_race_and_one_wins(flow):
 
 
 def test_steps_report_to_ready_and_back_through_offline(flow, monkeypatch):
+    at = clock(monkeypatch)
     made = flow.made()
     credentials = flow.connect(made)
     flow.accept(made)
@@ -596,9 +610,16 @@ def test_steps_report_to_ready_and_back_through_offline(flow, monkeypatch):
     item = flow.get(made)
     assert item["state"] == "ready" and item["state_label"] == "Set up and checked"
     assert all(s["state"] == "ok" for s in item["steps"])
-    now = freeze(monkeypatch, seconds=pairing.OFFLINE_SECONDS + 1)
+    # No heartbeat has ever arrived, so silence proves nothing: it stays ready.
+    at(seconds=pairing.OFFLINE_SECONDS * 4)
+    assert flow.get(made)["state"] == "ready"
+    at(seconds=0)
+    assert flow.report(credentials, {"step": "heartbeat"})[1]["state"] == "ready"
+    assert [s["step"] for s in flow.get(made)["steps"]] == list(pairing.STEPS)
+    now = at(seconds=pairing.OFFLINE_SECONDS + 1)
     item = flow.get(made)
     assert item["state"] == "offline" and item["last_report_at"] < control_db._iso(now)
+    at(seconds=pairing.OFFLINE_SECONDS + 2)
     assert flow.report(credentials, {"step": "heartbeat"})[1]["state"] == "ready"
     assert flow.get(made)["state"] == "ready"
 

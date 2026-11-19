@@ -1,0 +1,4 @@
+- **Owns:** `GET /machine-setup.sh` in the gateway's public GET list.
+- **Promises:** The route is the same text for every caller, requires no credential and exposes no secret or tenant data; it is classified `public` in the route guards.
+- **How it fails:** Nothing else becomes public through it: the list names the exact path.
+- **Tests:** `tests/test_machine_setup.py`, `tests/test_commonplace_public_surface.py`, `tests/test_console_guards.py`.
