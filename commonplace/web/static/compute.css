@@ -143,3 +143,53 @@
   :root[data-ui="deck"] #content.deck-workspace:has(.compute-ws) { scroll-padding-bottom: calc(var(--ws-bar-h) + 16px); }
   .compute-ws :is(input, select, .compute-presets) { scroll-margin-bottom: calc(var(--ws-bar-h) + 96px); }
 }
+
+/* Compute overview (compute-overview.js). Scoped: nothing here changes a global or Deck token. Status colours reuse the
+   existing --ok, --wait and --block tokens and are never the only signal (every chip carries its label). The phone
+   offsets follow the Deck breakpoint (699px) and the 44px touch rule of the rest of this file. */
+.compute-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.compute-ov { --ov-warn: var(--wait); display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.compute-ov > * { min-width: 0; }
+:root[data-ui="deck"] .compute-ov { --ov-warn: var(--amber, #f59e0b); }
+.compute-ov [data-ov-top] > header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.compute-ov-meta { margin: 0; }
+.compute-ov-summary { font-size: 15px; font-weight: 600; margin: 0; }
+.compute-ov-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.compute-ov-kinds { display: flex; gap: 8px; flex-wrap: wrap; }
+.compute-ov-kinds .btn[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+.compute-ov-select { display: flex; align-items: center; gap: 8px; }
+.compute-ov .compute-ov-status-filter { font-size: 13px; color: var(--text-2); }
+.compute-ov-group h3 { font-size: 14px; line-height: 20px; margin: 12px 0 0; font-weight: 600; }
+.compute-ov-group .compute-list { max-height: none; overflow: visible; margin-top: 4px; }
+.compute-ov-row .compute-ov-name { font-size: 15px; line-height: 22px; font-weight: 600; margin: 0; letter-spacing: 0; }
+.compute-ov-row p { margin: 4px 0; }
+@media (min-width: 700px) {
+  .compute-ov-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
+  .compute-ov-row > header, .compute-ov-row > p { grid-column: 1; }
+  .compute-ov-row > .compute-actions { grid-column: 2; grid-row: 2 / span 3; align-self: center; margin: 0; }
+}
+.compute-ov-row .compute-ov-sentence { font-size: 14px; }
+.compute-ov-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; color: var(--text); background: var(--well); }
+.compute-ov-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); flex: none; }
+.compute-ov-chip[data-tone="ok"]::before { background: var(--ok); }
+.compute-ov-chip[data-tone="wait"]::before { background: var(--ov-warn); border-radius: 2px; transform: rotate(45deg); }
+.compute-ov-chip[data-tone="bad"]::before { background: var(--block); border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.compute-ov-chip[data-tone="quiet"]::before { background: transparent; border: 2px solid var(--text-2); }
+.compute-ov-chip[data-tone="wait"] { border-color: var(--ov-warn); }
+.compute-ov-chip[data-tone="bad"] { border-color: var(--block); }
+.compute-ov-stale { margin: 0; padding: 8px 10px; border: 1px solid var(--block); border-radius: var(--r); }
+.compute-ov-panel .compute-ov-sub-h { font-size: 14px; margin: 16px 0 0; font-weight: 600; }
+.compute-ov-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; list-style: disc; }
+.compute-ov-list li { margin: 3px 0; }
+.compute-ov-panel dl { margin: 6px 0 0; }
+@media (max-width: 699px) {
+  .compute-ov-filters { align-items: stretch; }
+  .compute-ov-kinds { width: 100%; }
+  .compute-ov-kinds .btn { flex: 1 1 auto; }
+  .compute-ov-select { width: 100%; }
+  .compute-ov-select select { flex: 1; font-size: 16px; }
+  .compute-ov-row .compute-actions .btn { flex: 1; }
+  .compute-ov [data-ov-top] > header .btn { flex: 1 0 auto; }
+}
+.compute-ov h2[tabindex="-1"]:focus, .compute-ov h3[tabindex="-1"]:focus { outline: none; }
+.compute-ov-panel header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }

@@ -6,7 +6,8 @@ const source = name => readFileSync(new URL(`../commonplace/web/static/${name}.j
 const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;
 const apiURL = moduleURL(source('api'));
 const workspacesURL = moduleURL(source('compute-workspaces').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
-const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/compute-workspaces\.js\1/g, JSON.stringify(workspacesURL))));
+const overviewURL = moduleURL(source('compute-overview').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
+const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/compute-workspaces\.js\1/g, JSON.stringify(workspacesURL)).replace(/(['"])\.\/compute-overview\.js\1/g, JSON.stringify(overviewURL))));
 const { createCompute, computePayload, computeExecutionHTML, provisionCommand } = await load('compute');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const clock = 1800000000;
@@ -66,7 +67,7 @@ const cases = {
   async presentation() {
     const f = fixture();
     await f.open(inventory({ nodes: [{ ...node, board: undefined, interface: undefined, address: '192.0.2.20' }], scopes: [], executions: [] }));
-    assert.match(f.host.innerHTML, /Where your Coworkers run: cloud workspaces first, then \(for the workspace owner\) the settings of the machines themselves under Advanced\./);
+    assert.match(f.host.innerHTML, /Where your Coworkers run: an overview of everything first, then cloud workspaces, then \(for the workspace owner\) the settings of the machines themselves under Advanced\./);
     assert.match(f.host.innerHTML, /No scripts saved yet\./);
     assert.doesNotMatch(f.host.innerHTML, /Set up pinned gateways|No immutable script bundles saved/);
     assert.match(f.host.innerHTML, /<p>192\.0\.2\.20:22<\/p>/);
