@@ -59,8 +59,8 @@ REFUSAL_TEXT = {
     "still_stopping": "It is still stopping. Try again when it has stopped.",
     "already_stopped": "It is already stopped.",
     "already_stopping": "It is already stopping.",
-    "not_started": "It has not been started yet. Start it first.",
-    "not_running": "Only a running workspace can be restarted. Use Start for a stopped one.",
+    "not_started": "It has not been started yet, and starting is not available in this version.",
+    "not_running": "Only a running workspace can be restarted, and starting and restarting are not available in this version.",
     "state_unknown": "Its state is not known right now (no recent report from its machine), so it can't be restarted. This clears when the machine reports again.",
     "nothing_to_withdraw": "No request is waiting.",
     "already_picked_up": "A machine picked this request up and is reporting on it, so it can't be withdrawn yet. If the machine goes quiet for ten minutes it can be.",
@@ -167,6 +167,22 @@ def _in_use(running, held, cap):
     return (
         f"{used} of {cap} runs at once {'is' if used == 1 else 'are'} in use: {'; '.join(parts)}."
     )
+
+
+def _allowed_to_start(machine, item):
+    """ "Allowed to start runs" from the status the chip shows, so the two can never disagree."""
+    code = item["status"]["code"]
+    if code == "revoked":
+        return "No: it was removed"
+    if code == "disabled":
+        return "No: it is turned off"
+    if machine["binding_state"] != "owner_attested":
+        return "No: it is not set up and approved yet"
+    if item["draining"]:
+        return "No: it is " + ("drained" if code == "drained" else "draining")
+    if code in ("offline", "never_connected"):
+        return "Yes, once it reports"
+    return "Yes"
 
 
 def _holding_step(cards):
@@ -817,16 +833,17 @@ def runner_status(machine, record, facts, now):
                 "draining",
                 "wait",
                 "Draining",
-                f"{DRAIN_SCOPE} {_runs(running)} in progress will finish."
+                f"Draining. {DRAIN_SCOPE} {_runs(running)} in progress will finish."
                 + (f" {_holding(held)}" if held else "")
                 + f" {NO_RESUME}",
+                next_text=_holding_step(facts["holding_cards"]) if held else None,
             )
         older = facts["end_unreported"]
         return _status(
             "drained",
             "wait",
             "Drained",
-            f"{DRAIN_SCOPE} "
+            f"Drained. {DRAIN_SCOPE} "
             + (
                 f"None is known to be in progress; {_runs(older)} started and never reported an end."
                 if older
@@ -834,6 +851,7 @@ def runner_status(machine, record, facts, now):
             )
             + (f" {_holding(held)}" if held else "")
             + f" {NO_RESUME}",
+            next_text=_holding_step(facts["holding_cards"]) if held else None,
         )
     used, cap = running + held, machine["max_in_flight"]
     if used:
@@ -925,10 +943,12 @@ def _runner_usage(machine, facts, now, *, silent=""):
     """``silent``: why the machine's report is stale ("offline", "slow to report"), so a count of runs in progress is only
     what was recorded."""
     running = facts["running"]
+    used = running + facts["finished_holding"]
+    # The same count the status sentence and the blocker use: how many of its runs at once are in use.
     in_progress = (
         f"{_runs(running)} recorded in progress; more may be running while it is {silent}"
         if silent
-        else f"{_runs(running)} in progress"
+        else f"{used} of {machine['max_in_flight']} runs at once in use"
     )
     usage = {
         "runs": {
@@ -940,7 +960,7 @@ def _runner_usage(machine, facts, now, *, silent=""):
             "max_starts_per_hour": machine["max_starts_per_hour"],
             "end_unreported": facts["end_unreported"],
             "finished_holding": facts["finished_holding"],
-            "text": f"{in_progress} (up to {machine['max_in_flight']} at once), "
+            "text": f"{in_progress}, "
             f"{facts['queued']} waiting, {facts['starts_hour']} started this hour "
             f"(limit {machine['max_starts_per_hour']})"
             + (f"; {_holding(facts['finished_holding'])}" if facts["finished_holding"] else "")
@@ -1027,9 +1047,7 @@ def _runner_usage(machine, facts, now, *, silent=""):
         )
         if spend["unknown_runs"]:
             spend_line += f" (and {_runs(spend['unknown_runs'])} of unknown cost)"
-    usage["summary"] = (
-        f"{in_progress} (up to {machine['max_in_flight']} at once) · {resources} · {spend_line}"
-    )
+    usage["summary"] = f"{in_progress} · {resources} · {spend_line}"
     return usage
 
 
@@ -1060,7 +1078,10 @@ def runner_item(machine, record, facts, now, red_after_s=900):
         }
     # Needs attention is what a person can act on: offline, turned off, uncertain runs. Slow to report only waits and a
     # removed runner is informational.
-    attention = status["code"] in ("offline", "disabled") or bool(issues)
+    # A finished run whose card is still in Doing is something a person can fix (move the card), so it counts too.
+    attention = (
+        status["code"] in ("offline", "disabled") or bool(issues) or bool(facts["finished_holding"])
+    )
     item = {
         "kind": "runner",
         "id": machine["id"],
@@ -1302,6 +1323,9 @@ def read(store, principal, *, session_hash):
         "refresh_seconds": REFRESH_SECONDS,
         "thresholds": thresholds(),
         "drain_scope": DRAIN_SCOPE,  # the one sentence about what drain stops, for the screen's own overrides
+        "next_steps": {
+            code: NEXT_STEP[code] for code in ("offline", "slow")
+        },  # likewise, for an age override
         "can_manage": manage,
         "executor": {
             "available": executor,
@@ -1478,17 +1502,11 @@ def detail(store, principal, kind, item_id, *, session_hash):
     item["activity"] = _runner_activity(store, item_id, now)
     machine = _machine_row(store, item_id)
     item["facts"] = [
-        {"label": "Runs at the same time", "value": f"Up to {machine['max_in_flight']}"},
+        {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
         {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
         {
             "label": "Allowed to start runs",
-            "value": (
-                "No: it is not set up and approved yet"
-                if machine["binding_state"] != "owner_attested"
-                else "No: it is draining"
-                if item["draining"]
-                else "Yes"
-            ),
+            "value": _allowed_to_start(machine, item),
         },
         {
             "label": "Logs",

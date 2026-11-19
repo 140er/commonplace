@@ -415,7 +415,7 @@ def test_preview_of_a_refused_action_gives_the_reason_and_no_effect_claim(api):
     assert stop["allowed"] is False
     assert stop["refusal"] == {
         "reason": "not_started",
-        "text": "It has not been started yet. Start it first.",
+        "text": "It has not been started yet, and starting is not available in this version.",
     }
 
 

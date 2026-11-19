@@ -73,7 +73,7 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
     item = runner(api, made)
     assert item["status"]["code"] == "draining" and item["status"]["tone"] == "wait"
     assert item["status"]["detail"] == (
-        "No new card runs start here. Chat and Coworker sessions can still start here. "
+        "Draining. No new card runs start here. Chat and Coworker sessions can still start here. "
         "1 run in progress will finish. This screen has no button to resume it yet."
     )
     assert [b["code"] for b in item["health"]["blockers"]] == ["draining"]
@@ -358,7 +358,7 @@ def test_drain_is_stated_to_stop_card_runs_only(api, fleet):
     act(api, made, "drain")
     detail = runner(api, made)
     scope = "No new card runs start here. Chat and Coworker sessions can still start here."
-    assert detail["status"]["detail"].startswith(scope)
+    assert detail["status"]["detail"].startswith("Drained. " + scope)
     # Chat and Coworker leases do not read the flag: pinned here so the sentence cannot drift from the code.
     import inspect
 
