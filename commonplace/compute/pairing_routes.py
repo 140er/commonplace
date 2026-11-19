@@ -33,6 +33,7 @@ _CONTROL_STATUS = {"cancelled": 200, "expired": 200}
 def dispatch(h, store, principal, parts, auth, body_reader):
     """``parts`` is the path after ``/api/compute/pairings``."""
     gateway, db = store.gateway, store.gateway.db
+    pairing.ensure(db)
     owner = store._member(principal, auth["session_hash"]).role == "owner"
     if h.command == "GET":
         if not parts:

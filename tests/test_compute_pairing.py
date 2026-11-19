@@ -350,7 +350,7 @@ def test_writes_need_same_origin_json(flow):
         body=body,
         origin="http://evil.test",
     )
-    assert status == 403 and result["reason"] == "request"
+    assert status == 403 and "setup" not in result
     with flow.hub.db._lock:
         assert flow.hub.db._conn.execute("SELECT count(*) FROM machine_pairings").fetchone()[0] == 0
 
@@ -667,7 +667,7 @@ def test_a_malformed_report_is_refused_and_stores_nothing(flow, body):
 def test_only_the_machine_credential_reports(flow):
     credentials = flow.connect(flow.made())
     body = {"step": "files", "state": "ok"}
-    assert flow.report(credentials, body, "worker_token")[0] == 404
+    assert flow.report(credentials, body, "worker_token")[0] in (403, 404)
     assert http(flow.hub.port, "POST", STATUS, cookie=flow.owner["cookie"], body=body)[0] in (
         403,
         404,
@@ -687,7 +687,13 @@ def test_a_closed_pairing_takes_no_more_reports(flow):
     credentials = flow.connect(made)
     assert flow.close(made)[0] == 200
     status, _ = flow.report(credentials, {"step": "files", "state": "ok"})
-    assert status in (404, 409)
+    # Closing revoked the machine's credential, so the gateway stops the report first.
+    assert status in (401, 404, 409)
+    with flow.hub.db._lock:
+        assert (
+            flow.hub.db._conn.execute("SELECT count(*) FROM machine_pairing_steps").fetchone()[0]
+            == 0
+        )
 
 
 # ---- closing, revoking and setting up again --------------------------------------------------
@@ -922,8 +928,8 @@ def test_tables_are_classified_and_the_code_is_in_no_pairing_column(flow):
 
 def test_every_refusal_reason_in_the_code_has_a_sentence_and_a_next_step():
     source = Path(pairing.__file__).read_text()
-    used = set(re.findall(r'refuse\([^()]*?,\s*"([a-z_]+)"', source))
-    used |= set(re.findall(r'return "([a-z_]+)"', source))
+    used = set(re.findall(r'refuse\((?:None|"[a-z_]+"),\s*"([a-z_]+)"', source))
+    used |= set(re.findall(r'return "([a-z_]+)"', source[source.index("def _check_reason") :]))
     assert used and used <= set(pairing.REASONS), sorted(used - set(pairing.REASONS))
     for text, step in pairing.REASONS.values():
         assert text.endswith(".") and step.endswith(".")

@@ -80,6 +80,9 @@ EXACT = {
     # Code-authenticated, single-use bootstrap; recovery requires a bound-key challenge.
     ("POST", "/api/runner-enrollment/exchange"): "bootstrap",
     ("POST", "/api/runner-enrollment/recover"): "bootstrap",
+    # Guided pairing: the code and pairing id authenticate the check; the status report is the machine's own.
+    ("POST", "/api/runner-pairing/check"): "bootstrap",
+    ("POST", "/api/runner/pairing-status"): "authenticated",
     # Machine runner (commonplace/runner), inert until an owner attests.
     ("GET", "/api/runners"): "authenticated",
     ("POST", "/api/runners"): "authenticated",

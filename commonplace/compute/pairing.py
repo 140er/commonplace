@@ -34,7 +34,8 @@ PAIRING_ID = re.compile(r"pair_[0-9a-f]{16}")
 HUB = re.compile(r"https?://[A-Za-z0-9.\-]{1,253}(?::[0-9]{1,5})?")
 STEPS = ("prerequisites", "files", "service", "check")
 DEFAULTS = {"max_runtime_mode": "approval-required", "max_in_flight": 1, "max_starts_per_hour": 6}
-COPIED = ("projects", "topics", "wings", "requesters") + tuple(DEFAULTS)
+LISTS = ("projects", "topics", "wings", "requesters")
+COPIED = LISTS + tuple(DEFAULTS)
 CREATE_FIELDS = frozenset({"request_id", "kind", "label", "copy_from", *COPIED})
 CREATE_REQUIRED = frozenset({"request_id", "kind", "label"})
 ACCEPT_FIELDS = frozenset({"request_id", "expected_version", "identity_digest"})
@@ -250,11 +251,14 @@ MEMBER_VIEW = (
 
 
 def ensure(db):
-    """Runner tables first: pairings reference enrollments."""
-    registry.ensure(db)
-    enrollment.ensure(db)
+    """Runner tables first: pairings reference enrollments. Once per database."""
     with db._lock:
+        if getattr(db, "_pairing_schema", False):
+            return
+        registry.ensure(db)
+        enrollment.ensure(db)
         db._conn.executescript(SCHEMA)
+        db._pairing_schema = True
 
 
 def refuse(field, reason, code="invalid_request", status=None):
@@ -365,7 +369,7 @@ def identity_digest(row):
 
 def _grant_view(row):
     grant = json.loads(row["intent"])
-    return {key: grant.get(key, DEFAULTS.get(key)) for key in COPIED}
+    return {key: grant.get(key, [] if key in LISTS else DEFAULTS[key]) for key in COPIED}
 
 
 def _step_view(steps):
@@ -882,6 +886,7 @@ def report(db, principal, data):
             "UPDATE machine_pairings SET last_report_at=?, updated_at=? WHERE id=?",
             (stamp, stamp, row["id"]),
         )
+        row = db._conn.execute(_SELECT + "WHERE p.id=?", (row["id"],)).fetchone()
         return {"ok": True, "state": derive(row, _steps(db, row["id"]), stamp)[0]}
 
 
