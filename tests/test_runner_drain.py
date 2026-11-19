@@ -367,8 +367,12 @@ def test_a_runner_removed_between_the_check_and_the_drain_is_refused_inside_the_
         # The route's concealment read and the pre-check see it not removed yet; the read inside the lock sees the removal.
         return row if len(calls) <= 2 else {**dict(row), "revoked_at": "2026-11-19T10:00:00Z"}
 
+    seq = runner(api, made)["basis"]["seq"]  # read before the race starts
     monkeypatch.setattr(overview, "_machine_row", racing)
-    assert act(api, made, "drain") == (409, {"error": "conflict", "reason": "revoked"})
+    assert api.request(
+        "POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": seq}
+    ) == (409, {"error": "conflict", "reason": "revoked"})
+    assert len(calls) == 3
     monkeypatch.undo()
     assert runner(api, made)["draining"] is False
     with fleet.store().connection() as conn:
