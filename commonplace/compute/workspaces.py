@@ -12,6 +12,7 @@ Docs: docs/system/compute-workspaces.md.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import math
 import re
@@ -27,7 +28,8 @@ from .protocol import ProtocolDenied, identifier, positive_integer
 MAX_WORKSPACES = 100
 MAX_LIST = MAX_WORKSPACES
 # Bumped with every migration step in ``schema``; ``PRAGMA user_version`` records the one already done.
-SCHEMA_VERSION = 2
+# 3: the uniqueness key became NFKC-casefold, so every stored key is recomputed once.
+SCHEMA_VERSION = 3
 NAME_LIMIT = 60  # code points, counted after NFC normalisation (the browser counts the same way)
 
 # Ranges and defaults, served to the form so the browser never hard-codes a second copy.
@@ -107,7 +109,34 @@ _LOCAL_SUFFIXES = (
     ".intranet",
     ".private",
     ".home.arpa",
+    ".localdomain",
+    ".svc",
+    ".ts.net",
+    ".consul",
 )
+_DOTTED_QUAD = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}", re.ASCII)
+# Not public: "this" network, private, shared, loopback, link-local, protocol and documentation blocks,
+# benchmarking, multicast and everything reserved above it (the browser rule carries the same list).
+_NON_PUBLIC = tuple(
+    ipaddress.ip_network(net)
+    for net in (
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/3",
+    )
+)
+# "localhost4" and "localdomain4" are the usual resolver names for the loopback host and its domain.
+_LOCAL_LABEL = re.compile(r"(?:localhost|localdomain)[0-9]*", re.ASCII)
 # Registry logins need a custody purpose and pull-time use that arrive with the start/stop lifecycle, so no
 # record may claim to need one yet (docs/system/compute-workspaces.md, "Registry logins").
 REGISTRY_LOGINS = False
@@ -116,7 +145,7 @@ _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
 # to Unicode, so the category check above cannot catch them: Hangul and braille fillers, Khmer inherent
 # vowels, the combining grapheme joiner and the variation selectors. Any space but U+0020 is refused too.
 _HIDDEN_NAME = re.compile(
-    "[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180d\ufe00-\ufe0f"
+    "[\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0\u034f\u180b-\u180f\ufe00-\ufe0f"
     "\U000e0100-\U000e01ef]"
 )
 
@@ -138,12 +167,27 @@ def _conflict(reason, field=None):
     return StoreError("conflict", 409, field=field, reason=reason)
 
 
-def _private_host(host):
-    """True for hosts that name a local or private network, or an IP address in any notation."""
+def _host_refusal(host):
+    """The reason a registry host is refused, or None.
+
+    ``registry_private``: a name or address on a local or private network. ``registry_ip``: a public
+    IPv4 address in plain dotted form, which is refused too (a registry has a name, and a pull by
+    address cannot be checked here) but for a reason that says so. Any other numeric notation
+    (``0x7f.0.0.1``, ``8.8.8``) could hide a private address and counts as private.
+    """
     name = host.partition(":")[0]
-    if "." not in name or name.endswith(_LOCAL_SUFFIXES):
-        return True
-    return _NUMERIC_LABEL.fullmatch(name.rsplit(".", 1)[-1]) is not None
+    if (
+        "." not in name
+        or name.endswith(_LOCAL_SUFFIXES)
+        or any(_LOCAL_LABEL.fullmatch(label) for label in name.split("."))
+    ):
+        return "registry_private"
+    if _NUMERIC_LABEL.fullmatch(name.rsplit(".", 1)[-1]) is None:
+        return None
+    if not _DOTTED_QUAD.fullmatch(name) or any(int(part) > 255 for part in name.split(".")):
+        return "registry_private"
+    address = ipaddress.IPv4Address(name)
+    return "registry_private" if any(address in net for net in _NON_PUBLIC) else "registry_ip"
 
 
 def parse_image(value, *, strict=True):
@@ -163,6 +207,9 @@ def parse_image(value, *, strict=True):
     if not _SAFE.fullmatch(value) or value.startswith(("-", "/", ".")):
         raise refuse("image", "characters")
     name, at, digest = value.partition("@")
+    if at and ("/" in digest or "." in digest):
+        # "user:pass@ghcr.io/app": a login in the address is not a digest, and it must never be stored.
+        raise refuse("image", "user_info")
     if at and (not _DIGEST.fullmatch(digest) or "@" in digest):
         raise refuse("image", "digest")
     if "@" in name:
@@ -183,8 +230,8 @@ def parse_image(value, *, strict=True):
         match = _HOST.fullmatch(first)
         if match is None or (match.group(1) is not None and not 1 <= int(match.group(1)) <= 65535):
             raise refuse("image", "registry")
-        if strict and _private_host(first):
-            raise refuse("image", "registry_private")
+        if strict and (refusal := _host_refusal(first)):
+            raise refuse("image", refusal)
         registry = first
         parts = parts[1:]
     if not parts or any(not _COMPONENT.fullmatch(part) for part in parts):
@@ -216,18 +263,19 @@ def _name(value):
 
 
 def name_key(name):
-    """The uniqueness key: case-folded and NFC, so 'Straße' and 'STRASSE' are one name."""
-    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
+    """The uniqueness key: NFKC and case-folded, so 'Straße' and 'STRASSE', 'Ａ' and 'A', '①' and '1' are one name.
 
-
-def schema(conn):
-    """Columns and tables added after slice 1 shipped; the backfill keeps stored names unique by key.
-
-    Runs once per database: ``PRAGMA user_version`` records the step already done, so an ordinary
-    Compute transaction pays for one read instead of a table scan.
+    Case folding can produce characters that compose or fold again, so the two steps run twice (the
+    Unicode NFKC_Casefold recipe); a test pins that the key is a fixed point.
     """
-    if conn.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
-        return
+    key = name
+    for _ in range(2):
+        key = unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", key).casefold())
+    return key
+
+
+def _migrate(conn):
+    """Every step of the migration; the caller owns the transaction, so all of it or none of it applies."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(cloud_workspaces)")}
     if "name_key" not in columns:
         conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN name_key TEXT")
@@ -240,15 +288,18 @@ def schema(conn):
         # against; ``revision`` still counts only the edits that need a restart.
         conn.execute("ALTER TABLE cloud_workspaces ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
         conn.execute("UPDATE cloud_workspaces SET version=revision")
-    pending = conn.execute("SELECT id,name FROM cloud_workspaces WHERE name_key IS NULL").fetchall()
-    if pending:
-        taken = {row[0] for row in conn.execute("SELECT name_key FROM cloud_workspaces") if row[0]}
-        for row in pending:
-            key = name_key(row["name"])
-            if key in taken:
-                key = f"{key}\x00{row['id']}"
-            taken.add(key)
-            conn.execute("UPDATE cloud_workspaces SET name_key=? WHERE id=?", (key, row["id"]))
+    # Recompute every key (older rows have none, or a weaker one). The oldest record keeps the plain key;
+    # a later record whose key collides is kept apart by its id. Keys are parked first so the unique
+    # index never sees two rows holding the same key part-way through.
+    rows = conn.execute("SELECT id,name FROM cloud_workspaces ORDER BY created_at,id").fetchall()
+    conn.execute("DROP INDEX IF EXISTS cloud_workspaces_name_key")
+    taken = set()
+    for row in rows:
+        key = name_key(row["name"])
+        if key in taken:
+            key = f"{key}\x00{row['id']}"
+        taken.add(key)
+        conn.execute("UPDATE cloud_workspaces SET name_key=? WHERE id=?", (key, row["id"]))
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS cloud_workspaces_name_key ON cloud_workspaces(name_key)"
     )
@@ -272,7 +323,31 @@ def schema(conn):
         "BEFORE UPDATE ON cloud_workspace_tombstones BEGIN "
         "SELECT RAISE(ABORT,'workspace tombstones cannot be changed'); END"
     )
-    conn.execute("PRAGMA user_version=2")  # SCHEMA_VERSION; a test pins that they agree
+    # Last, so a database is never marked done with a step missing (the version is part of the transaction).
+    conn.execute("PRAGMA user_version=" + str(SCHEMA_VERSION))  # an integer constant, never input
+
+
+def schema(conn):
+    """Columns, keys and tables added after slice 1 shipped.
+
+    Runs once per database: ``PRAGMA user_version`` records the step already done, so an ordinary
+    Compute transaction pays for one read instead of a table scan. A migration is one transaction:
+    when the caller has none open it takes ``BEGIN IMMEDIATE`` itself and re-reads the version under
+    that lock, so two processes never both migrate and a failure part-way leaves nothing changed.
+    """
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
+        return
+    if conn.in_transaction:
+        _migrate(conn)
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            _migrate(conn)
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
 
 
 def _cpu(value):
@@ -324,17 +399,26 @@ def _revision(value):
         raise refuse("expected_revision", "invalid") from None
 
 
+# The one query every read goes through: a record with its machine's metadata (a JOIN, never a lookup per row).
+_SELECT = (
+    "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
+    "LEFT JOIN nodes n ON n.id=w.node_id"
+)
+
+
+def _rows(conn, where="", params=(), tail=""):
+    """Records through ``_SELECT``; ``where`` and ``tail`` are fixed SQL text from this module, values go in ``params``."""
+    return conn.execute(_SELECT + " " + where + " " + tail, params).fetchall()
+
+
 def _row(conn, workspace_id):
-    """One record with its machine's metadata (one JOIN, no per-row lookup)."""
+    """One record with its machine's metadata."""
     try:
         identifier(workspace_id)
     except ProtocolDenied:
         raise refuse(None, "identifier") from None
-    row = conn.execute(
-        "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
-        "LEFT JOIN nodes n ON n.id=w.node_id WHERE w.id=?",
-        (workspace_id,),
-    ).fetchone()
+    found = _rows(conn, "WHERE w.id=?", (workspace_id,))
+    row = found[0] if found else None
     if row is None:
         raise StoreError("not_found", 404, reason="record")
     return row
@@ -447,11 +531,7 @@ def options():
 def list_workspaces(store, principal, *, session_hash):
     with store._transaction(principal, session_hash, member=True) as (conn, current):
         manage = current.role == "owner"
-        rows = conn.execute(
-            "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
-            "LEFT JOIN nodes n ON n.id=w.node_id ORDER BY w.created_at DESC,w.id DESC LIMIT ?",
-            (MAX_LIST,),
-        ).fetchall()
+        rows = _rows(conn, tail="ORDER BY w.created_at DESC,w.id DESC LIMIT ?", params=(MAX_LIST,))
         return {
             "workspaces": [public(row, manage=manage) for row in rows],
             "total": conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[0],
@@ -520,11 +600,8 @@ def create_workspace(
             ).fetchone():
                 # The record this id made was discarded on purpose: a replay must not bring it back.
                 raise _conflict("request_discarded", "request_id")
-            prior = conn.execute(
-                "SELECT w.*, n.metadata AS node_metadata FROM cloud_workspaces w "
-                "LEFT JOIN nodes n ON n.id=w.node_id WHERE w.request_id=?",
-                (request_id,),
-            ).fetchone()
+            found = _rows(conn, "WHERE w.request_id=?", (request_id,))
+            prior = found[0] if found else None
             if prior is not None:
                 if prior["request_hash"] != digest:
                     raise _conflict("request_reused", "request_id")
@@ -691,12 +768,27 @@ def discard_workspace(store, principal, workspace_id, *, session_hash, expected_
 
 
 def set_state(conn, workspace_id, state, reason=None, *, applied_revision=None):
-    """Lifecycle write for the later start/stop code; the REST surface never calls it."""
+    """Lifecycle write for the later start/stop code; the REST surface never calls it.
+
+    ``ready`` means the machine runs the saved settings, so it needs ``applied_revision`` and writes
+    only when that covers the record's ``revision``, in the same UPDATE that sets the state: a stale
+    or missing revision can never leave a record ready with settings the machine does not hold.
+    """
     if state not in STATES or (state == "failed") != (reason is not None):
         raise ValueError("invalid_workspace_state")
     if reason is not None and reason not in FAILURE_REASONS:
         raise ValueError("invalid_workspace_state")
-    if applied_revision is None:
+    if state == "ready":
+        if applied_revision is None:
+            raise ValueError("invalid_workspace_state")
+        changed = conn.execute(
+            "UPDATE cloud_workspaces SET state='ready',state_reason=NULL,applied_revision=? "
+            "WHERE id=? AND revision<=?",
+            (applied_revision, workspace_id, applied_revision),
+        ).rowcount
+        if changed != 1:
+            raise ValueError("invalid_workspace_state")
+    elif applied_revision is None:
         conn.execute(
             "UPDATE cloud_workspaces SET state=?,state_reason=? WHERE id=?",
             (state, reason, workspace_id),

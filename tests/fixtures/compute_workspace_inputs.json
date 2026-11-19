@@ -10,7 +10,9 @@
    "ghcr.io/acme/tools:1.2@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
    "ghcr.io/acme/tools:1.2",
    "registry.example.com:5000/team/app/sub-name_x:v1.0-rc1",
-   "127.0.0.1.nip.io/app:1"
+   "127.0.0.1.nip.io/app:1",
+   "svc.example.com/app:1",
+   "localhosting.example.com/app:1"
   ],
   "refused": {
    "": "empty",
@@ -32,7 +34,7 @@
    ".hidden": "characters",
    "https://evil.example/app": "scheme",
    "docker://ubuntu": "scheme",
-   "user@host.example/app": "digest",
+   "user@host.example/app": "user_info",
    "ubuntu@sha256:abc": "digest",
    "ubuntu@sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "digest",
    "ubuntu@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "digest",
@@ -60,7 +62,24 @@
    "foo.localhost/app": "registry_private",
    "ghcr.io:443": "registry_no_path",
    "ghcr.io": "registry_no_path",
-   "registry.example.com:5000": "registry_no_path"
+   "registry.example.com:5000": "registry_no_path",
+   "user:pass@ghcr.io/acme/tools": "user_info",
+   "token@ghcr.io/acme/tools:1": "user_info",
+   "localhost.localdomain/app": "registry_private",
+   "localhost4.localdomain4/app": "registry_private",
+   "registry.localdomain/app": "registry_private",
+   "registry.svc/app": "registry_private",
+   "box.tailnet-abc.ts.net/app": "registry_private",
+   "db.consul/app": "registry_private",
+   "8.8.8.8/app": "registry_ip",
+   "1.1.1.1:5000/app": "registry_ip",
+   "100.64.0.1/app": "registry_private",
+   "198.18.0.1/app": "registry_private",
+   "203.0.113.9/app": "registry_private",
+   "224.0.0.1/app": "registry_private",
+   "255.255.255.255/app": "registry_private",
+   "01.2.3.4/app": "registry_private",
+   "8.8.8/app": "registry_private"
   }
  },
  "names": {
@@ -115,7 +134,8 @@
    "\u3164": "characters",
    "\u2800\u2800": "characters",
    "---": "no_letter",
-   "!!! ???": "no_letter"
+   "!!! ???": "no_letter",
+   "a\u180fb": "characters"
   }
  }
 }

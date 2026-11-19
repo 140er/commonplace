@@ -85,6 +85,14 @@ _WORKSPACE_REASON = {
 }
 
 
+# What a refusal from the shared write boundary becomes on a cloud workspace route: only the two codes that
+# name the person (not signed in; a token or other non-person caller) are about who is asking.
+_BOUNDARY_WORKSPACE = {
+    "sign_in": (401, "sign_in"),
+    "person_session_required": (403, "owner_required"),
+}
+
+
 def _tail_parts(path):
     """The decoded segments after /api/compute, or None when the path is not a clean one.
 
@@ -267,6 +275,10 @@ def handle(gateway, handler):
         raise StoreError("not_found", 404)
     except BoundaryError as exc:
         h.close_connection = True
+        if workspace_route:
+            # By code, not by status: a foreign Origin is a refused request, not a refused person.
+            status, code = _BOUNDARY_WORKSPACE.get(exc.code, (400, "invalid_request"))
+            return send_json(h, status, _with_reason({"error": code}, True))
         code = (
             "sign_in"
             if exc.code == "sign_in"
@@ -277,7 +289,7 @@ def handle(gateway, handler):
         return send_json(
             h,
             401 if code == "sign_in" else 403 if code == "owner_required" else 400,
-            _with_reason({"error": code}, workspace_route),
+            {"error": code},
         )
     except FenceDenied:
         h.close_connection = True

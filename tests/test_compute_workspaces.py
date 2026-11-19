@@ -1,6 +1,7 @@
 """Cloud workspace records on the owner Compute REST: validation, status, access and edits."""
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -947,3 +948,232 @@ def test_a_private_looking_name_that_only_resolves_elsewhere_is_accepted_and_doc
     # The app cannot see DNS: a name that merely resolves to a private address is accepted here.
     # Pulling an image is the lifecycle card's job and it must check the address it resolved; nothing pulls yet.
     assert create(api, image="127.0.0.1.nip.io/app:1")["image_registry"] == "127.0.0.1.nip.io"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": None},
+        {"Origin": "null"},
+        {"Origin": "http://evil.test"},
+        {"Origin": ["http://app.test", "http://evil.test"]},
+        {"Content-Type": None},
+        {"Content-Type": "text/plain"},
+    ],
+)
+def test_a_refused_request_is_not_reported_as_a_refused_person(api, headers):
+    # The shared write boundary refuses a foreign Origin or a simple request with 403; on these routes that
+    # is the request being wrong (invalid_request / request), never "only the owner can change ..." for the owner.
+    item = create(api)
+    url = f"{BASE}/{item['id']}"
+    for path, payload in (
+        (BASE, body(name="Foreign")),
+        (url, {"expected_revision": 1, "name": "Foreign"}),
+        (url + "/discard", {"expected_revision": 1}),
+        (url + "/credential", {}),
+    ):
+        status, result = api.request("POST", path, payload, headers=headers)
+        assert (status, result) == (400, {"error": "invalid_request", "reason": "request"}), path
+    assert api.request(path=BASE)[1]["workspaces"] == [item]
+    # A member is still told they are a member: the person check runs before the request check.
+    ask = member_api(api)
+    assert ask("POST", BASE, body(name="Foreign"), headers=headers) == (
+        403,
+        {"error": "owner_required", "reason": "member"},
+    )
+
+
+def test_a_signed_out_write_is_sign_in_not_invalid_request(api):
+    assert api.request("POST", BASE, body(), cookie=False) == (
+        401,
+        {"error": "sign_in", "reason": "session"},
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Ｂuild box", "Build box", "ＢＵＩＬＤ ＢＯＸ", "build box"],
+)
+def test_names_that_fold_to_the_same_key_are_one_name(api, name):
+    create(api, name="Build box")
+    status, result = api.request("POST", BASE, body(name=name, image="ghcr.io/acme/other:1"))
+    if name == "Build box":
+        assert (status, result["reason"]) == (
+            400,
+            "characters",
+        )  # a no-break space is refused outright
+    else:
+        assert (status, result["reason"]) == (409, "name_taken")
+
+
+def test_circled_and_fullwidth_digits_and_the_ligature_do_not_coexist_with_their_plain_form(api):
+    create(api, name="Box 1")
+    assert api.request("POST", BASE, body(name="Box ①", image="ghcr.io/a/b:1"))[1]["reason"] == (
+        "name_taken"
+    )
+    create(api, name="office", image="ghcr.io/a/c:1")
+    assert api.request("POST", BASE, body(name="oﬃce", image="ghcr.io/a/d:1"))[1]["reason"] == (
+        "name_taken"
+    )
+
+
+@pytest.mark.parametrize("name", ["Straße", "ǅ", "ﬃ", "Ａ① ｂ", "İstanbul", "ΐ", "ǰ", "ẞ"])
+def test_the_name_key_is_a_fixed_point(name):
+    key = workspaces.name_key(name)
+    assert workspaces.name_key(key) == key
+
+
+def test_stored_keys_are_recomputed_once_with_the_older_record_keeping_the_plain_key(api):
+    first = create(api, name="Box 1")
+    second = create(api, name="Other", image="ghcr.io/a/b:1")
+    with api.env.store._journal() as conn:
+        # What the previous release stored: a name key that was only NFC and case-folded.
+        conn.execute("DROP INDEX cloud_workspaces_name_key")
+        conn.execute(
+            "UPDATE cloud_workspaces SET name='Box ①',name_key='box ①' WHERE id=?", (second["id"],)
+        )
+        conn.execute("UPDATE cloud_workspaces SET created_at=1 WHERE id=?", (first["id"],))
+        conn.execute("UPDATE cloud_workspaces SET created_at=2 WHERE id=?", (second["id"],))
+        conn.execute("PRAGMA user_version=2")
+        workspaces.schema(conn)
+        keys = dict(conn.execute("SELECT id,name_key FROM cloud_workspaces").fetchall())
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == workspaces.SCHEMA_VERSION
+    assert keys[first["id"]] == "box 1"
+    assert keys[second["id"]] == f"box 1\x00{second['id']}"
+    # Both records are still listed and the new key applies to everything created afterwards.
+    assert api.request(path=BASE)[1]["total"] == 2
+    assert api.request("POST", BASE, body(name="BOX 1", image="ghcr.io/a/e:1"))[1]["reason"] == (
+        "name_taken"
+    )
+
+
+def test_ready_needs_an_applied_revision_that_covers_the_record(api):
+    item = create(api)
+    for kwargs in ({}, {"applied_revision": 0}):
+        with pytest.raises(ValueError):
+            set_state(api, item["id"], "ready", **kwargs)
+    api.request("POST", f"{BASE}/{item['id']}", {"expected_revision": 1, "cpu_cores": 3})
+    # The record is on revision 2: a machine that applied revision 1 is not ready for it.
+    with pytest.raises(ValueError):
+        set_state(api, item["id"], "ready", applied_revision=1)
+    shown = api.request(path=f"{BASE}/{item['id']}")[1]["workspace"]
+    assert (shown["status"], shown["started"], shown["applied_revision"]) == (
+        "no_machine",
+        False,
+        None,
+    )
+    _, node = api.enrolled()
+    api.request("POST", f"{BASE}/{item['id']}", {"expected_revision": 2, "node_id": node["id"]})
+    set_state(api, item["id"], "ready", applied_revision=3)
+    shown = api.request(path=f"{BASE}/{item['id']}")[1]["workspace"]
+    assert (shown["status"], shown["applied_revision"]) == ("ready", 3)
+
+
+def _old_database(conn):
+    """The table as the first release left it: no key, request, hash or version column."""
+    conn.execute("UPDATE cloud_workspaces SET revision=3")
+    for column in ("version", "request_id", "request_hash", "name_key"):
+        conn.execute("DROP INDEX IF EXISTS cloud_workspaces_name_key")
+        conn.execute("DROP INDEX IF EXISTS cloud_workspaces_request")
+        conn.execute(f"ALTER TABLE cloud_workspaces DROP COLUMN {column}")
+    conn.execute("DROP TABLE cloud_workspace_tombstones")
+    conn.execute("PRAGMA user_version=0")
+
+
+def test_a_failure_between_migration_steps_changes_nothing_and_the_next_open_finishes_it(
+    api, monkeypatch
+):
+    create(api)
+    with api.env.store._journal() as conn:
+        _old_database(conn)
+    store = api.env.store
+    original = workspaces.name_key
+    calls = []
+
+    def crash(name):
+        calls.append(name)
+        raise RuntimeError("the process died between the column and the backfill")
+
+    monkeypatch.setattr(workspaces, "name_key", crash)
+    with pytest.raises(RuntimeError):
+        with store._journal():
+            pass
+    assert calls
+    monkeypatch.setattr(workspaces, "name_key", original)
+    # Opened by hand, without the migration, to see what the failed attempt left behind.
+    import sqlite3
+
+    raw = sqlite3.connect(str(store._path() if callable(store._path) else store._path))
+    try:
+        columns = {row[1] for row in raw.execute("PRAGMA table_info(cloud_workspaces)")}
+        assert "version" not in columns and "name_key" not in columns
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == 0
+    finally:
+        raw.close()
+    with store._journal() as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == workspaces.SCHEMA_VERSION
+        row = conn.execute("SELECT version,name_key,revision FROM cloud_workspaces").fetchone()
+        assert (row["version"], row["name_key"], row["revision"]) == (3, "build box", 3)
+
+
+def test_the_migration_takes_its_own_transaction_and_rolls_back_as_one(api, monkeypatch):
+    create(api)
+    import sqlite3
+
+    path = api.env.store._path() if callable(api.env.store._path) else api.env.store._path
+    with api.env.store._journal() as conn:
+        _old_database(conn)
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        monkeypatch.setattr(
+            workspaces, "name_key", lambda name: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        with pytest.raises(RuntimeError):
+            workspaces.schema(conn)
+        assert not conn.in_transaction
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert "version" not in {
+            row[1] for row in conn.execute("PRAGMA table_info(cloud_workspaces)")
+        }
+    finally:
+        conn.close()
+
+
+def _statements(monkeypatch):
+    """Every SQL statement a request runs inside the Compute journal (each request opens its own Store)."""
+    from commonplace.compute.control import Store
+
+    seen = []
+    original = Store._journal
+
+    @contextmanager
+    def journal(self):
+        with original(self) as conn:
+            conn.set_trace_callback(seen.append)
+            yield conn
+
+    monkeypatch.setattr(Store, "_journal", journal)
+    return seen
+
+
+def test_listing_runs_the_same_number_of_statements_however_many_records_there_are(
+    api, monkeypatch
+):
+    _, node = api.enrolled()
+    seen = _statements(monkeypatch)
+    api.request(path=BASE)
+    empty = len(seen)
+    assert empty  # the count below compares real statements, not two empty lists
+    for number in range(8):
+        create(api, name=f"On {number}", image=f"ghcr.io/acme/a{number}:1", node_id=node["id"])
+    seen.clear()
+    status, result = api.request(path=BASE)
+    assert status == 200 and len(result["workspaces"]) == 8
+    assert all(item["machine_name"] == node["name"] for item in result["workspaces"])
+    assert len(seen) == empty
+    # One JOINed query names the machines: no statement reads the machines table on its own.
+    assert not [text for text in seen if "FROM nodes" in text and "cloud_workspaces" not in text]
+    seen.clear()
+    api.request(path=f"{BASE}/{result['workspaces'][0]['id']}")
+    assert len([text for text in seen if "cloud_workspaces" in text and "SELECT" in text]) == 1
