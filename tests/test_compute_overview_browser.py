@@ -19,7 +19,7 @@ import pytest
 from commonplace import sessions
 from commonplace.compute import workspace_lifecycle as lifecycle
 from commonplace.runner import drain
-from tests.compute_overview_helpers import FakeExecutor, Fleet, revoke_machine
+from tests.compute_overview_helpers import FakeExecutor, Fleet, iso, revoke_machine
 from tests.test_compute_workspaces_browser import (  # noqa: F401 -- shared real-gateway fixtures and helpers
     SIZES,
     TOUCH,
@@ -113,7 +113,7 @@ def _populate(fx):
                 draining=True,
                 expected_seq=0,
                 by="owner",
-                now="2026-11-19T09:00:00Z",
+                now=iso(time.time() - 60),  # after the run it left alone started, not before it
             )
     node = fx.node["id"]
     executor = FakeExecutor(env)
@@ -170,6 +170,8 @@ def _populate(fx):
 def _fold(page):
     """On a phone the overview starts folded to its summary sentence; a person opens it with one tap."""
     fold = page.locator("details[data-ov-fold]")
+    # Wait for the first answer: the fold settles when the data arrives (open for a handful of items, closed for more).
+    expect(page.locator("[data-ov-summary]")).not_to_have_text("Loading the overview…")
     if fold.get_attribute("open") is None:
         page.locator("[data-ov-fold-summary]").click()
         expect(fold).to_have_attribute("open", "")
@@ -278,7 +280,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         shown = _shown(page)
         assert "5 runners" not in shown  # six were enrolled; the sentence counts them all
         expect(page.locator("[data-ov-summary]")).to_contain_text(
-            "7 runners, 1 machine, 7 cloud workspaces. 6 need attention: "
+            "7 runners, 1 machine, 7 cloud workspaces. 5 need attention: "
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
@@ -325,7 +327,10 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         assert "No machine chosen" not in _shown(page)
         expect(_row(page, "Build machine")).to_contain_text("Not verified")
         expect(_row(page, "Build machine")).to_contain_text("1 thing blocks new work: not verified")
-        expect(_row(page, "Build machine")).to_contain_text("Next step: Verify it under Advanced")
+        expect(_row(page, "Build machine")).to_contain_text(
+            "Next step: Verification is not available in this version of the app."
+        )
+        assert "Advanced" not in _row(page, "Build machine").inner_text()
         # What is not known says so: no zero stands in for a missing report.
         expect(_row(page, "build-runner")).to_contain_text("2 runs of unknown cost")
         expect(page.locator(f"{ROOT}")).to_contain_text(
@@ -361,23 +366,26 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         expect(_rows(page)).to_have_count(1)
         expect(_row(page, "edge-runner")).to_be_visible()
         _shot(page, f"{label}-11-filtered")
+        # A status that does not exist for the chosen kind is not offered, so no combination matches nothing.
         page.get_by_role("button", name=re.compile(r"^Cloud workspaces \(7\)")).click()
-        expect(page.locator(ROOT)).to_contain_text(
-            "No machines, runners or cloud workspaces match these filters."
+        expect(_rows(page)).to_have_count(7)
+        expect(page.get_by_label("Filter by status")).to_have_value("all")
+        assert (
+            page.get_by_label("Filter by status").locator("option", has_text="Offline").count() == 0
         )
-        _shot(page, f"{label}-12-no-match")
+        _shot(page, f"{label}-12-kind-resets-status")
         assert page.get_by_role("button", name="Clear filters").count() == 1
         page.get_by_role("button", name="Clear filters").click()
         expect(_rows(page)).to_have_count(15)
         expect(page.get_by_label("Filter by status")).to_be_focused()
         # "6 need attention" is a button that sets the same filter, with a filled pressed state.
-        page.get_by_role("button", name="6 need attention").click()
-        expect(_rows(page)).to_have_count(6)
-        expect(page.get_by_role("button", name="6 need attention")).to_have_attribute(
+        page.get_by_role("button", name="5 need attention").click()
+        expect(_rows(page)).to_have_count(5)
+        expect(page.get_by_role("button", name="5 need attention")).to_have_attribute(
             "aria-pressed", "true"
         )
         expect(page.get_by_label("Filter by status")).to_have_value("attention")
-        pressed = page.get_by_role("button", name="6 need attention").evaluate(
+        pressed = page.get_by_role("button", name="5 need attention").evaluate(
             "el => getComputedStyle(el).backgroundColor"
         )
         idle = page.get_by_role("button", name="Runners (7)").evaluate(
@@ -386,7 +394,7 @@ def test_filters_narrow_the_list_and_an_empty_result_says_so(served, ui, size):
         assert pressed != idle, "a pressed filter is filled, not only outlined"
         # The problems come first inside each group.
         first = page.locator(f"{ROOT} .compute-ov-group").first.locator(".compute-ov-row").first
-        expect(first).to_have_attribute("data-status", re.compile("offline|revoked|slow|disabled"))
+        expect(first).to_have_attribute("data-status", re.compile("offline|slow|disabled"))
         if size == "phone":
             _assert_ov_phone(page)
 
@@ -406,7 +414,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
         panel = page.locator(".compute-ov-panel")
         expect(panel.locator("[data-ov-chip]")).to_have_text("Offline")
         expect(panel).to_contain_text("Blocking new work")
-        expect(panel).to_contain_text("Commonplace has not heard from it for over 15 minutes")
+        expect(panel).to_contain_text("Offline: nothing heard for over 15 minutes")
         expect(panel).to_contain_text("Next step: Check that the machine is on")
         assert panel.locator("header").get_by_role("button", name="Close").count() == 1, (
             "Close is in the header"
@@ -451,7 +459,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                 "night-runner",
                 [
                     "No new card runs start here. Chat and Coworker sessions can still start here. 1 run in progress will finish.",
-                    "It is draining: no new card runs start on it. Resuming it is not available in this version.",
+                    "Draining: no new card runs start on it. Resuming it is not available in this version.",
                 ],
                 "24-detail-draining",
             ),
@@ -478,7 +486,7 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
                     "Not checked live",
                     "Commonplace does not probe target machines.",
                     "Not verified: cloud workspaces placed here cannot start until it is verified.",
-                    "Next step: Verify it under Advanced",
+                    "Next step: Verification is not available in this version of the app.",
                 ],
                 "26-detail-machine",
             ),
@@ -558,9 +566,10 @@ def test_with_no_machine_the_overview_lists_the_record_and_the_form_says_why(
         )
         assert "Choose a machine for it with Change settings" not in row.inner_text()
         assert "Nothing here yet" not in page.locator(".compute-ov").inner_text()
+        assert "waiting for a machine" in page.locator("[data-ov-summary]").inner_text()
         assert "No machine chosen" not in page.locator(".compute").inner_text()
         expect(page.locator("[data-ov-summary]")).to_have_text(
-            "1 cloud workspace. Nothing needs attention."
+            "1 cloud workspace. Nothing needs attention. 1 cloud workspace is waiting for a machine."
         )
         expect(page.locator(".compute-ws-row, .compute-ws .compute-row").first).to_contain_text(
             "Saved, not started"
@@ -583,13 +592,13 @@ def test_a_workspace_created_below_shows_up_in_the_overview_without_a_reload(ser
 
     def body(page, label, context):
         _fold(page)
-        expect(page.locator(ROOT)).to_contain_text("Nothing here yet.")
+        expect(page.locator("[data-ov-summary]")).to_have_text("Nothing here yet.")
         fx.make(
             name="Late arrival"
         )  # saved behind the page's back, as another tab or a person would
         page.get_by_role("button", **REFRESH).click()
         expect(_row(page, "Late arrival")).to_be_visible()
-        expect(page.locator(ROOT)).not_to_contain_text("Nothing here yet.")
+        expect(page.locator("[data-ov-summary]")).not_to_contain_text("Nothing here yet.")
 
     _run(fx, ui, "desktop", body, populate=False)
 
@@ -611,7 +620,7 @@ def test_on_a_phone_the_overview_is_folded_and_the_create_button_is_within_reach
         assert box and box["y"] + box["height"] < 844 * 1.5, (
             f"the create button is {box['y']}px down"
         )
-        pause = page.get_by_role("button", name="Pause updates")
+        pause = page.get_by_role("button", name="Pause automatic updates")
         assert pause.bounding_box()["width"] < 300, "no full-width box that looks like a text field"
         assert page.get_by_role("button", name="Update overview").count() == 0
         _shot(page, f"{label}-62-folded")
@@ -635,7 +644,7 @@ def test_the_deck_map_tab_stops_saying_checking_when_there_is_nothing_to_check(s
         expect(status).not_to_contain_text("Checking")
         expect(status).to_contain_text("No enrolled runner machine is known here")
         empty = page.locator('[data-compute-region="empty"]')
-        expect(empty).to_contain_text("You can still save a cloud workspace without one")
+        expect(empty).to_contain_text("A cloud workspace can still be saved without one")
         _shot(page, f"{label}-64-map-no-machines")
 
     _run(fx, "deck", "desktop", body, populate=False)
@@ -650,6 +659,8 @@ def test_expired_slow_and_unverified_states_explain_themselves(served, ui, size)
     with fx.store._journal() as conn:
         life = lifecycle.life_of(conn, stale, time.time())
         row = conn.execute("SELECT version FROM cloud_workspaces WHERE id=?", (stale,)).fetchone()
+    # Asked 25 hours ago, audit trail included (it is append-only): nothing says "just now" beside "expired".
+    fx.store._now = lambda: time.time() - (lifecycle.REQUEST_TTL_S + 3600)
     lifecycle.request(
         fx.store,
         fx.principal,
@@ -659,11 +670,7 @@ def test_expired_slow_and_unverified_states_explain_themselves(served, ui, size)
         expected_seq=life["seq"],
         expected_version=row["version"],
     )
-    with fx.store._journal() as conn:
-        conn.execute(
-            "UPDATE cloud_workspace_lifecycle SET requested_at=requested_at-? WHERE workspace_id=?",
-            (lifecycle.REQUEST_TTL_S + 600, stale),
-        )
+    del fx.store._now
 
     def body(page, label, context):
         _go(page, fx, ui)
@@ -673,6 +680,11 @@ def test_expired_slow_and_unverified_states_explain_themselves(served, ui, size)
             "expired after 24 hours without a machine picking it up, so it was not carried out"
         )
         assert "Ask again" not in panel.inner_text()
+        expect(panel).to_contain_text("Not carried out")
+        expect(panel).to_contain_text(
+            "Starting is not available in this version, so there is nothing to do yet."
+        )
+        assert "Needs a person" not in panel.inner_text()
         _shot(page, f"{label}-70-detail-expired-request")
         page.get_by_role("button", name="Close").click()
         page.get_by_role("button", name="Status and activity of review-runner").click()
@@ -736,11 +748,108 @@ def test_the_overview_fits_320px_and_a_touch_tablet(served, ui, viewport, touch,
         _shot(page, f"{ui}-{name}-80-list")
         _assert_ov_phone(page)
         page.get_by_role("button", name="Status and activity of edge-runner").click()
+        expect(page.locator(".compute-ov-panel")).not_to_have_attribute("aria-busy", "true")
+        expect(page.locator(".compute-ov-panel")).to_contain_text("Recent activity")
         _shot(page, f"{ui}-{name}-81-detail")
         _assert_ov_phone(page)
         page.get_by_role("button", name="Close").click()
 
     _run(fx, ui, "phone", body, viewport=viewport, touch=touch)
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_folded_phone_overview_still_shows_a_failed_refresh_and_opens_for_a_failed_first_read(
+    served, ui
+):
+    fx = served
+    fx.names = _populate(fx)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, "phone")
+            _visit(page, fx, ui)
+            fold = page.locator("details[data-ov-fold]")
+            expect(page.locator("[data-ov-summary]")).to_contain_text("7 runners")
+            assert fold.get_attribute("open") is None, "the fold is closed, as a phone starts"
+            _refuse_overview(page)
+            page.get_by_role("button", **REFRESH).click()
+            # With the fold closed the person still reads that the data is old, three ways, none inside the fold.
+            banner = page.locator("[data-ov-stale]")
+            expect(banner).to_be_visible()
+            expect(banner).to_contain_text("Could not refresh. Showing the data from")
+            expect(page.locator("[data-ov-meta]")).to_contain_text("the last refresh failed")
+            expect(page.locator("[data-ov-meta]")).not_to_contain_text("Updated just now")
+            expect(page.locator("[data-ov-summary]")).to_contain_text(
+                "Could not refresh: data from"
+            )
+            assert fold.get_attribute("open") is None
+            _shot(page, f"{ui}-phone-66-stale-fold-closed")
+            context.close()
+            context, page, errors = _open(browser, fx, ui, "phone")
+            page.route(
+                f"**{OVERVIEW}",
+                lambda route: route.fulfill(
+                    status=500, content_type="application/json", body='{"error":"boom"}'
+                ),
+            )
+            _visit(page, fx, ui)
+            # A failed first read opens the fold so "Try again" is reachable without a tap.
+            expect(page.locator("details[data-ov-fold]")).to_have_attribute("open", "")
+            expect(page.get_by_role("button", name="Try again")).to_be_visible()
+            expect(page.locator("[data-ov-summary]")).to_have_text("Overview not loaded.")
+            _shot(page, f"{ui}-phone-67-failed-first-read")
+            context.close()
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_member_sees_a_machine_less_workspace_the_way_the_list_does(served_empty, ui, size):
+    fx = served_empty
+    fx.make(name="Machine-less")
+
+    def body(page, label, context):
+        _fold(page)
+        row = _row(page, "Machine-less")
+        expect(row.locator("[data-ov-chip]")).to_have_text("Saved, not started")
+        expect(row).to_contain_text("The workspace owner can choose a machine.")
+        expect(page.locator("[data-ov-summary]")).to_have_text(
+            "1 cloud workspace. Nothing needs attention. 1 cloud workspace is waiting for a machine."
+        )
+        assert "Change settings" not in page.locator(".compute-ov").inner_text()
+        _shot(page, f"{label}-68-member-no-machine")
+
+    _run(fx, ui, size, body, cookie=fx.member_cookie, populate=False)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("skew", [1000, -1000])
+def test_a_skewed_browser_clock_does_not_change_what_the_overview_says(served, ui, skew):
+    fx = served
+    fx.names = _populate(fx)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context, page, errors = _open(browser, fx, ui, "desktop")
+            # The browser believes it is 1000 s later (or earlier) than the server: every timestamp on screen is the
+            # server's, so the rows must read as the server said, not as the wrong clock would make them.
+            page.clock.install(time=int((time.time() + skew) * 1000))
+            _visit(page, fx, ui)
+            _go(page, fx, ui)
+            build = _row(page, "build-runner")
+            expect(build.locator("[data-ov-chip]")).to_have_text("Online · Busy")
+            expect(build).to_contain_text(re.compile(r"Last seen 4\d seconds ago"))
+            expect(_row(page, "Build box").locator("[data-ov-chip]")).to_have_text("Running")
+            expect(page.locator(".compute-ov-meta")).to_contain_text("Updated just now")
+            assert "Slow to report" not in build.inner_text()
+            page.get_by_role("button", name="Status and activity of build-runner").click()
+            expect(page.locator(".compute-ov-panel")).not_to_contain_text("Offline")
+            _shot(page, f"{ui}-desktop-46-skew-{skew}")
+            context.close()
+        finally:
+            browser.close()
+    assert errors == []
 
 
 def _count_reads(page):
@@ -774,15 +883,18 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         gate["route"] = route  # held until the check has looked at the loading state
 
     def loading(page, label):
-        _fold(page)
-        expect(page.locator(ROOT)).to_contain_text("Loading the overview…")
+        expect(page.locator("[data-ov-summary]")).to_have_text("Loading the overview…")
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0
+        assert "Loading" not in page.locator(ROOT).inner_text(), "the headline says it once"
         _shot(page, label)
         gate["route"].continue_()
         # A fresh workspace: nothing is listed, and the empty state says what to do next.
-        expect(page.locator(ROOT)).to_contain_text("Nothing here yet.")
+        expect(page.locator("[data-ov-summary]")).to_have_text("Nothing here yet.")
         expect(page.locator(ROOT)).to_contain_text(
             "Create a cloud workspace below. A machine can be chosen later."
+        )
+        assert "Nothing here yet" not in page.locator(ROOT).inner_text(), (
+            "the headline says it once"
         )
         assert "runner machine" not in page.locator(ROOT).inner_text()
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0
@@ -805,7 +917,7 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         _shot(page, label)
         page.unroute(f"**{OVERVIEW}")
         page.get_by_role("button", name="Try again").click()
-        expect(page.locator(ROOT)).to_contain_text("Nothing here yet.")
+        expect(page.locator("[data-ov-summary]")).to_have_text("Nothing here yet.")
         assert page.locator(f"{ROOT} [role=alert]:visible").count() == 0
 
     run_with(broken, "41-failed", failed)
@@ -836,7 +948,8 @@ def test_a_refresh_that_fails_keeps_the_old_data_and_marks_every_row_as_old(serv
         banner = page.locator("[data-ov-stale]")
         expect(banner).to_contain_text("Could not refresh. Showing the data from")
         expect(banner).to_contain_text("it may be out of date")
-        expect(page.locator("[data-ov-announce]")).to_contain_text("could not be refreshed")
+        # Said once, by the alert (not twice: the status line stays as it was).
+        expect(page.locator("[data-ov-announce]")).not_to_contain_text("could not be refreshed")
         assert "edge-runner" in _shown(page) and "edge-runner" in before
         # No row keeps saying Online, Busy or Running as if it were current: each says "Last known" and "As of".
         expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text(
@@ -889,7 +1002,7 @@ def test_the_clock_makes_ages_older_and_stale_reports_unknown_without_a_new_read
             expect(_row(page, "Build box")).to_contain_text("nothing newer has arrived")
             expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text("Offline")
             expect(page.locator("[data-ov-summary]")).to_contain_text(
-                re.compile(r"[89] need attention")
+                re.compile(r"[789] need attention")
             )
             _shot(page, f"{ui}-desktop-45-aged-by-clock")
             context.close()
@@ -939,13 +1052,13 @@ def test_the_overview_refreshes_by_itself_and_stops_when_the_page_is_hidden(serv
                 )
             assert len(reads) == 3, "coming back reads at once"
             # Pausing stops the automatic reads (and says so); resuming reads at once.
-            page.get_by_role("button", name="Pause updates").click()
-            expect(page.locator(".compute-ov-meta")).to_contain_text("Updates are paused")
+            page.get_by_role("button", name="Pause automatic updates").click()
+            expect(page.locator(".compute-ov-meta")).to_contain_text("Automatic refresh is paused")
             page.clock.run_for(95000)
             barrier()
             assert len(reads) == 3, "paused: no automatic read"
             with page.expect_request(lambda r: r.url.endswith(OVERVIEW)):
-                page.get_by_role("button", name="Resume updates").click()
+                page.get_by_role("button", name="Resume automatic updates").click()
             assert len(reads) == 4
             # Leaving the screen stops the refresh.
             page.evaluate("location.hash = '#/'")

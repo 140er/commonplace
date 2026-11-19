@@ -670,7 +670,7 @@ test('empty workspace keeps just the hub, and an unavailable general bot hides o
   assert.deepEqual(f.nodes(), ['commonplace-hub']);
   assert.match(f.root.html, /No machines yet/);
   assert.equal(f.regions.get('empty').hidden, false);
-  assert.equal(f.regions.get('summary').textContent, '0 of 0 machines ready.');
+  assert.equal(f.regions.get('summary').textContent, '');
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add a machine/);
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-site">Add site/);
   assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
