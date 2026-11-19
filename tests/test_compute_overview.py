@@ -63,13 +63,8 @@ def test_empty_overview_is_honest_about_what_exists_and_what_cannot_happen_yet(a
     assert result["items"] == [] and result["counts"]["total"] == 0
     assert result["can_manage"] is True and result["hidden"] is None
     assert result["refresh_seconds"] == overview.REFRESH_SECONDS == 30
-    assert result["thresholds"] == {
-        "green_within_s": 180,
-        "red_after_s": 900,
-        "path_fresh_s": 900,
-        "path_unknown_after_s": 3600,
-        "report_stale_s": 600,
-    }
+    # No threshold is served: the screen never decides a status from its own clock.
+    assert "thresholds" not in result and "drain_scope" not in result and "next_steps" not in result
     assert result["executor"]["available"] is False
     assert "not available in this version" in result["executor"]["text"]
     assert result["truncated"] == {}
@@ -629,6 +624,61 @@ def test_a_workspace_on_an_unverified_machine_lists_that_as_what_stops_it(api):
     assert "machine_not_verified" not in blockers
 
 
+def test_a_running_workspace_is_not_blocked_by_the_state_of_its_machine(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Running box")
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor = FakeExecutor(api.env)
+    executor.run(executor.claim(), "running")
+    item = by_name(read(api))["Running box"]
+    assert item["status"]["code"] == "running"
+    assert "machine_not_verified" not in {b["code"] for b in item["health"]["blockers"]}
+    assert "nothing can start on it" not in json.dumps(item)
+
+
+def test_the_draining_blocker_uses_the_word_of_the_chip_and_resuming_is_said_once(api, fleet):
+    running = fleet.enroll("runner-word-running")
+    fleet.seen(running, 5)
+    fleet.job(running, "started", task=fleet.work(running))
+    idle = fleet.enroll("runner-word-idle")
+    fleet.seen(idle, 5)
+    for made in (running, idle):
+        api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    items = by_name(read(api))
+
+    def words(name):
+        item = items[name]
+        blocker = {b["code"]: b["text"] for b in item["health"]["blockers"]}["draining"]
+        return item["status"], blocker
+
+    status, blocker = words("runner-word-running")
+    assert status["code"] == "draining" and blocker == f"Draining: {overview.DRAIN_SCOPE}"
+    status, blocker = words("runner-word-idle")
+    assert status["code"] == "drained" and blocker == f"Drained: {overview.DRAIN_SCOPE}"
+    assert overview.NO_RESUME == "Resuming is not available in this version."
+    assert "no button" not in json.dumps(items)
+    assert status["detail"].endswith(overview.NO_RESUME) and overview.NO_RESUME not in blocker
+
+
+def test_no_sentence_points_at_a_restart_or_a_start_that_this_version_does_not_have(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Settings box")
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor = FakeExecutor(api.env)
+    executor.run(executor.claim(), "running", revision=1)
+    api.request("POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "cpu_cores": 4})
+    detail = by_name(read(api))["Settings box"]["status"]["detail"]
+    assert detail == (
+        "It runs with the settings from before your last change. Restarting is not available in this "
+        "version, so the change applies the next time it starts."
+    )
+    assert "restart it" not in detail.lower()
+
+
 def test_the_action_route_checks_the_owner_before_it_looks_at_a_record(api):
     ws = workspace(api)
     ask = member(api)
@@ -1099,10 +1149,6 @@ def test_allowed_to_start_runs_follows_the_drain_and_the_approval(api, fleet):
     )
 
 
-def test_the_payload_serves_the_one_drain_sentence_for_the_screens_own_overrides(api):
-    assert read(api)["drain_scope"] == overview.DRAIN_SCOPE
-
-
 def _allowed(api, made):
     status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
     assert status == 200
@@ -1124,7 +1170,7 @@ def test_allowed_to_start_runs_follows_the_status_the_chip_shows_one_case_per_st
     full = fleet.enroll("allowed-full", max_in_flight=1)
     fleet.seen(full, 5)
     fleet.job(full, "started", task=fleet.work(full))
-    assert _allowed(api, full) == ("full", "Yes")
+    assert _allowed(api, full) == ("full", "Yes, once a run finishes")
     # slow to report still takes work when it comes back
     slow = fleet.enroll("allowed-slow")
     fleet.seen(slow, 400)
@@ -1194,9 +1240,3 @@ def test_a_draining_or_drained_runner_holding_a_finished_card_names_the_card_and
         f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
         "to free its place."
     )
-
-
-def test_the_payload_serves_the_offline_and_slow_next_steps_for_the_screens_overrides(api):
-    steps = read(api)["next_steps"]
-    assert steps["offline"].startswith("Check that the machine is on")
-    assert steps["slow"].startswith("Wait a little")

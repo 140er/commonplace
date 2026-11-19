@@ -331,7 +331,7 @@ def test_restart_needed_is_a_flag_beside_running_not_a_second_status(api):
     api.request("POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "cpu_cores": 4})
     current = item(api, ws)
     assert current["status"]["code"] == "running" and current["restart_needed"] is True
-    assert "restart it to apply them" in current["status"]["detail"]
+    assert "Restarting is not available in this version" in current["status"]["detail"]
 
 
 def test_bad_tokens_and_ids_are_refused_with_the_field_named(api):
@@ -429,7 +429,7 @@ def test_settings_edited_while_a_start_is_under_way_leave_it_running_with_older_
     executor.run(claim, "running", revision=claim["revision"])
     current = item(api, ws)
     assert current["status"]["code"] == "running" and current["restart_needed"] is True
-    assert "restart it to apply them" in current["status"]["detail"]
+    assert "Restarting is not available in this version" in current["status"]["detail"]
     assert api.request(path=f"/workspaces/{ws['id']}")[1]["workspace"]["status"] == "restart_needed"
 
 

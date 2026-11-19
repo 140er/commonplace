@@ -81,7 +81,7 @@ RUNNER_ACTIONS = ("drain", "resume")
 # Drain stops only the hub handing out card runs (``capacity.available`` is read by ``jobs.lease``); chat and
 # Coworker session leases do not read it. Every sentence about drain says this, from this one string.
 DRAIN_SCOPE = "No new card runs start here. Chat and Coworker sessions can still start here."
-NO_RESUME = "This screen has no button to resume it yet."
+NO_RESUME = "Resuming is not available in this version."
 # The cloud workspace vocabulary of the workspaces list (compute-workspaces.js: NOT_STARTED_NOTE, NO_MACHINES_SENTENCE and
 # the "Saved, not started" label), so the overview and the list never describe one record in two ways. A test compares
 # these strings with the script.
@@ -92,7 +92,7 @@ NO_MACHINES_SENTENCE = (
 )
 # The one next step per status, for a status a person has to act on or wait out. Pointers name the place.
 NEXT_STEP = {
-    "offline": "Check that the machine is on and the runner program is running there. New card runs wait until it reports again.",
+    "offline": "Check that the machine is on and the runner program is running there.",
     "slow": "Wait a little: a busy machine or a poor connection can delay a report. If it stays like this, check the machine's network.",
     "never_connected": "Finish its setup on the machine (Admin, Runner machines lists what to run there).",
     "unknown": "Nothing to do yet; this clears when the machine reports again.",
@@ -182,6 +182,8 @@ def _allowed_to_start(machine, item):
         return "No: it is " + ("drained" if code == "drained" else "draining")
     if code in ("offline", "never_connected"):
         return "Yes, once it reports"
+    if code == "full":
+        return "Yes, once a run finishes"
     return "Yes"
 
 
@@ -318,7 +320,8 @@ def workspace_status(row, life, now, *, manage, executor, has_machines=None):
             "running",
             "ok",
             "Running",
-            "It runs with the settings from before your last change; restart it to apply them."
+            "It runs with the settings from before your last change. Restarting is not available in this version, "
+            "so the change applies the next time it starts."
             if stale_settings
             else "It runs with the saved settings.",
         )
@@ -333,7 +336,7 @@ def workspace_status(row, life, now, *, manage, executor, has_machines=None):
             "Stopped",
             "It is stopped and its saved files are kept."
             + (
-                " It starts again with the latest settings."
+                " Starting is not available in this version; your latest settings apply the next time it starts."
                 if workspaces._restart_needed(row)
                 else ""
             ),
@@ -376,7 +379,12 @@ def _workspace_blockers(row, status, executor, manage, has_machines):
                 " Choose one with Change settings." if manage else ""
             )
         blockers.append({"code": "no_machine", "text": text})
-    if row["node_id"] is not None and not _machine_verified(row):
+    # A workspace that is running (or starting or stopping) is past the check: "nothing can start on it" would contradict it.
+    if (
+        row["node_id"] is not None
+        and not _machine_verified(row)
+        and status["code"] not in ("running", "starting", "stopping")
+    ):
         blockers.append(
             {
                 "code": "machine_not_verified",
@@ -895,14 +903,10 @@ def runner_blockers(machine, record, facts, red_after_s=900):
             }
         )
     if drain["draining"]:
-        # One word per state, the chip's: "Draining" while runs are in progress, "Drained" when none are.
+        # One word per state, the chip's: "Draining" while runs are in progress, "Drained" when none are. That resuming is
+        # not available is said once, in the status sentence.
         word = "Draining" if facts["running"] else "Drained"
-        blockers.append(
-            {
-                "code": "draining",
-                "text": f"{word}: {DRAIN_SCOPE} {NO_RESUME}",
-            }
-        )
+        blockers.append({"code": "draining", "text": f"{word}: {DRAIN_SCOPE}"})
     if reason == "never_reported":
         blockers.append(
             {
@@ -1273,12 +1277,6 @@ def _summary(items):
     return {"total": len(items), "by_kind": by_kind, "by_status": by_status, "attention": attention}
 
 
-def thresholds():
-    from commonplace.topology import status as topo
-
-    return topo.StatusConfig.from_env().as_dict() | {"report_stale_s": lifecycle.REPORT_STALE_S}
-
-
 def read(store, principal, *, session_hash):
     """Everything the screen needs in one read. Members get cloud workspaces only."""
     data = _read_compute(store, principal, session_hash)
@@ -1321,11 +1319,6 @@ def read(store, principal, *, session_hash):
     return {
         "as_of": _dt(now).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "refresh_seconds": REFRESH_SECONDS,
-        "thresholds": thresholds(),
-        "drain_scope": DRAIN_SCOPE,  # the one sentence about what drain stops, for the screen's own overrides
-        "next_steps": {
-            code: NEXT_STEP[code] for code in ("offline", "slow")
-        },  # likewise, for an age override
         "can_manage": manage,
         "executor": {
             "available": executor,

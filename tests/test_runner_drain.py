@@ -74,7 +74,7 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
     assert item["status"]["code"] == "draining" and item["status"]["tone"] == "wait"
     assert item["status"]["detail"] == (
         "Draining. No new card runs start here. Chat and Coworker sessions can still start here. "
-        "1 run in progress will finish. This screen has no button to resume it yet."
+        "1 run in progress will finish. Resuming is not available in this version."
     )
     assert [b["code"] for b in item["health"]["blockers"]] == ["draining"]
     with fleet.store().transaction() as conn:
