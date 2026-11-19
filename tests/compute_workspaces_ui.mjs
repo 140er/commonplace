@@ -245,6 +245,10 @@ const cases = {
     assert.match(capped.host.innerHTML, /data-ws-action="create" disabled/); assert.match(text(capped.host.innerHTML), /You have reached the limit of 2 cloud workspaces\. Discard one that was never started to make room\./);
     capped.click('create'); assert.doesNotMatch(capped.host.innerHTML, /data-ws-form/);
     capped.ui.stop();
+    // More records than the list shows: the count is said, and creation is refused by the total, not the page.
+    const many = fixture({ list: { workspaces: [record({ id: 'a', name: 'A' })], total: 100, can_manage: true } }); await many.open();
+    assert.match(text(many.host.innerHTML), /Showing the newest 1 of 100 cloud workspaces\./); assert.match(many.host.innerHTML, /data-ws-action="create" disabled/);
+    many.ui.stop();
   },
 
   async 'server-errors'() {

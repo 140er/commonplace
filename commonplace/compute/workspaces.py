@@ -99,7 +99,7 @@ _LOCAL_SUFFIXES = (
     ".home.arpa",
 )
 _PRIVATE_FLAG = {True: 1, False: 0}
-# Registry logins need a custody purpose and pull-time use that arrive with card 615, so no
+# Registry logins need a custody purpose and pull-time use that arrive with the start/stop lifecycle, so no
 # record may claim to need one yet (docs/system/compute-workspaces.md, "Registry logins").
 REGISTRY_LOGINS = False
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
@@ -337,7 +337,9 @@ def public(conn, row, *, manage):
         "image_tag": parsed["tag"],
         "image_digest": parsed["digest"],
         "image_pinned": parsed["pinned"],
-        "curated_label": (_CURATED_BY_REFERENCE.get(row["image_reference"]) or {}).get("label"),
+        "curated_label": (_CURATED_BY_REFERENCE.get(row["image_reference"]) or {}).get("label")
+        if row["image_source"] == "curated"
+        else None,
         "private_registry": bool(row["private_registry"]),
         "credential_bound": row["registry_credential_id"] is not None,
         "cpu_cores": row["cpu_millicores"] / 1000,
@@ -381,6 +383,7 @@ def list_workspaces(store, principal, *, session_hash):
         ).fetchall()
         return {
             "workspaces": [public(conn, row, manage=manage) for row in rows],
+            "total": conn.execute("SELECT count(*) FROM cloud_workspaces").fetchone()[0],
             "can_manage": manage,
         }
 
@@ -578,7 +581,7 @@ def update_workspace(store, principal, workspace_id, *, session_hash, expected_r
 
 def bind_registry_credential(store, principal, workspace_id, *, session_hash):
     """Registry logins cannot be stored yet: no custody purpose exists for them, and nothing
-    would use one before card 615. Refused after the owner and concealment checks, writing nothing,
+    would use one before the lifecycle exists. Refused after the owner and concealment checks, writing nothing,
     so a gateway or target credential can never be filed here as a registry login."""
     with store._transaction(principal, session_hash) as (conn, current):
         _row(conn, workspace_id)

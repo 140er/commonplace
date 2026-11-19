@@ -294,11 +294,11 @@ const FIELD_OF_INPUT = { ws_name: "name", ws_image: "image", ws_cpu_cores: "cpu_
  * Owns its own state; compute.js only embeds html() and forwards events.
  */
 export function createWorkspaces(ctx) {
-  let rows = null, options = null, canManage = false, loadError = "", configError = "", loading = false;
+  let rows = null, total = 0, options = null, canManage = false, loadError = "", configError = "", loading = false;
   let mode = "", step = "edit", values = {}, baseValues = null, base = null, errors = {}, selected = null, busy = false, formError = "", notice = "", requestId = "", opener = null;
   const find = id => rows?.find(row => row.id === id);
   const machines = () => (ctx.machines() || []).map(node => ({ id: node.id, name: node.name, state: node.state }));
-  const full = () => options && rows !== null && rows.length >= options.max_workspaces;
+  const full = () => options && rows !== null && Math.max(total, rows.length) >= options.max_workspaces;
   function previewText() {
     if (RESOURCE_KEYS.some(key => validate(values, options, key)[key])) return PREVIEW_INVALID;
     const machine = machines().find(m => m.id === values.ws_node_id)?.name || (values.ws_node_id ? "the chosen machine" : "");
@@ -322,8 +322,9 @@ export function createWorkspaces(ctx) {
     else if (mode === "detail" && row) panel = detailHTML(row, { manage: canManage, busy });
     // The row a panel is about is replaced by the panel, so a workspace never appears twice.
     const shown = rows.filter(item => !(mode && mode !== "create" && item.id === selected));
-    const list = shown.length ? `<ul class="compute-list compute-ws-list">${shown.map(item => rowHTML(item, { manage: canManage, busy })).join("")}</ul>`
-      : rows.length || mode ? "" : `<p class="compute-empty">No cloud workspaces yet. ${canManage ? "Choose New cloud workspace to create one." : "The workspace owner can create one here."}</p>`;
+    const more = total > rows.length ? `<p class="compute-quiet">Showing the newest ${rows.length} of ${total} cloud workspaces.</p>` : "";
+    const list = more + (shown.length ? `<ul class="compute-list compute-ws-list">${shown.map(item => rowHTML(item, { manage: canManage, busy })).join("")}</ul>`
+      : rows.length || mode ? "" : `<p class="compute-empty">No cloud workspaces yet. ${canManage ? "Choose New cloud workspace to create one." : "The workspace owner can create one here."}</p>`);
     const unavailable = configError ? `<p class="compute-error" role="alert">${e(configError)}</p><div class="compute-actions"><button type="button" class="btn" data-ws-action="reload">Reload</button></div>` : "";
     return `${unavailable}${panel}${list}`;
   }
@@ -345,6 +346,21 @@ export function createWorkspaces(ctx) {
     notice = text;
     const node = ctx.host()?.querySelector?.("[data-ws-notice]");
     if (node) { node.textContent = text; if (focus) node.focus?.(); }
+  }
+  // A background repaint of the whole screen must not take focus (or a half-typed caret) away from this section.
+  function holdFocus() {
+    const control = ctx.host()?.querySelector?.(".compute-ws :focus");
+    if (typeof control?.matches !== "function") return () => {};
+    const row = control.closest?.("[data-ws-id]");
+    const selector = control.matches("[data-ws-control]") ? `[data-ws-control="${control.dataset.wsControl}"]` : control.matches("[data-ws-notice]") ? "[data-ws-notice]" : control.matches("[data-ws-summary]") ? "[data-ws-summary]"
+      : control.id === "compute-ws-heading" ? "#compute-ws-heading" : control.dataset?.wsAction ? `${row ? `[data-ws-id="${row.dataset.wsId}"] ` : ""}[data-ws-action="${control.dataset.wsAction}"]` : "";
+    const caret = typeof control.selectionStart === "number" ? [control.selectionStart, control.selectionEnd] : null;
+    return () => {
+      const again = selector ? ctx.host()?.querySelector?.(selector) : null;
+      if (!again) return;
+      again.focus?.();
+      if (caret) try { again.setSelectionRange?.(...caret); } catch { /* number inputs have no caret */ }
+    };
   }
   function restoreFocus(back) {
     const host = ctx.host(), row = back?.id ? host?.querySelector?.(`[data-ws-id="${back.id}"]`) : null;
@@ -373,7 +389,7 @@ export function createWorkspaces(ctx) {
     if (!ctx.valid(page)) return;
     for (const result of [list, config]) if (result.status === "rejected" && result.reason?.status === 401 && ctx.denied(result.reason)) return;
     if (list.status === "rejected" || !Array.isArray(list.value?.workspaces)) { rows = null; loadError = LOAD_ERROR; }
-    else { rows = list.value.workspaces; canManage = list.value.can_manage === true; }
+    else { rows = list.value.workspaces; total = Number.isInteger(list.value.total) ? list.value.total : rows.length; canManage = list.value.can_manage === true; }
     configError = "";
     if (config.status === "fulfilled" && config.value?.images && config.value?.limits) options = config.value;
     else { options = null; if (rows !== null && canManage) configError = "The image list could not be loaded, so new workspaces cannot be created right now. Reload to try again."; }
@@ -428,9 +444,10 @@ export function createWorkspaces(ctx) {
       const result = await ctx.request(path, { method: "POST", body });
       if (!ctx.valid(page)) return;
       let text;
-      if (kind === "discard") { rows = rows.filter(item => item.id !== id); text = `Discarded ${row.name}. Nothing on a machine was affected.`; }
+      if (kind === "discard") { rows = rows.filter(item => item.id !== id); total = Math.max(0, total - 1); text = `Discarded ${row.name}. Nothing on a machine was affected.`; }
       else {
         const saved = result.workspace;
+        if (!rows.some(item => item.id === saved.id)) total += 1;
         rows = [saved, ...rows.filter(item => item.id !== saved.id)].sort((a, b) => b.created_at - a.created_at);
         const machine = machineOf(saved, true);
         text = kind === "create" ? `Saved ${saved.name} in Commonplace. Nothing has been sent to ${machine || "a machine"} yet.`
@@ -493,6 +510,6 @@ export function createWorkspaces(ctx) {
     formError = ""; step = "review"; paint("heading");
     return true;
   }
-  function reset() { rows = null; options = null; canManage = false; loadError = ""; configError = ""; loading = false; mode = ""; step = "edit"; values = {}; baseValues = null; base = null; errors = {}; selected = null; busy = false; formError = ""; notice = ""; requestId = ""; opener = null; }
-  return { html, load, click, input, submit, keydown, reset, get open() { return mode !== ""; }, get loaded() { return rows !== null; }, get state() { return { rows, mode, step, values, errors, canManage, notice, formError, requestId }; } };
+  function reset() { rows = null; total = 0; options = null; canManage = false; loadError = ""; configError = ""; loading = false; mode = ""; step = "edit"; values = {}; baseValues = null; base = null; errors = {}; selected = null; busy = false; formError = ""; notice = ""; requestId = ""; opener = null; }
+  return { html, holdFocus, load, click, input, submit, keydown, reset, get open() { return mode !== ""; }, get loaded() { return rows !== null; }, get state() { return { rows, mode, step, values, errors, canManage, notice, formError, requestId }; } };
 }

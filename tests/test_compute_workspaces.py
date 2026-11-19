@@ -57,7 +57,7 @@ def test_options_serve_curated_images_ranges_and_defaults(api):
 
 
 def test_create_with_defaults_is_pending_without_a_machine_and_not_started(api):
-    assert api.request(path=BASE) == (200, {"workspaces": [], "can_manage": True})
+    assert api.request(path=BASE) == (200, {"workspaces": [], "total": 0, "can_manage": True})
     item = create(api)
     assert item["cpu_cores"] == 2 and item["memory_mib"] == 4096 and item["storage_gib"] == 20
     assert item["network"] == "outbound"
@@ -66,7 +66,7 @@ def test_create_with_defaults_is_pending_without_a_machine_and_not_started(api):
     assert item["node_id"] is None and item["machine_name"] is None
     assert item["image"] == "ghcr.io/acme/tools:1.2" and item["image_pinned"] is False
     assert item["image_registry"] == "ghcr.io" and item["image_tag"] == "1.2"
-    assert api.request(path=BASE) == (200, {"workspaces": [item], "can_manage": True})
+    assert api.request(path=BASE) == (200, {"workspaces": [item], "total": 1, "can_manage": True})
     assert api.request(path=f"{BASE}/{item['id']}") == (
         200,
         {"workspace": item, "can_manage": True},
@@ -175,7 +175,7 @@ def test_malformed_and_injected_image_references_are_refused_and_never_stored(
     status, result = api.request("POST", BASE, body(image=reference))
     assert status == 400
     assert result == {"error": "invalid_request", "field": "image", "reason": reason}
-    assert api.request(path=BASE) == (200, {"workspaces": [], "can_manage": True})
+    assert api.request(path=BASE) == (200, {"workspaces": [], "total": 0, "can_manage": True})
 
 
 @pytest.mark.parametrize(
@@ -568,7 +568,10 @@ def test_signed_out_and_foreign_people_are_refused_consistently(api):
     assert api.request("POST", BASE, body(name="Z"), cookie=False)[0] == 401
     foreign = sessions.start_session(api.env.db, api.env.foreign, api.env.other_workspace)
     # A person of another workspace reads their own (empty) list and cannot reach this one's ids.
-    assert api.request(path=BASE, cookie=foreign) == (200, {"workspaces": [], "can_manage": True})
+    assert api.request(path=BASE, cookie=foreign) == (
+        200,
+        {"workspaces": [], "total": 0, "can_manage": True},
+    )
     assert api.request(path=f"{BASE}/{item['id']}", cookie=foreign) == (404, {"error": "not_found"})
     assert api.request(
         "POST", f"{BASE}/{item['id']}", {"expected_revision": 1, "name": "X"}, cookie=foreign
@@ -618,7 +621,7 @@ def test_the_creation_cap_equals_the_list_limit_so_nothing_is_created_unlisted(a
                 (f"{number:032x}", f"Box {number}", f"box {number}", float(number), float(number)),
             )
     status, result = api.request(path=BASE)
-    assert status == 200 and len(result["workspaces"]) == 100
+    assert status == 200 and len(result["workspaces"]) == 100 and result["total"] == 100
     assert result["workspaces"][0]["name"] == "Box 99"  # newest first, and the oldest is listed
     assert result["workspaces"][-1]["name"] == "Box 0"
     status, result = api.request("POST", BASE, body(name="One too many"))
@@ -758,3 +761,19 @@ def test_restart_needed_never_reads_as_ready(api):
     set_state(api, item["id"], "failed", "out_of_memory")
     again = api.request(path=f"{BASE}/{item['id']}")[1]["workspace"]
     assert (again["status"], again["restart_needed"]) == ("failed", True)
+
+
+def test_records_beyond_the_list_limit_are_counted_not_silently_dropped(api):
+    # Slice 1 allowed 200 records; a store that already holds more than 100 says so.
+    with api.env.store._journal() as conn:
+        for number in range(103):
+            conn.execute(
+                "INSERT INTO cloud_workspaces (id,name,name_key,image_source,image_reference,"
+                "cpu_millicores,memory_mib,storage_gib,network,created_by,created_at,updated_at) "
+                "VALUES (?,?,?,'custom','ghcr.io/acme/tools:1',2000,4096,20,'outbound','u',?,?)",
+                (f"{number:032x}", f"Old {number}", f"old {number}", float(number), float(number)),
+            )
+    status, result = api.request(path=BASE)
+    assert status == 200 and len(result["workspaces"]) == 100 and result["total"] == 103
+    assert api.request("POST", BASE, body(name="New"))[1]["reason"] == "limit_reached"
+    assert api.request(path=f"{BASE}/{3:032x}")[0] == 200  # a record outside the list still opens

@@ -151,6 +151,8 @@ def _open(browser, fx, ui, size, cookie=None):
     route = "#/compute/management" if ui == "deck" else "#/compute"
     page.goto(f"{fx.origin}/app/?ui={ui}{route}")
     page.locator("#compute-workspaces").wait_for()
+    # The screen repaints once the inventory has loaded; interact only after it has settled.
+    expect(page.get_by_role("button", name="Reload inventory")).to_be_enabled()
     return context, page, errors
 
 
@@ -319,6 +321,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         # Details, with a plain way out: Escape closes and focus returns to the row's button.
         page.get_by_role("button", name="Details for Acceptance box").click()
         detail = page.locator(".compute-ws-detail")
+        expect(page.locator("#compute-ws-heading")).to_be_focused()
         expect(detail).to_contain_text("Changed 1 time since it was created")
         expect(detail).to_contain_text("can't be deleted yet")
         _shot(page, f"{label}-10-detail")
