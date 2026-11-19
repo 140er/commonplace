@@ -175,7 +175,7 @@ PREFIX = {
     ("DELETE", "/api/runners/enrollments/"): "unavailable",
     ("GET", "/api/instance-admin/"): "authenticated",
     **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
-    **{(method, "/api/previews/"): "authenticated" for method in ("GET", "POST", "PUT", "DELETE")},
+    **{(method, "/api/previews/"): "authenticated" for method in ("GET", "POST", "PUT")},
     **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/coworkers/"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/admin/instance/"): "authenticated",

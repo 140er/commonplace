@@ -5,8 +5,9 @@ revision (immutable: the files of ``r<n>`` are written once and never changed);
 ``preview_events`` is the append-only record of who did what, and ``preview_rules`` the
 workspace's stop rule. Files live under ``<workspace dir>/previews/<id>/r<n>/``.
 
-Nothing here deletes by itself: stopping a preview keeps its files, and the only code that
-removes files is ``delete_files``, which a person calls explicitly. All SQL is literal.
+Nothing here deletes preview files: stopping a preview keeps them. Deleting files is a later
+slice. Only refused attempts that never published are pruned (``prune_failed``). All SQL is
+literal.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from . import bundle
 MAX_READY = 25
 MAX_WORKSPACE_BYTES = 500 * 1024 * 1024
 MAX_PER_CARD_HOUR = 10
-MAX_ROWS = 200  # previews a workspace keeps; refused attempts and deleted previews do not count
+MAX_ROWS = 200  # previews a workspace keeps; refused attempts that never published do not count
 MAX_FAILED = 50  # refused attempts that never published anything are kept this many, newest first
 BUILDING_STALE = timedelta(minutes=15)
 MAX_NAME = 80
@@ -54,10 +55,6 @@ REASONS = {
         "Stopped by the workspace's stop rule. The files are kept.",
         "Use Open again to serve it.",
     ),
-    "files_deleted": (
-        "The files were deleted by a person.",
-        "Ask the Coworker to publish it again.",
-    ),
     "no_index_html": (
         "The bundle has no index.html at its top level.",
         "Publish again with an index.html.",
@@ -78,7 +75,8 @@ REASONS = {
     ),
     "workspace_quota_full": (
         "This workspace is at its preview limit (25 open previews or 500 MiB).",
-        "Stop or delete an older preview, then publish again.",
+        "Stop an older preview to free an open place. Freeing space needs deleting previews, "
+        "which is not available yet.",
     ),
     "storage_unavailable": (
         "The files could not be saved on the server.",
@@ -90,11 +88,10 @@ REASONS = {
     ),
     "too_many_previews": (
         "This workspace keeps at most 200 previews, and it holds that many.",
-        "Delete the files of previews you no longer need, then publish again.",
+        "Ask the workspace owner. Deleting previews is not available yet.",
     ),
     "changed_meanwhile": (
-        "A person stopped or deleted this preview while it was being published, so nothing "
-        "was changed.",
+        "A person stopped this preview while it was being published, so nothing was changed.",
         "Look at the preview's current state, then publish again if it is still wanted.",
     ),
     "rate_limited": (
@@ -155,7 +152,7 @@ def ensure_schema(db) -> None:
                 preview_id TEXT NOT NULL REFERENCES previews(id), revision INTEGER NOT NULL,
                 digest TEXT NOT NULL, size_bytes INTEGER NOT NULL, file_count INTEGER NOT NULL,
                 published_by TEXT NOT NULL, by_person INTEGER NOT NULL,
-                published_at TEXT NOT NULL, deleted_at TEXT,
+                published_at TEXT NOT NULL,
                 PRIMARY KEY (preview_id, revision)
             );
             CREATE TABLE IF NOT EXISTS preview_events (
@@ -205,25 +202,21 @@ def usage(conn, workspace_id) -> dict:
     ).fetchone()[0]
     size = conn.execute(
         "SELECT coalesce(sum(r.size_bytes),0) FROM preview_revisions r "
-        "JOIN previews p ON p.id=r.preview_id WHERE p.workspace_id=? AND r.deleted_at IS NULL",
+        "JOIN previews p ON p.id=r.preview_id WHERE p.workspace_id=?",
         (workspace_id,),
     ).fetchone()[0]
     return {"ready": ready, "bytes": size}
 
 
 def counts_live(row) -> bool:
-    """Whether a preview counts toward ``MAX_ROWS``: not a refused attempt that never published
-    and not one whose files a person deleted."""
-    if row["state"] == "failed" and row["current_revision"] == 0:
-        return False
-    return not (row["state"] == "stopped" and row["reason"] == "files_deleted")
+    """Whether a preview counts toward ``MAX_ROWS``: not a refused attempt that never published."""
+    return not (row["state"] == "failed" and row["current_revision"] == 0)
 
 
 def live_rows(conn, workspace_id) -> int:
     return conn.execute(
         "SELECT count(*) FROM previews WHERE workspace_id=? "
-        "AND NOT (state='failed' AND current_revision=0) "
-        "AND NOT (state='stopped' AND reason='files_deleted')",
+        "AND NOT (state='failed' AND current_revision=0)",
         (workspace_id,),
     ).fetchone()[0]
 
@@ -325,9 +318,7 @@ def shape(row, current, revisions=None) -> dict:
         "published_at": current["published_at"] if current else row["created_at"],
         "stops_at": None,
         "last_changed_at": row["updated_at"],
-        "url": f"/p/{row['id']}/"
-        if current is not None and current["deleted_at"] is None
-        else None,
+        "url": f"/p/{row['id']}/" if current is not None else None,
     }
     if revisions is not None:
         shown["revisions"] = [
@@ -337,7 +328,6 @@ def shape(row, current, revisions=None) -> dict:
                 "file_count": r["file_count"],
                 "published_by": r["published_by"],
                 "published_at": r["published_at"],
-                "files_deleted": r["deleted_at"] is not None,
             }
             for r in revisions
         ]
@@ -366,14 +356,24 @@ def write_files(gateway, workspace_id, preview_id, items) -> Path:
     return tmp
 
 
-def place(tmp: Path, final: Path) -> None:
-    """Move the written files into ``final``. The caller has just taken ``final``'s revision
-    number from the database, so a directory already there is left by a publish that died
-    after this step: no row names it, and it is replaced."""
+def place(tmp: Path, final: Path):
+    """Move the written files into ``final`` with renames only, which is cheap enough to do
+    while the control-database lock is held. The caller has just taken ``final``'s revision
+    number from the database, so a directory already there is left by a publish that died after
+    this step: no row names it. It is renamed aside and returned, and the caller removes it
+    once the lock is released (nothing recursive ever runs under the lock). Returns the aside
+    path or ``None``."""
+    aside = None
     try:
         if final.exists():
-            shutil.rmtree(final)
+            aside = final.with_name(".stale-" + secrets.token_hex(8))
+            os.replace(final, aside)
         os.replace(tmp, final)
     except OSError:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if aside is not None:
+            try:
+                os.replace(aside, final)  # put it back; nothing changed
+            except OSError:
+                pass
         raise bundle.Refused("storage_unavailable") from None
+    return aside

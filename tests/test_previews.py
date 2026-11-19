@@ -137,10 +137,6 @@ def test_other_workspaces_and_unknown_ids_get_the_same_answer(console_hub):
     assert h.request(h.other, "GET", f"/api/previews?card={number}")[0] == 404
     for action in ("stop", "open-again"):
         assert h.request(h.other, "POST", f"/api/previews/{identity}/{action}", {})[0] == 404
-    assert h.request(h.other, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0] in (
-        403,
-        404,
-    )
     assert one(h, number)["state"] == "ready"
     anonymous = h.request(None, "GET", "/api/previews")
     assert anonymous[0] == 401
@@ -300,7 +296,7 @@ def test_a_failed_republish_leaves_the_ready_preview_serving(console_hub):
     assert shown["state"] == "ready" and shown["revision"] == 1
 
 
-# ── stop, open again, delete ──
+# ── stop and open again ──
 
 
 def test_stop_keeps_files_and_open_again_restores_them(console_hub):
@@ -331,31 +327,7 @@ def test_a_coworker_stops_only_what_it_published(console_hub):
     assert one(h, number)["state"] == "ready"
 
 
-def test_delete_needs_an_owner_and_the_repeated_id_and_is_final(console_hub):
-    h = console_hub
-    number = card(h)
-    assert publish(h, h.t1, number)[0]
-    identity = one(h, number)["id"]
-    assert (
-        h.request(h.member, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0] == 403
-    )
-    assert h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": "yes"})[0] == 400
-    assert store.revision_dir(h.gateway, h.workspace, identity, 1).is_dir()
-    status, body, _ = h.request(
-        h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity}
-    )
-    assert status == 200 and body["state"] == "stopped" and body["reason"] == "files_deleted"
-    assert body["url"] is None and body["revisions"][0]["files_deleted"] is True
-    assert not (store.root(h.gateway, h.workspace) / identity).exists()
-    status, again, _ = h.request(h.owner, "POST", f"/api/previews/{identity}/open-again", {})
-    assert status == 409 and again["reason"] == "files_deleted"
-    assert previews(h, card=number)[1]["usage"] == {"ready": 0, "bytes": 0}
-    # A new publish under the same name works and starts a new revision.
-    assert publish(h, h.t1, number)[0]
-    assert one(h, number)["state"] == "ready" and one(h, number)["revision"] == 2
-
-
-def test_a_coworker_has_no_way_to_delete_or_set_rules(console_hub):
+def test_a_coworker_has_no_way_to_delete_files_or_set_rules(console_hub):
     h = console_hub
     names = h.hub.tool_names(h.t1)
     assert {"preview_publish", "preview_list", "preview_stop"} <= set(names)
@@ -372,7 +344,7 @@ def test_the_ready_limit_refuses_without_evicting_and_stopping_makes_room(consol
     for name in ("a", "b"):
         assert publish(h, h.t1, number, name=name)[0]
     text = refused(h, number, PAGE, "workspace_quota_full", "c")
-    assert "Stop or delete an older preview" in text
+    assert "Stop an older preview" in text
     ids = {p["name"]: p for p in previews(h, card=number)[1]["previews"]}
     assert ids["a"]["state"] == ids["b"]["state"] == "ready" and ids["c"]["state"] == "failed"
     assert mcp(h, h.t1, "preview_stop", id=ids["a"]["id"])[0]
@@ -664,35 +636,7 @@ def test_a_directory_left_by_an_earlier_crash_does_not_block_the_next_publish(co
     assert (stale / "index.html").read_text() == "second" and not (stale / "left-over.txt").exists()
 
 
-def test_a_delete_that_cannot_remove_every_file_says_so_and_records_it(console_hub, monkeypatch):
-    from commonplace.previews import service
-
-    h = console_hub
-    number = card(h)
-    assert publish(h, h.t1, number)[0]
-    identity = one(h, number)["id"]
-    monkeypatch.setattr(service, "_remove_tree", lambda path: None)
-    status, body, _ = h.request(
-        h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity}
-    )
-    assert status == 200 and body["reason"] == "files_deleted" and body["files_remaining"] is True
-    with h.db._lock:
-        kinds = [
-            r[0]
-            for r in h.db._conn.execute(
-                "SELECT kind FROM preview_events WHERE preview_id=?", (identity,)
-            )
-        ]
-    assert "delete_incomplete" in kinds
-    monkeypatch.undo()
-    status, body, _ = h.request(
-        h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity}
-    )
-    assert status == 200 and "files_remaining" not in body
-    assert not (store.root(h.gateway, h.workspace) / identity).exists()
-
-
-# ── delete and publish racing, the row cap, and the small ends ──
+# ── stop and publish racing, the row cap, and the small ends ──
 
 
 def interleave(monkeypatch, action):
@@ -720,32 +664,6 @@ def served_has_files(h, identity):
     ).is_file()
 
 
-def test_a_delete_between_a_republish_writing_and_committing_never_leaves_a_ready_preview_without_files(
-    console_hub, monkeypatch
-):
-    h = console_hub
-    number = card(h)
-    assert publish(h, h.t1, number)[0]
-    identity = one(h, number)["id"]
-    done = interleave(
-        monkeypatch,
-        lambda: h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0],
-    )
-    changed = [INDEX, {"path": "assets/app.css", "text": "body{color:#000}"}]
-    ok, text = publish(h, h.t1, number, files=changed)
-    assert done == [200]
-    assert not ok and "[changed_meanwhile]" in text
-    shown = one(h, number)
-    assert (shown["state"], shown["reason"]) == ("stopped", "files_deleted")
-    assert served_has_files(h, identity)
-    folder = store.root(h.gateway, h.workspace)
-    assert not list(folder.glob("*/r*")) and not list(folder.glob("*/.tmp-*"))
-    assert h.request(h.owner, "GET", "/api/previews")[1]["usage"] == {"ready": 0, "bytes": 0}
-    # The same publish sent again afterwards is an ordinary republish and works.
-    assert publish(h, h.t1, number, files=changed)[0]
-    assert one(h, number)["state"] == "ready" and served_has_files(h, identity)
-
-
 def test_a_stop_during_a_republish_is_not_undone_by_it(console_hub, monkeypatch):
     h = console_hub
     number = card(h)
@@ -765,30 +683,7 @@ def test_a_stop_during_a_republish_is_not_undone_by_it(console_hub, monkeypatch)
     assert not list(store.root(h.gateway, h.workspace).glob("*/.tmp-*"))
 
 
-def test_a_delete_of_a_preview_still_being_built_is_refused_and_the_publish_completes(
-    console_hub, monkeypatch
-):
-    from commonplace.previews import service
-
-    h = console_hub
-    number = card(h)
-    owner = h.person(h.hub.admin)
-
-    def try_delete():
-        identity = next(iter(h.db._conn.execute("SELECT id FROM previews")))[0]
-        try:
-            service.delete_files(h.gateway, owner, identity, identity)
-        except service.Refused as exc:
-            return exc.reason
-
-    done = interleave(monkeypatch, try_delete)
-    assert publish(h, h.t1, number)[0]
-    assert done == ["validating"]
-    shown = one(h, number)
-    assert shown["state"] == "ready" and served_has_files(h, shown["id"])
-
-
-def test_refused_attempts_and_deleted_previews_do_not_count_toward_the_cap(
+def test_refused_attempts_do_not_count_toward_the_cap_and_the_refusal_is_accurate(
     console_hub, monkeypatch
 ):
     from commonplace.previews import service
@@ -805,18 +700,78 @@ def test_refused_attempts_and_deleted_previews_do_not_count_toward_the_cap(
         service.publish(h.gateway, person, number, "c", PAGE)
     assert caught.value.reason == "too_many_previews"
     text = service.refusal_payload(caught.value)
-    assert "at most 200 previews" in text["error"] and "Delete the files" in text["next"]
+    assert "at most 200 previews" in text["error"] and "not available yet" in text["next"]
     assert "25" not in text["error"] and "MiB" not in text["error"]
     assert caught.value.detail["preview"]["state"] == "failed"  # recorded, never silently dropped
-    # Deleting the files of one frees a place (it no longer counts), and publishing works again.
-    identity = one(h, number, "a")["id"]
-    assert (
-        h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0] == 200
-    )
-    assert publish(h, h.t1, number, name="c")[0]
-    # Reviving the deleted name takes a place again, so it is refused while the cap is full.
-    ok, text = publish(h, h.t1, number, name="a")
-    assert not ok and "[too_many_previews]" in text
+    # Republishing a name that already holds a preview is not a new place.
+    assert publish(h, h.t1, number, name="a", files=[{"path": "index.html", "text": "v2"}])[0]
+    assert one(h, number, "a")["revision"] == 2
+
+
+def test_a_refused_attempt_does_not_overwrite_a_publish_that_is_still_building(console_hub):
+    h = console_hub
+    number = card(h)
+    now = store.stamp(store.clock())
+    with h.db._lock, h.db._tx() as conn:
+        conn.execute(
+            "INSERT INTO previews(id,workspace_id,card,name,state,reason,actor,published_by,by_person,"
+            "created_at,updated_at) VALUES ('pv_busy',?,?,'busy','building','storing','conn:a1','a1',0,?,?)",
+            (h.workspace, number, now, now),
+        )
+    refused(h, number, [{"path": "nope.html", "text": "x"}], "no_index_html", "busy")
+    shown = one(h, number, "busy")
+    assert (shown["state"], shown["reason"]) == ("building", "storing")
+    with h.db._lock:
+        kinds = [
+            r[0]
+            for r in h.db._conn.execute(
+                "SELECT kind FROM preview_events WHERE preview_id='pv_busy'"
+            )
+        ]
+    assert kinds == ["publish_failed"]
+
+
+def test_no_recursive_file_work_runs_while_the_control_database_lock_is_held(
+    console_hub, monkeypatch
+):
+    """Removing a directory tree (a leftover, a failed write) must happen with the lock released."""
+    import shutil
+
+    from commonplace.previews import service
+
+    h = console_hub
+    number = card(h)
+    calls = []
+    real = shutil.rmtree
+
+    def watched(path, *args, **kwargs):
+        calls.append(str(path))
+        assert not h.db._lock._is_owned(), f"rmtree of {path} ran under the database lock"
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", watched)
+    original_write = store.write_files
+
+    def writing(*args, **kwargs):
+        assert not h.db._lock._is_owned(), "files were written under the database lock"
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(store, "write_files", writing)
+    assert publish(h, h.t1, number)[0]
+    identity = one(h, number)["id"]
+    # A leftover directory from a crash is renamed aside under the lock and removed after it.
+    stale = store.revision_dir(h.gateway, h.workspace, identity, 2)
+    stale.mkdir(parents=True)
+    (stale / "old.txt").write_text("left by a publish that died")
+    assert publish(h, h.t1, number, files=[{"path": "index.html", "text": "two"}])[0]
+    assert (stale / "index.html").read_text() == "two" and not (stale / "old.txt").exists()
+    assert not list(store.root(h.gateway, h.workspace).glob("*/.stale-*"))
+    assert any(".stale-" in c for c in calls)
+    # The failure paths too: a stopped preview during a republish, and a write that fails.
+    interleave(monkeypatch, lambda: service.stop(h.gateway, h.person(h.hub.admin), identity))
+    ok, text = publish(h, h.t1, number, files=[{"path": "index.html", "text": "three"}])
+    assert not ok and "[changed_meanwhile]" in text
+    assert any(".tmp-" in c for c in calls)
 
 
 def test_only_the_newest_refused_attempts_that_never_published_are_kept(console_hub, monkeypatch):
@@ -887,9 +842,6 @@ def test_the_event_record_names_connections_and_never_a_user_id(console_hub):
     identity = one(h, number)["id"]
     assert h.request(h.owner, "POST", f"/api/previews/{identity}/stop", {})[0] == 200
     assert h.request(h.owner, "PUT", "/api/previews/rules", {"max_age_days": 30})[0] == 200
-    assert (
-        h.request(h.owner, "DELETE", f"/api/previews/{identity}", {"confirm": identity})[0] == 200
-    )
     with h.db._lock:
         actors = {r[0] for r in h.db._conn.execute("SELECT actor FROM preview_events")}
     assert actors == {"conn:a1", "a person"}

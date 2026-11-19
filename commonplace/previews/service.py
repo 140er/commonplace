@@ -1,4 +1,4 @@
-"""Publish, list, stop, reopen and delete previews, and the workspace stop rule.
+"""Publish, list, stop and reopen previews, and the workspace stop rule.
 
 The caller is always a ``Principal``; the workspace comes from it, never from the request.
 A preview is reachable by the people who can open its card, so every call starts from the
@@ -136,7 +136,8 @@ def _failure(gateway, principal, info, name, exc) -> dict:
                 ),
             )
             row = store.row_by_id(conn, workspace, identity)
-        elif row["current_revision"] == 0 and row["state"] != "ready":
+        elif row["current_revision"] == 0 and row["state"] == "failed":
+            # Only a refused attempt is refreshed; a publish that is still building is left alone.
             conn.execute(
                 "UPDATE previews SET state='failed',reason=?,updated_at=? WHERE id=?",
                 (exc.reason, now, row["id"]),
@@ -274,11 +275,11 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
     except Refused as exc:
         settle(exc)
         raise
-    failed = changed = final = None
+    failed = changed = final = aside = None
     try:
         with db._lock, db._tx() as conn:
             row = store.row_by_id(conn, workspace, identity)
-            # Someone may have stopped or deleted this preview while the files were written. A
+            # Someone may have stopped this preview while the files were written. A
             # preview that was ready must still be ready; one this publish started must still be
             # building (or already ready through a racing publish of the same name).
             if row["state"] not in (("ready",) if keep else ("building", "ready")):
@@ -305,7 +306,7 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                         (identity,),
                     ).fetchone()[0]
                     target = store.revision_dir(gateway, workspace, identity, revision)
-                    store.place(tmp, target)
+                    aside = store.place(tmp, target)
                     final = target
                 except Refused as exc:
                     failed = exc
@@ -336,8 +337,12 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
         # Nothing was committed: the placed files, and the ones still waiting, must not outlive it.
         if final is not None:
             _remove_tree(final)
+        if aside is not None:
+            _remove_tree(aside)
         _remove_tree(tmp)
         raise
+    if aside is not None:
+        _remove_tree(aside)  # a leftover from a crash, removed with the lock released
     if changed is not None:
         _remove_tree(tmp)
         raise changed
@@ -456,15 +461,7 @@ def stop(gateway, principal, preview_id) -> dict:
 
 
 def reopen(gateway, principal, preview_id) -> dict:
-    """Serve a stopped preview again from its kept files; ``Refused`` when they were deleted."""
-    _authorize(gateway, principal, preview_id)
-    db = gateway.db
-    with db._lock:
-        row = _held(db._conn, principal, preview_id)
-        if row["state"] == "stopped" and (
-            row["reason"] == "files_deleted" or row["current_revision"] == 0
-        ):
-            raise Refused("files_deleted")
+    """Serve a stopped preview again from its kept files."""
     return _change(
         gateway,
         principal,
@@ -474,56 +471,6 @@ def reopen(gateway, principal, preview_id) -> dict:
         reason_for=lambda row, p: "published",
         allowed_from=("stopped",),
     )
-
-
-def delete_files(gateway, principal, preview_id, confirm) -> dict:
-    """Delete every revision's files. A signed-in workspace owner only, and only with the
-    preview's own id repeated as confirmation; never called by a timer or a Coworker.
-
-    The rows and the files change under one hold of the control-database lock, the same lock a
-    publish takes to place and commit a revision, so a publish never lands between them. Only
-    the revision folders go: files a publish is still writing are left for that publish, which
-    then refuses itself (``changed_meanwhile``) because the preview was deleted under it."""
-    if not principal.person or principal.role != "owner":
-        raise Forbidden("owner")
-    _authorize(gateway, principal, preview_id)
-    db, workspace = gateway.db, principal.workspace_id
-    with db._lock, db._tx() as conn:
-        row = _held(conn, principal, preview_id)
-        if confirm != row["id"]:
-            raise ValueError("confirm must repeat the preview id")
-        state, _reason = store.effective(row)
-        if state == "building":
-            raise Refused("validating")
-        now = store.stamp(store.clock())
-        conn.execute(
-            "UPDATE preview_revisions SET deleted_at=? WHERE preview_id=? AND deleted_at IS NULL",
-            (now, row["id"]),
-        )
-        conn.execute(
-            "UPDATE previews SET state='stopped',reason='files_deleted',updated_at=? WHERE id=?",
-            (now, row["id"]),
-        )
-        store.event(conn, workspace, row["id"], row["card"], "files_deleted", principal.actor)
-        folder = store.root(gateway, workspace) / row["id"]
-        for revision in sorted(folder.glob("r[0-9]*")):
-            _remove_tree(revision)
-        remaining = any(folder.glob("r[0-9]*"))
-        if remaining:
-            # The rows say deleted but some files remain: record it and say so; asking again retries.
-            log.warning("preview files could not be fully removed for %s", row["id"])
-            store.event(
-                conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
-            )
-        else:
-            try:
-                folder.rmdir()  # only when nothing is waiting in it
-            except OSError:
-                pass
-        shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]), revisions=True)
-    if remaining:
-        shown["files_remaining"] = True
-    return shown
 
 
 RULE_BOUNDS = {"stop_days_after_pr": (1, 365), "max_age_days": (1, 3650)}
@@ -604,7 +551,6 @@ REFUSAL_STATUS = {
     "changed_meanwhile": 409,
     "workspace_quota_full": 409,
     "validating": 409,
-    "files_deleted": 409,
     "storage_unavailable": 503,
 }
 

@@ -2,7 +2,7 @@
 open that card reopen it after the work session has ended.
 
 Modules: ``bundle`` (checks a bundle before anything is stored), ``store`` (control-database
-tables, limits, reasons, files on disk), ``service`` (publish, stop, reopen, delete, the stop
+tables, limits, reasons, files on disk), ``service`` (publish, stop, reopen, the stop
 rule), ``routes`` (``/api/previews`` for people) and ``tools`` (``preview_publish``,
 ``preview_list``, ``preview_stop`` for Coworkers). The design note is
 ``docs/system/previews.md``.

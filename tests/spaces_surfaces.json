@@ -1451,7 +1451,7 @@
           "name": "preview_publish"
         },
         {
-          "description": "Stop serving a preview you published. Its files are kept; a person can open it again. You cannot delete files or change the stop rule.",
+          "description": "Stop serving a preview you published. Its files are kept; a person can open it again. You cannot change the stop rule.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -5421,7 +5421,7 @@
           "name": "preview_publish"
         },
         {
-          "description": "Stop serving a preview you published. Its files are kept; a person can open it again. You cannot delete files or change the stop rule.",
+          "description": "Stop serving a preview you published. Its files are kept; a person can open it again. You cannot change the stop rule.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {

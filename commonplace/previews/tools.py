@@ -155,7 +155,7 @@ register(
         name="preview_stop",
         description=(
             "Stop serving a preview you published. Its files are kept; a person can open it "
-            "again. You cannot delete files or change the stop rule."
+            "again. You cannot change the stop rule."
         ),
         input_schema={
             "type": "object",
