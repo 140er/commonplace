@@ -107,9 +107,12 @@ def ensure(conn):
     if conn.execute("SELECT 1 FROM run_ledger_backfill").fetchone() is None:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for row in conn.execute(_MISSING).fetchall():
-                sync(conn, row)
-            conn.execute("INSERT INTO run_ledger_backfill(id) VALUES (1)")
+            # Two first opens can both see no marker above; the second one waits for the first one's transaction and
+            # must find it done, so the marker is checked again inside it (and written with OR IGNORE).
+            if conn.execute("SELECT 1 FROM run_ledger_backfill").fetchone() is None:
+                for row in conn.execute(_MISSING).fetchall():
+                    sync(conn, row)
+                conn.execute("INSERT OR IGNORE INTO run_ledger_backfill(id) VALUES (1)")
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")

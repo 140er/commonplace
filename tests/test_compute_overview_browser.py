@@ -571,7 +571,7 @@ def test_with_no_machine_the_overview_lists_the_record_and_the_form_says_why(
         expect(row.locator("[data-ov-chip]")).to_have_text("Saved, not started")
         # The same words as the workspaces list below, and an instruction only where it can be followed.
         expect(row).to_contain_text(
-            "No machine is set up yet, so this stays on Choose later. Starting will need one; that is not available yet."
+            "No machine is set up yet. Starting will need one, which is not available yet."
         )
         assert "Choose a machine for it with Change settings" not in row.inner_text()
         assert "Nothing here yet" not in page.locator(".compute-ov").inner_text()

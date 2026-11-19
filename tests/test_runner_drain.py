@@ -74,7 +74,7 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
     assert item["status"]["code"] == "draining" and item["status"]["tone"] == "wait"
     assert item["status"]["detail"] == (
         "No new card runs start here. Chat and Coworker sessions can still start here. "
-        "1 run in progress will finish. Resuming it is not available in this version."
+        "1 run in progress will finish. This screen has no button to resume it yet."
     )
     assert [b["code"] for b in item["health"]["blockers"]] == ["draining"]
     with fleet.store().transaction() as conn:
@@ -244,7 +244,10 @@ def test_the_drain_flag_and_its_log_line_are_one_transaction(api, fleet):
         assert [r["action"] for r in drain.log(conn, made["machine_id"], 10)] == ["drain"]
     # The activity list says so in words.
     texts = [e["text"] for e in runner(api, made)["activity"]]
-    assert "Drain started: no new card runs start here" in texts
+    assert (
+        "Drain started. No new card runs start here. Chat and Coworker sessions can still start here."
+        in texts
+    )
 
 
 def test_a_drain_table_made_before_request_ids_existed_is_upgraded_in_place(api, fleet):
@@ -300,13 +303,23 @@ def test_the_poll_reads_runs_through_indexes_and_opens_the_runner_store_once(
 
     made = fleet.enroll("runner-index")
     fleet.job(made, "started", task=1)
+    fleet.resources(made)  # creates the resource table the plan below reads
+    act(api, made, "drain")  # creates the drain log
     stamp = "2026-01-01T00:00:00Z"
     with fleet.store().connection() as conn:
         names = {r[1] for r in conn.execute("PRAGMA index_list(runner_jobs)")}
         assert {"runner_jobs_state_updated", "runner_jobs_starting"} <= names
         # Every read of a poll searches an index (a SCAN reads the whole history, which is never pruned).
         for sql, params in (
-            (overview.FACT_ACTIVE_SQL, ()),
+            (overview.FACT_QUEUED_SQL, ()),
+            (jobs.IN_FLIGHT_SQL, ("m",)),
+            (overview.RECENT_RUNS_SQL, ("m", 10)),
+            (overview.FACT_RESOURCES_SQL.format("?"), ("m",)),
+            (overview.FACT_ENDED_SQL.format("?"), ("j",)),
+            (
+                "SELECT action,by,at FROM runner_drain_log WHERE machine_id=? ORDER BY id DESC LIMIT ?",
+                ("m", 10),
+            ),
             (overview.FACT_STARTED_OPEN_SQL, (stamp,)),
             (overview.FACT_SPEND_SQL, ("a", "b", "c", "d", "e", stamp, stamp)),
             (overview.FACT_SPEND_PLAIN_SQL, ("a", "b", "c", "d", "e", stamp, stamp)),
@@ -314,6 +327,9 @@ def test_the_poll_reads_runs_through_indexes_and_opens_the_runner_store_once(
         ):
             plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
             assert "SEARCH" in plan and "SCAN" not in plan, plan
+            assert "TEMP B-TREE FOR ORDER BY" not in plan, (
+                plan
+            )  # a machine's history is read in index order
         for sql in (
             "SELECT machine_id,max(updated_at) FROM runner_jobs INDEXED BY runner_jobs_state_updated "
             "WHERE state='started' AND updated_at>? GROUP BY machine_id",
@@ -332,8 +348,8 @@ def test_the_poll_reads_runs_through_indexes_and_opens_the_runner_store_once(
     assert len(opened) == 1
     opened.clear()
     assert runner(api, made)["id"] == made["machine_id"]
-    # The detail reads the facts and the activity: one open each, not one per query.
-    assert len(opened) <= 2
+    # The detail reads the facts (with the topology signals) and the activity: one open each, exactly.
+    assert len(opened) == 2, len(opened)
 
 
 def test_drain_is_stated_to_stop_card_runs_only(api, fleet):
@@ -479,3 +495,133 @@ def test_the_ledger_backfill_runs_once_not_at_every_open_of_the_store(api, fleet
     fleet.store()
     with fleet.store().connection() as conn:
         assert conn.execute("SELECT count(*) FROM run_ledger").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "name,slots,rows,full",
+    [
+        # (state of the started run, ended in the ledger, card still Doing, age in minutes)
+        ("running", 1, [(False, True, 5)], True),
+        ("finished but its card is still Doing", 1, [(True, True, 5)], True),
+        ("card moved on, end reported", 1, [(True, False, 5)], False),
+        ("card moved on, end never reported", 1, [(False, False, 5)], False),
+        ("never ended, 8 days old, card still Doing", 1, [(False, True, 8 * 24 * 60)], True),
+        (
+            "two slots, one running and one finished but holding",
+            2,
+            [(False, True, 5), (True, True, 6)],
+            True,
+        ),
+        ("two slots, only a finished one holding", 2, [(True, True, 5)], False),
+        (
+            "two slots, a finished one whose card moved on and a running one",
+            2,
+            [(True, False, 5), (False, True, 6)],
+            False,
+        ),
+    ],
+)
+def test_the_lease_and_the_overview_agree_on_what_holds_a_slot(api, fleet, name, slots, rows, full):
+    """One definition (``jobs.in_flight``) decides which started runs hold a slot; the lease refuses exactly when the
+    overview says the machine is full, in every case of the matrix (a finished run whose card is still Doing included)."""
+    made = fleet.enroll(f"matrix-{abs(hash(name)) % 10000}", max_in_flight=slots)
+    fleet.seen(made, 5)
+    for k, (ended, doing, minutes) in enumerate(rows):
+        task = fleet.work(made) if doing else 900 + k
+        job = fleet.job(made, "started", minutes_ago=minutes, task=task, project=f"p{k}")
+        if ended:
+            fleet.end(job, minutes_ago=max(0, minutes - 1))
+    epoch = machine_row(api, made)["binding_epoch"]
+    fleet.job(made, "queued", task=700, project="other", binding_epoch=epoch)
+    shown = runner(api, made)
+    says_full = any(b["code"] == "full" for b in shown["health"]["blockers"])
+    leased = jobs.lease(fleet.store(), machine_row(api, made))
+    assert says_full is full, (name, shown["health"]["blockers"])
+    assert (leased is None) is full, (name, leased)
+
+
+def test_two_first_opens_of_a_store_do_not_race_on_the_backfill_marker(api, fleet):
+    """Both opens see no marker; the second must wait for the first and find it done, not fail on the marker row."""
+    import threading
+
+    from commonplace.runner import ledger
+
+    made = fleet.enroll("runner-race-open")
+    fleet.job(made, "started", task=21)
+    with fleet.store().transaction() as conn:
+        conn.execute("DROP TABLE run_ledger_backfill")
+        conn.execute("DELETE FROM run_ledger")
+    path = fleet.store().path
+    from mempalace.sqlite_crypto import connect, row_factory
+
+    errors, ready, go = [], threading.Barrier(2), threading.Event()
+
+    def first_open():
+        conn = connect(path, timeout=10, isolation_level=None)
+        conn.row_factory = row_factory
+        try:
+            ready.wait(10)
+            go.wait(10)
+            ledger.ensure(conn)
+        except BaseException as exc:  # noqa: BLE001 - the test reports whatever failed
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=first_open, daemon=True) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    go.set()
+    for thread in threads:
+        thread.join(20)
+    assert errors == [] and not any(t.is_alive() for t in threads)
+    with fleet.store().connection() as conn:
+        assert conn.execute("SELECT count(*) FROM run_ledger").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM run_ledger_backfill").fetchone()[0] == 1
+
+
+def test_one_unreadable_resource_report_does_not_fail_the_overview(api, fleet):
+    good = fleet.enroll("runner-res-good")
+    bad = fleet.enroll("runner-res-bad")
+    fleet.seen(good, 5)
+    fleet.seen(bad, 5)
+    fleet.resources(good)
+    fleet.resources(bad)
+    with fleet.store().transaction() as conn:
+        conn.execute(
+            "UPDATE runner_resources SET resources='{not json' WHERE machine_id=?",
+            (bad["machine_id"],),
+        )
+    status, result = api.request(path=BASE)
+    assert status == 200
+    items = {i["name"]: i for i in result["items"]}
+    assert items["runner-res-good"]["usage"]["resources"]["known"] is True
+    assert items["runner-res-bad"]["usage"]["resources"]["known"] is False
+
+
+def test_a_finished_run_is_labelled_finished_not_started_in_the_activity_list(api, fleet):
+    made = fleet.enroll("runner-labels")
+    fleet.seen(made, 5)
+    job = fleet.job(made, "started", minutes_ago=300, task=fleet.work(made))
+    fleet.end(job, minutes_ago=290)
+    fleet.job(made, "started", minutes_ago=10, task=fleet.work(made))
+    texts = [e["text"] for e in runner(api, made)["activity"]]
+    assert any(t.startswith("Finished: demo card") for t in texts), texts
+    assert any(t.startswith("Started: demo card") for t in texts), texts
+
+
+def test_every_drain_sentence_uses_the_one_drain_scope_and_zero_reads_none(api, fleet):
+    made = fleet.enroll("runner-scope-2")
+    fleet.seen(made, 4000)  # offline: the note says it is also set to drain
+    act(api, made, "drain")
+    item = runner(api, made)
+    assert overview.DRAIN_SCOPE in item["status"]["detail"]
+    assert (
+        overview.DRAIN_SCOPE
+        in {b["code"]: b["text"] for b in item["health"]["blockers"]}["draining"]
+    )
+    assert any(
+        e["text"].startswith("Drain started. " + overview.DRAIN_SCOPE) for e in item["activity"]
+    )
+    status, preview = api.request(path=f"{BASE}/runner/{made['machine_id']}/preview/drain")
+    assert preview["running_work"] == "None is in progress; nothing is cancelled."
