@@ -555,6 +555,11 @@ class BoardStore:
                 for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
+                if "priority_by" not in columns:
+                    # Only an owner could set a priority before: a non-default one is a person's.
+                    conn.execute(
+                        "UPDATE tasks SET priority_by='person' WHERE priority!=?", (DEFAULT_RANK,)
+                    )
                 if "restricted_origin" not in columns:
                     # NULL leaves legacy agent backlog pending a policy lookup.
                     conn.execute(

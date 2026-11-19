@@ -8,6 +8,7 @@ sweep is given, so nothing sleeps.
 import pytest
 
 from commonplace.boards.service import BoardService
+from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolError
 from commonplace.orch import durable, start_retry, triggers
 from commonplace.runner import jobs
@@ -87,6 +88,23 @@ def test_a_blocked_card_does_not_take_the_slot_of_a_ready_one(hub):
     assert not w.jobs_for(blocked)
     assert {m["code"] for m in w.misses() if m["card"] == blocked} == {"blocked_by"}
     assert w.jobs_for(ready) and not w.jobs_for(blocker)
+
+
+def test_a_revisited_event_never_starts_a_card_twice(hub):
+    w = world(hub, on=False, runner=True)
+    cap(w, 3)
+    low = w.card(priority="low")
+    urgent = w.card(priority="urgent")
+    triggers.run(w.js, now=T0)
+    before = len(w.all_jobs())
+    assert before == 2
+    # A sweep that stopped mid-batch leaves the cursor below events already started.
+    with w.st.transaction() as conn:
+        conn.execute("UPDATE orch_cursor SET cursor=0 WHERE board=?", (BOARD,))
+    triggers.run(w.js, now=T0)
+    assert len(w.all_jobs()) == before
+    assert len(w.jobs_for(low)) == len(w.jobs_for(urgent)) == 1
+    assert w.cursor()[0] == w.max_event()
 
 
 # --- owner precedence and the Coworker's ranking ------------------------------------------
@@ -264,3 +282,18 @@ def test_the_rest_api_shows_who_ranked_a_card(hub, env):
         {"version": card["version"], "priority": "high"},
     )
     assert status == 200 and body["priority_source"] == "person"
+
+
+def test_priorities_owners_set_before_the_column_existed_stay_theirs(hub, coordinator):
+    coworker, owner = coordinator
+    high = owner.task_add("Set by the owner", board="work", priority="high")
+    plain = owner.task_add("Never ranked", board="work")
+    with owner.store.transaction() as conn:
+        conn.execute("ALTER TABLE tasks DROP COLUMN priority_by")
+    BoardStore(owner.ctx.workspace_dir())  # opening migrates additively
+    with pytest.raises(ToolError, match="a person set this priority"):
+        coworker.task_update(
+            high["number"], version=high["version"], priority="low", priority_reason="Later"
+        )
+    assert owner.task_show(high["number"])["priority_source"] == "person"
+    assert owner.task_show(plain["number"])["priority_source"] == "default"
