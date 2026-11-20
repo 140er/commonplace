@@ -116,7 +116,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       <form class="agent-form" data-runner-form="wings" data-runner-id="${id}"><h4>Edit wings</h4>${wingBoxes(m.wings)}
       <p>${e(RESET_NOTE)}</p><button type="submit" class="btn">Save wings</button></form>${revokeControl(m)}` : '';
     return `<article class="runner-machine" aria-label="${e(m.label)}"><h3>${e(m.label)}</h3>
-      <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · ${e(m.max_in_flight)} in flight</p>
+      <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · Limit: ${e(m.max_in_flight)} run${m.max_in_flight === 1 ? '' : 's'} at once</p>
       ${m.lifecycle ? `<p role="status">${e(m.lifecycle.service)} · Host verification: ${e(m.lifecycle.host_verification)}</p>` : ''}
       <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.map(wing => wingLabel(wing)).join(', '))}</p>${forms}</article>`;
   };

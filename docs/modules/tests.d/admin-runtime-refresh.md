@@ -1,0 +1,4 @@
+- **Owns:** Real-browser coverage in `tests/workbench_e2e/test_admin_runtime_refresh.py` for configured machine limits, keyboard refresh success/failure, duplicate-read refusal while busy, focus after moving to another link, and phone control size.
+- **Promises:** Both looks are exercised; phone targets are measured at 320px and 390px. Requests use a synthetic owner and the real local gateway. The tests assert visible text and focus, not source strings.
+- **How it fails:** Browser acceptance requires the existing `CP_BROWSER_E2E=1` lane; missing browser dependencies fail that lane. Held routes are removed during teardown. The same tests must fail on the unchanged product before the fix.
+- **Tests:** `CP_BROWSER_E2E=1 pytest tests/workbench_e2e/test_admin_runtime_refresh.py` with Playwright and Chromium available; optional `ADMIN_REFRESH_SHOTS` writes captures outside the repository.
