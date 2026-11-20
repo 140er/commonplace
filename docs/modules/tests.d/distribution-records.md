@@ -1,0 +1,3 @@
+- **Owns:** `test_runner_distribution_records.py` checks real installed wheel bytes and the narrowly declared CFFI build-launcher exclusion.
+- **Promises:** Real marker-appropriate libraries and metadata survive delivery unchanged; external archive entries remain refused. Negative cases cover declarations, locations, links, permissions and RECORD hashes.
+- **Tests:** `tests/test_runner_distribution_records.py` and `tests/test_runner_prefix_inventory_round.py`.

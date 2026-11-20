@@ -52,6 +52,18 @@ def actual_archive():
                 base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
                 == record.hash.value
             )
+            # Console launchers live outside site-packages and are not runtime library files.
+            if (
+                name == "cffi"
+                and str(record) == "../../../bin/cffi-gen-src"
+                and [
+                    (entry.name, entry.value)
+                    for entry in dist.entry_points
+                    if entry.group == "console_scripts"
+                ]
+                == [("cffi-gen-src", "cffi._cffi_gen_src:run")]
+            ):
+                continue
             files["site/" + str(record)] = raw
     manifest = {
         "version": 1,
@@ -265,7 +277,10 @@ def test_manifest_refuses_missing_wrong_extra_or_invalid_dependency_metadata(kin
     if kind == "missing-metadata":
         del files[key]
     elif kind == "wrong-version":
-        files[key] = text.replace("Version: 48.0.0\n", "Version: 0.0.0\n").encode()
+        files[key] = text.replace(
+            "Version: " + manifest["dependencies"]["cryptography"] + "\n", "Version: 0.0.0\n"
+        ).encode()
+        assert files[key] != text.encode()
     elif kind == "duplicate-identity":
         files[key] += b"\n"
         files["site/duplicate.dist-info/METADATA"] = files[key]
