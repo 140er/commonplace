@@ -1,0 +1,4 @@
+- **Owns:** Legacy Unknown workspace restart refusal, authorization before body reads for every lifecycle and drain control, and workspace request rollback when auditing fails.
+- **Promises:** Tests use isolated stores and synthetic callers; no machine is contacted and no workspace executor runs.
+- **How it fails:** Accepting an unreported restart, reading a nonowner body, or retaining an unaudited request fails a behavioral assertion.
+- **Tests:** tests/test_compute_workspace_lifecycle_guards.py, alongside the existing lifecycle, overview, drain and overview interface tests.
