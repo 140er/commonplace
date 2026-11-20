@@ -1,0 +1,4 @@
+- **Owns:** Restart admission for legacy cloud workspaces whose saved state is ready but which have no executor report.
+- **Promises:** The effective running phase needs a fresh report before restart is allowed, matching the Unknown status; stop remains an owner request.
+- **How it fails:** Restart returns conflict with reason state_unknown without changing the request, version basis or audit trail.
+- **Tests:** tests/test_compute_workspace_lifecycle_guards.py and tests/test_compute_workspace_lifecycle.py.

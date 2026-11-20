@@ -173,10 +173,10 @@ def report_fresh(life, now):
     return age is not None and age <= REPORT_STALE_S
 
 
-def phase_trusted(life, now):
+def phase_trusted(phase, life, now):
     """A moving or running phase is believed only while its report is fresh; stopped, failed and
-    never-started are facts that do not expire."""
-    if life["phase"] in ("starting", "running", "stopping"):
+    never-started are facts that do not expire. Use the effective phase for legacy records too."""
+    if phase in ("starting", "running", "stopping"):
         age = report_age(life, now)
         return age is not None and age <= REPORT_STALE_S
     return True
@@ -264,7 +264,7 @@ def decide(row, life, action, now):
     if (
         action == "restart"
         and phase in ("running", "starting", "stopping")
-        and not phase_trusted(life, now)
+        and not phase_trusted(phase, life, now)
     ):
         # Shown as Unknown (its report is old): a restart would stop something nobody knows is there. Stop is still allowed.
         return "state_unknown"
