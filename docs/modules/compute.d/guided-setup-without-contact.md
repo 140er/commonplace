@@ -1,0 +1,3 @@
+- **Promises:** Completed guided setup remains Set up and checked even without connection-use telemetry or after its machine credential is rotated. Revocation, unfinished setup and explicit owner disable retain their status priorities.
+  Setup-only eligibility suppresses unused run-capacity summaries even when the primary status is Disabled. Detail capacity facts remain hidden while setup-only admission blocks work; developer machines retain recorded resource and usage facts.
+- **Tests:** tests/test_compute_guided_telemetry.py checks list and detail with absent or rotated connection telemetry, disabled guided capacity, unchanged developer presentation and refusal to lease guided work.

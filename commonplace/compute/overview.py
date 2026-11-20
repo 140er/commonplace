@@ -1039,13 +1039,6 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
         return _status(
             "not_approved", "wait", "Not approved", pending["detail"], next_text=pending["next"]
         )
-    if reason == "never_reported":
-        return _status(
-            "never_connected",
-            "quiet",
-            "Never connected",
-            "This machine has not contacted Commonplace yet. Finish its setup and it will report here.",
-        )
     if setup_only:
         # Added through the setup guide and never heartbeated: its setup-only service sends no heartbeat, so the
         # signals here are only its own setup reports. Online or Offline would claim what nothing can see.
@@ -1054,6 +1047,13 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "quiet",
             pairing.SET_UP_LABEL,
             f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Coworkers do not run on it in this version.",
+        )
+    if reason == "never_reported":
+        return _status(
+            "never_connected",
+            "quiet",
+            "Never connected",
+            "This machine has not contacted Commonplace yet. Finish its setup and it will report here.",
         )
     if reason == "no_heartbeat":
         return _status(
@@ -1311,7 +1311,7 @@ def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, 
             facts,
             now,
             silent={"offline": "offline", "slow": "slow to report"}.get(status["code"], ""),
-            takes_no_work=status["code"] in GUIDED_SETUP_CODES,
+            takes_no_work=setup_only or status["code"] in GUIDED_SETUP_CODES,
         ),
         "placement": {"approved": machine["binding_state"] == "owner_attested"},
         "draining": facts["drain"]["draining"],
@@ -1713,7 +1713,7 @@ def detail(store, principal, kind, item_id, *, session_hash):
     # Omit unused capacity settings while setup or approval still blocks new work.
     limits = (
         []
-        if item["status"]["code"] in HIDDEN_LIMIT_CODES
+        if "setup_only" in item["intake"]["reasons"] or item["status"]["code"] in HIDDEN_LIMIT_CODES
         else [
             {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
             {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
