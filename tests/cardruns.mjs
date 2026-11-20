@@ -208,7 +208,7 @@ const cases = {
       assert.ok(words.length > 40 && !words.includes(code), code);
     }
     assert.ok(startRefusalWords({ status: 409, payload: { error: 'no: card already has an active start' } }).includes('already being started'));
-    assert.ok(startRefusalWords({ status: 403, payload: { error: 'no: binding_not_attested' } }).includes('vouched for'));
+    assert.ok(startRefusalWords({ status: 403, payload: { error: 'no: binding_not_attested' } }).includes('attested'));
     assert.ok(startRefusalWords({ status: 409, payload: { error: 'no: card is not startable: blocked_by' } }).length > 0);
     // An unknown refusal still shows the server's own sentence.
     assert.equal(startRefusalWords({ status: 403, payload: { error: 'no: something new' } }), 'Something new.');

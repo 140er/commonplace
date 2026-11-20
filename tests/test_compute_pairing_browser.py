@@ -65,6 +65,14 @@ def _shot(page, name):
         page.screenshot(path=str(Path(target) / f"{name}.png"))
 
 
+def _shot_of(page, selector, name):
+    """A capture of one section (the overview above the guide), for the evidence folder only."""
+    target = os.environ.get("COMPUTE_PAIRING_SHOTS")
+    if target:
+        Path(target).mkdir(parents=True, exist_ok=True)
+        page.locator(selector).first.screenshot(path=str(Path(target) / f"{name}.png"))
+
+
 def _no_sideways_scroll(page):
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), (
         "page scrolls sideways"
@@ -404,6 +412,9 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         # The machine has not finished and printed its fingerprint: the sheet waits, and Approve says why it waits.
         expect(sheet).to_contain_text("Waiting for the machine to print its fingerprint.")
         _shot(page, f"{label}-05-connected-waiting")
+        # The first machine arrived while the page was open: the overview already shows it (0 -> 1).
+        expect(page.locator("[data-ov-summary]")).to_contain_text("1 runner", timeout=20000)
+        _shot_of(page, "[data-ov]", f"{label}-05c-overview-first-machine")
         fx.steps(credentials)
         expect(page.locator(".compute-pr-fingerprint")).to_be_visible(timeout=20000)
         groups = page.locator(".compute-pr-fingerprint").inner_text().split()
@@ -431,6 +442,7 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         )
         expect(page.locator("[data-ov]")).not_to_contain_text("No machine is set up yet")
         _shot(page, f"{label}-08-list")
+        _shot_of(page, "[data-ov]", f"{label}-09-overview-setup-only-row")
 
     _run(fx, ui, size, body)
 

@@ -90,6 +90,8 @@ NOT_STARTED_NOTE = "Starting is not available yet, so this only keeps your setti
 NO_MACHINES_SENTENCE = (
     "No machine is set up yet. Starting will need one, which is not available yet."
 )
+# Only runner machines from the setup guide exist: they are set up, and they only check themselves.
+ONLY_RUNNERS_SENTENCE = "No machine for a cloud workspace yet: the one you set up only checks itself in this version. Starting will need one, which is not available yet."
 # The one next step per status, for a status a person has to act on or wait out. Pointers name the place.
 NEXT_STEP = {
     "offline": "Check that the machine is on and the runner program is running there.",
@@ -186,6 +188,9 @@ def _cap_text(machine, facts):
 # disagree. Each reason has a ``kind``: "no" (nothing starts), "not_now" (nothing starts until time passes), "slot" (waits
 # for a run to finish) or "report" (the hub would hand it work once it reports).
 REASON_KINDS = ("no", "not_now", "slot", "report")
+SETUP_ONLY_BLOCKER = (
+    "This setup only checks the machine. Coworkers do not run on it in this version."
+)
 
 
 def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False):
@@ -212,6 +217,18 @@ def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False)
                 "blocker": "Turned off: the owner turned it off. Turn it on again in Admin, Runner machines.",
             }
         )
+    if setup_only:
+        # The setup guide installs a service that only checks the machine (no agent runs, no heartbeat): nothing is
+        # approved or offline about it, and attesting it does not make it run Coworkers. One reason, the same everywhere.
+        reasons.append(
+            {
+                "code": "setup_only",
+                "kind": "no",
+                "allowed": "No: this setup only checks the machine",
+                "blocker": SETUP_ONLY_BLOCKER,
+            }
+        )
+        return reasons
     if machine["binding_state"] != "owner_attested":
         reasons.append(
             {
@@ -242,7 +259,7 @@ def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False)
                 "blocker": "Never connected: it has not contacted Commonplace yet, so runs would wait.",
             }
         )
-    elif reason == "no_heartbeat" and not setup_only:
+    elif reason == "no_heartbeat":
         reasons.append(
             {
                 "code": "offline",
@@ -340,6 +357,8 @@ def _saved_status(row, *, manage, executor, has_machines):
         detail = f"{note} The workspace owner can choose a machine."
     elif has_machines is False:
         detail = NO_MACHINES_SENTENCE
+    elif has_machines == "runners":
+        detail = ONLY_RUNNERS_SENTENCE
     else:
         detail = f"{note} Choose a machine for it with Change settings."
     return _status("not_started", "quiet", SAVED_LABEL, detail)
@@ -475,6 +494,8 @@ def _workspace_blockers(row, status, executor, manage, has_machines):
     if row["node_id"] is None:
         if manage and has_machines is False:
             text = "No machine is set up yet; starting will need one, which is not available yet."
+        elif manage and has_machines == "runners":
+            text = "No machine for a cloud workspace yet: the one you set up only checks itself in this version."
         else:
             text = "Machine: not chosen yet." + (
                 " Choose one with Change settings." if manage else ""
@@ -939,7 +960,8 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "set_up",
             "quiet",
             "Set up and checked",
-            "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
+            "The machine passed its setup checks. This page cannot see whether it is switched on right now, "
+            "and this version only checks the machine: Coworkers do not run on it.",
         )
     if reason == "no_heartbeat":
         return _status(
@@ -1340,6 +1362,15 @@ def _runner_items(store, now, only=None):
     return items, total
 
 
+def _has_machines(store, data):
+    """Where a cloud workspace can be placed: True, False, or ``"runners"`` when the only machines are ones the
+    setup guide added (they are set up, but only check themselves, so a workspace still has nowhere to go)."""
+    if data["node_total"] > 0:
+        return True
+    gateway = store.gateway
+    return "runners" if pairing.setup_only_ids(gateway.db, store.workspace_id) else False
+
+
 def _summary(items):
     by_status, attention = {}, 0
     for item in items:
@@ -1366,7 +1397,7 @@ def read(store, principal, *, session_hash):
                 now,
                 manage=manage,
                 executor=executor,
-                has_machines=data["node_total"] > 0 if manage else None,
+                has_machines=_has_machines(store, data) if manage else None,
             )
         )
     if data["workspace_total"] > len(data["workspace_rows"]):
@@ -1534,7 +1565,7 @@ def detail(store, principal, kind, item_id, *, session_hash):
             now,
             manage=manage,
             executor=executor,
-            has_machines=data["node_total"] > 0 if manage else None,
+            has_machines=_has_machines(store, data) if manage else None,
         )
         item["activity"] = _activity_from_audit(data["audit"], now, manage=manage)
         item["facts"] = _workspace_facts(row, life, now, manage)
@@ -1663,7 +1694,7 @@ def preview(store, principal, kind, item_id, action, *, session_hash):
         row = data["workspace_row"]
         life = data["lifecycles"].get(item_id) or lifecycle.default(now)
         item = workspace_item(
-            row, life, now, manage=True, executor=executor, has_machines=data["node_total"] > 0
+            row, life, now, manage=True, executor=executor, has_machines=_has_machines(store, data)
         )
         refusal = lifecycle.decide(row, life, action, now)
         return _workspace_preview(item, row, life, action, refusal, executor)

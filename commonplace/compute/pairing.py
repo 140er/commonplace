@@ -83,8 +83,8 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "Coworkers can run here only after a provider is connected (sign in from Needs me) and the machine is attested under Runner machines in Admin.",
-        "This machine is set up. Coworkers can run on it after the owner connects a provider.",
+        "This version only checks the machine: Coworkers do not run on it yet. That needs a connected provider (sign in from Needs me) and an owner's attestation under Runner machines in Admin, and a later version.",
+        "This machine is set up and checked. Coworkers do not run on it in this version.",
     ),
     "offline": (
         "Offline",

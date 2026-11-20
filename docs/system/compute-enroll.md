@@ -110,6 +110,7 @@ What this change does not do, and the app says so: it does not deliver the runne
 - **A stalled setup is labelled "Not finished"** (owner and member, tone of a failure) instead of keeping the "waiting for your approval" chip.
 - **Before any question.** A command for another site, or an installation whose manifest cannot be read, stops before the administrator confirmation (fail closed, nothing changed). A non-string `identity_digest` is a 400. When the final reports cannot reach the app, the window says so instead of "Done".
 - **The overview's first row.** When the first machine arrives while the page is open, the first-run sentence is replaced at once (the state slot sits outside the fold).
+- **A setup-only machine in the overview.** It has one reason in the "can this runner take new work" answer: "This setup only checks the machine. Coworkers do not run on it in this version." The chip stays "Set up and checked"; the blockers, the sentence and "Allowed to start card runs" ("No: this setup only checks the machine") say the same, with no offline, never-connected or not-approved claim, also after 15 minutes of silence and after the owner attests it. The ready copy and the intro say the same, and the attestation step is called "attest" everywhere (the card-run refusals said "vouch"). A cloud workspace beside only such machines says "No machine for a cloud workspace yet: the one you set up only checks itself in this version."
 
 #### Screens (change C)
 
