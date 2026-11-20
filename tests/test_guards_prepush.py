@@ -402,3 +402,4 @@ def test_real_typechecker_rejects_a_stub_with_a_space_in_its_path(repo):
     mypy = next(outcome for outcome in report.outcomes if outcome.name == "typecheck mypy")
     assert mypy.status == "failed" and report.exit_code == 1
     assert "stub dir/a b.pyi:1" in text
+    assert "Incompatible types in assignment" in text and "[assignment]" in text

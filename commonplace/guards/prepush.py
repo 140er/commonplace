@@ -261,7 +261,11 @@ def _run_command_step(
         )
     if result.status == "timeout":
         return StepOutcome(name, _FAILED, result.seconds, "command did not finish")
-    lines = result.locations[:MAX_OUTPUT_LINES] or _tail(result.output)
+    lines = (
+        _tail(result.output)
+        if command.name == "mypy"
+        else result.locations[:MAX_OUTPUT_LINES] or _tail(result.output)
+    )
     return StepOutcome(name, _FAILED, result.seconds, lines=lines, rerun=command.fix)
 
 
