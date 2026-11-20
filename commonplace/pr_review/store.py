@@ -975,6 +975,8 @@ class ReviewStore:
             ).fetchone()
             if pr_row is None:
                 raise Refused("not_found")
+            if event_id and event_id <= pr_row["decided_event"]:
+                return {"choice": choice, "counts": self.counts(repo, pr)}
             if event_id:
                 # The board event that carried the answer: it is applied once, never again.
                 conn.execute(

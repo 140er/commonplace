@@ -70,6 +70,17 @@ const ALL = [
 ];
 
 const cases = {
+  async loading() {
+    const f = fakeSlot();
+    let loaded;
+    const pending = attachCardReviews(f.mount, card, { api: () => new Promise((resolve) => { loaded = resolve; }) });
+    assert.equal(f.slot.hidden, false);
+    assert.ok(f.body.innerHTML.includes('Loading review comments…'));
+    assert.equal(f.status.textContent, '');
+    loaded(view([]));
+    await pending;
+    assert.ok(f.body.innerHTML.includes('No review comments yet.') && !f.body.innerHTML.includes('data-review-loading'));
+  },
   states() {
     const html = cardReviewsHTML(view(ALL));
     for (const text of ['New', 'The Coworker is working on it', 'Fixed', 'Answered', 'Needs you', 'Not for the Coworker',

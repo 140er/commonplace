@@ -142,5 +142,3 @@ export async function mountReviewSettings(section, { project, api = request, cur
   });
   await load();
 }
-
-export const reviewSettingsSection = () => '<section class="set-sec" data-project-reviews-section hidden><h2>Review comments</h2><div data-project-reviews></div></section>';

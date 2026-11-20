@@ -205,6 +205,8 @@ export async function attachCardReviews(mount, card, { api = request, previous =
     body.innerHTML = previous.html;
     slot.hidden = false;
     focus(previous.focus);
+  } else {
+    paint('<p class="run-empty" data-review-loading>Loading review comments…</p>');
   }
   async function load(note) {
     const token = ++revision;

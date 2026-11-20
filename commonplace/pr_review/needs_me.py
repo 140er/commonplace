@@ -40,8 +40,9 @@ def options(rounds: int) -> list[str]:
     return [AGAIN.get(rounds, AGAIN[2]), MINE, IGNORE]
 
 
-def is_ours(ask) -> bool:
-    return isinstance(ask, str) and ask.startswith(QUESTION_START)
+def is_ours(ask, pr: int | None = None) -> bool:
+    prefix = QUESTION_START if pr is None else f"{QUESTION_START}{pr} need a decision:"
+    return isinstance(ask, str) and ask.startswith(prefix)
 
 
 def question(pr: int, counts: dict) -> str:
@@ -91,7 +92,9 @@ def apply_answers(gateway, workspace_id, store, now) -> int:
         found = mapping.match(gateway, workspace_id, pr_row["repo"], pr_row["pr"])
         if found["card"] is None:
             continue
-        event = mapping.last_answer(gateway, workspace_id, found["card"], list(CHOICES))
+        event = mapping.last_answer(
+            gateway, workspace_id, found["card"], list(CHOICES), pr=pr_row["pr"]
+        )
         if event is None or event["id"] <= pr_row["decided_event"]:
             continue
         store.decide(

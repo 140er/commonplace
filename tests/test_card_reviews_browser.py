@@ -138,6 +138,7 @@ STATES = {
     9: "off",
     10: "offline",
     11: "refused",
+    12: "loading",
 }
 SIZES = {
     "desktop": {"viewport": {"width": 1280, "height": 800}},
@@ -146,6 +147,7 @@ SIZES = {
     "tablet-768-touch": {"viewport": {"width": 768, "height": 1024}, "has_touch": True},
 }
 WORDS = {
+    "loading": "Loading review comments…",
     "every-status": "6 comments:",
     "needs-you": "1 comment needs you.",
     "empty": "No review comments yet.",
@@ -199,7 +201,11 @@ def open_shell(browser, look, size, cards, *, member=False):  # noqa: F811
 
 
 def cards():
-    return [dict(card) for card in shell.CARDS] + [
+    # The shell fixture waits for card 1 to be visible before a review card opens.
+    # Classic phones start on Todo, so keep that unrelated anchor in the default column.
+    return [
+        {**card, **({"status": "todo"} if card["number"] == 1 else {})} for card in shell.CARDS
+    ] + [
         {
             **shell.CARD,
             "number": n,
@@ -212,6 +218,22 @@ def cards():
         }
         for n, label in STATES.items()
     ]
+
+
+def assert_phone_text_is_readable(section, size):
+    if size not in ("phone", "narrow-320"):
+        return
+    small = section.evaluate(
+        """root => {
+            const selector = 'p, button, a, label, h2, h3, b, span, code, time, select';
+            const elements = [...(root.matches(selector) ? [root] : []), ...root.querySelectorAll(selector)];
+            return elements.filter(e => e.getClientRects().length && e.textContent.trim()
+                && parseFloat(getComputedStyle(e).fontSize) < 14).map(e => ({
+                    element: e.outerHTML.slice(0, 150), font: getComputedStyle(e).fontSize
+                }));
+        }"""
+    )
+    assert small == [], (size, small)
 
 
 @pytest.mark.parametrize("look", ["deck", "classic"])
@@ -228,12 +250,15 @@ def test_every_review_state_reads_in_words_for_owner_and_member(
     evidence.mkdir(parents=True, exist_ok=True)
     owner = role == "owner"
     page, errors, _ = open_shell(browser, look, size, cards(), member=not owner)
+    loading = []
 
     def reviews_api(route):
         path = urlsplit(route.request.url).path
         number = int(path.split("/")[4])
         label = STATES[number]
-        if label == "offline":
+        if label == "loading":
+            loading.append(route)
+        elif label == "offline":
             route.abort()
         elif label == "refused":
             route.fulfill(status=404, json={"error": "Card not found", "reason": "not_found"})
@@ -261,11 +286,17 @@ def test_every_review_state_reads_in_words_for_owner_and_member(
             if label == "off":
                 assert section.locator("[data-review-settings]").count() == (1 if owner else 0)
             section.scroll_into_view_if_needed()
-            for control in section.locator("button:visible, a.btn:visible").all():
+            for control in section.locator("button:visible, a:visible").all():
                 box = control.bounding_box()
                 assert box and box["width"] > 0
                 if size != "desktop":
-                    assert box["height"] >= 44, (size, label, control.inner_text(), box)
+                    assert box["height"] >= 44 and box["width"] >= 44, (
+                        size,
+                        label,
+                        control.inner_text(),
+                        box,
+                    )
+            assert_phone_text_is_readable(section, size)
             if size in ("phone", "narrow-320"):
                 font = section.locator(".run-reason, .run-empty").first.evaluate(
                     "e => getComputedStyle(e).fontSize"
@@ -276,6 +307,9 @@ def test_every_review_state_reads_in_words_for_owner_and_member(
             label,
         )
         panel.screenshot(path=str(evidence / f"reviews-{look}-{role}-{size}-{label}.png"))
+        if label == "loading":
+            loading.pop().fulfill(json=view([], owner=owner))
+            section.get_by_text(WORDS["empty"]).first.wait_for()
     assert not errors, errors
     page.close()
 
@@ -334,7 +368,7 @@ def test_the_owner_answers_and_focus_holds_through_the_answer_and_a_background_r
     page.close()
 
 
-@pytest.mark.parametrize("size", ["desktop", "phone", "narrow-320"])
+@pytest.mark.parametrize("size", list(SIZES))
 def test_the_pipeline_shows_a_review_chip_that_leads_to_the_card(browser, size, tmp_path):  # noqa: F811
     evidence = Path(os.environ.get("CARD_REVIEWS_SHOTS") or tmp_path)
     page, errors, _ = open_shell(browser, "deck", size, cards())
@@ -377,6 +411,11 @@ def test_the_pipeline_shows_a_review_chip_that_leads_to_the_card(browser, size, 
     assert chip.inner_text() == "2 review comments need you"
     link = page.locator("[data-pl-review-card]")
     assert link.get_attribute("href") == "#/card/7"
+    if size != "desktop":
+        box = link.bounding_box()
+        assert box["height"] >= 44 and box["width"] >= 44, (size, box)
+    assert_phone_text_is_readable(page.locator("[data-pl-reviews]"), size)
+    assert_phone_text_is_readable(page.locator("[data-pl-review-card]"), size)
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
     page.screenshot(path=str(evidence / f"reviews-pipeline-{size}.png"))
     assert not errors, errors
@@ -490,6 +529,7 @@ def test_the_owners_review_settings_read_in_words_and_save(browser, look, size, 
             box = control.bounding_box()
             if size != "desktop":
                 assert box["height"] >= 44, (size, label, box)
+        assert_phone_text_is_readable(section, size)
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), (
             size,
             label,

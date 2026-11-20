@@ -8,6 +8,7 @@ import pytest
 
 HARNESS = Path(__file__).with_name("cardreviews.mjs")
 CASES = [
+    "loading",
     "states",
     "waiting",
     "decision",

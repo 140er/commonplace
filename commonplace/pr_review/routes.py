@@ -280,7 +280,7 @@ def _answer_question(gateway, principal, store, facts, choice) -> int:
     from commonplace.boards.service import BoardService
     from commonplace.extensions import ToolContext, ToolError
 
-    if not is_ours(facts.get("ask")) or facts.get("status") != "review":
+    if not is_ours(facts.get("ask"), facts.get("pr_number")) or facts.get("status") != "review":
         return 0
     label = {
         "again": options(store.board(facts["board"])["rounds"])[0],
@@ -294,7 +294,9 @@ def _answer_question(gateway, principal, store, facts, choice) -> int:
     except ToolError as exc:  # the comments still follow the answer; the card keeps its question
         http_util.log_failure(logger, "review answer could not answer the card's question", exc)
         return 0
-    event = mapping.last_answer(gateway, principal.workspace_id, facts["number"], [label])
+    event = mapping.last_answer(
+        gateway, principal.workspace_id, facts["number"], [label], pr=facts["pr_number"]
+    )
     return event["id"] if event else 0
 
 

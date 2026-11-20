@@ -139,19 +139,25 @@ def pr_problem(pr_row, facts) -> str | None:
     return None
 
 
-def last_answer(gateway, workspace_id: str, number: int, choices: list) -> dict | None:
-    """The newest answer on the card whose choice is one of ``choices`` (the loop's labels),
-    as ``{id, choice, stamp_user}``, or ``None``."""
+def last_answer(gateway, workspace_id: str, number: int, choices: list, *, pr: int) -> dict | None:
+    """The newest matching answer to this PR's own question, as ``{id, choice, stamp_user}``.
+    An unrelated question may offer the same words without deciding any review comment.
+    """
+    from .needs_me import is_ours
+
     store = _open(gateway, workspace_id)
     if store is None or not choices:
         return None
     with store.connection() as conn:
         rows = conn.execute(
-            "SELECT id, choice, stamp_user FROM task_events WHERE task_id=? AND kind='decide' "
-            "ORDER BY id DESC LIMIT 20",
+            "SELECT e.id, e.choice, e.stamp_user, (SELECT a.text FROM task_events a "
+            "WHERE a.task_id=e.task_id AND a.id < e.id AND a.to_status='review' "
+            "AND a.kind IN ('ask','handoff','move') ORDER BY a.id DESC LIMIT 1) AS question "
+            "FROM task_events e WHERE e.task_id=? AND e.kind='decide' "
+            "ORDER BY e.id DESC LIMIT 20",
             (number,),
         ).fetchall()
     for row in rows:
-        if row["choice"] in choices:
+        if row["choice"] in choices and is_ours(row["question"], pr):
             return {"id": row["id"], "choice": row["choice"], "stamp_user": row["stamp_user"]}
     return None

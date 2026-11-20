@@ -1421,6 +1421,48 @@ def test_an_unrelated_answer_on_the_card_changes_no_comment(world, monkeypatch):
     assert {rows(h)[k]["status"] for k in ("1", "2")} == {"needs_you"}
 
 
+def test_an_unrelated_question_with_the_same_answer_changes_no_comment(world, monkeypatch):
+    h = world
+    number = asked_card(h, monkeypatch)
+    owner = service(h, h.person(h.admin))
+    owner.decide(
+        number, reply="Keep these comments waiting while we discuss the name.", then="return"
+    )
+    owner.ask(
+        "Should we rename the project?",
+        ["Ignore", "Rename"],
+        task=number,
+        person_reason="The project name needs its owner's decision.",
+    )
+    owner.decide(number, choice="Ignore", then="return")
+    trigger.run(h.gateway, h.workspace)
+    assert {rows(h)[k]["status"] for k in ("1", "2")} == {"needs_you"}
+
+
+@pytest.mark.parametrize("older", [False, True])
+def test_replaying_a_card_answer_cannot_discard_a_later_comment_revision(world, monkeypatch, older):
+    h = world
+    number = asked_card(h, monkeypatch)
+    assert (
+        h.request(
+            h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "dismiss"}
+        )[0]
+        == 200
+    )
+    event_id = h.store.pr(REPO, 7)["decided_event"]
+    assert event_id > 1
+    assert (
+        post(h, batch(comment(1, "Please also rename the helper.", updated_at=when(-1))))[0] == 200
+    )
+    assert rows(h)["1"]["status"] == "new"
+    before = h.store.history(REPO, 7)
+    h.store.decide(
+        REPO, 7, "dismiss", "person", datetime.now(timezone.utc), event_id=event_id - int(older)
+    )
+    assert rows(h)["1"]["status"] == "new"
+    assert h.store.history(REPO, 7) == before
+
+
 def test_the_reader_status_says_what_the_owner_waits_for_without_any_token(world, monkeypatch):
     h = world
     path = "/api/pr-review/status"
