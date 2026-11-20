@@ -11,6 +11,8 @@
 
   - Import release checks retain owner listing and exact read-back and require the write-only bearer to receive the not-found response without metadata.
 
+  - Disposable release instances create the parent model cache before launching workers, so downloaded weights survive instance cleanup; each gateway, workspace database and model session stays separate.
+
   - Scripts are run by hand or by the release process; none runs on import or ships in the package.
 
   - Benchmarks are informational and never gate a change.
