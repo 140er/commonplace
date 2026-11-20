@@ -67,7 +67,7 @@ test('Management uses the existing controller and restores the shell and phone d
     f.root.ownerDocument = { documentElement: { dataset: deck ? { ui: 'deck' } : {} }, addEventListener() {}, removeEventListener() {} };
     f.root.parentElement = { querySelector: selector => ({ '.head': header, '#phone-bar': phone, '#phone-tabs': tabs })[selector] };
     const ui = mount({ root: f.root, route: '#/compute/management', me: { workspace: 'w', actor: 'u' }, api: () => new Promise(() => {}) });
-    assert.deepEqual(hrefs(f.root.innerHTML), [deck ? '#/compute' : '#/compute-map', '#/compute/management']);
+    assert.deepEqual(hrefs(f.root.innerHTML), [deck ? '#/compute' : '#/compute-map', '#/compute/management', '#/compute/activity']);
     assert.match(f.regions.get('content').innerHTML, /Loading Compute inventory/);
     assert.match(f.regions.get('content').innerHTML, /<h1>Cloud workspaces<\/h1>/);
     assert.doesNotMatch(f.root.innerHTML, /<p>Management<\/p>/);

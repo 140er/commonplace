@@ -8,6 +8,7 @@ import { createCompute } from './compute.js';
 import { createCoworkers } from './coworkers.js';
 import { statusMark } from './topology-map.js';
 import { mount as mountCapyCoworkers } from './deck-coworkers.js';
+import { mount as mountActivity } from './activity.js';
 
 export const TITLE = 'Cloud workspaces';
 const enc = encodeURIComponent;
@@ -55,8 +56,10 @@ export function mount(context) {
     const mapLink = doc?.documentElement?.dataset?.ui === 'deck' ? '#/compute' : '#/compute-map';
     // The map shows the machines, which only owners can read: a member gets the one page that is theirs (the
     // read-only list of cloud workspaces), with no tab bar to a screen that has nothing for them.
-    root.innerHTML = `${member ? '' : `<nav class="dw-tabs" aria-label="Cloud workspaces views"><a href="${mapLink}"${managing ? '' : ' aria-current="page"'}>Map</a><a href="#/compute/management"${managing ? ' aria-current="page"' : ''}>Management</a></nav>`}${host}`;
-    if (managing) {
+    root.innerHTML = `${member ? '' : `<nav class="dw-tabs" aria-label="Cloud workspaces views"><a href="${mapLink}"${managing || page.activity ? '' : ' aria-current="page"'}>Map</a><a href="#/compute/management"${managing && !page.activity ? ' aria-current="page"' : ''}>Management</a><a href="#/compute/activity"${page.activity ? ' aria-current="page"' : ''}>Activity</a></nav>`}${host}`;
+    if (page.activity) {
+      child = mountActivity({ ...ctx, root: region('content') });
+    } else if (managing) {
       child = createCompute({ mount: () => region('content'), api: (...args) => ctx.api(...args), current: () => ctx.me, route: () => globalThis.location?.hash || ctx.route, expectedRoute: ctx.route, title: 'Compute', doc });
       child.show();
       tabPlacement = placeManagementTabs(region('content'), root.querySelector('.dw-tabs'));
