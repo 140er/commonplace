@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - The matrix of modes, the owner-only setting, private machines, never-silent refusals and the migration of an older store are pinned. Connection IDs are deterministic. Both run tables store exactly the pinned account fields and no credentials.
+  - The matrix of modes, the owner-only setting, private machines, never-silent refusals and the migration of an older store are pinned. Connection IDs are deterministic. Both run tables store exactly the pinned account fields and no credentials. Queued chat rejects valid account switches and same-label connection replacements; unchanged eligible personal machines still lease, and schema upgrades preserve older queued rows while refusing their unknown accounts.
 
 - **How it fails:**
 
