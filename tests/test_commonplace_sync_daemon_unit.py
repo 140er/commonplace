@@ -38,7 +38,11 @@ class State:
 
     def __init__(self, path):
         self.conn = sqlite3.connect(path)
-        self.conn.execute("CREATE TABLE cursors(source,path,native_id,offset,prefix_sha256)")
+        # Match the production key so backfill lookups do not scan every source.
+        self.conn.execute(
+            "CREATE TABLE cursors(source,path,native_id,offset,prefix_sha256,"
+            " PRIMARY KEY(source,path,native_id))"
+        )
         self.pending, self.feeds, self.due, self.status = [], {}, {}, {}
         self.acked, self.attempts, self.marked = [], [], {}
 
@@ -264,6 +268,33 @@ def once(setup, hub):
     return sync_daemon.run(
         config, state, clock=plans._now, sleep=lambda _: None, transport=hub, once=True
     )
+
+
+def test_cursor_lookup_work_is_bounded_with_many_sources(tmp_path):
+    """Count SQLite work, independent of host speed or concurrent test load."""
+    state = State(tmp_path / "state.db")
+    try:
+        for i in range(300):
+            state.store_cursor("claude-code", f"path-{i}", f"session-{i}", i, EMPTY)
+        batches = 0
+
+        def count_work():
+            nonlocal batches
+            batches += 1
+            return 0
+
+        state.conn.set_progress_handler(count_work, 100)
+        try:
+            for i in range(0, 300, 3):
+                assert state.cursor("claude-code", f"path-{i}", f"session-{i}") == {
+                    "offset": i,
+                    "prefix_sha256": EMPTY,
+                }
+        finally:
+            state.conn.set_progress_handler(None, 0)
+        assert batches < 100, f"Cursor lookups executed at least {batches * 100} VM instructions"
+    finally:
+        state.conn.close()
 
 
 @pytest.mark.parametrize(
