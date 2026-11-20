@@ -62,6 +62,7 @@ def test_activity_real_app_states_phone_keyboard_and_lists(enrolled):  # noqa: F
             page.locator("[data-ca-tab=sinks]").click()
             page.get_by_role("heading", name="What eats time").wait_for()
             page.get_by_role("button", name="Trace", exact=True).click()
+            page.get_by_text("Threads 1–25 of 53 retained", exact=False).wait_for()
             assert page.locator("[data-ca-body] [data-ca-thread]").count() == 25
             assert page.locator("button[data-ca-thread], [data-ca-detail-title]").count() == 0
             page.get_by_role("button", name="Next", exact=True).click()
