@@ -393,3 +393,42 @@ def test_staging_keeps_custom_push_to_checkout_refusal(clone, tmp_path):
     assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
     assert (clone / "f.txt").read_text() == "1\n"
     assert previous.read_bytes() == original
+
+
+def test_staging_preserves_relative_receive_hook_refusal(clone, tmp_path):
+    """Relative hooks resolve differently for worktree and receiving Git calls."""
+    (clone / ".hooks").mkdir()
+    receiving = clone / ".git" / ".hooks"
+    receiving.mkdir()
+    refusal = receiving / "pre-receive"
+    refusal.write_text("#!/bin/sh\ncat >/dev/null\necho 'fixture receive refusal' >&2\nexit 23\n")
+    refusal.chmod(0o755)
+    original = refusal.read_bytes()
+    git(clone, "config", "core.hooksPath", ".hooks")
+    git(clone, "config", "receive.denyCurrentBranch", "updateInstead")
+    config = (clone / ".git/config").read_bytes()
+    sender = tmp_path / "sender"
+    git(tmp_path, "clone", "-q", str(clone), str(sender))
+    (sender / "f.txt").write_text("incoming\n")
+    git(sender, "commit", "-qam", "incoming")
+    accepted = git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    before = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+    assert before.returncode != 0 and "fixture receive refusal" in before.stderr
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+    destination = tmp_path / "staged relative hooks"
+    try:
+        staged = hooks.stage_pre_push(clone, destination)
+    except ValueError as exc:
+        assert "relative core.hooksPath" in str(exc)
+        assert not destination.exists()
+        assert (clone / ".git/config").read_bytes() == config
+    else:
+        git(clone, "config", "core.hooksPath", str(staged))
+
+    after = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+    assert after.returncode != 0, "staging must retain the existing receive-hook refusal"
+    assert "fixture receive refusal" in after.stderr
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+    assert (clone / "f.txt").read_text() == "1\n"
+    assert refusal.read_bytes() == original

@@ -115,6 +115,19 @@ def stage_pre_push(repo: str | os.PathLike[str], destination: Path) -> Path:
     additional checks. Activation and restoration of the exact prior hooksPath
     are separate, reviewed steps.
     """
+    configured = subprocess.run(
+        ["git", "-C", os.fspath(repo), "config", "--path", "--get", "core.hooksPath"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if configured.returncode not in (0, 1):
+        raise RuntimeError(configured.stderr.strip() or "could not read hooks configuration")
+    if configured.returncode == 0 and not Path(configured.stdout.rstrip("\n")).is_absolute():
+        raise ValueError(
+            "cannot stage a relative core.hooksPath: worktree and receive hooks use different "
+            "directories; audit both before changing the configuration"
+        )
     previous = hooks_dir(repo).resolve()
     destination = destination.resolve()
     if destination.is_relative_to(previous):

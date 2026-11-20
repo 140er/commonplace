@@ -20,3 +20,8 @@ hooks remain absent so Git retains its default handling, including checkout upda
 and dirty-receiver refusal for `receive.denyCurrentBranch=updateInstead`. Stage again
 when the set of enabled hooks changes. Shared activation is a reviewed step and
 rollback restores the prior configuration, retaining all original hooks.
+
+Staging refuses a relative `core.hooksPath` before writing anything: ordinary hooks
+and receive hooks resolve it from different directories. The existing configuration
+and receive-side refusals remain intact. Default and absolute hook directories are
+supported; audit both hook sets before changing a relative configuration.
