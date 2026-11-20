@@ -15,7 +15,9 @@ from urllib.parse import urlsplit
 import pytest
 
 from tests import test_deck_board_browser as shell
+from tests._console_helpers import console_hub_fixture  # noqa: F401
 from tests.test_deck_board_browser import browser  # noqa: F401
+from tests.test_pr_review import card as review_card
 
 SHA = "b" * 40
 ANSWERS = [
@@ -368,6 +370,60 @@ def test_the_owner_answers_and_focus_holds_through_the_answer_and_a_background_r
     page.close()
 
 
+@pytest.mark.parametrize("look", ["deck", "classic"])
+@pytest.mark.parametrize("size", list(SIZES))
+def test_the_settings_link_opens_real_project_settings_and_survives_reload(
+    browser,  # noqa: F811
+    console_hub,
+    look,
+    size,
+    tmp_path,
+):
+    hub = console_hub
+    number = review_card(hub, hold=True)
+    origin = f"http://127.0.0.1:{hub.port}"
+    context = browser.new_context(reduced_motion="reduce", **SIZES[size])
+    name, value = hub.owner["Cookie"].split("=", 1)
+    context.add_cookies([{"name": name, "value": value, "url": origin}])
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(f"{origin}/app/?ui={look}#/card/{number}")
+    link = page.locator("#card-panel [data-review-settings]")
+    link.wait_for()
+    assert link.get_attribute("href") == "#/board/work/settings"
+    link.click()
+    section = page.locator("[data-project-reviews-section]")
+    page.wait_for_load_state("networkidle")
+    assert section.is_visible()
+    assert page.url.endswith("#/board/work/settings")
+    assert not section.locator('[data-reviews-field="enabled"]').is_checked()
+    assert not section.locator('[data-reviews-field="post_replies"]').is_checked()
+    page.reload()
+    section.locator('[data-reviews-reader="no_token"]').wait_for()
+    assert_phone_text_is_readable(section, size)
+    if size != "desktop":
+        for control in section.locator("button:visible, select:visible").all():
+            box = control.bounding_box()
+            assert box["height"] >= 44 and box["width"] >= 44, (size, box)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    evidence = Path(os.environ.get("CARD_REVIEWS_SHOTS") or tmp_path)
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(
+        path=str(evidence / f"reviews-settings-shell-{look}-{size}.png"), full_page=True
+    )
+    page.locator("[data-project-back]").click()
+    page.wait_for_url("**/#/board/work")
+    page.locator("#card-panel").wait_for(state="hidden")
+    page.goto(f"{origin}/app/?ui={look}#/board/work/settings")
+    section.wait_for()
+    page.get_by_role("button", name="Close project settings", exact=True).click()
+    page.wait_for_url("**/#/board/work")
+    page.locator("#card-panel").wait_for(state="hidden")
+    assert not errors, errors
+    context.close()
+
+
 @pytest.mark.parametrize("size", list(SIZES))
 def test_the_pipeline_shows_a_review_chip_that_leads_to_the_card(browser, size, tmp_path):  # noqa: F811
     evidence = Path(os.environ.get("CARD_REVIEWS_SHOTS") or tmp_path)
@@ -490,6 +546,11 @@ SETTINGS_STATES = {
         {"board": "product", "enabled": False, "rounds": 2, "post_replies": False},
         [],
     ),
+    "waiting-first-read": (
+        {"state": "waiting_first_read", "last_read_at": None},
+        {"board": "product", "enabled": True, "rounds": 2, "post_replies": False},
+        [],
+    ),
     "on-reading": (
         {"state": "reading", "last_read_at": "2026-01-01T11:00:00Z"},
         {"board": "product", "enabled": True, "rounds": 3, "post_replies": True},
@@ -520,6 +581,7 @@ def test_the_owners_review_settings_read_in_words_and_save(browser, look, size, 
         section.wait_for()
         words = {
             "off-no-token": "Waiting for the owner's token.",
+            "waiting-first-read": "has not read a pull request yet.",
             "on-reading": "The comment reader is working.",
             "stale": "Comments may be missing",
         }[label]
