@@ -19,7 +19,8 @@ def _admin(hub, chromium, look, width=1440):
     machine(hub, binding_state="owner_attested", enabled=False)
     link = sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
     session = sessions.redeem_login_link(hub.db, link)
-    origin = f"http://127.0.0.1:{hub.port}"
+    host, port = hub.server.server_address
+    origin = f"http://{host}:{port}"
     context = chromium.new_context(viewport={"width": width, "height": 900})
     context.add_cookies([{"name": sessions.COOKIE, "value": session, "url": origin}])
     try:
