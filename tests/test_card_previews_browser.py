@@ -195,7 +195,7 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, look
                 "offline": "Could not load the previews.",
                 "long-name": "Published and open to people who can open this card.",
             }[label]
-            section.get_by_text(words).wait_for()
+            section.get_by_text(words).first.wait_for()
             section.scroll_into_view_if_needed()
             for control in section.locator("button:visible, a.btn:visible").all():
                 box = control.bounding_box()
@@ -298,3 +298,55 @@ def test_focus_stays_on_the_same_control_when_the_section_follows_a_publish(brow
         timeout=15000
     )
     assert page.evaluate("document.activeElement?.dataset?.previewOpen") == "pv_0123456789abcdef"
+
+
+def test_the_stop_rule_form_keeps_its_state_through_a_panel_redraw(browser):  # noqa: F811
+    """The owner opens the rule and types; a feed event makes the shell refresh the card in the
+    background. The form stays open with what was typed and keeps focus (while it is in use the
+    shell leaves the panel alone); an open form that is not being used survives a real redraw."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800}, reduced_motion="reduce")
+    cards = [dict(card) for card in shell.CARDS] + [
+        {**shell.CARD, "number": 15, "title": "Rule card", "ask": None, "need": "idle"}
+    ]
+    shell.open_board(page, cards=cards)
+    page.route("**/api/previews**", lambda route: route.fulfill(json=listing([PREVIEW])))
+    delivered = {"count": 0}
+
+    def feed(route):
+        # One event, once; then quiet again.
+        if delivered["count"] == 0:
+            delivered["count"] = 1
+            route.fulfill(
+                json={"events": [{"kind": "comment", "seq": 1}], "seq": 1, "epoch": "fixture"}
+            )
+        else:
+            route.fulfill(json={"events": [], "seq": 1, "epoch": "fixture"})
+
+    page.evaluate("location.hash='#/card/15'")
+    panel = page.locator("#card-panel")
+    rule = panel.locator("[data-preview-rule]")
+    rule.locator("summary").click()
+    field = rule.locator('input[name="max_age_days"]')
+    field.fill("30")
+    field.focus()
+    section = panel.locator("[data-card-previews]")
+    section.evaluate("e => { e.dataset.mark = 'same-element' }")
+    # The feed event arrives while the form is in use; wait for the shell to have handled it.
+    page.route("**/api/events**", feed)
+    with page.expect_request(lambda r: "/api/events" in r.url and "after=1" in r.url):
+        pass
+    assert page.evaluate("document.querySelector('[data-preview-rule]').open") is True
+    assert field.input_value() == "30"
+    assert page.evaluate("document.activeElement?.name") == "max_age_days"
+    # Nothing replaced the section: the form in use protected the panel.
+    assert section.evaluate("e => e.dataset.mark") == "same-element"
+    # Open but unused (focus elsewhere, nothing typed): a real redraw still keeps it open.
+    field.fill("")
+    panel.locator("[data-preview-open]").focus()
+    delivered["count"] = 0
+    with page.expect_request(lambda r: "/api/cards/15" in r.url):
+        pass
+    page.wait_for_function(
+        "!document.querySelector('[data-card-previews]')?.dataset.mark",
+    )
+    assert page.evaluate("document.querySelector('[data-preview-rule]')?.open") is True

@@ -7,7 +7,7 @@
 
   - `bundle.py` checks a bundle before anything is stored (size, file count, paths, entry page, credential-shaped text); `store.py` holds the tables, the limits and the fixed reason texts; `service.py` is publish, stop, reopen and the stop rule; `routes.py` is `/api/previews` for signed-in people; `tools.py` is `preview_publish`, `preview_list` and `preview_stop` for Coworkers; `serving.py` is `GET /p/<id>/<path>`, the files of a ready preview with the isolation headers and the state pages; `links.py` is the short-lived page link (`preview_links`) that stands in for the session for the sandboxed page's own requests.
 
-  - `web/static/cardpreviews.js` is the Previews section of the card panel (after Runs): every preview of the card with its state in words, the reason and next step, Open (new tab), Stop and Open again, the workspace's usage and stop rule, and for the owner a form to change the rule.
+  - `web/static/cardpreviews.js` is the Previews section of the card panel (after Runs): every preview of the card with its state in words, the reason and next step, Open in new tab, Stop and Open again, a note on the 30-minute key and the static limit, the workspace's usage and stop rule, and for the owner a form to change the rule that lives outside the redrawn list, so a redraw keeps it open, with its text and focus.
 
 - **Promises:**
 
@@ -48,3 +48,5 @@
   - `tests/cardpreviews.mjs` also covers the review round on the card: start versus publish times, the failure file and kind, accessible names, the offline wording and the not-loaded view, focus after Stop, Open again, a refusal and saving the rule, focus through a redraw, the status line, polling while publishing, and that the shell's focus keys match; `tests/test_card_previews_browser.py` adds 320 px, 768 px touch and the open rule form, 44 px checks off the desktop, focus after Stop and focus through a polling redraw.
 
   - `tests/test_previews_delete.py` covers deleting files: owner only with the repeated id, the removal with the lock released, a delete racing a republish (deterministic, no sleeps), a preview still being published, a removal that leaves files and the retry, a refused rename that changes nothing, the cap after a delete, the column added to a first-slice revision table, and the served page of a deleted preview. `tests/cardpreviews.mjs` covers the owner-only Delete files button, its confirmation and the result.
+
+  - Review round 2 on the card adds to `tests/cardpreviews.mjs` the stop-rule form kept through a list repaint, a panel redraw and a refused Save, focus that counts only when the control really holds it, the status said before a request and for the offline view, the key and static note, the version and publisher words and the phone font size; `tests/test_card_previews_browser.py` types in the open rule form, delivers a feed event and checks it keeps its state and focus.
