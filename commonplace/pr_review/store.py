@@ -434,14 +434,19 @@ class ReviewStore:
         out.update(st.reason_fields(row["reason"]))
         return out
 
-    def comments(self, repo: str, pr: int, limit: int = 200, offset: int = 0) -> list[dict]:
-        """One page of a PR's comments (thread order); ``limit`` is at most 500."""
+    def comments(
+        self, repo: str, pr: int, limit: int = 200, offset: int = 0, *, actionable: bool = False
+    ) -> list[dict]:
+        """One page in thread order; optionally filter new/working before the bounded limit."""
         with self._lock:
             conn = self._connection(create=False)
             if conn is None:
                 return []
+            selected = "AND status IN ('new', 'working') " if actionable else ""
             rows = conn.execute(
-                "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? ORDER BY thread, id "
+                "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? "
+                + selected
+                + "ORDER BY thread, id "
                 "LIMIT ? OFFSET ?",
                 (repo, pr, min(limit, 500), offset),
             ).fetchall()

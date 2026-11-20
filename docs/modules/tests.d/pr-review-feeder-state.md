@@ -1,0 +1,4 @@
+- **Owns:** `test_pr_review_feeder_state.py` exercises real cache files, injected flush/publication errors, and actual stored review histories beyond 500 resolved comments.
+- **Promises:** Old published bytes survive refusal, private staging is cleaned, and new/working comments retain thread order and the 25-item context bound.
+- **How it fails:** Pinned-source assertions distinguish missed synchronization, abandoned staging and hidden actionable comments from setup failures.
+- **Tests:** `tests/test_pr_review_feeder_state.py`.

@@ -1,0 +1,1 @@
+- **Owns:** `docs/system/pr-review-feeder-state.md` records cache-file publication and SQL-limited actionable review context.

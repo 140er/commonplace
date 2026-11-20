@@ -8,21 +8,21 @@ or a PR with nothing waiting answers ``None`` and adds nothing.
 
 from __future__ import annotations
 
-from . import mapping, status as st
+from . import mapping
 from .store import RUN_COMMENTS, open_review, reply_mode
 
 
 def for_card(ctx, number: int) -> dict | None:
     gateway, workspace = ctx.gateway, ctx.principal.workspace_id
     facts = mapping.card_facts(gateway, workspace, number, principal=ctx.principal)
-    repo = mapping.repo_of(facts) if facts else None
-    pr = facts.get("pr_number") if facts else None
+    if not facts:
+        return None
+    repo = mapping.repo_of(facts)
+    pr = facts.get("pr_number")
     if not repo or not pr:
         return None
     store = open_review(gateway, workspace)
-    waiting = [
-        c for c in store.comments(repo, pr, limit=500) if c["status"] in (st.NEW, st.WORKING)
-    ][:RUN_COMMENTS]
+    waiting = store.comments(repo, pr, limit=RUN_COMMENTS, actionable=True)
     if not waiting:
         return None
     row, board = store.pr(repo, pr), store.board(facts["board"])
