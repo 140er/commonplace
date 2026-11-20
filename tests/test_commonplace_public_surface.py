@@ -37,6 +37,15 @@ EXACT = {
     ("GET", "/api/settings/costs"): "authenticated",
     ("PUT", "/api/settings/costs"): "authenticated",
     **{(method, "/api/settings/budgets"): "authenticated" for method in ("GET", "PUT", "DELETE")},
+    **{
+        (method, "/api/settings/model-mode"): "authenticated" for method in ("GET", "PUT", "DELETE")
+    },
+    **{
+        (method, "/api/me/model-connections"): "authenticated"
+        for method in ("GET", "POST", "DELETE")
+    },
+    ("PUT", "/api/me/model-use-own"): "authenticated",
+    ("GET", "/api/me/model-mode"): "authenticated",
     ("GET", "/api/learned"): "authenticated",
     ("GET", "/api/learning/settings"): "authenticated",
     ("PATCH", "/api/learning/settings"): "authenticated",
@@ -383,6 +392,9 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("GET", "/api/costs"),
         ("GET", "/api/settings/costs"),
         ("GET", "/api/settings/budgets"),
+        ("GET", "/api/settings/model-mode"),
+        ("GET", "/api/me/model-connections"),
+        ("GET", "/api/me/model-mode"),
         ("GET", "/api/topology/route"),
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
@@ -966,6 +978,7 @@ REST_TOOLS = [
     ("POST", "/api/cards/1/decide", "decide"),
     ("GET", "/api/needs-me", "needs_me"),
     ("GET", "/api/costs", "costs_summary"),
+    ("GET", "/api/me/model-mode", "model_mode"),
     ("GET", "/api/topology", "topology_get"),
     ("GET", "/api/topology/route", "topology_route"),
     ("GET", "/api/memory/search", "memory_search"),

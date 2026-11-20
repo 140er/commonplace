@@ -119,14 +119,19 @@ def test_the_config_render_shows_the_effective_model_per_role(world):
     assert "effective model: none (no model is set" in text
 
 
+def _without_account(item):
+    return {key: value for key, value in item.items() if key != "account"}
+
+
 def test_the_project_view_carries_the_effective_models(projects_hub):
     h = projects_hub
     h.create_board(h.owner, "alpha")
     cheap = {"provider": PROVIDER, "model": "example-cheap"}
     assert h.models(h.owner, "alpha", {"worker": cheap}, declare=True)[0] == 200
     shown = h.project(h.owner, "alpha")[1]["models_effective"]
-    assert shown["worker"] == {**cheap, "source": "project"}
-    assert shown["main"] == {**cheap, "source": "default"}
+    # The account a role would run on (model modes) rides along; its own tests pin that field.
+    assert _without_account(shown["worker"]) == {**cheap, "source": "project"}
+    assert _without_account(shown["main"]) == {**cheap, "source": "default"}
     assert h.project(h.member, "alpha")[1]["models_effective"]["gate"]["source"] == "default"
 
 
@@ -136,5 +141,6 @@ def test_an_empty_project_view_says_none_not_blank(projects_hub):
     shown = h.project(h.owner, "alpha")[1]["models_effective"]
     assert set(shown) == {"main", "worker", "reviewer", "gate"}
     assert all(
-        item == {"provider": None, "model": None, "source": "none"} for item in shown.values()
+        _without_account(item) == {"provider": None, "model": None, "source": "none"}
+        for item in shown.values()
     )
