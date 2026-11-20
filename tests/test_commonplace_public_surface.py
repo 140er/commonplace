@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from http import client as http_client
 from types import SimpleNamespace
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import pytest
@@ -298,20 +299,24 @@ def hardened(response):
 def make_surface(tmp_path, monkeypatch):
     monkeypatch.delenv("COMMONPLACE_RATE_LIMITS", raising=False)
     monkeypatch.delenv("COMMONPLACE_ALLOWED_HOSTS", raising=False)
-    surfaces = []
+    surfaces: list[SimpleNamespace] = []
 
     def make():
         root = tmp_path / str(len(surfaces))
         db = ControlDB(str(root / "control.sqlite3"))
         uid = db.create_user("owner@example.com", is_admin=True)
         workspace = db.create_workspace("home", uid, personal=True)
-        supervisor = WorkerSupervisor(str(root), launcher=object())
+        supervisor = WorkerSupervisor(str(root), launcher=cast(Any, object()))
         gateway = Gateway(db, supervisor)
         clock = SimpleNamespace(now=0.0)
         gateway.limiter = ratelimit.TokenBuckets(clock=lambda: clock.now)
         gateway.wall_clock = lambda: clock.now
         # These tests exercise the gateway, not the memory worker's behavior.
-        gateway.mediator.handle = lambda principal, data: {"jsonrpc": "2.0", "id": 1, "result": {}}
+        monkeypatch.setattr(
+            gateway.mediator,
+            "handle",
+            lambda principal, data: {"jsonrpc": "2.0", "id": 1, "result": {}},
+        )
         server = gateway.build_server("127.0.0.1", 0)
         thread = threading.Thread(
             target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
@@ -475,6 +480,7 @@ def test_sessions_have_separate_600_request_budgets(surface):
     for _ in range(2):
         link = sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
         session = sessions.redeem_login_link(surface.db, link)
+        assert session is not None
         cookies.append((session, {"Cookie": sessions.COOKIE + "=" + session}))
     for _ in range(600):
         assert request(surface, headers=cookies[0][1])[0] == 200
@@ -1024,6 +1030,7 @@ def test_rest_requires_the_matching_visible_tool(surface, method, path, tool):
     session = sessions.redeem_login_link(
         surface.db, sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
     )
+    assert session is not None
     assert (
         request(
             surface,
@@ -1098,6 +1105,7 @@ def test_session_writes_require_json_and_valid_origin(
     session = sessions.redeem_login_link(
         surface.db, sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
     )
+    assert session is not None
     headers = {"Cookie": sessions.COOKIE + "=" + session}
     if content_type is not None:
         headers["Content-Type"] = content_type
@@ -1120,6 +1128,7 @@ def test_session_json_writes_accept_app_and_request_origins(surface, monkeypatch
     session = sessions.redeem_login_link(
         surface.db, sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
     )
+    assert session is not None
     headers = {
         "Cookie": sessions.COOKIE + "=" + session,
         "Content-Type": "application/json; charset=utf-8",

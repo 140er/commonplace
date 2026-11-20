@@ -13,7 +13,8 @@ test('Activity is nested inside Compute while the four global destinations stay 
 
 test('zero heat stays zero and omitted metrics retain a reason', () => {
   const html = heatHTML([{ day: '2026-11-19', seconds: 0, runs: 0 }]);
-  assert.match(html, /--fill:0/);
+  assert.match(html, /height="0"/);
+  assert.doesNotMatch(html, / style=|<style/);
   assert.match(html, /0.00 h/);
   const recap = recapHTML({ coverage: {}, daily: [], models: [], metrics: {}, handoffs: [] });
   for (const label of ['Tasks finished', 'Tasks from agents', 'PRs merged', 'Thinking time', 'Cached input tokens', 'Context snapshots']) assert.ok(recap.includes(label), label);

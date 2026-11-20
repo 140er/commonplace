@@ -42,14 +42,14 @@
 .ca-heat { display: flex; align-items: end; gap: 8px; overflow-x: auto; padding: 4px 0; }
 .ca-heat > div { display: grid; gap: 6px; min-width: 64px; flex: 1; font-size: 12px; }
 .ca-heat-bar { height: 56px; display: block; background: var(--well); position: relative; border-radius: 4px; }
-.ca-heat-bar::after { content: ''; position: absolute; inset: auto 0 0; height: calc(var(--fill)*100%); background: var(--wait); border-radius: 3px; }
+.ca-heat-bar rect { fill: var(--wait); }
 .ca-heat strong { font-weight: 500; }
-.ca-rank { display: block; height: 2px; width: calc(var(--fill)*100%); background: var(--wait); margin-top: 6px; }
-.ca-bucket { display: flex; height: 16px; min-width: 150px; width: 100%; background: var(--well); }
-.ca-phase-tool { background: var(--wait); }
-.ca-phase-wait { background: var(--text); }
-.ca-phase-compaction { background: var(--text-2); }
-.ca-phase-unknown { background: var(--line-strong); }
+.ca-rank { display: block; height: 2px; width: 100%; fill: var(--wait); margin-top: 6px; }
+.ca-bucket { display: block; height: 16px; min-width: 150px; width: 100%; background: var(--well); }
+.ca-phase-tool { background: var(--wait); fill: var(--wait); }
+.ca-phase-wait { background: var(--text); fill: var(--text); }
+.ca-phase-compaction { background: var(--text-2); fill: var(--text-2); }
+.ca-phase-unknown { background: var(--line-strong); fill: var(--line-strong); }
 .ca-phases { font-size: 12px; color: var(--text-2); margin: 16px 0; }
 .ca-phases i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
 @media(max-width: 900px) { .ca-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }

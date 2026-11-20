@@ -259,9 +259,13 @@ def _write(gateway, planned: dict, sink) -> dict:
             for name in present:
                 clause = tables.workspace_clause(name, present, rules=rules)
                 if clause is not None:
+                    params = {"wid": workspace["id"]}
+                    if name in {"compute_activity_consent", "compute_activity_snapshots"}:
+                        clause += ' AND "owner_id" = :uid'
+                        params["uid"] = planned["user"]
                     cursor = control.execute(
                         f"SELECT * FROM {tables.quote(name)} WHERE {clause}",
-                        {"wid": workspace["id"]},
+                        params,
                     )
                     archive.rows(f"{prefix}/control/{name}.ndjson", cursor, redact=True)
             directory = Path(workspace["directory"])

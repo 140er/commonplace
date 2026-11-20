@@ -1,4 +1,4 @@
-# Compute Activity
+### Compute Activity
 
 ## Provenance and privacy boundary
 
@@ -21,7 +21,10 @@ labels; it receives no source text.
 
 An enrolled machine needs explicit Activity consent from the person who enrolled
 it. Reports and reads recheck the active workspace membership, machine grant,
-machine connection and consent. Another owner of the workspace cannot read that
+machine connection and consent. Account and owned-workspace exports apply
+the same enrolling-owner filter to Activity rows. Account purge removes that
+person's rows even in retained shared workspaces; workspace purge removes all
+remaining Activity rows for that workspace. Another owner of the workspace cannot read that
 person's host activity. Anonymous callers, members, worker connections and
 external agent tokens cannot read or grant Activity access. Revocation, disabled
 machines, a new connection or grant changes invalidate access. Reports grant no

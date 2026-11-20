@@ -1,6 +1,7 @@
 """Real app sign-in, Activity controls and phone layout on an isolated gateway."""
 
 import copy
+import importlib
 import os
 import shutil
 from pathlib import Path
@@ -12,7 +13,8 @@ from commonplace.compute.activity_collector import identity
 
 
 def test_activity_real_app_states_phone_keyboard_and_drilldown(enrolled):  # noqa: F811
-    from playwright.sync_api import sync_playwright
+    # Browser evidence requires this runtime; missing installation is never a skip.
+    sync_playwright = importlib.import_module("playwright.sync_api").sync_playwright
 
     hub, machine, path, snapshot = enrolled
     template = max(snapshot["threads"], key=lambda row: row["seconds"])
@@ -25,6 +27,10 @@ def test_activity_real_app_states_phone_keyboard_and_drilldown(enrolled):  # noq
         browser = pw.chromium.launch(executable_path=shutil.which("google-chrome"))
         try:
             page = browser.new_page(viewport={"width": 1280, "height": 800})
+            page.add_init_script(
+                "window.caCspViolations=[]; document.addEventListener('securitypolicyviolation',"
+                "e => window.caCspViolations.push(e.violatedDirective))"
+            )
             token = sessions.create_login_link(hub.db, "activity@example.test", hub.workspace)
             try:
                 page.goto(origin + "/app/login?t=" + token)
@@ -49,6 +55,9 @@ def test_activity_real_app_states_phone_keyboard_and_drilldown(enrolled):  # noq
             )
             page.get_by_role("button", name="Refresh", exact=True).click()
             page.get_by_role("heading", name="Daily activity").wait_for()
+            assert page.locator(".ca-heat-bar rect").evaluate_all(
+                "rows => rows.some(el => Number(el.getAttribute('height')) > 0)"
+            )
             assert "Stale snapshot" in page.locator("[data-ca-fresh]").inner_text()
             page.locator("[data-ca-tab=sinks]").click()
             page.get_by_role("heading", name="What eats time").wait_for()
@@ -110,6 +119,7 @@ def test_activity_real_app_states_phone_keyboard_and_drilldown(enrolled):  # noq
                 if target:
                     Path(target).mkdir(parents=True, exist_ok=True)
                     page.screenshot(path=str(Path(target) / f"activity-synthetic-{width}.png"))
+            assert page.evaluate("window.caCspViolations") == []
             page.get_by_role("button", name="Stop aggregate access").click()
             page.get_by_role("heading", name="Allow aggregate reporting").wait_for()
         finally:
