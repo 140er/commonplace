@@ -67,6 +67,22 @@ class RateLimited(FeederError):
         self.reset = reset
 
 
+def _json(raw: bytes, code: str):
+    """A JSON answer, or ``FeederError(code)``: a malformed answer never stops the feeder."""
+    try:
+        return json.loads(raw)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise FeederError(code) from None
+
+
+def _items(raw: bytes) -> list:
+    """A GitHub list of objects; anything else is a bad answer for this PR."""
+    items = _json(raw, "github_bad_answer")
+    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+        raise FeederError("github_bad_answer")
+    return items
+
+
 def read_token(path) -> str | None:
     """The one-line secret in ``path``, or ``None`` when the file is missing or empty."""
     try:
@@ -239,8 +255,20 @@ class Feeder:
             raise FeederError("hub_refused")
         if status != 200:
             raise FeederError("hub_unavailable")
-        prs = json.loads(raw).get("prs") or []
-        return [p for p in prs if isinstance(p, dict) and "repo" in p and "pr" in p]
+        answer = _json(raw, "hub_bad_answer")
+        prs = answer.get("prs") if isinstance(answer, dict) else None
+        if not isinstance(prs, list):
+            raise FeederError("hub_bad_answer")
+        # An entry that is not a repository and a whole PR number is left out, never fatal.
+        return [
+            p
+            for p in prs
+            if isinstance(p, dict)
+            and isinstance(p.get("repo"), str)
+            and isinstance(p.get("pr"), int)
+            and not isinstance(p.get("pr"), bool)
+            and p["pr"] > 0
+        ]
 
     def post(self, request: dict) -> dict:
         status, _, raw = self.transport.request(
@@ -251,7 +279,7 @@ class Feeder:
         if status != 200:
             # The hub's answer names a field, never a comment's words; only the status is logged.
             raise FeederError(f"hub_status_{status}")
-        return json.loads(raw)
+        return _json(raw, "hub_bad_answer")
 
     def _github(self, path: str, etag: str | None = None):
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -289,13 +317,13 @@ class Feeder:
             return False, [], etag, True
         if status != 200:
             raise FeederError("github_not_found" if status == 404 else f"github_status_{status}")
-        first_etag, items, count = headers.get("etag"), list(json.loads(raw)), 1
+        first_etag, items, count = headers.get("etag"), _items(raw), 1
         url = self._next(headers)
         while url and count < pages:
             status, headers, raw = self._github(url)
             if status != 200:
                 raise FeederError(f"github_status_{status}")
-            items += json.loads(raw)
+            items += _items(raw)
             url, count = self._next(headers), count + 1
         return True, items, first_etag, url is None
 
@@ -309,7 +337,9 @@ class Feeder:
         base = f"repos/{quote(repo, safe='/')}/"
         status, headers, raw = self._github(base + f"pulls/{number}", mine["etags"].get("pr"))
         if status == 200:
-            pull = json.loads(raw)
+            pull = _json(raw, "github_bad_answer")
+            if not isinstance(pull, dict):
+                raise FeederError("github_bad_answer")
             head, repository = pull.get("head") or {}, (pull.get("base") or {}).get("repo") or {}
             mine["pr"] = {
                 "head": head.get("sha"),
@@ -433,6 +463,14 @@ class Feeder:
                     logger.warning(
                         "review feeder: %s#%s skipped (%s)", entry["repo"], entry["pr"], exc.code
                     )
+                except Exception as exc:  # one odd PR never stops the others; type only
+                    summary["errors"].append("unexpected")
+                    logger.warning(
+                        "review feeder: %s#%s skipped (unexpected %s)",
+                        entry["repo"],
+                        entry["pr"],
+                        type(exc).__name__,
+                    )
         except RateLimited:
             summary["rate_limited"] = True
             logger.warning("review feeder: GitHub's rate limit is near; paused until its reset")
@@ -447,6 +485,8 @@ class Feeder:
                 self.once(respect_schedule=True)
             except FeederError as exc:
                 logger.warning("review feeder: pass stopped (%s)", exc.code)
+            except Exception as exc:  # the loop outlives any one bad pass; type only
+                logger.warning("review feeder: pass stopped (unexpected %s)", type(exc).__name__)
             stop.wait(interval_s)
 
 

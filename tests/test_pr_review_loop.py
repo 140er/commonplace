@@ -441,3 +441,93 @@ def test_a_token_file_must_hold_one_line(tmp_path):
     path.write_text("abc def\n")
     with pytest.raises(feed.FeederError, match="token_file_unreadable"):
         feed.read_token(path)
+
+
+# ── card #629: the feeder survives bad input ──
+
+
+class Answers:
+    """A transport that answers chosen URLs with a fixed body and passes the rest through."""
+
+    def __init__(self, real, fixed):
+        self.real, self.fixed = real, fixed
+
+    def request(self, method, url, **kw):
+        for part, raw in self.fixed.items():
+            if part in url:
+                return 200, {}, raw
+        return self.real.request(method, url, **kw)
+
+
+@pytest.mark.parametrize(
+    "fixed, code",
+    [
+        ({"/api/pr-review/watch": b"not json"}, "hub_bad_answer"),
+        ({"/api/pr-review/watch": b'{"prs": "nope"}'}, "hub_bad_answer"),
+    ],
+)
+def test_a_malformed_watch_answer_stops_the_pass_with_a_code(loop, fixed, code):
+    h = loop
+    f = feeder(h)
+    f.transport = Answers(f.transport, fixed)
+    with pytest.raises(feed.FeederError, match=code):
+        f.once()
+
+
+def test_odd_watch_entries_are_left_out_and_the_rest_are_read(loop):
+    h = loop
+    finished_card(h)
+    loop_on(h)
+    h.gh.add("inline", "One.")
+    f = feeder(h)
+    real = f.watch
+    f.watch = lambda: [{"repo": REPO, "pr": "x"}, {"repo": 5, "pr": 7}, *real()]
+    summary = f.once()
+    assert summary["prs"] == 1 and summary["comments"] == 1
+
+
+@pytest.mark.parametrize("raw", [b"<html>oops</html>", b'{"not": "a list"}', b"[1, 2]"])
+def test_a_malformed_github_list_skips_that_pr_only(loop, raw):
+    h = loop
+    finished_card(h)
+    loop_on(h)
+    h.gh.add("inline", "One.")
+    f = feeder(h)
+    f.transport = Answers(f.transport, {"/pulls/7/comments": raw})
+    summary = f.once()
+    assert summary["errors"] == ["github_bad_answer"] and summary["prs"] == 0
+    f.transport = f.transport.real
+    assert f.once()["comments"] == 1  # nothing was kept from the bad read; read again
+
+
+def test_an_unexpected_error_skips_the_pr_and_logs_only_its_type(loop, monkeypatch, caplog):
+    h = loop
+    finished_card(h)
+    loop_on(h)
+    f = feeder(h)
+
+    def boom(repo, number):
+        raise KeyError("words from a comment")
+
+    monkeypatch.setattr(f, "read_pr", boom)
+    with caplog.at_level(logging.DEBUG):
+        summary = f.once()
+    assert summary["errors"] == ["unexpected"]
+    assert "KeyError" in caplog.text and "words from a comment" not in caplog.text
+
+
+def test_the_loop_outlives_a_bad_pass(loop, monkeypatch):
+    h = loop
+    f = feeder(h)
+    stop, calls = feed.threading.Event(), []
+
+    def once(**kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ValueError("a bad pass")
+        stop.set()
+        return {}
+
+    monkeypatch.setattr(f, "once", once)
+    f.run(stop, interval_s=0)
+    assert len(calls) == 2
