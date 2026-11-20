@@ -684,18 +684,34 @@ def workspace_item(row, life, now, *, manage, executor, has_machines=None):
     }
     if manage:
         item["actions"] = [
-            _action(a, lifecycle.decide(row, life, a, now)) for a in WORKSPACE_ACTIONS
+            _action(
+                a,
+                lifecycle.decide(row, life, a, now),
+                state_unknown=item["status"]["code"] == "unknown",
+            )
+            for a in WORKSPACE_ACTIONS
         ]
     return item
 
 
-def _action(action, refusal):
+def _action(action, refusal, *, state_unknown=False):
+    text = REFUSAL_TEXT.get(refusal) if refusal else None
+    if state_unknown and refusal in (
+        "already_running",
+        "already_starting",
+        "still_stopping",
+        "already_stopping",
+    ):
+        text = (
+            "Its current state is not known (no recent report from its machine), so this action "
+            "cannot be requested. Wait for the machine to report again."
+        )
     return {
         "action": action,
         "label": ACTION_LABEL[action],
         "allowed": refusal is None,
         "reason": refusal,
-        "refusal": REFUSAL_TEXT.get(refusal) if refusal else None,
+        "refusal": text,
         "danger": action in ("stop", "restart", "drain"),
     }
 
@@ -1834,6 +1850,8 @@ def preview(store, principal, kind, item_id, action, *, session_hash):
 def _workspace_preview(item, row, life, action, refusal, executor):
     name = row["name"]
     machine = item["placement"]["machine_name"] or "its machine"
+    state_unknown = item["status"]["code"] == "unknown"
+    action_metadata = _action(action, refusal, state_unknown=state_unknown)
     wait = (
         "A machine carries it out the next time it asks for work."
         if executor
@@ -1848,7 +1866,7 @@ def _workspace_preview(item, row, life, action, refusal, executor):
         "allowed": refusal is None,
         "refusal": None
         if refusal is None
-        else {"reason": refusal, "text": REFUSAL_TEXT.get(refusal, "")},
+        else {"reason": refusal, "text": action_metadata["refusal"] or ""},
         "basis": item["basis"],
         "executor": {"available": executor},
         "danger": action in ("stop", "restart"),
@@ -1864,6 +1882,19 @@ def _workspace_preview(item, row, life, action, refusal, executor):
         "so it can't list it here."
     )
     if action == "start":
+        phase, reason = effective_phase(row, life)
+        if state_unknown or (phase == "failed" and reason == "machine_unreachable"):
+            running_work = (
+                "Commonplace does not know whether work is still running in this workspace. "
+                "A start request does not stop existing work."
+            )
+        elif phase in ("running", "starting", "stopping"):
+            running_work = (
+                "Work may already be running in this workspace. "
+                "A start request does not stop existing work."
+            )
+        else:
+            running_work = "Nothing is running in it now, so no work is affected."
         base.update(
             title=f"Start {name}?",
             effect=[
@@ -1875,7 +1906,7 @@ def _workspace_preview(item, row, life, action, refusal, executor):
                 + f" the workspace from its image with {_limits_text(row)}.",
                 "Saves the request in Commonplace. " + wait,
             ],
-            running_work="Nothing is running in it now, so no work is affected.",
+            running_work=running_work,
             will_not=[
                 "It does not change the saved settings.",
                 "It does not touch any other workspace.",
