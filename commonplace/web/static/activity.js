@@ -95,7 +95,7 @@ function coverageHTML(s) {
 }
 
 export function mount(context) {
-  let ctx = context, stopped = false, paused = false, pending = null, timer = null, epoch = 0;
+  let ctx = context, stopped = false, paused = false, pending = null, consentPending = false, timer = null, epoch = 0;
   let hosts = [], host = '', window = '1', offset = 0, tab = 'recap', model = '', data = null, problem = '', pageFocus = '';
   const root = ctx.root, doc = root.ownerDocument || globalThis.document;
   if (doc?.head && !doc.querySelector('link[data-activity-style]')) {
@@ -113,7 +113,8 @@ export function mount(context) {
     find('problem').textContent = problem;
     find('model-label').hidden = !['trace', 'live'].includes(tab);
     find('disable').hidden = !hosts.some(row => row.id === host && row.enabled);
-    find('body').setAttribute('aria-busy', String(!!pending));
+    find('disable').disabled = !!pending || consentPending;
+    find('body').setAttribute('aria-busy', String(!!pending || consentPending));
     for (const button of root.querySelectorAll('[data-ca-tab]')) button.setAttribute('aria-pressed', String(button.dataset.caTab === tab));
     const focusedPage = pageFocus || (root.contains(doc?.activeElement) ? doc.activeElement?.hasAttribute?.('data-ca-next') ? 'next' : doc.activeElement?.hasAttribute?.('data-ca-prev') ? 'prev' : '' : '');
     const snapshot = hosts.some(row => row.id === host && row.enabled) ? data?.snapshot : null;
@@ -122,7 +123,7 @@ export function mount(context) {
     if (problem && !snapshot) { find('body').innerHTML = '<section class="ca-panel"><h2>Activity is unavailable</h2><p>n/a: the protected aggregate source could not be read. Use Refresh to try again.</p></section>'; return; }
     if (!hosts.length) { find('body').innerHTML = '<section class="ca-panel"><h2>No Activity source connected</h2><p>No collector has been connected to a machine you enrolled. This is unavailable data, not zero activity. Enroll a machine in Compute Management, then allow its aggregate reporting here.</p><a class="ca-text" href="#/compute/management">Open Compute Management</a></section>'; return; }
     if (data?.state === 'not_enabled') {
-      find('body').innerHTML = '<section class="ca-panel"><h2>Allow aggregate reporting</h2><p>This machine may report numeric activity across its locally observed projects to this workspace. Only you, as the enrolling owner, can read it. Prompts, titles, paths, commands and file contents are excluded. This grants no execution access.</p><button class="btn" type="button" data-ca-consent>Allow aggregates from this host</button></section>'; return;
+      find('body').innerHTML = `<section class="ca-panel"><h2>Allow aggregate reporting</h2><p>This machine may report numeric activity across its locally observed projects to this workspace. Only you, as the enrolling owner, can read it. Prompts, titles, paths, commands and file contents are excluded. This grants no execution access.</p><button class="btn" type="button" data-ca-consent ${consentPending ? 'disabled' : ''}>Allow aggregates from this host</button></section>`; return;
     }
     if (!snapshot) { find('body').innerHTML = '<section class="ca-panel"><h2>Collector has not reported this window</h2><p>n/a: no aggregate snapshot is available. Check the collector on your source machine, or choose a window it has reported. Refresh reads stored aggregates; it does not scan source files.</p></section>'; return; }
     const page = `<div class="ca-page"><span role="status" aria-live="polite" aria-atomic="true">Threads ${data.page.total ? offset + 1 : 0}–${Math.min(offset + 25, data.page.total)} of ${data.page.total} retained · ${number(snapshot.coverage.threads_total)} observed</span><button class="btn" type="button" data-ca-prev ${offset ? '' : 'disabled'}>Previous</button><button class="btn" type="button" data-ca-next ${data.page.next == null ? 'disabled' : ''}>Next</button></div>`;
@@ -133,9 +134,9 @@ export function mount(context) {
       pageFocus = '';
     }
   }
-  const schedule = () => { clearTimeout(timer); if (!stopped && !paused && !doc?.hidden) timer = setTimeout(() => { void load(false); }, 30000); };
+  const schedule = () => { clearTimeout(timer); if (!stopped && !paused && !consentPending && !doc?.hidden) timer = setTimeout(() => { void load(false); }, 30000); };
   async function load(manual = true) {
-    if (stopped || (!manual && (paused || doc?.hidden || pending))) { schedule(); return; }
+    if (stopped || (!manual && (paused || doc?.hidden || pending || consentPending))) { schedule(); return; }
     pending?.abort(); const controller = new AbortController(); pending = controller; const mine = ++epoch;
     problem = ''; find('body').setAttribute('aria-busy', 'true');
     if (!data?.snapshot) paint();
@@ -170,8 +171,9 @@ export function mount(context) {
     }
   }
   async function enable(enabled = true) {
-    if (!host || pending) return;
+    if (!host || pending || consentPending) return;
     const targetHost = host;
+    consentPending = true; clearTimeout(timer); paint();
     try {
       await ctx.api(`${BASE}/${encodeURIComponent(targetHost)}/consent`, { method: 'POST', body: { enabled } });
       if (stopped) return;
@@ -182,6 +184,7 @@ export function mount(context) {
       await load();
     }
     catch { problem = 'Aggregate reporting could not be enabled. Refresh and try again.'; paint(); }
+    finally { consentPending = false; paint(); schedule(); }
   }
   const click = event => {
     const node = event.target.closest?.('button'); if (!node || !root.contains(node)) return;

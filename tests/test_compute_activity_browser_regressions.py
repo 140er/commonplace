@@ -3,6 +3,7 @@
 import copy
 import importlib
 import shutil
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -57,6 +58,181 @@ def activity_page(enrolled):  # noqa: F811
             yield page
         finally:
             browser.close()
+
+
+@pytest.fixture
+def consent_traffic(activity_page):
+    page = activity_page
+    source = page.locator("[data-ca-host]").input_value()
+    origin = page.url.split("/app/")[0]
+    consent_url = origin + f"/api/compute/activity/{source}/consent"
+    response = page.request.post(consent_url, data={"enabled": False})
+    assert response.status == 200
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.get_by_role("heading", name="Allow aggregate reporting", exact=True).wait_for()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    posts, reloads, commits = [], [], []
+    flags = {"hold_reload": False}
+    page.evaluate("window.caConsentReloadsHeld = 0")
+
+    def post(route):
+        posts.append(
+            {"route": route, "enabled": route.request.post_data_json["enabled"], "done": False}
+        )
+
+    def reload(route):
+        if flags["hold_reload"]:
+            reloads.append({"route": route, "done": False})
+            page.evaluate("count => window.caConsentReloadsHeld = count", len(reloads))
+        else:
+            route.continue_()
+
+    def commit(item):
+        next_reload = len(reloads) + 1
+        with page.expect_response(lambda response: response.url == consent_url) as ack:
+            item["route"].continue_()
+        item["done"] = True
+        assert ack.value.status == 200
+        assert ack.value.json() == {"enabled": item["enabled"]}
+        commits.append(item["enabled"])
+        assert enabled() is item["enabled"]
+        if flags["hold_reload"]:
+            page.wait_for_function("count => window.caConsentReloadsHeld >= count", arg=next_reload)
+
+    def enabled():
+        response = page.request.get(origin + "/api/compute/activity")
+        assert response.status == 200
+        return next(row["enabled"] for row in response.json()["hosts"] if row["id"] == source)
+
+    page.route("**/api/compute/activity/*/consent", post)
+    page.route("**/api/compute/activity", reload)
+    try:
+        yield SimpleNamespace(
+            page=page,
+            posts=posts,
+            reloads=reloads,
+            commits=commits,
+            flags=flags,
+            commit=commit,
+            enabled=enabled,
+        )
+    finally:
+        for item in posts + reloads:
+            if not item["done"]:
+                item["route"].abort("failed")
+        page.unroute("**/api/compute/activity/*/consent", post)
+        page.unroute("**/api/compute/activity", reload)
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+def test_delayed_overlapping_allow_cannot_write_after_acknowledged_revoke(consent_traffic, width):
+    traffic = consent_traffic
+    page = traffic.page
+    page.set_viewport_size({"width": width, "height": 700 if width < 600 else 844})
+    with page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith("/consent")
+    ):
+        page.locator("[data-ca-consent]").evaluate("button => { button.click(); button.click(); }")
+    allow_disabled = page.locator("[data-ca-consent]").is_disabled()
+    post_busy = page.locator("[data-ca-body]").get_attribute("aria-busy")
+    assert traffic.enabled() is False
+    first = traffic.posts[0]
+    traffic.flags["hold_reload"] = True
+    with page.expect_request(lambda request: urlparse(request.url).path == "/api/compute/activity"):
+        traffic.commit(first)
+    allow_reload_disabled = page.locator("[data-ca-disable]").is_disabled()
+    allow_reload = traffic.reloads[-1]
+    traffic.flags["hold_reload"] = False
+    allow_reload["route"].continue_()
+    allow_reload["done"] = True
+    page.get_by_role("heading", name="Daily activity", exact=True).wait_for()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert traffic.enabled() is True
+    with page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith("/consent")
+    ):
+        page.get_by_role("button", name="Stop aggregate access", exact=True).click()
+    revoke_post_disabled = page.locator("[data-ca-disable]").is_disabled()
+    revoke = next(item for item in traffic.posts if not item["enabled"])
+    traffic.flags["hold_reload"] = True
+    with page.expect_request(lambda request: urlparse(request.url).path == "/api/compute/activity"):
+        traffic.commit(revoke)
+    revoke_reload_disabled = page.locator("[data-ca-disable]").is_disabled()
+    revoke_reload = traffic.reloads[-1]
+    traffic.flags["hold_reload"] = False
+    revoke_reload["route"].continue_()
+    revoke_reload["done"] = True
+    page.get_by_role("heading", name="Allow aggregate reporting", exact=True).wait_for()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert traffic.enabled() is False
+    for late in [item for item in traffic.posts if item["enabled"] and item is not first]:
+        traffic.commit(late)
+        page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert traffic.commits == [True, False], "A delayed Allow performed a real write after Revoke"
+    assert traffic.enabled() is False
+    assert page.get_by_role("heading", name="Allow aggregate reporting", exact=True).count() == 1
+    assert allow_disabled
+    assert post_busy == "true"
+    assert allow_reload_disabled
+    assert revoke_post_disabled
+    assert revoke_reload_disabled
+    assert page.locator("[data-ca-consent]").is_enabled()
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+@pytest.mark.parametrize("stage", ["POST", "reload"])
+@pytest.mark.parametrize("failure", ["503", "network"])
+def test_consent_failure_recovers_without_losing_acknowledged_state(
+    consent_traffic, width, stage, failure
+):
+    traffic = consent_traffic
+    page = traffic.page
+    page.set_viewport_size({"width": width, "height": 700 if width < 600 else 844})
+    with page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith("/consent")
+    ):
+        page.locator("[data-ca-consent]").click()
+    first = traffic.posts[0]
+    if stage == "POST":
+        failed = first
+    else:
+        traffic.flags["hold_reload"] = True
+        with page.expect_request(
+            lambda request: urlparse(request.url).path == "/api/compute/activity"
+        ):
+            traffic.commit(first)
+        failed = traffic.reloads[-1]
+    if failure == "503":
+        failed["route"].fulfill(status=503, json={"error": "synthetic_consent_failure"})
+    else:
+        failed["route"].abort("failed")
+    failed["done"] = True
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert traffic.enabled() is (stage == "reload")
+    assert page.locator("[data-ca-disable]").is_enabled()
+    traffic.flags["hold_reload"] = False
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    if stage == "POST":
+        with page.expect_request(
+            lambda request: request.method == "POST" and request.url.endswith("/consent")
+        ):
+            page.locator("[data-ca-consent]").click()
+        traffic.commit(traffic.posts[-1])
+        page.get_by_role("heading", name="Daily activity", exact=True).wait_for()
+        page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    with page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith("/consent")
+    ):
+        page.get_by_role("button", name="Stop aggregate access", exact=True).click()
+    traffic.commit(traffic.posts[-1])
+    page.get_by_role("heading", name="Allow aggregate reporting", exact=True).wait_for()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert traffic.commits == [True, False]
+    assert traffic.enabled() is False
+    assert page.locator("[data-ca-consent]").is_enabled()
 
 
 @pytest.mark.parametrize("width", [1440, 390, 320])
