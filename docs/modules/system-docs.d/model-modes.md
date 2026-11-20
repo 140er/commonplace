@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - The note is design only and changes no behaviour: it records the gaps on develop, the precedence matrix, what each run shows (mode, model, account label, never a secret value), that personal-account spend stays out of org budgets by default, and the open questions with their defaults.
+  - The note records the design and the slice as built: the precedence matrix, what each run shows, credential privacy, planned spend attribution, open questions and defaults. It names the admission transaction window, the existing run-status fields and the Needs me failure behaviour without claiming later slices have shipped.
 
 - **How it fails:**
 

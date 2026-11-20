@@ -4,7 +4,7 @@ name the next step, and a store from before modes that keeps every run as it was
 import pytest
 
 from commonplace.runner import jobs
-from mempalace.sqlite_crypto import connect
+from mempalace.sqlite_crypto import connect, row_factory
 from tests.runner_harness import (
     attest,
     card,
@@ -171,21 +171,32 @@ def test_org_mode_refuses_a_persons_own_machine(signup_hub, owners):
     assert (status, body["code"]) == (409, "machine_not_org_account")
 
 
-def test_the_recorded_account_never_carries_a_credential(signup_hub, owners):
+@pytest.mark.parametrize("table", ["runner_jobs", "run_ledger"])
+def test_the_recorded_account_is_exactly_the_pinned_fields_and_never_a_credential(
+    signup_hub, owners, table
+):
     hub, owner = signup_hub, owners["A"]
     own = _machine(hub, owner, "own-1")
     _connect(hub, owner, "own-1")
     _set_mode(hub, owner, mode="personal")
-    (status, body), task = _start(hub, owner, own)
+    (status, _), _task = _start(hub, owner, own)
     assert status == 201
     conn = connect(str(hub.gateway.workspace_dir(owner["workspace"])) + "/runner.sqlite3")
+    conn.row_factory = row_factory
     try:
-        rows = conn.execute("SELECT * FROM run_ledger").fetchall()
-        names = [d[0] for d in conn.execute("SELECT * FROM run_ledger").description]
+        [row] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
     finally:
         conn.close()
-    text = repr([dict(zip(names, row, strict=True)) for row in rows])
-    assert "cmmn_" not in text
+    assert {k: row[k] for k in ("mode", "mode_source", "account_kind", "account_label")} == {
+        "mode": "personal",
+        "mode_source": "workspace",
+        "account_kind": "person",
+        "account_label": "my subscription",
+    }
+    assert row["account_person"] == owner["user_id"]
+    stored = repr(row)
+    assert not any(value in stored for value in (owner["cookie"], own["machine_token"]))
+    assert not any(prefix in stored for prefix in ("cmmn_", "sk-ant-", "ghp_", "Bearer "))
 
 
 def test_a_store_from_before_modes_keeps_every_run_and_gains_empty_columns(signup_hub, owners):

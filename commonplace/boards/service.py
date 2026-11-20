@@ -5105,7 +5105,7 @@ class BoardService(lifecycle.LifecycleMixin):
             # never shown to the owner for anyone else.
             try:
                 lacking = model_modes.needs(self.ctx.db, self.principal)
-            except sqlite3.Error:
+            except (sqlite3.Error, model_modes.ModeUnavailable):
                 lacking = []
             if lacking:
                 groups["model_connections"] = lacking
