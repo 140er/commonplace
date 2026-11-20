@@ -16,7 +16,7 @@ from commonplace.extensions import ToolContext
 from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests._projects_helpers import projects_hub_fixture as projects_hub_fixture
-from tests.test_commonplace_oauth import Client
+from tests.test_commonplace_oauth import Client, client_approval
 
 OPTIONS = ["Ship it", "Hold"]
 REFUSAL = "only a signed-in workspace owner can answer this"
@@ -138,13 +138,15 @@ def rest_decide(w, token, number, version, choice=OPTIONS[0]):
 
 def oauth_grant(hub, *, email="owner@example.com", scope=FULL, tick=True):
     client = Client(hub)
-    client.login(email)
     cid = client.register(client_name="Owner Phone")
+    if email != "owner@example.com":
+        client.approve(cid)
+    client.login(email)
     path = client.authorize_path(cid, scope=scope)
     status, _, page = client.request("GET", path)
     assert status == 200, page
     request = unescape(re.search(r'name="request" value="([^"]+)"', page)[1])
-    data = {"request": request, "decision": "allow"}
+    data = {"request": request, "decision": "allow", **client_approval(page)}
     if tick:
         data["grant_decide"] = "1"
     status, headers, _ = client.request("POST", path, data)
@@ -825,7 +827,9 @@ def test_refresh_does_not_restore_a_withdrawn_grant(world):
     _, _, page = client.request("GET", path)
     request = unescape(re.search(r'name="request" value="([^"]+)"', page)[1])
     _, headers, _ = client.request(
-        "POST", path, {"request": request, "decision": "allow", "grant_decide": "1"}
+        "POST",
+        path,
+        {"request": request, "decision": "allow", "grant_decide": "1", **client_approval(page)},
     )
     code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]
     issued = json.loads(client.exchange(cid, code)[2])
@@ -851,7 +855,9 @@ def test_refresh_cannot_widen_into_the_scope(world):
     path = client.authorize_path(cid, scope=FULL)
     _, _, page = client.request("GET", path)
     request = unescape(re.search(r'name="request" value="([^"]+)"', page)[1])
-    _, headers, _ = client.request("POST", path, {"request": request, "decision": "allow"})
+    _, headers, _ = client.request(
+        "POST", path, {"request": request, "decision": "allow", **client_approval(page)}
+    )
     code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]
     issued = json.loads(client.exchange(cid, code)[2])
     assert "cards:decide" not in issued["scope"].split()

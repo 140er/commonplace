@@ -9,7 +9,7 @@ import pytest
 
 from commonplace import events, sessions
 from tests.test_commonplace_boards import api, service
-from tests.test_commonplace_oauth import REDIRECT, Client
+from tests.test_commonplace_oauth import REDIRECT, Client, client_approval
 from tests.test_commonplace_person_actions import (
     CHAT,
     grant,
@@ -491,7 +491,14 @@ def test_non_native_client_cannot_acquire_phone_capability_through_forged_checkb
     assert status == 200 and "grant_person_chat" not in html
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
     status, headers, _ = phone.request(
-        "POST", path, {"request": request, "decision": "allow", "grant_person_chat": "1"}
+        "POST",
+        path,
+        {
+            "request": request,
+            "decision": "allow",
+            "grant_person_chat": "1",
+            **client_approval(html),
+        },
     )
     assert status == 303
     code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]

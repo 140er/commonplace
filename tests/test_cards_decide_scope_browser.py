@@ -73,6 +73,7 @@ async def consent_and_agents(hub):
             await expect(box).not_to_be_checked()
             await _shot(page, "consent.png")
             await box.check()
+            await page.locator('input[name="approve_client"]').check()
             await page.get_by_role("button", name="Allow").click()
             await page.wait_for_url(f"{base}/oauth-test-callback?**")
             code = parse_qs(urlsplit(page.url).query)["code"][0]

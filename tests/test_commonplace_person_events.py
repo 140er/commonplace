@@ -12,6 +12,7 @@ import pytest
 
 from commonplace import events, sessions
 from tests.test_commonplace_boards import api
+from tests.test_commonplace_oauth import client_approval
 from tests.test_commonplace_person_actions import (
     grant,
     hub_fixture as hub_fixture,
@@ -34,7 +35,7 @@ def event_grant(client, checked=True):
     status, _, html = client.request("GET", path)
     assert status == 200
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
-    data = {"request": request, "decision": "allow"}
+    data = {"request": request, "decision": "allow", **client_approval(html)}
     if checked:
         data["grant_person_events"] = "1"
     status, headers, _ = client.request("POST", path, data)
@@ -429,7 +430,14 @@ def test_non_native_forged_consent_cannot_acquire_events(phone):
     assert "grant_person_events" not in html
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
     status, headers, _ = phone.request(
-        "POST", path, {"request": request, "decision": "allow", "grant_person_events": "1"}
+        "POST",
+        path,
+        {
+            "request": request,
+            "decision": "allow",
+            "grant_person_events": "1",
+            **client_approval(html),
+        },
     )
     assert status == 303
     code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]
