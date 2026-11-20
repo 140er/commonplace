@@ -9,6 +9,8 @@ same ``NotFound``.
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 import shutil
 from datetime import timedelta
 
@@ -520,6 +522,8 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
         "rule": rule,
         # Whether this caller may change the rule; the PUT route checks it again.
         "can_set_rule": bool(principal.person and principal.role == "owner"),
+        # Whether this caller may delete files; the DELETE route checks it again.
+        "can_delete": bool(principal.person and principal.role == "owner"),
     }
 
 
@@ -560,7 +564,13 @@ def stop(gateway, principal, preview_id) -> dict:
 
 
 def reopen(gateway, principal, preview_id) -> dict:
-    """Serve a stopped preview again from its kept files."""
+    """Serve a stopped preview again from its kept files; ``Refused`` when they were deleted."""
+    _authorize(gateway, principal, preview_id)
+    db = gateway.db
+    with db._lock:
+        row = _held(db._conn, principal, preview_id)
+    if row["state"] == "stopped" and row["reason"] == "files_deleted":
+        raise Refused("files_deleted")
     return _change(
         gateway,
         principal,
@@ -570,6 +580,63 @@ def reopen(gateway, principal, preview_id) -> dict:
         reason_for=lambda row, p: "published",
         allowed_from=("stopped",),
     )
+
+
+def delete_files(gateway, principal, preview_id, confirm) -> dict:
+    """Delete every revision's files of a preview. A signed-in workspace owner only, with the
+    preview's own id repeated as confirmation; never called by a timer or a Coworker.
+
+    The order (see docs/system/previews.md, "Deleting files"): under the control-database lock
+    the rows are marked deleted and the preview's folder is renamed aside in one step, which is
+    cheap and atomic; the lock is then released and the renamed folder is removed. A publish
+    racing the delete finds its preview stopped in its final transaction and refuses itself
+    (``changed_meanwhile``), and its half-written files went aside with the folder, so a deleted
+    preview never reads ready. A removal that leaves files behind is recorded in a short
+    follow-up transaction and said in the answer; asking again removes what is left."""
+    if not principal.person or principal.role != "owner":
+        raise Forbidden("owner")
+    _authorize(gateway, principal, preview_id)
+    db, workspace = gateway.db, principal.workspace_id
+    base = store.root(gateway, workspace)
+    aside = None
+    with db._lock, db._tx() as conn:
+        row = _held(conn, principal, preview_id)
+        if confirm != row["id"]:
+            raise ValueError("confirm must repeat the preview id")
+        state, _reason = store.effective(row)
+        if state == "building":
+            raise Refused("validating")
+        now = store.stamp(store.clock())
+        conn.execute(
+            "UPDATE preview_revisions SET deleted_at=? WHERE preview_id=? AND deleted_at IS NULL",
+            (now, row["id"]),
+        )
+        conn.execute(
+            "UPDATE previews SET state='stopped',reason='files_deleted',updated_at=? WHERE id=?",
+            (now, row["id"]),
+        )
+        store.event(conn, workspace, row["id"], row["card"], "files_deleted", principal.actor)
+        folder = base / row["id"]
+        if folder.exists():
+            aside = base / f".deleting-{row['id']}-{secrets.token_hex(4)}"
+            # A rename only: if the disk refuses it, the transaction rolls back and nothing changed.
+            try:
+                os.replace(folder, aside)
+            except OSError:
+                raise Refused("storage_unavailable") from None
+        shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]), revisions=True)
+    # The lock is released: the removal itself may take as long as the files need.
+    leftovers = sorted(base.glob(f".deleting-{row['id']}-*"))
+    for path in leftovers:
+        _remove_tree(path)
+    if any(path.exists() for path in leftovers):
+        log.warning("preview files could not be fully removed for %s", row["id"])
+        with db._lock, db._tx() as conn:
+            store.event(
+                conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
+            )
+        shown["files_remaining"] = True
+    return shown
 
 
 RULE_BOUNDS = {"stop_days_after_pr": (1, 365), "max_age_days": (1, 3650)}
@@ -651,6 +718,7 @@ REFUSAL_STATUS = {
     "workspace_quota_full": 409,
     "validating": 409,
     "storage_unavailable": 503,
+    "files_deleted": 409,
 }
 
 

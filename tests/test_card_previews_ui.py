@@ -20,6 +20,8 @@ CASES = [
     "refusal",
     "rulesave",
     "redraw",
+    "deleteview",
+    "deleteflow",
     "stale",
     "panel",
     "loads",

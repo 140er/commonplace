@@ -265,6 +265,7 @@ def test_published_previews_export_verbatim_with_their_owned_workspace(site):
             "published_by": "a1",
             "by_person": 0,
             "published_at": "2026-01-01T00:00:00Z",
+            "deleted_at": None,
         }
     ]
     assert [e["kind"] for e in archive.rows(f"{prefix}/preview_events.ndjson")] == [

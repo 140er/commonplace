@@ -3,8 +3,8 @@ import { api as request, escape as e, elapsed } from "./api.js";
 // "Previews" in the card panel: what a Coworker published for this card, from
 // GET /api/previews?card=<n>. A preview stays after the work session ends; Open shows it in a new tab
 // (/p/<id>/, only for signed-in people who can open the card). Stop keeps the files and Open again
-// serves them again. The workspace owner also sees the stop rule here and can change it; the server
-// checks that again. A card the person cannot see answers 404, and then the section stays hidden.
+// serves them again. The workspace owner also sees the stop rule here and can change it, and can
+// delete a preview's files after confirming; the server checks both again. A card the person cannot see answers 404, and then the section stays hidden.
 
 export const STATE_WORDS = {
   ready: "Ready",
@@ -41,7 +41,7 @@ const mib = (bytes) => {
   return value < MIB ? `${Math.max(value ? 1 : 0, Math.round(value / 1024))} KiB` : `${Math.round(value / MIB * 10) / 10} MiB`;
 };
 
-function previewHTML(preview) {
+function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
   const state = STATE_WORDS[preview.state] ? preview.state : "failed";
   const url = URL_SHAPE.test(preview.url || "") ? preview.url : null;
   const by = preview.by === "person" ? "a person" : `Coworker ${preview.published_by || ""}`.trim();
@@ -55,8 +55,12 @@ function previewHTML(preview) {
     state === "ready" && url ? `<a class="btn sm primary" href="${e(url)}" target="_blank" rel="noopener noreferrer" data-preview-open aria-label="Open preview ${e(label)} in a new tab">Open</a>` : "",
     state === "ready" ? `<button class="btn sm" type="button" data-preview-stop="${e(preview.id)}" aria-label="Stop preview ${e(label)}">Stop</button>` : "",
     state === "stopped" && url ? `<button class="btn sm" type="button" data-preview-reopen="${e(preview.id)}" aria-label="Open preview ${e(label)} again">Open again</button>` : "",
+    canDelete && url && state !== "building" && confirming !== preview.id ? `<button class="btn sm danger" type="button" data-preview-delete="${e(preview.id)}" aria-label="Delete the files of preview ${e(label)}">Delete files</button>` : "",
   ].join("");
-  return `<li data-preview="${e(preview.id)}" data-state="${e(state)}"><p class="run-line"><span class="tag run-state">${e(STATE_WORDS[state])}</span><b>${e(preview.name)}</b>${revision}${published}</p><p class="run-reason" data-preview-reason>${e(preview.reason_text || "")}</p>${preview.next ? `<p class="run-reason" data-preview-next>${e(preview.next)}</p>` : ""}${stops}${acts ? `<div class="preview-acts">${acts}</div>` : ""}</li>`;
+  const confirm = canDelete && url && confirming === preview.id
+    ? `<div class="preview-confirm" role="group" aria-label="Delete the files of preview ${e(label)}"><p class="run-reason">Delete the files of <b>${e(preview.name)}</b> (${e(mib(preview.size_bytes))}, this card)? People can no longer open it, and this cannot be undone.</p><div class="preview-acts"><button class="btn sm danger" type="button" data-preview-delete-confirm="${e(preview.id)}">Delete files</button><button class="btn sm" type="button" data-preview-delete-cancel>Cancel</button></div></div>`
+    : "";
+  return `<li data-preview="${e(preview.id)}" data-state="${e(state)}"><p class="run-line"><span class="tag run-state">${e(STATE_WORDS[state])}</span><b>${e(preview.name)}</b>${revision}${published}</p><p class="run-reason" data-preview-reason>${e(preview.reason_text || "")}</p>${preview.next ? `<p class="run-reason" data-preview-next>${e(preview.next)}</p>` : ""}${stops}${acts ? `<div class="preview-acts">${acts}</div>` : ""}${confirm}</li>`;
 }
 
 function usageHTML(found) {
@@ -75,10 +79,11 @@ function ruleHTML(found) {
 }
 
 // The inner HTML of the section for a loaded list; `note` is the last result or refusal.
-export function cardPreviewsHTML(found, note = "") {
+export function cardPreviewsHTML(found, note = "", confirming = "") {
   const previews = Array.isArray(found?.previews) ? found.previews : [];
+  const options = { canDelete: Boolean(found?.can_delete), confirming };
   const list = previews.length
-    ? `<ul class="run-list">${previews.map(previewHTML).join("")}</ul>`
+    ? `<ul class="run-list">${previews.map((preview) => previewHTML(preview, options)).join("")}</ul>`
     : `<p class="run-empty" data-preview-empty>No preview yet. When a Coworker publishes one for this card, it appears here and stays after the work session ends.</p>`;
   return `<div class="sec-h"><h3>Previews</h3></div>${list}${usageHTML(found)}${ruleHTML(found)}<p class="run-note" role="status" aria-live="polite">${e(note)}</p>`;
 }
@@ -108,11 +113,11 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
   const slot = mount.querySelector?.("[data-card-previews]");
   if (!slot || card?.number == null) return;
   const key = keyOf(card);
-  let revision = 0, last = null;
+  let revision = 0, last = null, confirming = "";
   const live = (token) => token === revision && slot.isConnected;
   const show = (found, note = "") => {
     last = found;
-    slot.innerHTML = cardPreviewsHTML(found, note);
+    slot.innerHTML = cardPreviewsHTML(found, note, confirming);
     slot.hidden = false;
   };
   // A redraw of the same card shows what the panel showed a moment ago until the load answers.
@@ -138,8 +143,8 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     control.closest?.("li, form")?.querySelectorAll?.("button, input").forEach((item) => { item.disabled = true; });
     let note;
     try {
-      await api(path, { method, body });
-      note = done;
+      const result = await api(path, { method, body });
+      note = typeof done === "function" ? done(result) : done;
     } catch (error) {
       note = refusalWords(error);
     }
@@ -151,6 +156,18 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     if (stop) { void act(stop, `/api/previews/${encodeURIComponent(stop.dataset.previewStop)}/stop`, "POST", {}, "Stopped. The files are kept; Open again serves them again."); return; }
     const reopen = event.target.closest?.("[data-preview-reopen]");
     if (reopen) { void act(reopen, `/api/previews/${encodeURIComponent(reopen.dataset.previewReopen)}/open-again`, "POST", {}, "Served again."); return; }
+    const remove = event.target.closest?.("[data-preview-delete]");
+    if (remove) { confirming = remove.dataset.previewDelete; if (last) show(last); return; }
+    if (event.target.closest?.("[data-preview-delete-cancel]")) { confirming = ""; if (last) show(last); return; }
+    const sure = event.target.closest?.("[data-preview-delete-confirm]");
+    if (sure) {
+      const id = sure.dataset.previewDeleteConfirm;
+      confirming = "";
+      void act(sure, `/api/previews/${encodeURIComponent(id)}`, "DELETE", { confirm: id }, (result) => result?.files_remaining
+        ? "Some files could not be removed. Delete files again to finish."
+        : "Deleted the files. People can no longer open this preview.");
+      return;
+    }
     if (event.target.closest?.("[data-preview-retry]")) void load();
   });
   slot.addEventListener("submit", (event) => {

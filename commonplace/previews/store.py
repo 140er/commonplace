@@ -5,9 +5,9 @@ revision (immutable: the files of ``r<n>`` are written once and never changed);
 ``preview_events`` is the append-only record of who did what, and ``preview_rules`` the
 workspace's stop rule. Files live under ``<workspace dir>/previews/<id>/r<n>/``.
 
-Nothing here deletes preview files: stopping a preview keeps them. Deleting files is a later
-slice. Only refused attempts that never published are pruned (``prune_failed``). All SQL is
-literal.
+Nothing here deletes preview files by itself: stopping a preview keeps them, and only an owner's
+explicit delete (``service.delete_files``) removes them. Only refused attempts that never
+published are pruned (``prune_failed``). All SQL is literal.
 """
 
 from __future__ import annotations
@@ -38,6 +38,10 @@ REASONS = {
     "stopped_by_person": (
         "Stopped by a person. The files are kept.",
         "Use Open again to serve it.",
+    ),
+    "files_deleted": (
+        "A workspace owner deleted the files of this preview.",
+        "Ask the Coworker to publish it again if it is still wanted.",
     ),
     "stopped_by_coworker": (
         "Stopped by the Coworker that published it. The files are kept.",
@@ -152,7 +156,7 @@ def ensure_schema(db) -> None:
                 preview_id TEXT NOT NULL REFERENCES previews(id), revision INTEGER NOT NULL,
                 digest TEXT NOT NULL, size_bytes INTEGER NOT NULL, file_count INTEGER NOT NULL,
                 published_by TEXT NOT NULL, by_person INTEGER NOT NULL,
-                published_at TEXT NOT NULL,
+                published_at TEXT NOT NULL, deleted_at TEXT,
                 PRIMARY KEY (preview_id, revision)
             );
             CREATE TABLE IF NOT EXISTS preview_events (
@@ -172,6 +176,10 @@ def ensure_schema(db) -> None:
             );
             """
         )
+        # A workspace that ran the first slice has the revision table without this column.
+        columns = [row[1] for row in db._conn.execute("PRAGMA table_info(preview_revisions)")]
+        if "deleted_at" not in columns:
+            db._conn.execute("ALTER TABLE preview_revisions ADD COLUMN deleted_at TEXT")
 
 
 def root(gateway, workspace_id) -> Path:
@@ -202,21 +210,25 @@ def usage(conn, workspace_id) -> dict:
     ).fetchone()[0]
     size = conn.execute(
         "SELECT coalesce(sum(r.size_bytes),0) FROM preview_revisions r "
-        "JOIN previews p ON p.id=r.preview_id WHERE p.workspace_id=?",
+        "JOIN previews p ON p.id=r.preview_id WHERE p.workspace_id=? AND r.deleted_at IS NULL",
         (workspace_id,),
     ).fetchone()[0]
     return {"ready": ready, "bytes": size}
 
 
 def counts_live(row) -> bool:
-    """Whether a preview counts toward ``MAX_ROWS``: not a refused attempt that never published."""
-    return not (row["state"] == "failed" and row["current_revision"] == 0)
+    """Whether a preview counts toward ``MAX_ROWS``: not a refused attempt that never published
+    and not one whose files a person deleted."""
+    if row["state"] == "failed" and row["current_revision"] == 0:
+        return False
+    return not (row["state"] == "stopped" and row["reason"] == "files_deleted")
 
 
 def live_rows(conn, workspace_id) -> int:
     return conn.execute(
         "SELECT count(*) FROM previews WHERE workspace_id=? "
-        "AND NOT (state='failed' AND current_revision=0)",
+        "AND NOT (state='failed' AND current_revision=0) "
+        "AND NOT (state='stopped' AND reason='files_deleted')",
         (workspace_id,),
     ).fetchone()[0]
 
@@ -318,12 +330,15 @@ def shape(row, current, revisions=None, stops_at=None) -> dict:
         "published_at": current["published_at"] if current else row["created_at"],
         "stops_at": stops_at if state == "ready" else None,
         "last_changed_at": row["updated_at"],
-        "url": f"/p/{row['id']}/" if current is not None else None,
+        "url": f"/p/{row['id']}/"
+        if current is not None and current["deleted_at"] is None
+        else None,
     }
     if revisions is not None:
         shown["revisions"] = [
             {
                 "revision": r["revision"],
+                "files_deleted": r["deleted_at"] is not None,
                 "size_bytes": r["size_bytes"],
                 "file_count": r["file_count"],
                 "published_by": r["published_by"],

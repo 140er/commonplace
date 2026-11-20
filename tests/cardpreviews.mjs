@@ -198,6 +198,44 @@ const cases = {
     assert.ok(third.slot.innerHTML.includes('Ready'));
     assert.equal(third.slot.note.textContent, 'Could not refresh the previews. Showing the last list.');
   },
+  deleteview() {
+    // Only an owner sees Delete files, only where there are files, and never while publishing.
+    const list = [
+      preview(),
+      preview({ id: 'pv_0000000000000002', state: 'stopped', url: '/p/pv_0000000000000002/' }),
+      preview({ id: 'pv_0000000000000003', state: 'stopped', reason: 'files_deleted', url: null }),
+      preview({ id: 'pv_0000000000000004', state: 'building', url: '/p/pv_0000000000000004/' }),
+    ];
+    assert.ok(!cardPreviewsHTML(found(list)).includes('data-preview-delete'));
+    const html = cardPreviewsHTML(found(list, { can_delete: true }));
+    assert.deepEqual([...html.matchAll(/data-preview-delete="([^"]+)"/g)].map((m) => m[1]), ['pv_0123456789abcdef', 'pv_0000000000000002']);
+    // Confirming names the preview, its size and that it cannot be undone.
+    const asking = cardPreviewsHTML(found(list, { can_delete: true }), '', 'pv_0123456789abcdef');
+    assert.ok(asking.includes('data-preview-delete-confirm="pv_0123456789abcdef"') && asking.includes('data-preview-delete-cancel'));
+    assert.ok(asking.includes('Delete the files of <b>home</b> (2 KiB, this card)?') && asking.includes('cannot be undone'));
+    assert.ok(!asking.includes('data-preview-delete="pv_0123456789abcdef"'));
+  },
+  async deleteflow() {
+    const { slot, mount, handlers } = fakeSlot();
+    const sent = [];
+    let deleted = false, remaining = true;
+    const api = async (url, options) => {
+      if (options?.method === 'DELETE') { sent.push([url, options.body]); deleted = true; const r = { files_remaining: remaining }; remaining = false; return r; }
+      return found([deleted ? preview({ state: 'stopped', reason: 'files_deleted', reason_text: 'A workspace owner deleted the files of this preview.', url: null }) : preview()], { can_delete: true });
+    };
+    await attachCardPreviews(mount, { ...card, number: 26 }, { api });
+    handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
+    assert.ok(slot.innerHTML.includes('cannot be undone'));
+    handlers.click({ target: { closest: (selector) => selector === '[data-preview-delete-cancel]' ? {} : null } });
+    assert.ok(!slot.innerHTML.includes('cannot be undone') && slot.innerHTML.includes('data-preview-delete="pv_0123456789abcdef"'));
+    assert.deepEqual(sent, []);
+    handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
+    handlers.click(clickOn('previewDeleteConfirm', 'pv_0123456789abcdef'));
+    await wait(); await wait();
+    assert.deepEqual(sent, [['/api/previews/pv_0123456789abcdef', { confirm: 'pv_0123456789abcdef' }]]);
+    assert.ok(slot.innerHTML.includes('Some files could not be removed. Delete files again to finish.'));
+    assert.ok(slot.innerHTML.includes('deleted the files') && !slot.innerHTML.includes('data-preview-open'));
+  },
   async stale() {
     const { slot, mount } = fakeSlot();
     const release = [];
