@@ -1,6 +1,6 @@
 ## pr-review
 
-- **Paths:** `commonplace/pr_review/`, `tests/test_pr_review.py`
+- **Paths:** `commonplace/pr_review/`, `tests/test_pr_review.py`, `tests/test_pr_review_loop.py`, `tests/_pr_review_fakes.py`
 - **Owns:**
 
   - Auto-addressed PR review comments, slice 1 (card #613, design in `docs/system/pr-review-loop.md`): comments of a pull request in the workspace file `pr_review.sqlite3` (`pr_review_prs`, `pr_review_comments`, `pr_review_events` append-only, `pr_review_boards`, `pr_review_people`), their six statuses (`new`, `working`, `addressed`, `answered`, `needs_you`, `skipped`) with fixed reasons and the words people read (`status.py`), the idempotent intake of a feeder's batches (`intake.py`, `store.py`), PR to card mapping and the fork and branch rules (`mapping.py`), the work trigger (`trigger.py`), the one question per PR (`needs_me.py`), `/api/pr-review` (`routes.py`) and the Coworker tools `pr_review_list` (read), `pr_review_take` and `pr_review_report` (writes) (`tools.py`). The hub never calls GitHub: a feeder outside the hub posts the comments.

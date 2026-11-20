@@ -14,9 +14,11 @@ from . import tools  # noqa: F401  (registers the tools)
 
 
 def install(gateway) -> None:
-    from . import routes
+    from . import routes, store
 
     if getattr(gateway, "pr_review_installed", False):
         return
     routes.install(gateway)
+    # The stores' connections close before the control database does (hub shutdown).
+    gateway.db.add_pre_close_callback(lambda: store.close_all(gateway))
     gateway.pr_review_installed = True

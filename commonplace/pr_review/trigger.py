@@ -72,9 +72,10 @@ def _consider(gateway, workspace_id, store, boards, pr_row, now):
     setting = boards.get(facts["board"])
     if setting is None or pr_row["loop_stopped"] or pr_row["pr_state"] in ("closed", "merged"):
         return None
-    hold = lambda reason: _hold(  # noqa: E731
-        gateway, workspace_id, store, pr_row, facts, reason, now, setting
-    )
+
+    def hold(reason):
+        return _hold(gateway, workspace_id, store, pr_row, facts, reason, now, setting)
+
     problem = mapping.pr_problem(pr_row, facts)
     if problem:
         return hold(problem)

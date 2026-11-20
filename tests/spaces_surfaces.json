@@ -1389,7 +1389,7 @@
           "name": "pr_review_list"
         },
         {
-          "description": "Report one outcome per review comment you hold: outcome 'addressed' with the full commit SHA that fixes it on the PR branch, 'answered' with the reply that gives your reason or question, or 'needs_you' with a note on what only a person can decide. Send comment, rev (as listed), outcome and the matching field for each; repeating a report changes nothing. This tool cannot merge, resolve a thread or dismiss a review.",
+          "description": "Report one outcome per review comment you hold: outcome 'addressed' with the full commit SHA that fixes it on the PR branch, 'answered' with the reply that gives your reason or question, or 'needs_you' with a note on what only a person can decide. Send comment, rev (as listed), outcome and the matching field for each; repeating a report changes nothing. Set posted=true only when you posted the reply on the PR, which the board allows only when pr_review_take says so; otherwise the reply is shown on the card. This tool cannot merge, resolve a thread or dismiss a review.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1431,6 +1431,9 @@
                         "answered",
                         "needs_you"
                       ]
+                    },
+                    "posted": {
+                      "type": "boolean"
                     },
                     "reply": {
                       "maxLength": 4000,
@@ -5490,7 +5493,7 @@
           "name": "pr_review_list"
         },
         {
-          "description": "Report one outcome per review comment you hold: outcome 'addressed' with the full commit SHA that fixes it on the PR branch, 'answered' with the reply that gives your reason or question, or 'needs_you' with a note on what only a person can decide. Send comment, rev (as listed), outcome and the matching field for each; repeating a report changes nothing. This tool cannot merge, resolve a thread or dismiss a review.",
+          "description": "Report one outcome per review comment you hold: outcome 'addressed' with the full commit SHA that fixes it on the PR branch, 'answered' with the reply that gives your reason or question, or 'needs_you' with a note on what only a person can decide. Send comment, rev (as listed), outcome and the matching field for each; repeating a report changes nothing. Set posted=true only when you posted the reply on the PR, which the board allows only when pr_review_take says so; otherwise the reply is shown on the card. This tool cannot merge, resolve a thread or dismiss a review.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -5532,6 +5535,9 @@
                         "answered",
                         "needs_you"
                       ]
+                    },
+                    "posted": {
+                      "type": "boolean"
                     },
                     "reply": {
                       "maxLength": 4000,

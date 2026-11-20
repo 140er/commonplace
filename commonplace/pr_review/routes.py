@@ -27,7 +27,7 @@ from commonplace.policy import PR_REVIEW_SCOPE
 
 from . import intake, mapping, status as st, trigger
 from .needs_me import CHOICES
-from .store import LIMITS, Invalid, Limit, Refused, open_review
+from .store import LIMITS, Invalid, Limit, Refused, open_review, reply_mode
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ def _board_view(store, slug):
         "board": slug,
         "enabled": setting["enabled"],
         "rounds": setting["rounds"],
+        "post_replies": setting["post_replies"],
         "limits": LIMITS,
     }
 
@@ -94,6 +95,8 @@ def _card_view(store, facts, limit=COMMENT_PAGE, offset=0):
             "rounds_used": row["rounds_used"],
             "rounds_allowed": setting["rounds"],
             "loop_stopped": row["loop_stopped"],
+            "public": row["public"],
+            "reply_mode": reply_mode(row, setting),
         },
         "counts": counts,
         "comments": store.comments(repo, pr, limit=limit, offset=offset),
@@ -287,12 +290,19 @@ def _board(principal, store, slug, method, owner, h, send):
         return None  # read_json has already sent the 400
     if (
         not isinstance(body, dict)
-        or body.keys() - {"enabled", "rounds"}
+        or body.keys() - {"enabled", "rounds", "post_replies"}
         or not isinstance(body.get("enabled"), bool)
     ):
-        raise Invalid("send enabled (true or false) and optionally rounds")
-    setting = store.set_board(slug, body["enabled"], principal.user_id, body.get("rounds"), _now())
-    send(200, {k: setting[k] for k in ("board", "enabled", "rounds")})
+        raise Invalid("send enabled (true or false) and optionally rounds and post_replies")
+    setting = store.set_board(
+        slug,
+        body["enabled"],
+        principal.user_id,
+        body.get("rounds"),
+        _now(),
+        post_replies=body.get("post_replies"),
+    )
+    send(200, {k: setting[k] for k in ("board", "enabled", "rounds", "post_replies")})
 
 
 def _people(principal, store, method, owner, h, send):

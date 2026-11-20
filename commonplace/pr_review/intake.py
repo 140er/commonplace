@@ -38,6 +38,7 @@ _BODY_KEYS = {
     "fetched_at",
     "changed_files",
     "comments",
+    "public",
 }
 _COMMENT_KEYS = {
     "kind",
@@ -199,6 +200,9 @@ def validate(body, now: datetime) -> dict:
     if not isinstance(files, list) or len(files) > MAX_FILES:
         raise Invalid(f"changed_files must be a list of at most {MAX_FILES} paths")
     files = [_plain(f, "changed_files path", 500) for f in files]
+    public = body.get("public")
+    if public is not None and not isinstance(public, bool):
+        raise Invalid("public must be true or false (whether the repository is public)")
     comments = body.get("comments")
     if not isinstance(comments, list) or len(comments) > MAX_COMMENTS:
         raise Invalid(f"comments must be a list of at most {MAX_COMMENTS} comments")
@@ -216,4 +220,5 @@ def validate(body, now: datetime) -> dict:
         "fetched_at": _time(body.get("fetched_at"), "fetched_at", now),
         "changed_files": files,
         "comments": out,
+        "public": public,
     }

@@ -137,6 +137,36 @@ def decisions(card) -> Optional[Section]:
     )
 
 
+def review_comments(card) -> Optional[Section]:
+    """Review comments waiting on the card's pull request, with the rules for answering them."""
+    review = card.get("review")
+    if not review:
+        return None
+    from commonplace.pr_review import guide
+
+    heading = (
+        f"Review comments on PR #{review['pr']} ({review['repo']}), waiting for you:\n"
+        + guide.guide(
+            card["number"],
+            review.get("branch"),
+            review["mode"],
+            review["rounds_used"],
+            review["rounds"],
+        )
+    )
+    items = []
+    for c in review["comments"]:
+        where = f" {quote(c['path'])}" if c.get("path") else ""
+        where += f" line {c['line']}" if c.get("path") and c.get("line") else ""
+        items.append(
+            f"- comment {c['id']} rev {c['rev']} [{c['status']}] {c['kind']} by "
+            f"{quote(c['author'])}{where}: {quote(c['text'])}"
+        )
+    return Section(
+        heading, tuple(items), "review comments", f"pr_review_list(card={card['number']})"
+    )
+
+
 def goal_head(card) -> tuple:
     """The card's own goal, the last link of its chain; never cut, like the title."""
     block = card.get("goals")
@@ -228,6 +258,7 @@ def linked_text(card) -> Optional[Section]:
 # Priority order. A builder takes the card dict of ``load`` and returns a Section or None.
 SECTIONS: list[Callable[[dict], Optional[Section]]] = [
     decisions,
+    review_comments,
     goals,
     comments,
     blockers,
@@ -331,7 +362,18 @@ def load(ctx: ToolContext, number: int) -> dict:
             continue  # not readable for this connection: the pointer line stays
         if isinstance(record, dict) and isinstance(record.get("content"), str):
             texts[link["drawer_id"]] = record["content"]
-    return {**card, "related": related, "linked_text": texts}
+    return {**card, "related": related, "linked_text": texts, "review": _review(ctx, number)}
+
+
+def _review(ctx: ToolContext, number: int):
+    """The card's waiting review comments, or ``None``; a failure never stops a start."""
+    try:
+        from commonplace.pr_review import context
+
+        return context.for_card(ctx, number)
+    except Exception as exc:  # the review loop is not the start's to break
+        log_failure(logger, "start context could not read review comments", exc)
+        return None
 
 
 def lease_fields(gateway, machine, row, message: Optional[str] = None) -> dict:

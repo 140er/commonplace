@@ -17,8 +17,8 @@ from commonplace.boards.service import BoardService
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolContext, ToolError, register
 from commonplace.http_util import log_failure
 
-from . import mapping, needs_me, status as st
-from .store import Invalid, Refused, open_review
+from . import guide, mapping, needs_me, status as st
+from .store import Invalid, Refused, open_review, reply_mode
 
 logger = logging.getLogger(__name__)
 
@@ -105,16 +105,22 @@ def pr_review_take(ctx, args):
     problem = mapping.pr_problem(row, facts) if row else None
     if problem:
         raise ToolError(f"no: {st.REASONS[problem][0]} [{problem}]")
-    rounds = store.board(facts["board"])["rounds"]
+    board = store.board(facts["board"])
     try:
-        taken = store.take_round(repo, pr, ctx.principal.actor, _now(), rounds=rounds)
+        taken = store.take_round(repo, pr, ctx.principal.actor, _now(), rounds=board["rounds"])
     except Refused as exc:
         raise ToolError(f"no: {_REFUSALS.get(exc.code, exc.code)} [{exc.code}]") from None
-    head = (
-        f"Round started on PR #{pr}: {len(taken)} comment(s) are yours."
-        if taken
-        else f"No comments are waiting on PR #{pr}."
+    if not taken:
+        return f"No comments are waiting on PR #{pr}."
+    row = store.pr(repo, pr)
+    text = guide.guide(
+        facts["number"],
+        facts.get("branch"),
+        reply_mode(row, board),
+        row["rounds_used"] if row else 0,
+        board["rounds"],
     )
+    head = f"Round started on PR #{pr}: {len(taken)} comment(s) are yours.\n{text}"
     return head + "".join("\n" + _line(c) for c in taken)
 
 
@@ -127,6 +133,7 @@ def pr_review_report(ctx, args):
     facts, repo, pr = _card(ctx, args["card"])
     _held(ctx, facts)
     store = open_review(ctx.gateway, ctx.principal.workspace_id)
+    mode = reply_mode(store.pr(repo, pr), store.board(facts["board"]))
     lines, asked = [], False
     for report in args["reports"]:
         if not isinstance(report, dict) or report.keys() - {
@@ -136,8 +143,19 @@ def pr_review_report(ctx, args):
             "commit",
             "reply",
             "note",
+            "posted",
         }:
-            raise ToolError("no: a report holds comment, rev, outcome, commit, reply and note only")
+            raise ToolError(
+                "no: a report holds comment, rev, outcome, commit, reply, note and posted only"
+            )
+        posted = report.get("posted", False)
+        if not isinstance(posted, bool):
+            raise ToolError("no: posted must be true or false")
+        if posted and mode != "post":
+            raise ToolError(
+                "no: this board shows replies on the card only; do not post them on GitHub "
+                "[dry_run]"
+            )
         cid, rev = report.get("comment"), report.get("rev")
         original = store.original(cid) if isinstance(cid, int) else None
         if (
@@ -161,6 +179,8 @@ def pr_review_report(ctx, args):
             raise ToolError(f"no: {exc}") from None
         except Refused as exc:
             raise ToolError(f"no: {_REFUSALS.get(exc.code, exc.code)} [{exc.code}]") from None
+        if shown.get("reply"):
+            store.mark_posted(cid, posted)
         asked = asked or shown["status"] == st.NEEDS_YOU
         lines.append(
             f"#{shown['id']} now {shown['status']}"
@@ -242,7 +262,9 @@ register(
             "commit SHA that fixes it on the PR branch, 'answered' with the reply that gives your "
             "reason or question, or 'needs_you' with a note on what only a person can decide. "
             "Send comment, rev (as listed), outcome and the matching field for each; repeating a "
-            "report changes nothing. This tool cannot merge, resolve a thread or dismiss a review."
+            "report changes nothing. Set posted=true only when you posted the reply on the PR, "
+            "which the board allows only when pr_review_take says so; otherwise the reply is "
+            "shown on the card. This tool cannot merge, resolve a thread or dismiss a review."
         ),
         input_schema={
             "type": "object",
@@ -261,6 +283,7 @@ register(
                             "commit": {"type": "string", "minLength": 40, "maxLength": 64},
                             "reply": {"type": "string", "minLength": 1, "maxLength": 4000},
                             "note": {"type": "string", "minLength": 1, "maxLength": 500},
+                            "posted": {"type": "boolean"},
                         },
                         "required": ["comment", "rev", "outcome"],
                         "additionalProperties": False,
