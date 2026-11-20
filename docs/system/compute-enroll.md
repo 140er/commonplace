@@ -132,3 +132,10 @@ The node harness of the whole Compute screen (`tests/compute_ui.mjs`) loads `com
 - **Quiet but not silent.** The first failed check is said once through the status line ("Could not check just now. Showing what was true at ..."); a recovered check clears it.
 - **Numbers, names, widths.** The run steps show their numerals (an ordered list again); the command block is a named region ("Run this on the machine"); "What it may do without asking" spans the form so its list is not clipped between 700 and 999 pixels.
 - **Words.** "Attested" is defined once, in the section note (an owner confirming the machine's provider and topics under Runner machines in Admin) and the approval sentence points back to it; the provider sign-in is named (Needs me); the copy-from hint says "without asking". `Set up again` keeps who may start work on the machine.
+
+#### Review round 3, screens
+
+- **Buttons wrap on a phone.** `.compute-pr .btn` wraps its label and is at least 44px tall below 700px, so "Make a new command (this one stops working)" fits a 320px screen in both looks; state chips and row text are 14px on touch. The width matrix now covers the waiting state, both confirmations and the member states, with a check that nothing reaches past the screen edge.
+- **A member can go back.** A member's detail has "Back to the list" (it had no control at all).
+- **The overview follows the machines.** When a machine appears, is approved or is removed, the section tells the overview to read again, so it does not say "Nothing here yet" beside a machine row. A runner added through this guide that has never sent a heartbeat reads "Set up and checked" in the overview too (not Online or Offline); its health is unknown, not attention. One heartbeat makes it an ordinary runner row.
+- **One sentence for a failed check.** The status line says "Could not check just now ..." once; the clock line then reads "Last checked at ..." instead of repeating it. The copy fallback says the command is selected and to press Ctrl+C.

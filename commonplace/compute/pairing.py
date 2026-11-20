@@ -405,6 +405,33 @@ def derive(row, steps, now_stamp):
     return "waiting", None
 
 
+def setup_only_ids(db, workspace_id):
+    """Machines added through a pairing that has never sent a heartbeat (reading never creates the tables).
+
+    Their setup-only service sends none, so whatever else the hub has seen of them is their own setup reports: a
+    screen must not call them Online or Offline.
+    """
+    with db._lock:
+        have = {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
+            )
+        }
+        if len(have) < 3:
+            return set()
+        return {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
+                "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NOT NULL "
+                "AND e.machine_id IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM machine_pairing_steps s WHERE s.pairing_id=p.id AND s.step=?)",
+                (workspace_id, HEARTBEAT),
+            )
+        }
+
+
 def fingerprint(row):
     """The machine key digest in groups of eight, exactly as the installer prints it."""
     digest = row["machine_key_digest"]

@@ -590,6 +590,29 @@ def test_a_null_request_id_is_refused_for_accept_and_close(flow):
     assert flow.get(made)["state"] == "connected" and flow.get(made)["version"] == item["version"]
 
 
+def test_the_overview_does_not_call_a_setup_only_machine_online_until_it_sends_a_heartbeat(flow):
+    made = flow.made()
+    credentials = flow.connect(made)
+    assert flow.accept(made)[0] == 200
+
+    def row():
+        status, listing = http(
+            flow.hub.port, "GET", "/api/compute/overview", cookie=flow.owner["cookie"]
+        )
+        assert status == 200, listing
+        return next(
+            i for i in listing["items"] if i["kind"] == "runner" and i["name"] == "build-box"
+        )
+
+    seen = row()
+    # Its own setup reports are all the hub has heard: that is not Online, and not Offline either.
+    assert (seen["status"]["code"], seen["status"]["label"]) == ("set_up", "Set up and checked")
+    assert "cannot see whether it is switched on" in seen["status"]["detail"]
+    assert seen["health"]["state"] == "unknown" and seen["health"]["state"] != "attention"
+    assert flow.report(credentials, {"step": "heartbeat"})[0] == 200
+    assert row()["status"]["code"] == "online", "a heartbeat is what makes it Online"
+
+
 def test_accept_replays_by_request_id_and_refuses_a_second_decision(flow):
     made = flow.made()
     flow.connect(made)

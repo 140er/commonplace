@@ -18,7 +18,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 
-from . import workspace_lifecycle as lifecycle, workspaces
+from . import pairing, workspace_lifecycle as lifecycle, workspaces
 from .control import StoreError
 
 KINDS = ("machine", "runner", "workspace")
@@ -792,7 +792,7 @@ def _recent_runs(conn, machine_id):
     return [dict(row) for row in conn.execute(RECENT_RUNS_SQL, (machine_id, ACTIVITY_LIMIT))]
 
 
-def runner_status(machine, record, facts, now):
+def runner_status(machine, record, facts, now, setup_only=False):
     """The one status of a runner machine: ``record`` is ``topology.status.machine_status``."""
     # The age of the last signal is the health line's job (``last_seen``); a sentence here says what it means.
     running, held = facts["running"], facts["finished_holding"]
@@ -819,6 +819,15 @@ def runner_status(machine, record, facts, now):
             "quiet",
             "Never connected",
             "This machine has not contacted Commonplace yet. Finish its setup and it will report here.",
+        )
+    if setup_only:
+        # Added through the setup guide and never heartbeated: its setup-only service sends no heartbeat, so the
+        # signals here are only its own setup reports. Online or Offline would claim what nothing can see.
+        return _status(
+            "set_up",
+            "quiet",
+            "Set up and checked",
+            "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
         )
     if reason == "no_heartbeat":
         return _status(
@@ -1055,8 +1064,8 @@ def _runner_usage(machine, facts, now, *, silent=""):
     return usage
 
 
-def runner_item(machine, record, facts, now, red_after_s=900):
-    status = runner_status(machine, record, facts, now)
+def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False):
+    status = runner_status(machine, record, facts, now, setup_only)
     blockers = runner_blockers(machine, record, facts, red_after_s)
     issues = []
     if facts["uncertain"]:
@@ -1095,7 +1104,7 @@ def runner_item(machine, record, facts, now, red_after_s=900):
         "last_seen": last,
         "health": {
             "state": "unknown"
-            if status["code"] == "never_connected"
+            if status["code"] in ("never_connected", "set_up")
             else "attention"
             if attention
             else "idle"
@@ -1247,6 +1256,7 @@ def _runner_items(store, now, only=None):
     signals = topo.collect_signals(gateway, ws, now=when, runs=runs)
     facts = _runner_facts(runs, now, machines)
     items = []
+    setup_only = pairing.setup_only_ids(gateway.db, ws)
     for machine in machines:
         sig = signals.get(machine["id"]) or topo.MachineSignals(
             machine_id=machine["id"],
@@ -1261,6 +1271,7 @@ def _runner_items(store, now, only=None):
                 facts.get(machine["id"]) or blank_facts(),
                 now,
                 config.red_after_s,
+                setup_only=machine["id"] in setup_only,
             )
         )
     return items, total
