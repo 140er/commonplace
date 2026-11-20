@@ -4,6 +4,7 @@
 - **Promises:**
 
   - No test starts a container or reaches a machine; the lifecycle is exercised through the seam with a fake executor. A runner's last signal is set relative to the fixture clock, so "offline" is reached by moving the clock, not by sleeping.
+  - The shared fleet initializes both runner registry and model-mode schema, matching the real database before admission and lease checks. It supplies no account authority or permissive fallback; every existing capacity, drain and refusal assertion stays unchanged.
 - **How it fails:**
 
   - A status that says running or online on a stale report, a zero where usage is unknown, a machine name or address in a member's answer, a start request that moves a phase, or a drain that still leases fails these tests.

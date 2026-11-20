@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from commonplace import control_db
 from commonplace.compute import workspace_lifecycle as lifecycle
+from commonplace.projects import model_modes
 from commonplace.runner import jobs, registry
 
 GRANT = {
@@ -77,6 +78,7 @@ class Fleet:
     def __init__(self, env):
         self.env = env
         registry.ensure(env.db)
+        model_modes.ensure_schema(env.db)
 
     def enroll(self, label="build-runner", attest=True, **grant):
         made = registry.enroll(self.env.db, self.env.principal, {**GRANT, "label": label, **grant})
