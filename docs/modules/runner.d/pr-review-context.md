@@ -1,0 +1,1 @@
+- **Owns:** the start context has a review-comments section (`start_context.review_comments`, second in priority after asks and decisions): the waiting comments of the card's PR with the Coworker's rules for answering them, read by `pr_review.context.for_card`; a failure there leaves the section out and never stops a start.
