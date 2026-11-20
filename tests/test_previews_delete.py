@@ -10,6 +10,8 @@ import shutil
 import sqlite3
 import threading
 
+import pytest
+
 from commonplace.previews import service, store
 from tests._console_helpers import console_hub_fixture  # noqa: F401
 from tests.test_commonplace_boards import mcp
@@ -201,6 +203,58 @@ def test_a_rename_the_disk_refuses_changes_nothing(console_hub, monkeypatch):
     shown = one(h, identity)
     assert shown["state"] == "ready" and shown["revisions"][0]["files_deleted"] is False
     assert files_of(h, identity).is_dir()
+
+
+def test_a_failure_after_the_rename_puts_the_files_back_where_the_rows_say(
+    console_hub, monkeypatch
+):
+    """The rename is not part of the SQLite transaction: if anything fails before the commit
+    lands, the rows roll back to ready and the folder must be renamed back."""
+    from contextlib import contextmanager
+
+    h = console_hub
+    _number, identity = published(h)
+    real_view = store.view
+
+    def failing_view(conn, row, *, revisions=False):
+        if revisions:
+            raise RuntimeError("could not read the result")
+        return real_view(conn, row, revisions=revisions)
+
+    monkeypatch.setattr(store, "view", failing_view)
+    with pytest.raises(RuntimeError):
+        service.delete_files(h.gateway, h.person(h.hub.admin), identity, identity)
+    monkeypatch.setattr(store, "view", real_view)
+    assert_untouched(h, identity)
+
+    # And a commit the database refuses (a full disk) after everything else succeeded.
+    real_tx = h.db._tx
+    armed = []
+
+    @contextmanager
+    def refusing_tx():
+        with real_tx() as conn:
+            yield conn
+            armed.append(True)
+            raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(h.db, "_tx", refusing_tx)
+    with pytest.raises(sqlite3.OperationalError):
+        service.delete_files(h.gateway, h.person(h.hub.admin), identity, identity)
+    monkeypatch.setattr(h.db, "_tx", real_tx)
+    assert armed
+    assert_untouched(h, identity)
+    # Nothing was lost: the delete works afterwards.
+    assert delete(h, h.owner, identity)[0] == 200
+    assert not files_of(h, identity).exists()
+
+
+def assert_untouched(h, identity):
+    shown = one(h, identity)
+    assert shown["state"] == "ready" and shown["url"] == f"/p/{identity}/"
+    assert shown["revisions"][0]["files_deleted"] is False
+    assert (store.revision_dir(h.gateway, h.workspace, identity, 1) / "index.html").is_file()
+    assert not list(store.root(h.gateway, h.workspace).glob(".deleting-*"))
 
 
 def test_deleted_previews_free_their_place_under_the_cap(console_hub, monkeypatch):
