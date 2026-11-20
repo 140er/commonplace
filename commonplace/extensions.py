@@ -65,6 +65,7 @@ MODULES = (
     "commonplace.pipeline",
     "commonplace.person_actions",
     "commonplace.previews",
+    "commonplace.pr_review",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})

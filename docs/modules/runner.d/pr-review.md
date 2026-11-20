@@ -1,0 +1,1 @@
+- **Owns:** every runner sweep also runs the review-comment trigger (`pr_review.trigger.run`) after the todo triggers, with its own failure handling, so waiting review comments reach a finished card without a person.

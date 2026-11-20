@@ -279,6 +279,13 @@ def _sweep(store):
         triggers.run(store)
     except Exception as exc:
         log_failure(logger, "orchestrator trigger sweep failed", exc)
+    # Review comments waiting for a Coworker (card #613); own failure handling, same rule.
+    try:
+        from commonplace.pr_review import trigger
+
+        trigger.run(store.gateway, store.workspace_id)
+    except Exception as exc:
+        log_failure(logger, "review comment trigger failed", exc)
 
 
 def _hourly(conn, machine, now):

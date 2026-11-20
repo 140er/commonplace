@@ -44,12 +44,17 @@ SCOPES = (
     "bots:confirm",
     "bots:learned",
     "pipeline:write",
+    "pr_review:write",
     "admin",
 )
 
 # The deploy script's own token: it may record pipeline events and do nothing else. The gateway
 # refuses every other route to a connection that holds it, and it must be the only scope.
 PIPELINE_SCOPE = "pipeline:write"
+# The review-comment feeder's own token: it may post PR review comments and read the watch list.
+PR_REVIEW_SCOPE = "pr_review:write"
+# Feed scopes: a token holds exactly one of them, as the workspace owner, with no parent.
+FEED_SCOPES = (PIPELINE_SCOPE, PR_REVIEW_SCOPE)
 
 TRUST_LEVELS = ("trusted", "standard", "untrusted")
 

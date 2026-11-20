@@ -1,0 +1,1 @@
+- **Owns:** a person's session policy never holds a feed scope (`pipeline:write` or `pr_review:write`): those belong only to the feeders' own tokens.

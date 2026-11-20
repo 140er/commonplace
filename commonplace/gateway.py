@@ -57,7 +57,15 @@ from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .bounded_map import BoundedMap
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
-from .policy import PIPELINE_SCOPE, TOOL_RULES, Policy, canonical_wing, is_private_wing
+from .policy import (
+    FEED_SCOPES,
+    PIPELINE_SCOPE,
+    PR_REVIEW_SCOPE,
+    TOOL_RULES,
+    Policy,
+    canonical_wing,
+    is_private_wing,
+)
 from .vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
 from .workers import (
     DEFAULT_REQUEST_WAIT_S,
@@ -87,6 +95,17 @@ MAX_FANOUT_WINGS = 64
 MAX_SEARCH_CANDIDATES = 100
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
+# A feeder token's one scope maps to the routes it may call and the refusal it gets elsewhere.
+_FEED_ROUTES = {
+    PIPELINE_SCOPE: (
+        {("POST", "/api/pipeline/events")},
+        "this connection can only record pipeline events",
+    ),
+    PR_REVIEW_SCOPE: (
+        {("POST", "/api/pr-review/comments"), ("GET", "/api/pr-review/watch")},
+        "this connection can only post review comments and read the watch list",
+    ),
+}
 
 
 def _public_worker_response(response, raw_reason=False):
@@ -2982,16 +3001,17 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         return False
 
     def _pipeline_token_refused(self, path, principal):
-        """A token whose only scope is pipeline:write records pipeline events and nothing else."""
-        if (
-            principal is None
-            or principal.person
-            or tuple(principal.policy.scopes) != (PIPELINE_SCOPE,)
-            or (self.command, path) == ("POST", "/api/pipeline/events")
-        ):
+        """A feeder token (one feed scope, nothing else) reaches its own routes and no others."""
+        if principal is None or principal.person:
+            return False
+        scopes = tuple(principal.policy.scopes)
+        if len(scopes) != 1 or scopes[0] not in FEED_SCOPES:
+            return False
+        allowed, text = _FEED_ROUTES[scopes[0]]
+        if (self.command, path) in allowed:
             return False
         self.close_connection = True
-        self._send_json(403, {"error": "this connection can only record pipeline events"})
+        self._send_json(403, {"error": text})
         return True
 
     def _handle(self):
