@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS machine_pairings (
     enrollment_id TEXT NOT NULL UNIQUE REFERENCES runner_enrollments(id),
     version INTEGER NOT NULL, accepted_by TEXT, accepted_at TEXT, accepted_digest TEXT,
     accept_request_id TEXT, closed_at TEXT, closed_reason TEXT, close_request_id TEXT,
-    last_report_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    last_report_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, program TEXT,
     UNIQUE(workspace_id, owner_id, request_id)
 );
 CREATE TABLE IF NOT EXISTS machine_pairing_steps (
@@ -165,6 +165,10 @@ CAUSES = {
     "missing_runner_program": (
         "The runner program is not installed on this machine, and this command does not install it yet.",
         "Ask the person who runs this site for the runner program, then open Cloud workspaces in the app and choose Set up again.",
+    ),
+    "program_unavailable": (
+        "The pinned runner program could not be delivered or verified.",
+        "Ask the site operator to check its program release, then choose Set up again.",
     ),
     "missing_privilege": (
         "The administrator confirmation was not given, or the password was wrong.",
@@ -299,6 +303,8 @@ def ensure(db):
         registry.ensure(db)
         enrollment.ensure(db)
         db._conn.executescript(SCHEMA)
+        if "program" not in {r[1] for r in db._conn.execute("PRAGMA table_info(machine_pairings)")}:
+            db._conn.execute("ALTER TABLE machine_pairings ADD COLUMN program TEXT")
         db._pairing_schema = True
 
 
@@ -363,6 +369,8 @@ def _step_rows(conn, pairing_id):
 
 def _age(stamp, now_stamp):
     then, now = control_db._parse(stamp), control_db._parse(now_stamp)
+    if then is None or now is None:
+        raise ValueError("invalid pairing timestamp")
     return max(0, int((now - then).total_seconds()))
 
 
@@ -705,6 +713,8 @@ def _find(db, workspace, pairing_id):
 
 
 def options(db, gateway, principal, *, owner):
+    from commonplace.runner import delivery
+
     result = {
         "kinds": [
             {
@@ -724,6 +734,7 @@ def options(db, gateway, principal, *, owner):
         "setup_enabled": enrollment.enabled(db, principal.workspace_id),
         "code_minutes": CODE_MINUTES,
         "offline_after_seconds": OFFLINE_SECONDS,
+        "program_delivery": delivery.pin_for(gateway) is not None,
         "states": {
             key: {
                 "label": v[0] if owner else MEMBER_LABEL.get(key, v[0]),
@@ -833,7 +844,7 @@ def _resolve_grant(db, owner, body):
         raise refuse(field, "invalid") from None
 
 
-def _envelope(hub, workspace, pairing_id, enrollment_id, label, digest):
+def _envelope(hub, workspace, pairing_id, enrollment_id, label, digest, program=None):
     public = {
         "v": 1,
         "hub": hub,
@@ -844,10 +855,12 @@ def _envelope(hub, workspace, pairing_id, enrollment_id, label, digest):
         "manifest_digest": digest,
         "kind": "runner",
     }
+    if program is not None:
+        public["program"] = program
     return base64.urlsafe_b64encode(_canonical(public).encode()).decode().rstrip("=")
 
 
-def render_command(hub, envelope, code):
+def render_command(hub, envelope, code, *, pinned_launcher=False):
     """The one command. The code goes in on standard input; the envelope has public values only.
 
     The launcher is fetched first and the rest runs only if that worked: a failed download stops here
@@ -855,9 +868,16 @@ def render_command(hub, envelope, code):
     history on shells that honour it. The line holds the one-time code, which is useless after first
     use or expiry.
     """
+    check = ""
+    if pinned_launcher:
+        from .pairing_routes import launcher_text
+
+        sha = hashlib.sha256((launcher_text().rstrip("\n") + "\n").encode()).hexdigest()
+        check = f"[ \"$(printf '%s\\n' \"$S\" | sha256sum | cut -d' ' -f1)\" = '{sha}' ] && "
     return (
-        f" S=$(curl -fsS '{hub}/machine-setup.sh') && printf '%s' '{code}' | "
-        f"sh -c \"$S\" machine-setup '{envelope}'"
+        f" S=$(curl -fsS '{hub}/machine-setup.sh') && "
+        + check
+        + f"printf '%s' '{code}' | sh -c \"$S\" machine-setup '{envelope}'"
     )
 
 
@@ -887,6 +907,8 @@ def create(db, gateway, principal, body):
 
     ``setup`` carries the one-time code and the command once; a replay returns ``None``.
     """
+    from commonplace.runner import delivery
+
     body = _body_fields(body)
     if not enrollment.enabled(db, principal.workspace_id):
         raise refuse(None, "setup_off", "conflict")
@@ -911,7 +933,11 @@ def create(db, gateway, principal, body):
         if _open_count(db, owner.workspace_id, stamp) >= MAX_OPEN:
             raise refuse(None, "too_many_open", "conflict", 429)
         grant = _resolve_grant(db, owner, body)
-        digest = _digest({"v": 1, "kind": body["kind"], "label": grant["label"], "grant": grant})
+        program = delivery.pin_for(gateway)
+        intent = {"v": 1, "kind": body["kind"], "label": grant["label"], "grant": grant}
+        if program is not None:
+            intent["program"] = program
+        digest = _digest(intent)
         try:
             _, issued = enrollment.issue(
                 db,
@@ -927,7 +953,7 @@ def create(db, gateway, principal, body):
             ) from None
         pairing_id = control_db._new_id("pair")
         db._conn.execute(
-            "INSERT INTO machine_pairings(id, workspace_id, kind, label, owner_id, request_id, request_hash, enrollment_id, version, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO machine_pairings(id, workspace_id, kind, label, owner_id, request_id, request_hash, enrollment_id, version, created_at, updated_at, program) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 pairing_id,
                 owner.workspace_id,
@@ -940,17 +966,20 @@ def create(db, gateway, principal, body):
                 1,
                 stamp,
                 stamp,
+                _canonical(program) if program is not None else None,
             ),
         )
         _audit(db, owner.workspace_id, "create", owner=owner, ids=(pairing_id, issued["id"]))
         row = db._conn.execute(_SELECT + "WHERE p.id=?", (pairing_id,)).fetchone()
         envelope = _envelope(
-            hub, owner.workspace_id, pairing_id, issued["id"], grant["label"], digest
+            hub, owner.workspace_id, pairing_id, issued["id"], grant["label"], digest, program
         )
         setup = {
             "code": issued["code"],
             "envelope": envelope,
-            "command": render_command(hub, envelope, issued["code"]),
+            "command": render_command(
+                hub, envelope, issued["code"], pinned_launcher=program is not None
+            ),
             "expires_at": issued["expires_at"],
         }
         return True, view(db, row, stamp, owner=True), setup
@@ -1165,7 +1194,7 @@ def check(db, data):
         if reason is not None and row is not None and row["workspace_id"] == workspace:
             # A refusal is a fact the owner's audit trail keeps (the rate limit bounds how many).
             _audit(db, workspace, "check", decision="deny", ids=(row["id"],), reason=reason)
-        if reason is None:
+        if reason is None and row is not None:
             if step:
                 _store_step(db, row, step, state, cause, stamp)
             return {

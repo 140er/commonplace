@@ -34,6 +34,7 @@ const RUN_STEPS = ["Open a terminal on that machine. On Ubuntu: press the Super 
 const WAIT_FINGERPRINT = "Waiting for the machine to print its fingerprint.";
 const CANNOT_RUN_YET = "Coworkers do not run on it in this version.";
 export const LIMITS_NOTE = "This version does not install the runner program itself (the command checks that it is there). It only checks a machine: Coworkers do not run on it in this version.";
+const PROGRAM_LIMITS_NOTE = "The command installs this site's pinned runner program and dependencies. Setup still only checks a machine: Coworkers do not run on it in this version.";
 const LOAD_ERROR = "Machines being added could not be loaded. Reload to try again.";
 const NO_ANSWER = "No answer from the server, so nothing is confirmed. Reload to check what happened before trying again.";
 const MEMBER_NOTE = "Only the workspace owner can add a machine.";
@@ -158,7 +159,7 @@ export function createPairing(ctx) {
     const off = manage() && setupEnabled ? ` ${NO_OFF_SWITCH}` : "";
     return `<header><h2 id="compute-pairing" tabindex="-1">Add a machine</h2>${add}</header>`
       + `<p class="compute-plain">${e(manage() ? OWNER_INTRO : MEMBER_INTRO)}</p>`
-      + `<p class="compute-plain" data-pr-limits>${e(LIMITS_NOTE + off)}</p>`;
+      + `<p class="compute-plain" data-pr-limits>${e((options?.program_delivery ? PROGRAM_LIMITS_NOTE : LIMITS_NOTE) + off)}</p>`;
   }
 
   function setupOffHTML() {
