@@ -1,0 +1,2 @@
+- **Owns:**
+  - The pre-commit configuration documents that the separate changed-file pre-push checker includes actual mypy and uses elapsed time as an alarm rather than a cutoff. Commit-stage Ruff configuration and its pinned version are unchanged.

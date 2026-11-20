@@ -1,0 +1,2 @@
+- **Owns:**
+  - `CONTRIBUTING.md` describes actual changed-file typechecking, non-cutting elapsed alarms, clean tracked input, staged hook-chain inspection, disposable-fixture activation and exact configuration rollback before coordinated shared installation.
