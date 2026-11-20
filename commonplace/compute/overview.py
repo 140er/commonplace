@@ -17,6 +17,7 @@ import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
+from typing import Any
 
 from . import pairing, workspace_lifecycle as lifecycle, workspaces
 from .control import StoreError
@@ -874,7 +875,7 @@ def _count_slots(store, conn, machines, of, started_since):
             names[machine["id"]] = "conn:" + worker["name"]
         except Exception:  # noqa: BLE001 - a worker connection that is gone holds no cards
             continue
-    cards = {}
+    cards: dict[str | None, set[tuple[str, int]]] = {}
 
     def working(machine_id):
         def read():
@@ -889,13 +890,14 @@ def _count_slots(store, conn, machines, of, started_since):
 
         return read
 
+    held: set[str]
     slots, held = {}, set()
     for machine in machines:
         rows = jobs.in_flight(conn, machine["id"], working(machine["id"]))
         slots[machine["id"]] = rows
         held.update(row["id"] for row in rows)
     started = [row["id"] for rows in slots.values() for row in rows if row["state"] == "started"]
-    ended = set()
+    ended: set[str] = set()
     for k in range(0, len(started), 500):
         chunk = started[k : k + 500]
         ended.update(
@@ -928,7 +930,7 @@ def _runner_facts(store, now, machines=()):
 
     since_epoch = now - SPEND_DAYS * 86400
     stamp = lambda epoch: datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
-    facts = {}
+    facts: dict[str, dict] = {}
 
     def of(machine_id):
         return facts.setdefault(machine_id, blank_facts())
@@ -1039,13 +1041,6 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
         return _status(
             "not_approved", "wait", "Not approved", pending["detail"], next_text=pending["next"]
         )
-    if reason == "never_reported":
-        return _status(
-            "never_connected",
-            "quiet",
-            "Never connected",
-            "This machine has not contacted Commonplace yet. Finish its setup and it will report here.",
-        )
     if setup_only:
         # Added through the setup guide and never heartbeated: its setup-only service sends no heartbeat, so the
         # signals here are only its own setup reports. Online or Offline would claim what nothing can see.
@@ -1054,6 +1049,13 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "quiet",
             pairing.SET_UP_LABEL,
             f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Coworkers do not run on it in this version.",
+        )
+    if reason == "never_reported":
+        return _status(
+            "never_connected",
+            "quiet",
+            "Never connected",
+            "This machine has not contacted Commonplace yet. Finish its setup and it will report here.",
         )
     if reason == "no_heartbeat":
         return _status(
@@ -1137,7 +1139,7 @@ def _runner_usage(machine, facts, now, *, silent="", takes_no_work=False):
         if silent
         else f"{used} of {_at_once(machine['max_in_flight'])} in use"
     )
-    usage = {
+    usage: dict[str, Any] = {
         "runs": {
             "known": True,
             "running": running,
@@ -1311,7 +1313,7 @@ def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, 
             facts,
             now,
             silent={"offline": "offline", "slow": "slow to report"}.get(status["code"], ""),
-            takes_no_work=status["code"] in GUIDED_SETUP_CODES,
+            takes_no_work=setup_only or status["code"] in GUIDED_SETUP_CODES,
         ),
         "placement": {"approved": machine["binding_state"] == "owner_attested"},
         "draining": facts["drain"]["draining"],
@@ -1483,6 +1485,7 @@ def _has_machines(store, data):
 
 
 def _summary(items):
+    by_status: dict[str, int]
     by_status, attention = {}, 0
     for item in items:
         code = item["status"]["code"]
@@ -1713,7 +1716,7 @@ def detail(store, principal, kind, item_id, *, session_hash):
     # Omit unused capacity settings while setup or approval still blocks new work.
     limits = (
         []
-        if item["status"]["code"] in HIDDEN_LIMIT_CODES
+        if "setup_only" in item["intake"]["reasons"] or item["status"]["code"] in HIDDEN_LIMIT_CODES
         else [
             {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
             {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
