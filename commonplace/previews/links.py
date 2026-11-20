@@ -7,7 +7,9 @@ relative links then name the token, and the token stands in for the session for 
 preview only.
 
 A token is random, stored only as a digest, bound to one preview, one person and one workspace,
-and lasts ``TTL``. Every request with it checks again that the person is still a member who can
+and lasts ``TTL`` (30 minutes). It is a key in the address: anyone who has that exact address
+can open the preview until it ends, so it is short, a person keeps at most ``KEEP`` of them per
+preview, and the texts say so. Every request with it checks again that the person is still a member who can
 open the card; a token that fails any check is treated as unknown. Expired tokens are removed
 when the next one is made (they are credentials, not user data).
 """
@@ -23,7 +25,8 @@ from commonplace.control_db import ControlError
 
 from . import store
 
-TTL = timedelta(hours=8)
+TTL = timedelta(minutes=30)
+KEEP = 3  # newest live links kept per person and preview; older ones end at once
 MARK = "~"
 
 
@@ -61,6 +64,12 @@ def mint(gateway, principal, preview_id) -> str:
                 principal.user_id,
                 store.stamp(now + TTL),
             ),
+        )
+        conn.execute(
+            "DELETE FROM preview_links WHERE preview_id=? AND user_id=? AND token_hash NOT IN "
+            "(SELECT token_hash FROM preview_links WHERE preview_id=? AND user_id=? "
+            "ORDER BY expires_at DESC LIMIT ?)",
+            (preview_id, principal.user_id, preview_id, principal.user_id, KEEP),
         )
     return token
 

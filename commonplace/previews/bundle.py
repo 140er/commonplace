@@ -70,6 +70,8 @@ def clean_path(raw) -> str:
         or ":" in raw
         or any(ord(c) < 32 or ord(c) == 127 for c in raw)
         or any(p == "" or p.startswith(".") for p in parts)
+        # A first part starting with "~" would read as a page link in the served address.
+        or parts[0].startswith("~")
     )
     if bad:
         raise Refused("bad_path", file=_shown(raw))

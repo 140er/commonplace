@@ -212,7 +212,7 @@ def test_missing_files_on_the_server_say_so_instead_of_an_empty_page(console_hub
     _number, identity = published(h)
     shutil.rmtree(folder(h, identity))
     status, _headers, body = visit(h, h.owner, f"/p/{identity}/")
-    assert status == 503 and b"could not be saved on the server" in body
+    assert status == 503 and b"cannot be read on the server right now" in body
 
 
 # ── the stop rule, applied when a preview is read or opened ──
