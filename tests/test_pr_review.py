@@ -1335,3 +1335,149 @@ def test_a_report_batch_with_one_refused_report_stores_none_of_it(world, bad, fr
     ]
     ok, text = mcp(h, h.t1, "pr_review_report", card=number, reports=[good])
     assert ok and rows(h)["1"]["status"] == "answered"
+
+
+# ── slice 3: the three answers, wherever they are given, and the reader's status ──
+
+
+def asked_card(h, monkeypatch, rounds=2):
+    """A card held by its Coworker that asked the owner about two comments it cannot address."""
+    configured(monkeypatch)
+    board_on(h, rounds=rounds)
+    number = start(h)
+    take(h, number)
+    ok, text = mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[
+            {"comment": 1, "rev": 1, "outcome": "needs_you", "note": "A product decision."},
+            {"comment": 2, "rev": 1, "outcome": "needs_you", "note": "Also a person's call."},
+            {"comment": 3, "rev": 1, "outcome": "answered", "reply": "Done as asked."},
+        ],
+    )
+    assert ok, text
+    return number
+
+
+@pytest.mark.parametrize(
+    "rounds, label", [(1, "One more round"), (2, "Two more rounds"), (3, "Three more rounds")]
+)
+def test_the_question_offers_the_three_answers_in_plain_words(world, monkeypatch, rounds, label):
+    h = world
+    number = asked_card(h, monkeypatch, rounds)
+    ok, shown = mcp(h, h.t1, "task_show", task=number)
+    assert f'options: ["{label}", "I will do it myself", "Ignore"]' in shown
+
+
+@pytest.mark.parametrize(
+    "choice, status, reason, card_status",
+    [
+        ("again", "new", None, "todo"),
+        ("mine", "skipped", "handled_by_person", "backlog"),
+        ("dismiss", "skipped", "dismissed_by_person", "todo"),
+    ],
+)
+def test_an_answer_in_the_section_answers_the_cards_question_too(
+    world, monkeypatch, choice, status, reason, card_status
+):
+    h = world
+    number = asked_card(h, monkeypatch)
+    path = f"/api/pr-review/cards/{number}/decision"
+    code, body, _ = h.request(h.owner, "POST", path, {"choice": choice})
+    assert code == 200 and body["card_answered"] is True, body
+    assert {(rows(h)[k]["status"], rows(h)[k]["reason"]) for k in ("1", "2")} == {(status, reason)}
+    ok, shown = mcp(h, h.t1, "task_show", task=number)
+    assert shown.split()[1] == card_status and "asks owner" not in shown.split("\n")[0]
+    trigger.run(h.gateway, h.workspace)  # the answer is not applied a second time
+    assert h.store.pr(REPO, 7)["decided_event"] > 0
+    assert (
+        len([e for e in h.store.history(REPO, 7) if e["kind"] in ("again", "mine", "dismissed")])
+        == 2
+    )
+
+
+def test_an_answer_given_on_the_cards_question_reaches_the_comments_once(world, monkeypatch):
+    h = world
+    number = asked_card(h, monkeypatch)
+    owner = service(h, h.person(h.admin))
+    owner.decide(number, choice="Two more rounds", then="return")
+    assert {rows(h)[k]["status"] for k in ("1", "2")} == {"needs_you"}  # not yet: the next pass
+    trigger.run(h.gateway, h.workspace)
+    assert {rows(h)[k]["status"] for k in ("1", "2")} == {"new"}
+    assert h.store.pr(REPO, 7)["rounds_used"] == 0
+    before = len(h.store.history(REPO, 7))
+    trigger.run(h.gateway, h.workspace)
+    assert len(h.store.history(REPO, 7)) == before
+
+
+def test_an_unrelated_answer_on_the_card_changes_no_comment(world, monkeypatch):
+    h = world
+    number = asked_card(h, monkeypatch)
+    owner = service(h, h.person(h.admin))
+    owner.decide(number, reply="Carry on with the other work first.", then="return")
+    trigger.run(h.gateway, h.workspace)
+    assert {rows(h)[k]["status"] for k in ("1", "2")} == {"needs_you"}
+
+
+def test_an_unrelated_question_with_the_same_answer_changes_no_comment(world, monkeypatch):
+    h = world
+    number = asked_card(h, monkeypatch)
+    owner = service(h, h.person(h.admin))
+    owner.decide(
+        number, reply="Keep these comments waiting while we discuss the name.", then="return"
+    )
+    owner.ask(
+        "Should we rename the project?",
+        ["Ignore", "Rename"],
+        task=number,
+        person_reason="The project name needs its owner's decision.",
+    )
+    owner.decide(number, choice="Ignore", then="return")
+    trigger.run(h.gateway, h.workspace)
+    assert {rows(h)[k]["status"] for k in ("1", "2")} == {"needs_you"}
+
+
+@pytest.mark.parametrize("older", [False, True])
+def test_replaying_a_card_answer_cannot_discard_a_later_comment_revision(world, monkeypatch, older):
+    h = world
+    number = asked_card(h, monkeypatch)
+    assert (
+        h.request(
+            h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "dismiss"}
+        )[0]
+        == 200
+    )
+    event_id = h.store.pr(REPO, 7)["decided_event"]
+    assert event_id > 1
+    assert (
+        post(h, batch(comment(1, "Please also rename the helper.", updated_at=when(-1))))[0] == 200
+    )
+    assert rows(h)["1"]["status"] == "new"
+    before = h.store.history(REPO, 7)
+    h.store.decide(
+        REPO, 7, "dismiss", "person", datetime.now(timezone.utc), event_id=event_id - int(older)
+    )
+    assert rows(h)["1"]["status"] == "new"
+    assert h.store.history(REPO, 7) == before
+
+
+def test_the_reader_status_says_what_the_owner_waits_for_without_any_token(world, monkeypatch):
+    h = world
+    path = "/api/pr-review/status"
+    assert h.request(h.member, "GET", path)[0] == 403
+    assert h.request(h.t1, "GET", path)[0] == 403
+    # the fixture minted a feeder token: it exists, nothing was read yet
+    code, body, raw = h.request(h.owner, "GET", path)
+    assert code == 200 and body["reader"] == {"state": "waiting_first_read", "last_read_at": None}
+    assert h.feeder.encode() not in raw
+    post(h, batch(comment(1)))
+    assert h.request(h.owner, "GET", path)[1]["reader"]["state"] == "reading"
+    later = datetime.now(timezone.utc) + timedelta(minutes=13)
+    monkeypatch.setattr(routes, "_now", lambda: later)
+    assert h.request(h.owner, "GET", path)[1]["reader"]["state"] == "stale"
+    for row in h.db.connections(h.workspace):
+        if "pr_review:write" in (row["policy"] or ""):
+            h.db.revoke(row["id"], actor=h.admin, workspace_ref=h.workspace)
+    assert h.request(h.owner, "GET", path)[1]["reader"]["state"] == "no_token"

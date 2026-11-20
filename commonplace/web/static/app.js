@@ -239,9 +239,11 @@ function callTree(card) {
 // section's keys are listed here too (kept equal to FOCUS_KEYS in cardpreviews.js by a test), so
 // this shell does not load that module before a card is opened.
 const PREVIEW_FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-rule-save", "data-preview-heading"];
+// The same for the Review comments section (kept equal to FOCUS_KEYS in cardreviews.js by a test).
+const REVIEW_FOCUS_KEYS = ["data-review-heading", "data-review-retry", "data-review-answer", "data-review-more", "data-review-original", "data-review-expand", "data-review-settings"];
 function focusKey(el) {
   if (el.id) return `#${CSS.escape(el.id)}`;
-  for (const name of ["data-action", "data-details-tab", "data-details-title", ...PREVIEW_FOCUS_KEYS]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
+  for (const name of ["data-action", "data-details-tab", "data-details-title", ...PREVIEW_FOCUS_KEYS, ...REVIEW_FOCUS_KEYS]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
   return null;
 }
 function remember() {
@@ -336,6 +338,7 @@ function currentBoard() {
 }
 function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
 function closeCardPanel() {
+  if (/^#\/board\/[^/?]+\/settings$/.test(state.route)) { location.hash = state.base; return; }
   if (state.deck?.on() && phone() && history.state?.deckProjectSettings) { history.back(); return; }
   detailsUI?.stop(); detailsUI = null;
   if (state.route.startsWith("#/card/")) location.hash = state.base;
@@ -934,7 +937,7 @@ async function openProjectSettings(action, b, { mountProject, settingsOptions })
   needs?.pause(true);
   panel.hidden = false;
   panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
-  if (state.deck?.on() && phone() && !history.state?.deckProjectSettings) {
+  if (state.deck?.on() && phone() && !state.route.endsWith("/settings") && !history.state?.deckProjectSettings) {
     history.pushState({ ...history.state, deckProjectSettings: true }, "", location.hash);
   }
   await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
@@ -1667,7 +1670,9 @@ async function route() {
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
   const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last, deck: state.deck?.owns("#/compute") === true });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
-  try { await prepareRoute(hash, direct ? boardRoute({ boards: state.boards, last }) : state.base); }
+  const projectSettings = /^#\/board\/([^/?]+)\/settings$/.exec(hash);
+  const pageHash = projectSettings ? `#/board/${projectSettings[1]}` : hash;
+  try { await prepareRoute(pageHash, direct ? boardRoute({ boards: state.boards, last }) : state.base); }
   catch (error) {
     if (routeRequest !== state.routeRequest || !state.me) return false;
     state.bootRoutePending = true;
@@ -1688,6 +1693,7 @@ async function route() {
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
     state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?(?:\?new=1)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
+    if (projectSettings) state.base = pageHash;
     if (start === undefined && state.deck?.owns(hash)) state.base = hash;
     // Today and Compute exist in the Deck look only; without it they are an unknown address.
     if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
@@ -1741,7 +1747,15 @@ async function route() {
   if (state.bootRoutePending) { state.bootRoutePending = false; schedule(0); }
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
-  await refresh();
+  const refreshed = await refresh();
+  if (projectSettings && refreshed !== false && routeRequest === state.routeRequest && state.me) {
+    try {
+      const projects = await import("./projects.js");
+      if (routeRequest !== state.routeRequest || !state.me) return;
+      await openProjectSettings("coordinator", { dataset: { board: decodeURIComponent(projectSettings[1]) } }, projects);
+      root.querySelector("[data-project-back]")?.focus();
+    } catch (error) { showError(error.message); }
+  }
 }
 // Opening a card: the panel draws what the lists already know of it at once, and the card's own read
 // starts now, beside the project refresh instead of after it. A known card is drawn in full as soon as

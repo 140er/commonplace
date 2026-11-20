@@ -9,6 +9,7 @@ one (the trigger) every board is visible. Only facts leave this module, never ca
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 from commonplace.boards.store import BoardStore
@@ -19,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 _CARD = (
     "SELECT t.id, t.status, t.assignee, t.branch, t.pr_repo, t.pr_state, t.pr_head, t.checks, "
-    "t.ask, t.review_kind, t.pr_url, t.created_by, b.id AS board_id, b.slug AS board, "
+    "t.ask, t.review_kind, t.pr_url, t.created_by, t.version, b.id AS board_id, b.slug AS board, "
     "b.wing AS wing FROM tasks t JOIN boards b ON b.id=t.board_id WHERE t.pr_number=? ORDER BY t.id"
 )
 _ONE = (
     "SELECT t.id, t.status, t.assignee, t.branch, t.pr_repo, t.pr_state, t.pr_head, t.checks, "
-    "t.ask, t.review_kind, t.pr_url, t.pr_number, t.created_by, b.id AS board_id, "
+    "t.ask, t.review_kind, t.pr_url, t.pr_number, t.created_by, t.version, b.id AS board_id, "
     "b.slug AS board, b.wing AS wing FROM tasks t JOIN boards b ON b.id=t.board_id WHERE t.id=?"
 )
 
@@ -43,6 +44,7 @@ def _facts(row) -> dict:
         "wing",
         "pr_url",
         "created_by",
+        "version",
     )
     return {"number": row["id"], **{k: row[k] for k in keys}}
 
@@ -137,3 +139,94 @@ def pr_problem(pr_row, facts) -> str | None:
     if pr_row["branch"] and facts["branch"] and pr_row["branch"] != facts["branch"]:
         return "branch_not_owned"
     return None
+
+
+def question_event(gateway, workspace_id, number, *, version) -> int:
+    """The exact question just placed, or zero if the card changed before it could be bound."""
+    store = _open(gateway, workspace_id)
+    if store is None:
+        return 0
+    with store.connection() as conn:
+        row = conn.execute(
+            "SELECT e.id FROM task_events e JOIN tasks t ON t.id=e.task_id "
+            "WHERE t.id=? AND t.version=? AND e.to_status='review' "
+            "AND e.kind IN ('ask','handoff','move') ORDER BY e.id DESC LIMIT 1",
+            (number, version),
+        ).fetchone()
+    return row["id"] if row else 0
+
+
+def last_answer(gateway, workspace_id: str, number: int, choices: list, *, pr: int) -> dict | None:
+    """The answer to the card's latest question, including its exact ``question_id``.
+    Never search past a newer question, even one for the same PR or offering the same words.
+    """
+    from .needs_me import is_ours
+
+    store = _open(gateway, workspace_id)
+    if store is None or not choices:
+        return None
+    with store.connection() as conn:
+        row = _last_answer(conn, number)
+    if row and row["choice"] in choices and is_ours(row["question"], pr):
+        return {key: row[key] for key in ("id", "choice", "stamp_user", "question_id")}
+    return None
+
+
+def _last_answer(conn, number):
+    return conn.execute(
+        "SELECT e.id, e.choice, e.stamp_user, a.id AS question_id, a.text AS question "
+        "FROM task_events e JOIN task_events a ON a.task_id=e.task_id AND a.id < e.id "
+        "WHERE e.task_id=? AND e.kind='decide' AND a.id=("
+        "SELECT id FROM task_events WHERE task_id=e.task_id AND to_status='review' "
+        "AND kind IN ('ask','handoff','move') ORDER BY id DESC LIMIT 1) "
+        "ORDER BY e.id DESC LIMIT 1",
+        (number,),
+    ).fetchone()
+
+
+@contextmanager
+def answer_guard(gateway, workspace_id, facts, event, choice):
+    """Fence a delayed answer against every board question writer until review commit.
+
+    ReviewStore enters this only after validating the bound comment revisions. A delayed
+    personal takeover first commits the generic, owner-authorized Backlog transition with
+    the lookup's card version. Failure leaves comments pending; a later review failure
+    leaves the card safely in Backlog. No nested board transactions are required.
+    """
+    from commonplace import sessions
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext, ToolError
+
+    store = _open(gateway, workspace_id)
+    if store is None:
+        yield False
+        return
+    number, version = facts["number"], facts["version"]
+    if choice == "mine" and facts["status"] != "backlog":
+        if facts["status"] not in ("todo", "doing") or not event["stamp_user"]:
+            yield False
+            return
+        person = sessions.person_principal(gateway.db, event["stamp_user"], workspace_id)
+        if person is None:
+            yield False
+            return
+        try:
+            shown = BoardService(ToolContext(principal=person, gateway=gateway)).task_update(
+                number, version=version, status="backlog"
+            )
+        except ToolError as exc:
+            log_failure(logger, "delayed review answer could not move its card", exc)
+            yield False
+            return
+        version = shown["version"]
+    with store.transaction() as conn:
+        current = conn.execute("SELECT version FROM tasks WHERE id=?", (number,)).fetchone()
+        latest = _last_answer(conn, number)
+        yield bool(
+            current
+            and current["version"] == version
+            and latest
+            and all(
+                latest[key] == event[key] for key in ("id", "question_id", "choice", "stamp_user")
+            )
+        )

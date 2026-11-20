@@ -19,6 +19,11 @@
 .pl-pill[data-state="done"] { color: var(--cyan); }
 .pl-pill[data-state="failed"] { color: var(--red); }
 .pl-pill[data-state="running"] { color: var(--violet-ink); }
+/* The review comments chip spans the row under the title, so long words wrap at 320 px. */
+.pl-reviews { grid-column: 1 / -1; justify-self: start; white-space: normal; overflow-wrap: anywhere; }
+.pl-meta a[data-pl-review-card] { display: inline-flex; align-items: center; }
+@media (pointer: coarse), (max-width: 999px) { .pl-meta a[data-pl-review-card] { min-height: 44px; } }
+@media (pointer: coarse), (max-width: 699px) { .pl-reviews, .pl-meta a[data-pl-review-card] { font-size: 14px; } }
 .pl-stats { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 28px; }
 .pl-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pl-stat small { font-size: 11px; color: var(--ink3); }

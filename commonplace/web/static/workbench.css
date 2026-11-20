@@ -148,7 +148,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
     left: 0; width: auto; height: 100vh; border: 0; box-shadow: none;
   }
   .shell.chat-open .chat-scrim { display: none; }
-  .shell:not(.chat-open):not(.ctx-pushed) .context .ctx-body { overflow: visible; }
+  .shell:not(.chat-open):not(.ctx-pushed):not(.panel-open) .context .ctx-body { overflow: visible; }
 }
 .shell.chat-open #details-btn, .shell.ctx-pushed #details-btn { display: none; }
 
@@ -305,6 +305,31 @@ section.card-previews [aria-invalid="true"] { outline: 2px solid var(--block); o
   .shell.panel-open .context .workbench-details:has([data-card-previews]) .ctx-body > * { flex-shrink: 0; }
   .shell.panel-open .context .workbench-details:has([data-card-previews]) :is(.ctx-head, .ctx-foot) { flex-shrink: 0; }
 }
+/* Review comments: the same shapes as Previews; the words wrap at any width. */
+.card-reviews:not([hidden]) { display: flex; flex-direction: column; gap: 8px; }
+.card-reviews .run-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.card-reviews .run-list > li { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); min-width: 0; }
+.card-reviews .run-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--text-2); font-size: 13px; max-width: 100%; overflow-wrap: anywhere; min-width: 0; }
+.card-reviews .run-state { color: var(--text); font-weight: 600; }
+.card-reviews [data-tone="bad"] .run-state { color: var(--block); }
+.card-reviews .run-reason, .card-reviews .run-note, .card-reviews .run-empty { font-size: 12.5px; line-height: 19px; color: var(--text-2); overflow-wrap: anywhere; margin: 0; }
+.card-reviews .review-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; margin: 0; max-width: 100%; }
+.card-reviews .review-reply { border-left: 3px solid var(--line); padding-left: 8px; width: 100%; box-sizing: border-box; }
+.card-reviews .review-decision { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); }
+.card-reviews .review-answer { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.card-reviews code { overflow-wrap: anywhere; white-space: normal; }
+.card-reviews h3[data-review-heading]:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+/* "section.card-reviews[data-card-reviews]" outweighs the Deck look's 36 px buttons, which load later. */
+@media (pointer: coarse), (max-width: 999px) {
+  section.card-reviews[data-card-reviews] .btn { min-height: 44px; min-width: 44px; justify-content: center; white-space: normal; text-align: center; }
+  section.card-reviews[data-card-reviews] a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+  section.card-reviews[data-card-reviews] .review-answer .btn, section.card-reviews[data-card-reviews] [data-review-more], section.card-reviews[data-card-reviews] [data-review-retry] { width: 100%; }
+}
+@media (pointer: coarse), (max-width: 699px) {
+  section.card-reviews .run-reason, section.card-reviews .run-note, section.card-reviews .run-empty, section.card-reviews .run-line, section.card-reviews .review-text { font-size: 14px; line-height: 21px; }
+  section.card-reviews[data-card-reviews] :is(h3, .btn, .tag, code, time) { font-size: 14px; }
+  :root section.card-reviews[data-card-reviews] .sec-h h3[data-review-heading] { font-size: 14px; }
+}
 .card-runs .run-empty { font-size: 13px; color: var(--text-2); }
 .card-runs .run-note { font-size: 12.5px; color: var(--text-2); }
 .card-runs .run-note:empty { display: none; }
@@ -357,3 +382,23 @@ section.card-previews [aria-invalid="true"] { outline: 2px solid var(--block); o
 
 /* Project settings > Coordinator: the typed text that confirms a restore acknowledgement fills the row, also on a phone. */
 .orch-restore-text { width: 100%; box-sizing: border-box; }
+/* Project settings > Review comments: labels above controls, words that wrap, touch-size controls. */
+[data-project-reviews] { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+[data-project-reviews] form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; min-width: 0; }
+[data-project-reviews] label { display: flex; flex-direction: column; gap: 4px; max-width: 100%; overflow-wrap: anywhere; }
+[data-project-reviews] label.set-check { flex-direction: row; align-items: flex-start; gap: 8px; }
+[data-project-reviews] .set-note { margin: 0; color: var(--text-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+[data-project-reviews] .set-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+[data-project-reviews] .set-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; overflow-wrap: anywhere; }
+[data-project-reviews] select, [data-project-reviews] input:not([type="checkbox"]) { max-width: 100%; }
+@media (pointer: coarse), (max-width: 999px) {
+  /* "section.set-sec[...] [...]" outweighs the Deck look's 36 px settings fields and buttons. */
+  section.set-sec[data-project-reviews-section] [data-project-reviews] :is(.btn, select, input:not([type="checkbox"])) { min-height: 44px; }
+  [data-project-reviews] input[type="checkbox"] { width: 24px; height: 24px; }
+  [data-project-reviews] label.set-check { min-height: 44px; align-items: center; }
+}
+@media (pointer: coarse), (max-width: 699px) {
+  section.set-sec[data-project-reviews-section] [data-project-reviews] :is(.set-note, label) { font-size: 14px; line-height: 21px; }
+  section.set-sec[data-project-reviews-section] [data-project-reviews] .btn { font-size: 14px; }
+  [data-project-reviews] input:not([type="checkbox"]), [data-project-reviews] select { font-size: 16px; }
+}

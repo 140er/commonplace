@@ -26,13 +26,15 @@ from commonplace import http_util
 from commonplace.policy import PR_REVIEW_SCOPE
 
 from . import intake, mapping, status as st, trigger
-from .needs_me import CHOICES
+from .needs_me import CHOICES, IGNORE, MINE, THEN, is_ours, options
 from .store import LIMITS, Invalid, Limit, Refused, open_review, reply_mode
 
 logger = logging.getLogger(__name__)
 
 PREFIX = "/api/pr-review"
 COMMENT_PAGE = 200
+# The reader is late when nothing was read for this long (it reads every 2 to 10 minutes).
+STALE_READ_S = 12 * 60
 COMMENT_PAGE_MAX = 500
 LIST_PAGE = 50
 LIST_PAGE_MAX = 100
@@ -66,12 +68,41 @@ def _board_view(store, slug):
     }
 
 
-def _card_view(store, facts, limit=COMMENT_PAGE, offset=0):
+def _answers(rounds: int) -> list[dict]:
+    """The three answers to comments that need a person, in the words the card shows."""
+    more = {1: "one more round", 2: "two more rounds", 3: "three more rounds"}.get(
+        rounds, "more rounds"
+    )
+    again, mine, ignore = options(rounds)
+    return [
+        {
+            "choice": "again",
+            "label": again,
+            "explain": f"The Coworker gets {more} on these comments and on any that still wait.",
+        },
+        {
+            "choice": "mine",
+            "label": mine,
+            "explain": "The Coworker stops answering this pull request's comments. The card moves "
+            "to Backlog, so no Coworker picks it up while you work on them.",
+        },
+        {
+            "choice": "dismiss",
+            "label": ignore,
+            "explain": "The waiting comments are set aside and nobody acts on them. The card goes "
+            "back to its Coworker.",
+        },
+    ]
+
+
+def _card_view(store, facts, limit=COMMENT_PAGE, offset=0, *, owner=False):
     repo = mapping.repo_of(facts)
     pr = facts.get("pr_number")
-    base = {"card": facts["number"], "repo": repo, "pr": pr}
+    base = {"card": facts["number"], "board": facts["board"], "repo": repo, "pr": pr}
     setting = store.board(facts["board"])
     base["loop"] = {"enabled": setting["enabled"], "rounds": setting["rounds"]}
+    base["can_decide"] = owner
+    base["answers"] = _answers(setting["rounds"]) if owner else []
     if not repo or not pr:
         return {
             **base,
@@ -184,6 +215,12 @@ def _people_routes(gateway, principal, store, parts, h, send):
         return _board(principal, store, parts[1], method, owner, h, send)
     if parts == ["people"]:
         return _people(principal, store, method, owner, h, send)
+    if parts == ["status"] and method == "GET":
+        if not owner:
+            return send(
+                403, {"error": "Only a workspace owner can use this.", "reason": "forbidden"}
+            )
+        return send(200, {"reader": _reader(gateway, principal, store), "limits": LIMITS})
     number = _card_ref(parts)
     facts = (
         None
@@ -197,7 +234,7 @@ def _people_routes(gateway, principal, store, parts, h, send):
         params = http_util.query(h)
         limit = _page(params, "limit", COMMENT_PAGE, 1, COMMENT_PAGE_MAX)
         offset = _page(params, "offset", 0, 0, 10**6)
-        return send(200, _card_view(store, facts, limit, offset))
+        return send(200, _card_view(store, facts, limit, offset, owner=owner))
     if (
         len(parts) == 5
         and parts[2:3] == ["comments"]
@@ -227,10 +264,79 @@ def _decision(gateway, principal, store, facts, owner, h, send):
     repo, pr = mapping.repo_of(facts), facts.get("pr_number")
     if not repo or not pr:
         return send(404, NOT_FOUND)
-    shown = store.decide(repo, pr, choice, f"user:{principal.user_id}", _now())
+    if choice not in THEN:
+        raise Invalid("choice must be again, mine or dismiss")
+    event_id, card_reason = _answer_question(gateway, principal, store, facts, choice)
+    shown = store.decide(repo, pr, choice, f"user:{principal.user_id}", _now(), event_id=event_id)
     if choice == "again":
         _wake(gateway, principal.workspace_id, _now())
-    return send(200, shown)
+    current = mapping.card_facts(
+        gateway, principal.workspace_id, facts["number"], principal=principal
+    )
+    return send(
+        200,
+        {
+            **shown,
+            "card_answered": bool(event_id),
+            "card_answer_reason": card_reason,
+            "card_question_pending": bool(
+                current and current["status"] == "review" and current["ask"]
+            ),
+        },
+    )
+
+
+def _answer_question(gateway, principal, store, facts, choice) -> tuple[int, str | None]:
+    """Answer the card's own question too, when it is the loop's, so the Needs me item goes and
+    the card moves on (back to its Coworker, or to Backlog for "I will do it myself"). Returns
+    the board event id and a fixed reason when the card could not follow the comment decision."""
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext, ToolError
+
+    if not is_ours(facts.get("ask"), facts.get("pr_number")) or facts.get("status") != "review":
+        return 0, "unrelated_question" if facts.get("ask") else "no_question"
+    label = {
+        "again": options(store.board(facts["board"])["rounds"])[0],
+        "mine": MINE,
+        "dismiss": IGNORE,
+    }[choice]
+    try:
+        BoardService(ToolContext(principal=principal, gateway=gateway)).decide(
+            facts["number"], choice=label, then=THEN[choice], version=facts["version"]
+        )
+    except ToolError as exc:  # the comments still follow the answer; the card keeps its question
+        http_util.log_failure(logger, "review answer could not answer the card's question", exc)
+        return 0, "card_refused"
+    event = mapping.last_answer(
+        gateway, principal.workspace_id, facts["number"], [label], pr=facts["pr_number"]
+    )
+    return (event["id"], None) if event else (0, "card_changed")
+
+
+def _reader(gateway, principal, store):
+    """The comment reader as the owner sees it: whether its hub token exists and when it last
+    read. Never a token, never where it runs."""
+    from datetime import datetime as _dt
+
+    now = _now()
+    live = False
+    for row in gateway.db.connections(principal.workspace_id):
+        policy = row["policy"] or ""
+        expires = row["expires_at"]
+        if row["revoked_at"] or PR_REVIEW_SCOPE not in policy:
+            continue
+        if expires and _dt.fromisoformat(expires.replace("Z", "+00:00")) <= now:
+            continue
+        live = True
+    last = store.last_read()
+    if not live:
+        state = "no_token"
+    elif not last:
+        state = "waiting_first_read"
+    else:
+        age = (now - _dt.fromisoformat(last.replace("Z", "+00:00"))).total_seconds()
+        state = "stale" if age > STALE_READ_S else "reading"
+    return {"state": state, "last_read_at": last}
 
 
 def _wake(gateway, workspace, now):
