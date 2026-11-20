@@ -12,6 +12,7 @@ trigger pass applies an answer given there, once: ``apply_answers``).
 from __future__ import annotations
 
 import logging
+from functools import partial
 
 from commonplace.http_util import log_failure
 
@@ -129,6 +130,14 @@ def apply_answers(gateway, workspace_id, store, now) -> int:
             event_id=event["id"],
             question_id=event["question_id"],
             card_id=found["card"],
+            board_guard=partial(
+                mapping.answer_guard,
+                gateway,
+                workspace_id,
+                found["facts"],
+                event,
+                CHOICES[event["choice"]],
+            ),
         )
         applied += int(result["applied"])
     return applied

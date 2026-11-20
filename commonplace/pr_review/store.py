@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from contextlib import ExitStack
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -1001,6 +1002,7 @@ class ReviewStore:
         event_id: int = 0,
         question_id: int = 0,
         card_id: int = 0,
+        board_guard=None,
     ) -> dict:
         """A person's answer to the one Needs me item of a PR: ``again`` (two more rounds and the
         held comments return to ``new``), ``mine`` (the loop stops for this PR) or ``dismiss``
@@ -1008,7 +1010,9 @@ class ReviewStore:
         at = stamp(now)
         if choice not in ("again", "mine", "dismiss"):
             raise Invalid("choice must be again, mine or dismiss")
-        with self._tx() as conn:
+        # Enter the board guard only after validating the review snapshot, and release it
+        # after the review COMMIT. Question writers use the same SQLite write lock.
+        with ExitStack() as guards, self._tx() as conn:
             pr_row = conn.execute(
                 "SELECT * FROM pr_review_prs WHERE repo=? AND pr=?", (repo, pr)
             ).fetchone()
@@ -1018,6 +1022,7 @@ class ReviewStore:
                 return {"choice": choice, "counts": self.counts(repo, pr), "applied": False}
             if question_id and (
                 not event_id
+                or board_guard is None
                 or event_id <= question_id
                 or pr_row["question_event"] != question_id
                 or pr_row["question_card"] != card_id
@@ -1026,6 +1031,8 @@ class ReviewStore:
             ):
                 # An unapplied historical answer is stale too. Validate both the exact
                 # question and its revisions after BEGIN IMMEDIATE, before any side effect.
+                return {"choice": choice, "counts": self.counts(repo, pr), "applied": False}
+            if question_id and not guards.enter_context(board_guard()):
                 return {"choice": choice, "counts": self.counts(repo, pr), "applied": False}
             if event_id:
                 # The board event that carried the answer: it is applied once, never again.
