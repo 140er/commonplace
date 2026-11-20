@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS pr_review_prs (
     branch TEXT NOT NULL DEFAULT '', head_repo TEXT NOT NULL DEFAULT '',
     fetched_at TEXT NOT NULL DEFAULT '', changed_files TEXT NOT NULL DEFAULT '[]',
     changed_head TEXT NOT NULL DEFAULT '',
-    rounds_used INTEGER NOT NULL DEFAULT 0, rounds_allowed INTEGER NOT NULL DEFAULT 2,
+    rounds_used INTEGER NOT NULL DEFAULT 0,
     last_round_at TEXT NOT NULL DEFAULT '', loop_stopped INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     PRIMARY KEY (repo, pr)
@@ -612,7 +612,7 @@ class ReviewStore:
                     (at, repo, pr, holder),
                 )
                 return [self.shown(r) for r in mine]
-            if pr_row["rounds_used"] >= min(rounds, pr_row["rounds_allowed"]):
+            if pr_row["rounds_used"] >= rounds:
                 raise Refused("rounds_exhausted")
             waiting = conn.execute(
                 "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? AND status='new' "
@@ -917,10 +917,20 @@ class _Transaction:
         return False
 
 
+_STORES_LOCK = threading.Lock()
+
+
 def open_review(gateway, workspace_id: str) -> ReviewStore:
-    """The gateway's one store for a workspace; it follows the workspace's directory."""
+    """The gateway's one store for a workspace; it follows the workspace's directory. The first
+    requests of a workspace may race: the lock makes sure only one store (one connection, one
+    lock) is ever built for a file."""
     stores = gateway.__dict__.setdefault("_pr_review_stores", {})
-    if workspace_id not in stores:
-        supervisor = gateway.supervisor
-        stores[workspace_id] = ReviewStore(lambda: supervisor.workspace_dir(workspace_id))
-    return stores[workspace_id]
+    store = stores.get(workspace_id)
+    if store is None:
+        with _STORES_LOCK:
+            store = stores.get(workspace_id)
+            if store is None:
+                supervisor = gateway.supervisor
+                store = ReviewStore(lambda: supervisor.workspace_dir(workspace_id))
+                stores[workspace_id] = store
+    return store

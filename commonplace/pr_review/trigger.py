@@ -78,7 +78,7 @@ def _consider(gateway, workspace_id, store, boards, pr_row, now):
     problem = mapping.pr_problem(pr_row, facts)
     if problem:
         return hold(problem)
-    rounds = min(setting["rounds"] or ROUNDS_DEFAULT, pr_row["rounds_allowed"])
+    rounds = setting["rounds"] or ROUNDS_DEFAULT
     if pr_row["rounds_used"] >= rounds:
         return hold("rounds_exhausted")
     from commonplace.orch import runner_bridge

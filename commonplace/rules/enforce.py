@@ -21,7 +21,8 @@ CHECKED_WRITES = frozenset(
     "orch_exp_retire orch_restore_ack orch_resume orch_force_release orch_card_start "
     "orch_journal_intent orch_journal_record orch_gate_open orch_gate_record "
     "orch_finding orch_finding_ack orch_void_step orch_reassign_step goal_set card_goal "
-    "topology_propose topology_discover_site preview_publish preview_stop pr_review_take pr_review_report".split()
+    "topology_propose topology_discover_site preview_publish preview_stop "
+    "pr_review_take pr_review_report".split()
 )
 
 # Explicit names make a newly exposed write fail the public-surface contract.

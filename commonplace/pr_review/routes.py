@@ -92,7 +92,7 @@ def _card_view(store, facts, limit=COMMENT_PAGE, offset=0):
             "state": row["pr_state"],
             "fetched_at": row["fetched_at"],
             "rounds_used": row["rounds_used"],
-            "rounds_allowed": min(setting["rounds"], row["rounds_allowed"]),
+            "rounds_allowed": setting["rounds"],
             "loop_stopped": row["loop_stopped"],
         },
         "counts": counts,

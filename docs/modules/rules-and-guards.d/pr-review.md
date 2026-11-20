@@ -1,1 +1,1 @@
-- **Owns:** `pr_review_take` and `pr_review_report` are in the checked-writes list, so a stale rules sequence refuses them like every other Coworker write; `pr_review_list` only reads.
+- **Owns:** `pr_review_take` and `pr_review_report` are in the checked-writes list (on a line of their own), so a stale rules sequence refuses them like every other Coworker write; `pr_review_list` only reads.

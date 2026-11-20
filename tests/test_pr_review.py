@@ -6,6 +6,8 @@ never talks to GitHub, so the feeder is played by these tests posting to the int
 
 import json
 import logging
+import threading
+import types
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -1064,3 +1066,104 @@ def test_a_body_that_is_not_an_object_is_a_400_on_every_write_route(world):
         method = "PUT" if "boards" in path else "POST"
         status, body, _ = h.request(auth, method, path, [1, 2])
         assert status == 400 and body == {"error": "Invalid JSON body"}, (path, status, body)
+
+
+# ── the board's rounds setting is the cap, from 1 to 3 ──
+
+
+def rounds_allowed(h, monkeypatch, rounds):
+    """Take and answer rounds until the board's setting refuses the next one."""
+    configured(monkeypatch)
+    board_on(h, rounds=rounds)
+    number = start(h)
+    for n in range(1, rounds + 1):
+        ok, text = take(h, number)
+        assert ok and "Round started" in text, (n, text)
+        reports = [
+            {"comment": c["id"], "rev": c["rev"], "outcome": "answered", "reply": "Because."}
+            for c in h.store.comments(REPO, 7)
+            if c["status"] == "working"
+        ]
+        assert mcp(h, h.t1, "pr_review_report", card=number, reports=reports)[0]
+        post(h, batch(comment(100 + n, "One more thing.")))
+    # the comment after the last allowed round waits for a person, and no round can start
+    held = rows(h)[str(100 + rounds)]
+    assert (held["status"], held["reason"]) == ("needs_you", "rounds_exhausted")
+    actor = h.principal(h.t1).actor
+    with pytest.raises(review_store.Refused, match="rounds_exhausted"):
+        h.store.take_round(REPO, 7, actor, datetime.now(timezone.utc), rounds=rounds)
+    assert h.store.pr(REPO, 7)["rounds_used"] == rounds
+    assert view(h, number)[1]["pr_info"]["rounds_allowed"] == rounds
+    return number
+
+
+def test_a_board_set_to_three_rounds_permits_exactly_three(world, monkeypatch):
+    h = world
+    number = rounds_allowed(h, monkeypatch, 3)
+    # "Try again" gives the board's rounds back, so a fourth round can start after it
+    path = f"/api/pr-review/cards/{number}/decision"
+    assert h.request(h.owner, "POST", path, {"choice": "again"})[0] == 200
+    actor = h.principal(h.t1).actor
+    again = h.store.take_round(REPO, 7, actor, datetime.now(timezone.utc), rounds=3)
+    assert [c["gh_id"] for c in again] == ["103"] and h.store.pr(REPO, 7)["rounds_used"] == 1
+
+
+def test_a_board_set_to_one_round_permits_exactly_one(world, monkeypatch):
+    rounds_allowed(world, monkeypatch, 1)
+
+
+# ── one store per workspace, even when the first requests race ──
+
+
+def test_concurrent_first_opens_of_a_workspace_share_one_store(monkeypatch, tmp_path):
+    threads_n = 8
+    cond = threading.Condition()
+    seen = {"checks": 0}
+
+    class Watched(dict):
+        """Counts every look-up, so a store can wait until all threads have looked."""
+
+        def _count(self):
+            with cond:
+                seen["checks"] += 1
+                cond.notify_all()
+
+        def __contains__(self, key):
+            self._count()
+            return super().__contains__(key)
+
+        def get(self, key, default=None):
+            self._count()
+            return super().get(key, default)
+
+    built = []
+    real = review_store.ReviewStore
+
+    class Slow(real):
+        def __init__(self, directory):
+            # Hold the first construction until every thread has looked for the store; without
+            # the lock each of them saw none and builds its own.
+            with cond:
+                cond.wait_for(lambda: seen["checks"] >= threads_n, timeout=10)
+            built.append(self)
+            super().__init__(directory)
+
+    monkeypatch.setattr(review_store, "ReviewStore", Slow)
+    gateway = types.SimpleNamespace(
+        supervisor=types.SimpleNamespace(workspace_dir=lambda _ws: tmp_path),
+        _pr_review_stores=Watched(),
+    )
+    start_line = threading.Barrier(threads_n)
+    got = []
+
+    def open_one():
+        start_line.wait()
+        got.append(review_store.open_review(gateway, "ws1"))
+
+    workers = [threading.Thread(target=open_one) for _ in range(threads_n)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert len(built) == 1
+    assert len(got) == threads_n and all(store is got[0] for store in got)
