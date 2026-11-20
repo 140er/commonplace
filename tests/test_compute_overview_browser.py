@@ -546,7 +546,7 @@ def test_a_member_reads_cloud_workspaces_only_and_is_offered_no_action(served, u
         _go(page, fx, ui)
         expect(_rows(page)).to_have_count(7)
         expect(page.locator(ROOT)).to_contain_text(
-            "Runner machines and target machines are visible to the workspace owner."
+            "Runner machines in Admin and target machines are visible to the workspace owner."
         )
         _shot(page, f"{label}-29-member-list")
         text = page.locator(".compute").inner_text()

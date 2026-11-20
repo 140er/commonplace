@@ -796,9 +796,9 @@ const cases = {
 
   async member() {
     const members = [item('workspace', 'w_1', 'Shared box', { code: 'running', label: 'Running' }, { more: { placement: { assigned: true, machine_name: null, machine_id: null } } })];
-    const f = fixture({ data: overviewOf(members, { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Runner machines and target machines are visible to the workspace owner.' }, executor: { available: false, text: 'hidden from members' } }) });
+    const f = fixture({ data: overviewOf(members, { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Runner machines in Admin and target machines are visible to the workspace owner.' }, executor: { available: false, text: 'hidden from members' } }) });
     await f.ui.load();
-    assert.match(f.shown(), /Runner machines and target machines are visible to the workspace owner\./);
+    assert.match(f.shown(), /Runner machines in Admin and target machines are visible to the workspace owner\./);
     assert.doesNotMatch(f.shown(), /hidden from members/, 'members are not told about owner-only machinery');
     assert.match(f.nodes.top.html, /The cloud workspaces in this workspace and what each is doing\./, 'a member\'s intro describes only what a member sees');
     assert.doesNotMatch(f.nodes.top.html, /runner is a machine|Every machine, runner/);
@@ -818,7 +818,7 @@ const cases = {
       const calls = [], user = { workspace: 'w', actor: 'user:u' }, doc = new EventTarget();
       const api = path => {
         calls.push(path);
-        if (path === '/api/compute/overview') return Promise.resolve(structuredClone(owner ? overviewOf() : overviewOf([fleet()[3]], { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Runner machines and target machines are visible to the workspace owner.' } })));
+        if (path === '/api/compute/overview') return Promise.resolve(structuredClone(owner ? overviewOf() : overviewOf([fleet()[3]], { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Runner machines in Admin and target machines are visible to the workspace owner.' } })));
         if (path === '/api/compute') return owner ? Promise.resolve({ gateways: [], nodes: [], scopes: [], executions: [], can_manage: true, capabilities: {} }) : Promise.reject(failure(403, { error: 'owner_required' }));
         if (path === '/api/compute/workspaces') return Promise.resolve({ workspaces: [], total: 0, can_manage: owner });
         return Promise.reject(failure(404, { error: 'not_found' }));

@@ -1535,7 +1535,7 @@ def read(store, principal, *, session_hash):
         if manage
         else {
             "kinds": ["machine", "runner"],
-            "text": "Runner machines and target machines are visible to the workspace owner.",
+            "text": "Runner machines in Admin and target machines are visible to the workspace owner.",
         },
         "truncated": truncated,
     }

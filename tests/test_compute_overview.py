@@ -541,7 +541,7 @@ def test_a_member_sees_cloud_workspaces_only_with_no_machine_names_or_addresses(
     assert [i["name"] for i in result["items"]] == ["Shared box"]
     assert result["hidden"] == {
         "kinds": ["machine", "runner"],
-        "text": "Runner machines and target machines are visible to the workspace owner.",
+        "text": "Runner machines in Admin and target machines are visible to the workspace owner.",
     }
     item = result["items"][0]
     assert item["actions"] == [] and item["basis"] is None

@@ -8,3 +8,5 @@
 
   - A status that says running or online on a stale report, a zero where usage is unknown, a machine name or address in a member's answer, a start request that moves a phase, or a drain that still leases fails these tests.
 - **Tests:** The three files above; run them with the affected Compute and runner tests (`tests/test_compute_workspaces.py`, `tests/test_runner_capacity_contract_388.py`).
+
+- Member fixture and exact-copy assertions retain the Admin parent in the hidden runner inventory message.
