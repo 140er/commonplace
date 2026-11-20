@@ -526,7 +526,7 @@ def test_unset_chat_is_recorded_as_the_legacy_setup(relay_hub):
 
 
 @contextmanager
-def _unreadable_mode_store(h, failure):
+def _unreadable_mode_store(h, failure, monkeypatch):
     if failure != "locked_settings":
         table = {
             "dropped_settings": "model_mode_settings",
@@ -536,6 +536,27 @@ def _unreadable_mode_store(h, failure):
             conn.execute(f"DROP TABLE {table}")
         yield
         return
+    original_decide = model_modes.decide
+    causes = []
+
+    def locked_decide(*args, **kwargs):
+        # Hold a real table lock only during resolution; later URL writes need the store too.
+        with _locked_mode_settings(h):
+            try:
+                return original_decide(*args, **kwargs)
+            except model_modes.ModeUnavailable as exc:
+                causes.append(exc.__cause__)
+                raise
+
+    with monkeypatch.context() as patch:
+        patch.setattr(model_modes, "decide", locked_decide)
+        yield
+    assert len(causes) == 1 and isinstance(causes[0], sqlite3.OperationalError)
+    assert "locked" in str(causes[0])
+
+
+@contextmanager
+def _locked_mode_settings(h):
     # Shared-cache connections let a real table lock affect modes without locking auth reads.
     uri = Path(h.db.path).as_uri() + "?cache=shared"
     with (
@@ -557,7 +578,7 @@ def _unreadable_mode_store(h, failure):
 
 
 @pytest.mark.parametrize("failure", ["dropped_settings", "dropped_needs", "locked_settings"])
-def test_needs_me_still_answers_when_the_mode_store_cannot_be_read(relay_hub, failure):
+def test_needs_me_still_answers_when_the_mode_store_cannot_be_read(relay_hub, failure, monkeypatch):
     h = relay_hub
     h.machine()
     assert h.propose_titled("Review this synthetic change")[0] == 201
@@ -568,12 +589,7 @@ def test_needs_me_still_answers_when_the_mode_store_cannot_be_read(relay_hub, fa
     assert before["approvals"]
     expected = {key: value for key, value in before.items() if key != "model_connections"}
     expected["count"] -= 1
-    with _unreadable_mode_store(h, failure):
-        if failure == "locked_settings":
-            with pytest.raises(model_modes.ModeUnavailable) as unavailable:
-                _decide(h, h.admin)
-            assert isinstance(unavailable.value.__cause__, sqlite3.OperationalError)
-            assert "locked" in str(unavailable.value.__cause__)
+    with _unreadable_mode_store(h, failure, monkeypatch):
         status, body, _ = h.request(h.owner, "GET", "/api/needs-me")
         assert status == 200 and body == expected
     if failure == "locked_settings":
