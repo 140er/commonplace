@@ -410,8 +410,8 @@ def derive(row, steps, now_stamp):
     return "waiting", None
 
 
-# The words every screen uses for a machine added through the guide that is not approved yet, and for one that is set
-# up and checked: Add a machine, the overview and Admin > Runner machines all take them from here.
+# The words every screen uses for an unfinished guided setup and for one that is set up and checked:
+# Add a machine, the overview and Admin > Runner machines all take them from here.
 ADD_A_MACHINE = "Add a machine in Cloud workspaces"
 WAITING_LABEL = "Waiting for your approval"
 NOT_FINISHED_LABEL = STALLED_LABEL
@@ -421,8 +421,14 @@ SET_UP_NEXT = STATES["ready"][2]
 
 
 def pending_words(pending):
-    """``(code, label, sentence, next)`` for a machine of an open setup the owner has not approved: waiting for approval,
-    or not finished (a step failed, or nothing more came for 15 minutes)."""
+    """``(code, label, sentence, next)`` for an unfinished guided setup, including older accepted setups whose checks
+    never finished. Approval alone does not establish that the machine passed its setup checks."""
+    if pending.get("accepted"):
+        if pending["stalled"]:
+            return "not_finished", STALLED_LABEL, STALLED[0], STALLED[1]
+        label, sentence, step, _ = STATES[pending["state"]]
+        code = "finishing_setup" if pending["state"] == "approved" else "not_finished"
+        return code, label, sentence, step
     if pending["state"] == "connected" and not pending["stalled"]:
         return (
             "waiting_approval",
@@ -461,6 +467,8 @@ def guided_state_on_connection(conn, workspace_id):
         code, label, sentence, step = pending_words(pending)
         result[machine_id] = {"state": code, "label": label, "sentence": sentence, "next": step}
     for machine_id in _setup_only_ids(conn, workspace_id):
+        if machine_id in result:
+            continue  # approval alone does not mean its setup steps finished
         result[machine_id] = {
             "state": "set_up",
             "label": SET_UP_LABEL,
@@ -471,11 +479,12 @@ def guided_state_on_connection(conn, workspace_id):
 
 
 def pending_machines(db, workspace_id):
-    """The machines of open setups the owner has not approved yet, by machine id: what a screen other than Add a
-    machine needs to say the same thing (reading never creates the tables, and nothing is written).
+    """The machines of unfinished open setups, by machine id: what a screen other than Add a machine needs to say the
+    same thing (reading never creates the tables, and nothing is written).
 
     ``{machine_id: {state, stalled, failed, cause, connected_at, last_report_at}}``, ``state`` being the pairing's own
-    (``connected`` or ``failed``) and ``stalled`` the 15-minute rule, from the same ``derive`` and ``stalled`` the page uses."""
+    (``connected``, ``approved`` or ``failed``) and ``stalled`` the 15-minute rule, from the same ``derive`` and ``stalled``
+    the page uses. Older accepted setups without a heartbeat also carry ``accepted=True``."""
     with db._lock:
         return _pending_machines(db._conn, workspace_id)
 
@@ -491,15 +500,16 @@ def _pending_machines(conn, workspace_id):
         return {}
     now, stamp = _now()
     rows = conn.execute(
-        _SELECT + "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NULL "
-        "AND e.machine_id IS NOT NULL",
-        (workspace_id,),
+        _SELECT + "WHERE p.workspace_id=? AND p.closed_reason IS NULL "
+        "AND e.machine_id IS NOT NULL AND (p.accepted_at IS NULL OR NOT EXISTS ("
+        "SELECT 1 FROM machine_pairing_steps s WHERE s.pairing_id=p.id AND s.step=?))",
+        (workspace_id, HEARTBEAT),
     ).fetchall()
     result = {}
     for row in rows:
         steps = _step_rows(conn, row["id"])
         state, failed = derive(row, steps, stamp)
-        if state not in ("connected", "failed"):
+        if state not in ("connected", "approved", "failed"):
             continue
         cause = _cause(steps, failed)
         result[row["machine_id"]] = {
@@ -510,6 +520,8 @@ def _pending_machines(conn, workspace_id):
             "connected_at": row["consumed_at"],
             "last_report_at": row["last_report_at"],
         }
+        if row["accepted_at"] is not None:
+            result[row["machine_id"]]["accepted"] = True
     return result
 
 

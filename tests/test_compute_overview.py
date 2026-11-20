@@ -1622,17 +1622,18 @@ def test_a_machine_the_owner_turned_off_is_still_disabled_when_no_setup_is_open(
     )
 
 
-def test_an_attested_setup_only_machine_is_never_leased_work_and_the_overview_says_why(api, fleet):
-    """The oracle for the setup-only reason: even enabled and attested, the hub's lease refuses a machine the guide added
-    that has never sent a heartbeat, which is what "No: this setup only checks the machine" says."""
+def test_an_attested_unfinished_setup_is_never_leased_work_and_the_overview_says_why(api, fleet):
+    """An older accepted setup with only prerequisites reported is still finishing, even when enabled and attested.
+    Approval does not invent completed checks, and the hub's lease still refuses it."""
     from commonplace.runner import jobs
 
     made = fleet.enroll("guided-attested")
     fleet.seen(made, 5)
     fleet.guided(made, "connected", accepted=True)
     item = by_name(read(api))["guided-attested"]
-    assert item["status"]["code"] == "set_up"
-    assert item["intake"]["allowed"] == "No: this setup only checks the machine"
+    assert (item["status"]["code"], item["status"]["label"]) == ("finishing_setup", "Approved")
+    assert item["intake"]["allowed"] == "No: setup not finished"
+    assert "Coworkers do not run on it in this version" in item["status"]["detail"]
     machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
     assert machine["enabled"] == 1 and machine["binding_state"] == "owner_attested"
     fleet.job(made, "queued", task=32000, project="other", binding_epoch=machine["binding_epoch"])

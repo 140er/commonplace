@@ -196,15 +196,28 @@ SETUP_ONLY_BLOCKER = (
 
 
 ADD_A_MACHINE = pairing.ADD_A_MACHINE
-GUIDED_SETUP_CODES = ("waiting_approval", "not_finished", "set_up")
+GUIDED_SETUP_CODES = ("waiting_approval", "finishing_setup", "not_finished", "set_up")
 HIDDEN_LIMIT_CODES = (*GUIDED_SETUP_CODES, "not_approved")
 NO_CAPACITY = "Not used in this version: no Coworker runs on this machine"
 
 
 def pending_reason(pending):
-    """The one reason a machine from the setup guide that the owner has not approved yet cannot take work. The words
+    """The one reason a machine from an unfinished guided setup cannot take work. The words
     (chip, sentence, next step) are the pairing's own (``pairing.pending_words``), the same on every screen."""
     code, label, sentence, step = pairing.pending_words(pending)
+    if pending.get("accepted"):
+        sentence += " Coworkers do not run on it in this version."
+    if code == "finishing_setup":
+        return {
+            "code": code,
+            "kind": "no",
+            "allowed": "No: setup not finished",
+            "blocker": "Approved: this machine is finishing its setup.",
+            "label": label,
+            "tone": "wait",
+            "detail": sentence,
+            "next": step,
+        }
     if code == "waiting_approval":
         return {
             "code": code,
@@ -993,13 +1006,13 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "Revoked",
             "The owner removed this runner and its access is cancelled.",
         )
-    if "waiting_approval" in codes or "not_finished" in codes:
+    if codes.intersection(("waiting_approval", "finishing_setup", "not_finished")):
         waiting = next(
             item
             for item in (
                 reasons if reasons is not None else can_take_new_work(machine, record, facts)
             )
-            if item["code"] in ("waiting_approval", "not_finished")
+            if item["code"] in ("waiting_approval", "finishing_setup", "not_finished")
         )
         return _status(
             waiting["code"],

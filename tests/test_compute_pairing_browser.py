@@ -807,12 +807,35 @@ def test_guided_states_match_on_all_three_screens(served, monkeypatch, ui, layou
         cookie=fx.cookie,
     )
     assert status == 200
+    for suffix in ("unfinished", "stalled", "failed"):
+        name = f"review-approved-{suffix}"
+        legacy, setup = fx.add(label=name)
+        credentials = fx.connect(setup)
+        if suffix == "failed":
+            fx.report(credentials, "service", "failed", "service_failed")
+        # Legacy approvals did not require every setup step to have finished.
+        with fx.db._lock:
+            fx.db._conn.execute(
+                "UPDATE machine_pairings SET accepted_at=?, accepted_by=? WHERE id=?",
+                (control_db._iso(control_db._now()), fx.owner, legacy["id"]),
+            )
+            fx.db._conn.execute(
+                "UPDATE runner_machines SET enabled=1 WHERE id=?", (credentials["machine_id"],)
+            )
+            if suffix == "stalled":
+                fx.db._conn.execute(
+                    "UPDATE runner_enrollments SET consumed_at=? WHERE machine_label=?",
+                    (control_db._iso(control_db._now() - timedelta(minutes=16)), name),
+                )
     states = {
         "review-waiting": "Waiting for your approval",
         "review-failed": "Not finished",
         "review-stalled": "Not finished",
         "review-ready": "Set up and checked",
         "review-attested": "Set up and checked",
+        "review-approved-unfinished": "Approved",
+        "review-approved-stalled": "Not finished",
+        "review-approved-failed": "Not finished",
     }
     limitation = "Coworkers do not run on it in this version."
 
@@ -820,7 +843,7 @@ def test_guided_states_match_on_all_three_screens(served, monkeypatch, ui, layou
         label = f"{ui}-{layout}"
         # Check Admin first: the pinned-base failure must expose its missing guided state, before copy changes elsewhere.
         page.goto(f"{fx.origin}/app/?ui={ui}#/admin")
-        expect(page.locator(".runner-block .runner-guided")).to_have_count(5)
+        expect(page.locator(".runner-block .runner-guided")).to_have_count(8)
         route = "#/compute/management" if ui == "deck" else "#/compute"
         page.goto(f"{fx.origin}/app/?ui={ui}{route}")
         section = _section(page)
@@ -855,7 +878,7 @@ def test_guided_states_match_on_all_three_screens(served, monkeypatch, ui, layou
         _no_sideways_scroll(page)
         page.goto(f"{fx.origin}/app/?ui={ui}#/admin")
         admin = page.locator(".runner-block")
-        expect(admin.locator(".runner-guided")).to_have_count(5)
+        expect(admin.locator(".runner-guided")).to_have_count(8)
         expect(admin).not_to_contain_text("can start and work cards")
         runtime = page.locator('[data-admin-panel="runtime"]')
         for name, state in states.items():

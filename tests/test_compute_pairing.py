@@ -1402,12 +1402,24 @@ def test_a_refused_check_is_in_the_audit_trail_and_a_wrong_typed_cause_is_a_bad_
         assert status == 400, cause
 
 
-@pytest.mark.parametrize("stage", ["waiting", "failed", "stalled", "ready", "attested"])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "waiting",
+        "failed",
+        "stalled",
+        "ready",
+        "attested",
+        "accepted_unfinished",
+        "accepted_stalled",
+        "accepted_failed",
+    ],
+)
 def test_guided_machine_state_matches_admin_add_and_overview(flow, monkeypatch, stage):
     at = clock(monkeypatch)
     made = flow.made()
     credentials = flow.connect(made)
-    if stage == "failed":
+    if stage in ("failed", "accepted_failed"):
         assert (
             flow.report(
                 credentials, {"step": "service", "state": "failed", "cause": "service_failed"}
@@ -1420,6 +1432,18 @@ def test_guided_machine_state_matches_admin_add_and_overview(flow, monkeypatch, 
         assert flow.accept(made)[0] == 200
         if stage == "attested":
             attest(flow.hub, flow.owner, credentials)
+    if stage.startswith("accepted_"):
+        # Older servers allowed approval before every setup step finished.
+        with flow.hub.db._lock:
+            flow.hub.db._conn.execute(
+                "UPDATE machine_pairings SET accepted_at=?, accepted_by=? WHERE id=?",
+                (control_db._iso(control_db._now()), flow.owner["user_id"], made["pairing"]["id"]),
+            )
+            flow.hub.db._conn.execute(
+                "UPDATE runner_machines SET enabled=1 WHERE id=?", (credentials["machine_id"],)
+            )
+        if stage == "accepted_stalled":
+            at(seconds=pairing.OFFLINE_SECONDS + 1)
     item = flow.get(made)
     status, listing = http(flow.hub.port, "GET", "/api/runners", cookie=flow.owner["cookie"])
     assert status == 200
@@ -1438,7 +1462,9 @@ def test_guided_machine_state_matches_admin_add_and_overview(flow, monkeypatch, 
         "Waiting for your approval"
         if stage == "waiting"
         else "Not finished"
-        if stage in ("failed", "stalled")
+        if stage in ("failed", "stalled", "accepted_stalled", "accepted_failed")
+        else "Approved"
+        if stage == "accepted_unfinished"
         else "Set up and checked"
     )
     assert guided["label"] == item["state_label"] == overview["status"]["label"] == expected

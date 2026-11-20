@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - `overview.py` shows a runner added through the setup guide that has never sent a heartbeat as "Set up and checked" (`set_up`, health unknown), from `pairing.setup_only_ids`, instead of Online.
+  - `overview.py` shows a runner added through the setup guide that passed every setup check but has never sent a heartbeat as "Set up and checked" (`set_up`, health unknown), instead of Online. An accepted setup with incomplete checks remains Approved or Not finished, matching the guide.
 
 - **Promises:**
 
