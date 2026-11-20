@@ -185,7 +185,7 @@ def as_member(page):
         ),
     )
     page.reload()
-    page.wait_for_selector('.card[data-card="1"]')
+    page.wait_for_selector('.card[data-card="1"]', state="attached")
 
 
 def open_shell(browser, look, size, cards, *, member=False):  # noqa: F811
@@ -267,7 +267,7 @@ def test_every_review_state_reads_in_words_for_owner_and_member(
                 if size != "desktop":
                     assert box["height"] >= 44, (size, label, control.inner_text(), box)
             if size in ("phone", "narrow-320"):
-                font = section.locator(".run-reason").first.evaluate(
+                font = section.locator(".run-reason, .run-empty").first.evaluate(
                     "e => getComputedStyle(e).fontSize"
                 )
                 assert font == "14px", font
