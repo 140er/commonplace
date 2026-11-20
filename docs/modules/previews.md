@@ -19,7 +19,7 @@
 
   - Responses name no filesystem path, host or environment value; a credential-shaped value in a file refuses the publish and names only the file and the kind.
 
-  - Files are served only to signed-in people who can open the card, or under a 30-minute page key of such a person for that one preview (anyone with that exact address can open it until it ends; the texts say so), re-checked on every request; signed-out browsers get a sign-in page, agent tokens a 403 page, and unknown, foreign or hidden previews one identical 404 page. Every file carries the sandbox policy, so a preview cannot read the viewer's cookies or storage or call `/api/`.
+  - Files are served only to signed-in people who can open the card, or under a 30-minute page key of such a person for that one preview (anyone with that exact address can open it until it ends; the texts say so), re-checked on every request; signed-out browsers get a sign-in page, agent tokens a 403 page, and unknown, foreign or hidden previews one identical 404 page. Every file carries the sandbox policy (inline scripts and styles allowed, no network), so a preview cannot read the viewer's cookies or storage or call `/api/`; the sign-in page and the ready text say the 30-minute key out loud.
 
   - Nothing outside the revision folder is read: decoded paths follow the published-path rules, links are never followed, and the state pages quote nothing from the request.
 
@@ -27,7 +27,7 @@
 
 - **How it fails:**
 
-  - A refused bundle returns 422 with its reason (`no_index_html`, `too_large`, `too_many_files`, `bad_path`, `contains_secret_like_text`), 409 for `workspace_quota_full`, `too_many_previews` and `changed_meanwhile`, 429 for `rate_limited` and 503 for `storage_unavailable`; a new name keeps a failed row the card shows, an existing preview keeps serving its current revision.
+  - A refused bundle returns 422 with its reason (`no_index_html`, `too_large`, `too_many_files`, `bad_path`, `contains_secret_like_text`), 409 for `workspace_quota_full` (25 served), `workspace_space_full` (500 MiB; stopping frees no space), `too_many_previews`, `person_stopped` and `changed_meanwhile`, 429 for `rate_limited` and 503 for `storage_unavailable`; a new name keeps a failed row the card shows, an existing preview keeps serving its current revision.
 
   - A preview that is not ready answers with a page in words: 410 stopped, 503 failed, being published or files missing on the server, 404 for an address not in it. An expired or unknown page link sends a signed-in browser back to the plain address and asks anyone else to sign in.
 
@@ -42,5 +42,7 @@
   - `tests/cardpreviews.mjs` (run by `tests/test_card_previews_ui.py`) covers every state, the empty and offline views, escaping, link checks, the stop rule form, Stop, Open again, refusals and the panel placement; `tests/test_card_previews_browser.py` (Playwright) shows every state in the real shell at desktop and phone size, 44 px touch targets on a phone, one click to open in a new tab and Stop from the keyboard.
 
   - `tests/test_previews_round2.py` covers the review round: the 30-minute key and the three kept per person, no key for an address that names no file, the texts that name the key, person words and the stored file and kind of a refusal, start and publish times, links on every served page, a Coworker refused on a preview a person stopped, the same files served again without a copy, card lines for Stop and Open again, credential-like names, a leading `~`, a linked folder, and the schema upgrade.
+
+  - `tests/test_previews_review2.py` covers review round 2 on the server: each limit named in its own words, stale failure details cleared, a credential-shaped file name refused by kind only, a Coworker refused when it reopens what a person stopped, the key told on the sign-in page and in the ready row, the being-published page, the page policy and the tool words (versions, KiB, served).
 
   - `tests/cardpreviews.mjs` also covers the review round on the card: start versus publish times, the failure file and kind, accessible names, the offline wording and the not-loaded view, focus after Stop, Open again, a refusal and saving the rule, focus through a redraw, the status line, polling while publishing, and that the shell's focus keys match; `tests/test_card_previews_browser.py` adds 320 px, 768 px touch and the open rule form, 44 px checks off the desktop, focus after Stop and focus through a polling redraw.

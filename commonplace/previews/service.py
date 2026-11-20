@@ -311,12 +311,15 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                     ("failed", "publish_interrupted") if before[0] == "building" else before[:2]
                 )
                 conn.execute(
-                    "UPDATE previews SET state=?,reason=?,updated_at=? WHERE id=?",
+                    "UPDATE previews SET state=?,reason=?,updated_at=?,failure_file='',"
+                    "failure_kind='' WHERE id=?",
                     (state, why, now, identity),
                 )
             else:
+                # A storage or room failure is not about one file: no stale file or kind stays.
                 conn.execute(
-                    "UPDATE previews SET state='failed',reason=?,updated_at=? WHERE id=?",
+                    "UPDATE previews SET state='failed',reason=?,updated_at=?,failure_file='',"
+                    "failure_kind='' WHERE id=?",
                     (exc.reason, now, identity),
                 )
             store.event(
@@ -379,7 +382,8 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                 )
                 conn.execute(
                     "UPDATE previews SET state='ready',reason='published',current_revision=?,"
-                    "pr_url=?,pr_head=?,actor=?,published_by=?,by_person=?,updated_at=? WHERE id=?",
+                    "pr_url=?,pr_head=?,actor=?,published_by=?,by_person=?,updated_at=?,"
+                    "failure_file='',failure_kind='' WHERE id=?",
                     (
                         revision,
                         info["pr_url"],
@@ -414,7 +418,7 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
         gateway,
         principal,
         info["number"],
-        f"Published preview {name} (revision {shown['revision']}). Open it from this card, "
+        f"Published preview {name} (version {shown['revision']}). Open it from this card, "
         "under Previews.",
     )
     return shown, True
@@ -584,6 +588,9 @@ def _change(gateway, principal, preview_id, *, kind, to_state, reason_for, allow
             raise Forbidden("not the publisher")
         if row["state"] not in allowed_from:
             return store.view(conn, row)
+        if kind == "reopened" and not principal.person and row["reason"] == "stopped_by_person":
+            # A person took it down: only a person serves it again, whatever the caller's routes.
+            raise Refused("person_stopped")
         reason = reason_for(row, principal)
         if to_state == "ready":
             held = store.usage(conn, workspace)
@@ -653,7 +660,8 @@ def rule_text(held) -> str:
         parts.append(f"{held['max_age_days']} days after it was last made live")
     if not parts:
         return "Previews are served until a person or the Coworker that published them stops them."
-    return "A preview stops being served " + " or ".join(parts) + ". Its files are kept."
+    when = " and ".join(parts) + (", whichever comes first" if len(parts) == 2 else "")
+    return f"A preview stops being served {when}. Its files are kept."
 
 
 def get_rules(gateway, principal) -> dict:
@@ -705,6 +713,7 @@ REFUSAL_STATUS = {
     "too_many_previews": 409,
     "changed_meanwhile": 409,
     "workspace_quota_full": 409,
+    "workspace_space_full": 409,
     "validating": 409,
     "storage_unavailable": 503,
     "person_stopped": 409,

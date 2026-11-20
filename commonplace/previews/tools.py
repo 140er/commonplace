@@ -19,9 +19,16 @@ _CARD = {
 
 def _line(p) -> str:
     return (
-        f"{p['id']}  #{p['card']}  {p['name']}  revision {p['revision']}  {p['state']}"
+        f"{p['id']}  #{p['card']}  {p['name']}  version {p['revision']}  {p['state']}"
         f" ({p['reason']}): {p['reason_text']}"
     )
+
+
+def _size(count: int) -> str:
+    """Bytes in the unit a person reads: KiB under one MiB (a small page is not "0 MiB")."""
+    if count < 1024 * 1024:
+        return f"{count // 1024} KiB" if count >= 1024 else f"{count} bytes"
+    return f"{count // (1024 * 1024)} MiB"
 
 
 def _refused(exc: Refused) -> ToolError:
@@ -56,9 +63,10 @@ def preview_publish(ctx, args):
     )
     head = "Published" if created else "Already published, unchanged"
     return (
-        f"{head}: {shown['name']} for #{shown['card']}, revision {shown['revision']}.\n"
+        f"{head}: {shown['name']} for #{shown['card']}, version {shown['revision']}.\n"
         f"People open it from card #{shown['card']}, under Previews (signed-in people who can "
-        "open the card; never public).\n"
+        "open the card; the address they open works for 30 minutes, so it can be passed on "
+        "within that time).\n"
         f"{_line(shown)}"
     )
 
@@ -76,8 +84,8 @@ def preview_list(ctx, args):
     rows = [_line(p) for p in found["previews"]]
     held = found["usage"]
     tail = (
-        f"{held['ready']} of {store.MAX_READY} previews open; "
-        f"{held['bytes'] // (1024 * 1024)} of {store.MAX_WORKSPACE_BYTES // (1024 * 1024)} MiB used."
+        f"{held['ready']} of {store.MAX_READY} previews served; "
+        f"{_size(held['bytes'])} of {store.MAX_WORKSPACE_BYTES // (1024 * 1024)} MiB used."
     )
     return "\n".join(rows + [tail]) if rows else "No previews.\n" + tail
 
@@ -93,14 +101,15 @@ register(
     LocalTool(
         name="preview_publish",
         description=(
-            "Publish a built static web page as a preview of a card, so people who can open the "
-            "card reopen it from the card after your session ends. Send card, a name and files "
-            "(each {path, text} or {path, base64}); index.html is required at the top, and links "
-            "between the files must be relative. Up to 5 MiB and 500 files. The page runs "
-            "isolated: no network requests, cookies or storage. Publishing the same name again "
-            "adds a revision. People who can open the card open it while signed in; the address "
-            "they open holds a key for 30 minutes, so it is never public but can be passed on "
-            "within that time. Files holding credentials are refused."
+            "Publish a built static web page as a preview of a card, so people who can open the card "
+            "reopen it from the card after your session ends. Send card, a name and files (each {path, "
+            "text} or {path, base64}); index.html is required at the top, and links between the files "
+            "must be relative. The page is static: there is no server code, and it runs isolated, with no "
+            "network requests, cookies or storage (scripts and styles may be inline or files). Up to 5 "
+            "MiB and 500 files. Publishing the same name again adds a version. People who can open the "
+            "card open it while signed in; the address they open works for 30 minutes, so the preview is "
+            "never public but its address can be passed on within that time. Files and file names holding "
+            "credentials are refused."
         ),
         input_schema={
             "type": "object",

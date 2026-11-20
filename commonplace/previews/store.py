@@ -36,7 +36,11 @@ STATES = ("building", "ready", "stopped", "failed")
 REASONS = {
     "validating": ("The files are being checked.", "Wait a moment."),
     "storing": ("The files are being saved.", "Wait a moment."),
-    "published": ("Published and open to people who can open this card.", ""),
+    "published": (
+        "Published and open to people who can open this card. The address a person opens "
+        "works for 30 minutes.",
+        "",
+    ),
     "stopped_by_person": (
         "Stopped by a person. The files are kept.",
         "Use Open again to serve it.",
@@ -76,10 +80,13 @@ REASONS = {
         "Remove the credential from that file and publish again.",
     ),
     "workspace_quota_full": (
-        "This workspace is at its preview limit (25 open previews or 500 MiB).",
-        "Stop a preview that is no longer needed: at most 25 are served at once. Stopped "
-        "previews still use space; freeing space needs deleting previews, which is not "
-        "available yet.",
+        "This workspace already serves 25 previews, the most it allows at once.",
+        "Stop a preview that is no longer needed, then publish again.",
+    ),
+    "workspace_space_full": (
+        "This workspace has used its 500 MiB of preview space.",
+        "Stopping a preview does not free space. Freeing space needs deleting previews, "
+        "which is not available yet. Tell the workspace owner.",
     ),
     "storage_unavailable": (
         "The files could not be saved on the server.",
@@ -164,8 +171,13 @@ PERSON_WORDS = {
         f"{_ASK} without the credential in that file. {_REPLY}",
     ),
     "workspace_quota_full": (
-        "Nothing was published: the workspace was at its preview limit (25 served or 500 MiB).",
+        "Nothing was published: the workspace already serves 25 previews, the most it allows.",
         "Stop a preview that is no longer needed, then ask the Coworker to publish again.",
+    ),
+    "workspace_space_full": (
+        "Nothing was published: the workspace has used its 500 MiB of preview space.",
+        "Stopping a preview does not free space. Freeing space needs deleting previews, "
+        "which is not available yet. Tell the workspace owner.",
     ),
     "too_many_previews": (
         "Nothing was published: the workspace keeps at most 200 previews.",
@@ -336,12 +348,14 @@ def attempts_last_hour(conn, workspace_id, card) -> int:
 
 
 def check_room(conn, workspace_id, size, *, needs_ready_slot) -> None:
-    """``Refused('workspace_quota_full')`` when one more ready preview or ``size`` more bytes
-    would pass the workspace's limits. Nothing is ever evicted to make room."""
+    """``Refused`` naming the limit that would be passed: ``workspace_space_full`` when ``size``
+    more bytes would pass the space limit (stopping does not free space), else
+    ``workspace_quota_full`` when one more ready preview would pass the count. Nothing is ever
+    evicted to make room."""
     held = usage(conn, workspace_id)
-    if (needs_ready_slot and held["ready"] >= MAX_READY) or (
-        held["bytes"] + size > MAX_WORKSPACE_BYTES
-    ):
+    if held["bytes"] + size > MAX_WORKSPACE_BYTES:
+        raise bundle.Refused("workspace_space_full")
+    if needs_ready_slot and held["ready"] >= MAX_READY:
         raise bundle.Refused("workspace_quota_full")
 
 

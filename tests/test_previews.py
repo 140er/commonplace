@@ -54,7 +54,7 @@ def test_a_coworker_publishes_and_the_preview_is_ready_for_people_of_the_workspa
     number = card(h)
     ok, text = publish(h, h.t1, number)
     assert ok, text
-    assert "never public" in text
+    assert "works for 30 minutes" in text and "never public" not in text
     shown = one(h, number)
     assert shown["state"] == "ready" and shown["reason"] == "published"
     assert shown["revision"] == 1 and shown["file_count"] == 2 and shown["kind"] == "static"
@@ -120,7 +120,7 @@ def test_a_card_note_records_every_publish(console_hub):
     assert publish(h, h.t1, number)[0]
     owner = service(h, h.person(h.hub.admin))
     shown = owner.task_show(number)
-    assert "Published preview home (revision 1)" in json.dumps(shown)
+    assert "Published preview home (version 1)" in json.dumps(shown)
 
 
 # ── who may see and do what ──
@@ -364,7 +364,7 @@ def test_the_size_limit_counts_every_revision(console_hub, monkeypatch):
         h,
         number,
         [INDEX, {"path": "assets/app.css", "text": "body{color:#fff}"}],
-        "workspace_quota_full",
+        "workspace_space_full",
         "home",
     )
     assert one(h, number)["revision"] == 1

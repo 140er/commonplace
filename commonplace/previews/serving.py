@@ -29,9 +29,12 @@ PREFIX = "/p/"
 _ID = re.compile(r"pv_[0-9a-f]{16}")
 
 # Every preview file. ``sandbox`` without ``allow-same-origin`` is the isolation; the rest keeps
-# the page to its own files and lets the Deck frame it.
+# the page to its own files and lets the Deck frame it. Inline scripts and styles are allowed: a
+# single-file report is the usual shape of a Coworker's page, and an inline script can do nothing
+# a script file in the same bundle could not.
 FILE_POLICY = (
     "sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob:; "
+    "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
     "connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'self'"
 )
@@ -201,6 +204,9 @@ def _sign_in(h) -> None:
         "Sign in to open this preview",
         [
             "Previews are open only to people in the workspace who can open the card.",
+            "Opening a preview gives its address a key for 30 minutes: anyone who has that "
+            "exact address can open the preview until then, so share the preview, not the "
+            "address.",
             "Sign in to Commonplace, then open this preview again from its card.",
         ],
         (("Link", '</app/login>; rel="login"'),),
@@ -265,6 +271,9 @@ def install(gateway) -> None:
                 "building": "This preview is being published",
             }[state]
             lines = [shown["reason_text"], shown["next"]]
+            if state == "building":
+                # This page does not refresh itself, unlike the card.
+                lines[1] = "Reload this page, or open the card, to see when it is ready."
             page(h, STATE_STATUS[state], title, lines, extra, links=[card])
             return
         wanted = file_path(inner)
