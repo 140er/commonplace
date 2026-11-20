@@ -44,6 +44,7 @@ VIEW_KEYS = (
     "model_provider",
     "model",
 )
+ACCOUNT_COLUMNS = ("mode", "mode_source", "account_kind", "account_label", "account_person")
 JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}\Z")
 CURRENCY = re.compile(r"[A-Z]{3}\Z")
 TABLE = """
@@ -60,7 +61,8 @@ CREATE TABLE IF NOT EXISTS run_ledger (
  cost_micros INTEGER, currency TEXT,
  reported_at TEXT,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
- source TEXT
+ source TEXT,
+ mode TEXT, mode_source TEXT, account_kind TEXT, account_label TEXT, account_person TEXT
 )
 """
 INDEXES = (
@@ -97,8 +99,20 @@ def ensure(conn):
     if fresh:  # a ledger made (or made again) now has not been backfilled, whatever a marker from before says
         conn.execute("DROP TABLE IF EXISTS run_ledger_backfill")
     # NULL is a card run; 'chat' is a chat-relay job (see chat_ledger). Added in place.
-    if "source" not in {row[1] for row in conn.execute("PRAGMA table_info(run_ledger)")}:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(run_ledger)")}
+    if "source" not in columns:
         conn.execute("ALTER TABLE run_ledger ADD COLUMN source TEXT")
+    # Model modes (card #617): the account a run is billed to. NULL on every run from before.
+    if "mode" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN mode TEXT")
+    if "mode_source" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN mode_source TEXT")
+    if "account_kind" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN account_kind TEXT")
+    if "account_label" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN account_label TEXT")
+    if "account_person" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN account_person TEXT")
     for statement in INDEXES:
         conn.execute(statement)
     # The backfill for jobs that predate the ledger is an anti-join over every job: it runs once (a marker row says so),
@@ -139,8 +153,9 @@ def sync(conn, job, *, agent=None):
     conn.execute(TABLE)
     conn.execute(
         "INSERT INTO run_ledger(job_id,task_number,board_slug,project,topic,machine_id,agent,"
-        "requested_by,model_provider,model,status,started_at,created_at,updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "requested_by,model_provider,model,status,started_at,created_at,updated_at,"
+        "mode,mode_source,account_kind,account_label,account_person) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(job_id) DO UPDATE SET "
         "status=CASE WHEN run_ledger.ended_at IS NULL THEN excluded.status "
         "ELSE run_ledger.status END, "
@@ -161,6 +176,7 @@ def sync(conn, job, *, agent=None):
             job["started_at"],
             job["created_at"],
             job["updated_at"],
+            *(_optional(job, name) for name in ACCOUNT_COLUMNS),
         ),
     )
 

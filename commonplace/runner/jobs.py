@@ -73,6 +73,14 @@ CONFIG_COLUMNS = {
     "model": "TEXT",
 }
 SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER", "launch_output": "TEXT"}
+# Model modes (card #617): the mode and account a start was admitted under, pinned like the model.
+ACCOUNT_COLUMNS = {
+    "mode": "TEXT",
+    "mode_source": "TEXT",
+    "account_kind": "TEXT",
+    "account_label": "TEXT",
+    "account_person": "TEXT",
+}
 STOP_COLUMNS = {
     "run_id": "TEXT",
     "stop_request_id": "TEXT",
@@ -154,7 +162,7 @@ class JobStore:
 def _migrate(conn):
     """Add the config run-record columns to a runner_jobs table that lacks them."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS
+    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS | ACCOUNT_COLUMNS
     missing = [name for name in additions if name not in columns]
     if not missing:
         return
@@ -325,6 +333,7 @@ def create(
     request_key=None,
     person=False,
     guard=None,
+    account=None,
 ):
     """Return (HTTP status, stored row); machine is the resolved registry row.
 
@@ -367,6 +376,7 @@ def create(
             request_key=request_key,
             person=person,
             admission_check=admission_check if on or guard is not None else None,
+            account=account,
         )
 
 
@@ -385,6 +395,7 @@ def create_in(
     person=False,
     config=None,
     admission_check=None,
+    account=None,
 ):
     """``create`` on the caller's open ``BEGIN IMMEDIATE`` connection.
 
@@ -462,6 +473,19 @@ def create_in(
             + ",".join(f"{key}=?" for key in CONFIG_COLUMNS)
             + " WHERE id=?",
             (*(config.get(key) for key in CONFIG_COLUMNS), job),
+        )
+    if account is not None:
+        conn.execute(
+            "UPDATE runner_jobs SET mode=?, mode_source=?, account_kind=?, account_label=?, "
+            "account_person=? WHERE id=?",
+            (
+                account["mode"],
+                account["mode_source"],
+                account["account_kind"],
+                account["account_label"],
+                account["account_person"],
+                job,
+            ),
         )
     row = dict(_row(conn, job))
     ledger.sync(conn, row, agent=machine["worker_connection_id"])
@@ -881,8 +905,11 @@ def resolve(store, job, principal, outcome, thread_id=None, *, conn=None):
 
 
 def status(store, task, principal):
+    from commonplace.projects import model_modes
+
     _sweep(store)
     machines = {m["id"]: m for m in registry.machines(store.gateway.db, store.workspace_id)}
+    viewer = principal.user_id if principal.person else None
     with store.connection() as conn:
         rows = conn.execute(
             "SELECT * FROM runner_jobs WHERE task_number=? ORDER BY created_at,rowid", (task,)
@@ -892,6 +919,7 @@ def status(store, task, principal):
         dict(
             job=row["id"],
             run=runs.get(row["id"]),
+            account=model_modes.run_view(row, viewer),
             machine_label=machines[row["machine_id"]]["label"]
             if row["machine_id"] in machines
             else None,

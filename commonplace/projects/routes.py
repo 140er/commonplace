@@ -12,6 +12,7 @@ from commonplace.projects import (
     connect,
     escalation,
     limits,
+    model_modes,
     models,
     orchestration,
     panel_routes,
@@ -41,6 +42,27 @@ def _may_write(service, board):
     return True
 
 
+def _effective(gateway, principal, slug):
+    """Each role's model and source, and (model modes, card #617) the account it would run on for
+    the caller: mode, where the mode comes from, account kind and the caller's own label."""
+    roles = models.effective_roles(gateway.db, principal.workspace_id, slug)
+    view = {role: effective.public() for role, effective in roles.items()}
+    if getattr(gateway, "runner_installed", False):
+        try:
+            accounts = model_modes.effective_for(
+                gateway.db,
+                principal.workspace_id,
+                slug,
+                principal.user_id if principal.person else None,
+                {role: e.choice.provider if e.choice else None for role, e in roles.items()},
+            )
+        except (model_modes.ModeUnavailable, sqlite3.Error):
+            accounts = {}
+        for role, account in accounts.items():
+            view[role]["account"] = account
+    return view
+
+
 def _view(gateway, principal, board):
     service = BoardService(ToolContext(principal=principal, gateway=gateway))
     with service.store.connection() as conn:
@@ -61,12 +83,7 @@ def _view(gateway, principal, board):
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()
         },
-        "models_effective": {
-            role: effective.public()
-            for role, effective in models.effective_roles(
-                gateway.db, principal.workspace_id, board["slug"]
-            ).items()
-        },
+        "models_effective": _effective(gateway, principal, board["slug"]),
         "model_catalog": [
             choice.public()
             for choice in models.catalog(gateway.db, principal.workspace_id, board["slug"])

@@ -133,7 +133,7 @@ The owner's own #419 item stays the org case: no model and no org account for a 
 ## Migration
 
 - **Nothing is rewritten.** A workspace with no mode record is `unset`, which behaves exactly as today: card starts on workspace machines, chat on the asker's own machine, budgets over every run. The migration creates tables and nullable columns only; it writes no mode record and backfills no run. Runs without `account_kind` count as `org`.
-- **Choosing a mode is a deliberate act.** The first save shows what changes in plain words (see below). Choosing `org` makes members' chat answers run on the workspace's machines (today they find no runner), which costs the workspace; the preview says so before the owner confirms.
+- **Choosing a mode is a deliberate act.** The first save shows what changes in plain words (see below). Choosing `org` keeps chat as it is: a chat message still goes only to the asking person's own runner, because relaying a member's words to a workspace machine would change the chat privacy rule; a chat message for a member therefore still finds no runner until a later card decides how members' chat reaches a shared machine.
 - **Rollback.** Deleting the mode records returns to `unset` and today's behaviour; the added columns are ignored by older code. Existing machines are all workspace machines until a person registers a connection for one that they own.
 - **`unset` is not retired by this card.** Whether to ever require an explicit choice is an open question; the default is no.
 
@@ -150,7 +150,7 @@ Every line carries the current numbers (ready machines, people connected, people
 ## Limits
 
 - One mode record per scope: one for the workspace and at most one per project, so never more than the workspace has projects.
-- At most 5 connections per person per workspace, one per provider and machine; a label is at most 60 characters.
+- At most 5 connections per person per workspace, one per machine (a machine is one person's or the workspace's); a label is at most 60 characters.
 - A person's switch is one boolean per workspace.
 - The preview reads aggregate counts only and is bounded (it walks the workspace's machines and connections, never run history).
 - Mode records, connections and run fields are small rows in the control database and the workspace's runner file; no unbounded text is stored.
@@ -182,7 +182,7 @@ One PR per slice, each against develop and under 300000 bytes of diff, regressio
 
 - Control tables `model_mode_settings(workspace_id, scope, mode, allow_person_override, updated_by, updated_at)`, `model_connections(id, workspace_id, user_id, provider, label, machine_id, created_at, revoked_at)` and `model_person_prefs(workspace_id, user_id, use_own)`, classified in `account/tables.py`; additive columns `mode`, `mode_source`, `account_kind`, `account_label`, `account_person` on `runner_jobs` and `run_ledger`.
 - A resolver `commonplace/projects/model_modes.py`, one pure function over a snapshot of the control rows (the matrix), used by the start plan in `orch/runner_bridge.py`, by `runner/chat_relay.py` (`enqueue` and `online`), by `runner/sessions.py` (an `account_changed` fence like `model_changed`) and by the hosted chat front. The machine pool in admission follows the account.
-- REST (owner-only write, 404 for others): `GET|PUT|DELETE /api/settings/model-mode` and `/api/projects/<board>/model-mode`; person routes `GET|POST|DELETE /api/me/model-connections` and `PUT /api/me/model-use-own`; extended `models_effective` per role. MCP: a read-only `model_mode` tool that returns the caller's effective mode, source and account kind per role; there is no write tool (agents never change a mode).
+- REST (owner-only write, 404 for others): `GET|PUT|DELETE /api/settings/model-mode` (a `board` key picks one project's record); person routes `GET|POST|DELETE /api/me/model-connections` and `PUT /api/me/model-use-own`; `GET /api/me/model-mode`; extended `models_effective` per role. MCP: a read-only `model_mode` tool that returns the caller's effective mode, source and account kind per role; there is no write tool (agents never change a mode).
 - The never-silent rule for `connection_missing`: refusal reply, chat reply and the person's Needs me item; the owner's items unchanged.
 - Acceptance:
   1. The precedence matrix above is a parametrized test, one row per case, including project over workspace and the `unset` rows; with no record every existing start, chat answer and ledger value is unchanged (a golden fixture from before the change).
@@ -219,3 +219,15 @@ Routine, default taken:
 8. Mode applies to new starts only; queued starts keep their pinned mode and are re-checked for their own connection and budgets, never re-routed.
 9. `unset` stays a valid state forever; no forced choice.
 10. A person's own spending limits and a workspace default connection label are out of scope for these three slices.
+
+## Slice 1 as built
+
+Slice 1 (PR 1) follows the plan above with these settled details.
+
+- **Tables and columns.** Control tables `model_mode_settings`, `model_connections`, `model_person_prefs` and `model_connection_needs` (classified in `account/tables.py`); additive columns `mode`, `mode_source`, `account_kind`, `account_label`, `account_person` on `runner_jobs` and `run_ledger`, added in place when a store opens. Nothing is backfilled: an older run keeps NULL, reads as no mode and counts as org. A machine can have only one active connection, which is what makes it one person's.
+- **One resolver.** `projects/model_modes.decide` is the only place the matrix lives. Card starts (manual and config-driven), the chat relay (at queueing and again when a machine leases the message), the persistent board session and the hosted chat front all ask it, and each fails closed with `mode_unavailable` when the rows cannot be read.
+- **A config-driven start in personal mode** swaps the config's workspace machine for the requesting person's own machine; a manual start must name the person's own machine (`machine_not_your_account` otherwise). A private machine is `machine not found` for everyone but its person, in every mode, including with no record.
+- **Where it shows.** `card_start_status` carries `account` per run (`mode`, `mode_source`, `kind`, `label`; the label is the caller's own or an org machine's, never another person's). The start reply of a manual start keeps its fixed shape. The launch reply of a config-driven start carries the mode and account kind but no label. `GET /api/me/model-mode` and the `model_mode` tool give the caller's own account per role; the project view's `models_effective` carries the same.
+- **Chat.** Org mode keeps today's chat rule (see Migration). In personal mode, or a hybrid override, the hosted front's key is not used: the message goes to the person's own runner or they are told why not. The chat ledger row records the mode and account pinned when the machine leases the message.
+- **Board sessions** run for the person who accepted the config and never on another account than the mode gives that person; a session whose account no longer fits is fenced with the refusal's code.
+- **Open for slice 2 and 3.** Spend attribution and budgets (PR 2) read `account_kind`; the settings screen and effect preview (PR 3) are not in this slice; member-owned private machines remain a later card.

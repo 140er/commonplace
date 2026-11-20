@@ -2324,6 +2324,8 @@ def _rest_tool(method, path):
         return "needs_me"
     if parts == ["api", "costs"] and method == "GET":
         return "costs_summary"
+    if parts == ["api", "me", "model-mode"] and method == "GET":
+        return "model_mode"
     if parts == ["api", "topology"] and method == "GET":
         return "topology_get"
     if parts == ["api", "topology", "route"] and method == "GET":
