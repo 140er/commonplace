@@ -9,10 +9,14 @@ workspace's id and a card the caller cannot see all get the same 404 page.
 
 Preview files are built by an agent and run on the app's own origin, so every file is sent
 with a sandbox policy that gives the page an opaque origin: it cannot read the app's cookies
-or storage, and its requests carry no session. Pages that are not ready get a plain page with
-the reason (410 stopped, 503 failed or being published). Nothing here runs under the
-control-database lock except the row reads in ``service``; files are read after it is
-released.
+or storage, and its requests carry no session. A person never opens the files as a page of their
+own: ``/p/<id>/~<token>/<path>`` is a small viewer page that shows the preview in a frame
+(``sandbox="allow-scripts"`` and nothing else, and the viewer allows frames of this site only),
+and the files themselves are served from ``/p/<id>/~<token>/files/<path>``. A script in the
+preview can therefore neither navigate the page the person is looking at nor load another site;
+it can only run inside its frame. Pages that are not ready get a plain page with the reason
+(410 stopped, 503 failed or being published). Nothing here runs under the control-database lock
+except the row reads in ``service``; files are read after it is released.
 """
 
 from __future__ import annotations
@@ -26,17 +30,28 @@ from . import bundle, links, service, store
 from .store import NotFound
 
 PREFIX = "/p/"
+FILES = (
+    "files/"  # under the key: the preview's own files; anything else under the key is the viewer
+)
 _ID = re.compile(r"pv_[0-9a-f]{16}")
 
-# Every preview file. ``sandbox`` without ``allow-same-origin`` is the isolation; the rest keeps
-# the page to its own files and lets the Deck frame it. Inline scripts and styles are allowed: a
+# Every preview file. ``sandbox`` without ``allow-same-origin`` is the isolation, and without
+# popups, forms and top navigation the page can open and submit nothing; the rest keeps the page
+# to its own files and lets only this site frame it. Inline scripts and styles are allowed: a
 # single-file report is the usual shape of a Coworker's page, and an inline script can do nothing
 # a script file in the same bundle could not.
 FILE_POLICY = (
-    "sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob:; "
+    "sandbox allow-scripts; default-src 'self' data: blob:; "
     "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
     "connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'self'"
+)
+# The viewer page holds the frame and a few words: no script, no sandbox of its own (a sandboxed
+# parent would pass every flag on to the preview's frame), frames of this site only (so the frame
+# cannot be sent to another site) and itself never framed.
+VIEWER_POLICY = (
+    "default-src 'none'; style-src 'unsafe-inline'; frame-src 'self'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
 )
 # The state and sign-in pages are this module's own text: no script at all.
 PAGE_POLICY = (
@@ -89,16 +104,18 @@ def content_type(path: str) -> str:
     )
 
 
-def _send(h, status, body: bytes, kind: str, policy: str, extra=()) -> None:
+def _send(h, status, body: bytes, kind: str, policy: str, extra=(), frame="SAMEORIGIN") -> None:
     h.send_response(status)
     h.send_header("Content-Type", kind)
     h.send_header("Content-Length", str(len(body)))
     h.send_header("Content-Security-Policy", policy)
+    # Set here, not by the proxy: the viewer must never be framed, the files may be framed by it.
+    h.send_header("X-Frame-Options", frame)
     h.send_header("Cache-Control", "private, no-store")
     h.send_header("Referrer-Policy", "no-referrer")
     # No resource or opener policy: the sandboxed page has an opaque origin, so a same-origin
     # resource policy would block its own stylesheets and scripts, and a browser refuses a
-    # sandboxed page that sets an opener policy. Other sites get no session cookie (SameSite).
+    # sandboxed page that sets an opener policy.
     for name, value in extra:
         h.send_header(name, value)
     h.end_headers()
@@ -140,6 +157,33 @@ def not_found(h) -> None:
         ],
         links=[("/app/", "Open Commonplace")],
     )
+
+
+def viewer(h, shown, identity, token, inner) -> None:
+    """The page a person sees: who it is from, how far to trust it, and the preview in a frame
+    that may run scripts and do nothing else. Only fixed text, the name (escaped) and addresses
+    built from checked parts appear in it."""
+    name = html.escape(shown["name"])
+    card = int(shown["card"])
+    src = html.escape(f"{PREFIX}{identity}/{links.MARK}{token}/{FILES}{inner}", quote=True)
+    body = (
+        "<!doctype html><html lang=en><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{name} - preview</title>"
+        "<style>html,body{height:100%}body{margin:0;display:flex;flex-direction:column;"
+        "font:16px/1.4 system-ui,sans-serif;color:#1d1d1f;background:#fff}"
+        "header{display:flex;flex-wrap:wrap;gap:.25rem 1rem;align-items:center;"
+        "padding:.25rem 1rem;border-bottom:1px solid #d0d0d5}"
+        "header strong{overflow-wrap:anywhere}"
+        "a{display:inline-flex;align-items:center;min-height:44px;color:#0b57d0}"
+        "iframe{flex:1;min-height:0;width:100%;border:0}</style>"
+        f"<header><strong>{name}</strong>"
+        f'<a href="/app/#/card/{card}">Open card #{card} in Commonplace</a>'
+        "<span>Open only previews from people you trust.</span></header>"
+        f'<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Preview: {name}" '
+        f'src="{src}"></iframe>'
+    ).encode("utf-8")
+    _send(h, 200, body, "text/html; charset=utf-8", VIEWER_POLICY, frame="DENY")
 
 
 def file_path(rest: str) -> str | None:
@@ -224,6 +268,9 @@ def install(gateway) -> None:
         token = None
         if inner.startswith(links.MARK):
             token, token_slash, inner = inner[len(links.MARK) :].partition("/")
+        framed = token is not None and inner.startswith(FILES)
+        if framed:
+            inner = inner[len(FILES) :]  # from here on, ``inner`` is the preview's own path
         signed_in = gateway.principal_for(h)
         if token is not None:
             principal = links.principal(gateway, identity, token)
@@ -301,6 +348,14 @@ def install(gateway) -> None:
                 303,
                 f"{PREFIX}{identity}/{links.MARK}{links.mint(gateway, principal, identity)}/{inner}",
             )
+            return
+        if not framed:
+            viewer(h, shown, identity, token, inner)
+            return
+        if h.headers.get("Sec-Fetch-Dest") == "document":
+            # The files are for the frame: a browser asking for one as a page of its own (the
+            # address opened in a tab, or the frame opened in a new tab) is shown the viewer.
+            _redirect(h, 303, f"{PREFIX}{identity}/{links.MARK}{token}/{inner}")
             return
         data = read_file(folder, wanted)
         if data is None:

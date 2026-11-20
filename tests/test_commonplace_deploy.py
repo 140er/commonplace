@@ -1400,3 +1400,31 @@ def test_public_template_routes_preview_addresses_to_the_gateway_on_the_app_host
     assert "/p/*" in app
     assert "/p/*" not in agent
     assert "/p/*" in (DEPLOY / "commonplace" / "DEPLOY.md").read_text()
+
+
+def test_templates_keep_x_frame_options_deny_everywhere_except_preview_addresses():
+    """The gateway sets the frame policy of /p/* itself (the viewer page is never framed, a
+    preview's files are framed by the viewer only), so the proxy must not add a second header
+    there; every other page keeps DENY, the OAuth pages on the apex included."""
+    private = "\n".join(line for line in CADDY.read_text().splitlines() if not line.startswith("#"))
+    public = (DEPLOY / "commonplace-public.caddy.example").read_text()
+    for text in (private, public):
+        site_wide = re.search(r"\(commonplace_headers\) \{(.*?)\n\}", text, re.S) or re.search(
+            r"hub.example.com \{.*?header \{(.*?)\}", text, re.S
+        )
+        assert "X-Frame-Options" not in site_wide[1]
+        assert "@notpreview not path /p/*" in text
+    assert (
+        "header @notpreview X-Frame-Options DENY"
+        in private.split("handle @backend {")[1].split("reverse_proxy")[0]
+    )
+    assert "header X-Frame-Options DENY" in private.split("\n\thandle {", 1)[1]
+    app = public.split("app.cmmn.dev {", 1)[1].split("\n}\n", 1)[0]
+    assert "header @notpreview X-Frame-Options DENY" in app.split("handle @app {")[1].split("}")[0]
+    apex = public.split("\ncmmn.dev {", 1)[1].split("\n}\n", 1)[0]
+    website = public.split("commonplace.run, www.commonplace.run {", 1)[1].split("\n}\n", 1)[0]
+    for host in (apex, website):
+        assert "import commonplace_frame_deny" in host
+    assert "(commonplace_frame_deny) {\n\theader X-Frame-Options DENY\n}" in public
+    text = (DEPLOY / "commonplace" / "DEPLOY.md").read_text()
+    assert "X-Frame-Options: SAMEORIGIN" in text and "must therefore not" in text

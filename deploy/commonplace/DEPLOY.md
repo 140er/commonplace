@@ -76,10 +76,20 @@ The private template routes `/app*`, `/api/*`, `/mcp`, `/health`, `/healthz`,
 `/p/*`, `/s/*`, `/oauth/*` and `/.well-known/*` to the gateway without stripping paths.
 Without `/p/*` the proxy falls through to the static fallback and a published preview
 never opens: the card's Open link then lands on the landing page.
-The tailnet-only site needs the same `/p/*` entry as the public app host. The proxy's
-global `X-Frame-Options: DENY` header also applies to `/p/*`; that is fine for opening
-a preview in its own tab, but a preview shown inside an app page would need that header
-relaxed on `/p/*` (previews are served with their own frame policy).
+The tailnet-only site needs the same `/p/*` entry as the public app host.
+
+**Frame headers on `/p/*`.** A person opens a preview on a viewer page that shows the
+preview in a sandboxed frame, so the two kinds of `/p/*` answer need different frame
+policies and the gateway sets both itself: the viewer page is sent with
+`X-Frame-Options: DENY` and `frame-ancestors 'none'`, a preview's files with
+`X-Frame-Options: SAMEORIGIN` and `frame-ancestors 'self'`. The proxy must therefore not
+add its own `X-Frame-Options: DENY` to `/p/*` (a second value is sent as a conflicting
+header and the viewer's frame is refused, or the browser ignores both), while every other
+path on the app host, the agent host (the apex, which serves `/oauth/*`) and the website
+keeps `X-Frame-Options: DENY`. Both templates do this: the header is added per handler,
+with `/p/*` left out. If you maintain your own proxy site, change the global header the
+same way and apply it at the host. Without it a preview shows an empty frame; the pages of
+the app itself must never become frameable.
 Its fallback serves `landing/public/`. The public template separates the
 website, app and agent endpoints; see [PUBLIC.md](../PUBLIC.md).
 
