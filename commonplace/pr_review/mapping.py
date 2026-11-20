@@ -72,7 +72,7 @@ def match(gateway, workspace_id: str, repo: str, pr: int, *, principal=None) -> 
             ]
     except Exception as exc:  # the board is not the review loop's to break
         log_failure(logger, "review comment card lookup failed", exc)
-        return {"card": None, "reason": "no_card", "candidates": [], "facts": None}
+        return {"card": None, "reason": "lookup_failed", "candidates": [], "facts": None}
     if row is not None:
         return {"card": row["id"], "reason": None, "candidates": [row["id"]], "facts": _facts(row)}
     return {

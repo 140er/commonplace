@@ -106,6 +106,20 @@ CREATE TABLE IF NOT EXISTS pr_review_people (
 """
 
 
+def is_protected(path: str) -> bool:
+    """True when a changed path is one of the protected checks and rules. The path is
+    normalised first (backslashes, ``./``, repeated slashes, case); a path that climbs with
+    ``..`` is protected, because it cannot be placed."""
+    parts = [p for p in str(path).replace("\\", "/").split("/") if p not in ("", ".")]
+    if ".." in parts:
+        return True
+    clean = "/".join(parts).casefold()
+    return any(
+        clean == rule.casefold() or (rule.endswith("/") and clean.startswith(rule.casefold()))
+        for rule in PROTECTED
+    )
+
+
 class Invalid(ValueError):
     """The request or the change is not acceptable (a plain 400); nothing was stored."""
 
@@ -401,14 +415,16 @@ class ReviewStore:
         out.update(st.reason_fields(row["reason"]))
         return out
 
-    def comments(self, repo: str, pr: int) -> list[dict]:
+    def comments(self, repo: str, pr: int, limit: int = 200, offset: int = 0) -> list[dict]:
+        """One page of a PR's comments (thread order); ``limit`` is at most 500."""
         with self._lock:
             conn = self._connection(create=False)
             if conn is None:
                 return []
             rows = conn.execute(
-                "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? ORDER BY thread, id",
-                (repo, pr),
+                "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? ORDER BY thread, id "
+                "LIMIT ? OFFSET ?",
+                (repo, pr, min(limit, 500), offset),
             ).fetchall()
         return [self.shown(r) for r in rows]
 
@@ -442,12 +458,15 @@ class ReviewStore:
         out["loop_stopped"] = bool(out["loop_stopped"])
         return out
 
-    def prs(self) -> list[dict]:
+    def prs(self, limit: int = 200) -> list[dict]:
+        """Up to ``limit`` PRs, the most recently updated first."""
         with self._lock:
             conn = self._connection(create=False)
             if conn is None:
                 return []
-            rows = conn.execute("SELECT * FROM pr_review_prs ORDER BY updated_at DESC").fetchall()
+            rows = conn.execute(
+                "SELECT * FROM pr_review_prs ORDER BY updated_at DESC, repo, pr LIMIT ?", (limit,)
+            ).fetchall()
         return [self._pr_view(r) for r in rows]
 
     def counts(self, repo: str, pr: int) -> dict:
@@ -726,7 +745,7 @@ class ReviewStore:
         if pr_row["changed_head"] != commit:
             return "files_pending"
         for path in json.loads(pr_row["changed_files"] or "[]"):
-            if path.startswith(PROTECTED) or path in PROTECTED:
+            if is_protected(path):
                 return "touches_checks"
         return None
 

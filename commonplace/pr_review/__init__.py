@@ -4,7 +4,7 @@ Modules: ``intake`` (validation of the feeder's batches), ``store`` (the ``pr_re
 workspace file: comments, statuses, history, rounds), ``status`` (statuses, reasons and the words
 people read), ``mapping`` (PR to card, branch and fork rules), ``trigger`` (hands a card back to
 its Coworker when comments wait), ``needs_me`` (one question per PR), ``routes``
-(``/api/pr-review``) and ``tools`` (``pr_review_list``, ``pr_review_report``). The hub never calls
+(``/api/pr-review``) and ``tools`` (``pr_review_list``, ``pr_review_take``, ``pr_review_report``). The hub never calls
 GitHub: a feeder reads it and posts here. Design: ``docs/system/pr-review-loop.md``.
 
 As a gateway extension, ``install(gateway)`` adds the routes.

@@ -32,6 +32,11 @@ from .store import LIMITS, Invalid, Limit, Refused, open_review
 logger = logging.getLogger(__name__)
 
 PREFIX = "/api/pr-review"
+COMMENT_PAGE = 200
+COMMENT_PAGE_MAX = 500
+LIST_PAGE = 50
+LIST_PAGE_MAX = 100
+SCAN_LIMIT = 200
 NOT_FOUND = {"error": "Card not found", "reason": "not_found"}
 
 
@@ -60,7 +65,7 @@ def _board_view(store, slug):
     }
 
 
-def _card_view(store, facts):
+def _card_view(store, facts, limit=COMMENT_PAGE, offset=0):
     repo = mapping.repo_of(facts)
     pr = facts.get("pr_number")
     base = {"card": facts["number"], "repo": repo, "pr": pr}
@@ -71,10 +76,13 @@ def _card_view(store, facts):
             **base,
             "counts": {s: 0 for s in st.STATUSES},
             "comments": [],
+            "comments_total": 0,
+            "has_more": False,
             "history": [],
             "pr_info": None,
         }
     row = store.pr(repo, pr)
+    counts = store.counts(repo, pr)
     return {
         **base,
         "pr_info": None
@@ -87,8 +95,10 @@ def _card_view(store, facts):
             "rounds_allowed": min(setting["rounds"], row["rounds_allowed"]),
             "loop_stopped": row["loop_stopped"],
         },
-        "counts": store.counts(repo, pr),
-        "comments": store.comments(repo, pr),
+        "counts": counts,
+        "comments": store.comments(repo, pr, limit=limit, offset=offset),
+        "comments_total": sum(counts.values()),
+        "has_more": offset + limit < sum(counts.values()),
         "history": store.history(repo, pr),
     }
 
@@ -151,7 +161,7 @@ def _feed(gateway, principal, store, name, h, send):
     try:
         body = http_util.read_json(h)
     except ValueError:
-        return None
+        return None  # read_json has already sent the 400
     now = _now()
     request = intake.validate(body, now)
     result = store.record(request, now)
@@ -165,7 +175,8 @@ def _people_routes(gateway, principal, store, parts, h, send):
     """Everything for signed-in people: lists, the card view, settings, the decision."""
     method, owner = h.command, principal.role == "owner"
     if parts == ["prs"] and method == "GET":
-        return send(200, {"prs": _pr_list(gateway, principal, store)})
+        limit = _page(http_util.query(h), "limit", LIST_PAGE, 1, LIST_PAGE_MAX)
+        return send(200, {"prs": _pr_list(gateway, principal, store, limit)})
     if len(parts) == 2 and parts[0] == "boards":
         return _board(principal, store, parts[1], method, owner, h, send)
     if parts == ["people"]:
@@ -180,7 +191,10 @@ def _people_routes(gateway, principal, store, parts, h, send):
         return send(404, NOT_FOUND)
     repo, pr = mapping.repo_of(facts), facts.get("pr_number")
     if len(parts) == 2 and method == "GET":
-        return send(200, _card_view(store, facts))
+        params = http_util.query(h)
+        limit = _page(params, "limit", COMMENT_PAGE, 1, COMMENT_PAGE_MAX)
+        offset = _page(params, "offset", 0, 0, 10**6)
+        return send(200, _card_view(store, facts, limit, offset))
     if (
         len(parts) == 5
         and parts[2:3] == ["comments"]
@@ -204,7 +218,7 @@ def _decision(gateway, principal, store, facts, owner, h, send):
     try:
         body = http_util.read_json(h)
     except ValueError:
-        return None
+        return None  # read_json has already sent the 400
     choice = body.get("choice") if isinstance(body, dict) else None
     choice = CHOICES.get(choice, choice)
     repo, pr = mapping.repo_of(facts), facts.get("pr_number")
@@ -224,13 +238,26 @@ def _wake(gateway, workspace, now):
         http_util.log_failure(logger, "review comment trigger failed", exc)
 
 
-def _pr_list(gateway, principal, store):
-    out = []
-    for row in store.prs():
+def _page(params, name, default, low, high):
+    raw = params.get(name)
+    if raw is None:
+        return default
+    if not raw.isdigit() or not low <= int(raw) <= high:
+        raise Invalid(f"{name} must be a whole number from {low} to {high}")
+    return int(raw)
+
+
+def _pr_list(gateway, principal, store, limit):
+    """The PRs a person may see: those whose card they can read. A PR with no card (or one they
+    cannot read) is not theirs to see; only a workspace owner sees it, with the reason. Nothing
+    of an unreadable PR (repository, number, counts, time) is added before that check."""
+    out, owner = [], principal.role == "owner"
+    for row in store.prs(SCAN_LIMIT):
         found = mapping.match(
             gateway, principal.workspace_id, row["repo"], row["pr"], principal=principal
         )
-        counts = store.counts(row["repo"], row["pr"])
+        if found["card"] is None and not owner:
+            continue
         out.append(
             {
                 "repo": row["repo"],
@@ -238,24 +265,26 @@ def _pr_list(gateway, principal, store):
                 "card": found["card"],
                 "card_reason": found["reason"],
                 "candidates": found["candidates"],
-                "counts": counts,
+                "counts": store.counts(row["repo"], row["pr"]),
                 "fetched_at": row["fetched_at"],
             }
         )
+        if len(out) == limit:
+            break
     return out
 
 
 def _board(principal, store, slug, method, owner, h, send):
+    # A board's loop setting is the owner's page; a person reads it for a card they can see
+    # through that card's own view, so a board they cannot read is never named here.
+    if method not in ("GET", "PUT") or not owner:
+        return send(403, {"error": "Only a workspace owner can use this.", "reason": "forbidden"})
     if method == "GET":
         return send(200, _board_view(store, slug))
-    if method != "PUT" or not owner:
-        return send(
-            403, {"error": "Only a workspace owner can change this.", "reason": "forbidden"}
-        )
     try:
         body = http_util.read_json(h)
     except ValueError:
-        return None
+        return None  # read_json has already sent the 400
     if (
         not isinstance(body, dict)
         or body.keys() - {"enabled", "rounds"}
@@ -267,16 +296,14 @@ def _board(principal, store, slug, method, owner, h, send):
 
 
 def _people(principal, store, method, owner, h, send):
+    if method not in ("GET", "PUT") or not owner:
+        return send(403, {"error": "Only a workspace owner can use this.", "reason": "forbidden"})
     if method == "GET":
         return send(200, {"people": store.people()})
-    if method != "PUT" or not owner:
-        return send(
-            403, {"error": "Only a workspace owner can change this.", "reason": "forbidden"}
-        )
     try:
         body = http_util.read_json(h)
     except ValueError:
-        return None
+        return None  # read_json has already sent the 400
     if not isinstance(body, dict) or body.keys() - {"login", "role"} or "login" not in body:
         raise Invalid("send login and role (trusted, own or null)")
     store.set_person(body["login"], body.get("role"), f"user:{principal.user_id}", _now())

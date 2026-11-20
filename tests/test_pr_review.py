@@ -11,7 +11,15 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from commonplace.control_db import ControlError
-from commonplace.pr_review import intake, routes, status as st, store as review_store, trigger
+from commonplace.pr_review import (
+    intake,
+    mapping,
+    routes,
+    status as st,
+    store as review_store,
+    trigger,
+)
+from commonplace.rules import enforce
 from tests._console_helpers import console_hub_fixture, successful  # noqa: F401
 from tests.test_commonplace_boards import mcp, service
 
@@ -353,7 +361,7 @@ def start(h, **kw):
 
 
 def take(h, number, token=None):
-    return mcp(h, token or h.t1, "pr_review_list", card=number, take=True)
+    return mcp(h, token or h.t1, "pr_review_take", card=number)
 
 
 def test_taking_a_round_makes_the_waiting_comments_the_coworkers(world):
@@ -528,7 +536,7 @@ def test_a_report_is_refused_for_a_stale_revision_a_foreign_comment_and_bad_inpu
 def test_the_tools_offer_nothing_that_merges_resolves_or_dismisses(world):
     h = world
     names = h.tool_names(h.t1)
-    assert {"pr_review_list", "pr_review_report"} <= names
+    assert {"pr_review_list", "pr_review_take", "pr_review_report"} <= names
     assert not {
         n
         for n in names
@@ -892,3 +900,167 @@ def test_one_pass_looks_at_a_bounded_number_of_prs_longest_waiting_first(world, 
     monkeypatch.setattr(trigger, "_consider", lambda g, w, s, b, row, now: seen.append(row["pr"]))
     trigger.run(h.gateway, h.workspace)
     assert seen == [21, 22]
+
+
+# ── tenant isolation: a person sees only the PRs whose card they can read ──
+
+
+def hidden_pr(h):
+    """A PR whose card is on a private board: the owner reads it, a member does not."""
+    owner = service(h, h.person(h.admin))
+    owner.board_add(slug="hidden", wing="private.hidden", repo="https://github.com/acme/secret.git")
+    number = owner.task_add("Secret work", board="hidden")["number"]
+    owner.task_update(number, pr="https://github.com/acme/secret/pull/9")
+    payload = batch(comment(1, "Rename the secret thing."), pr=9)
+    payload["repo"] = "acme/secret"
+    assert post(h, payload)[0] == 200
+    return number
+
+
+def test_a_member_sees_nothing_of_a_pr_whose_card_is_in_a_wing_they_cannot_read(world):
+    h = world
+    visible = card(h)
+    secret = hidden_pr(h)
+    post(h, batch(comment(2, "A comment on the visible PR.")))
+    _, listed, raw = h.request(h.member, "GET", "/api/pr-review/prs")
+    assert [p["pr"] for p in listed["prs"]] == [7] and listed["prs"][0]["card"] == visible
+    for leaked in (b"acme/secret", b'"pr": 9', b"private", b"hidden"):
+        assert leaked not in raw, leaked
+    _, owner_view, _ = h.request(h.owner, "GET", "/api/pr-review/prs")
+    assert {p["pr"] for p in owner_view["prs"]} == {7, 9}
+    assert view(h, secret, auth=h.member)[2] == view(h, 99_999, auth=h.member)[2]
+    assert view(h, secret, auth=h.member)[0] == 404 and view(h, secret)[0] == 200
+
+
+def test_a_pr_with_no_card_is_the_owners_to_see_and_not_a_members(world):
+    h = world
+    post(h, batch(comment(1)))
+    assert h.request(h.member, "GET", "/api/pr-review/prs")[1] == {"prs": []}
+    _, owner_view, _ = h.request(h.owner, "GET", "/api/pr-review/prs")
+    assert owner_view["prs"][0]["card_reason"] == "no_card"
+
+
+def test_board_settings_and_trusted_logins_are_the_owners_pages(world):
+    h = world
+    assert h.request(h.member, "GET", "/api/pr-review/boards/work")[0] == 403
+    assert h.request(h.member, "GET", "/api/pr-review/people")[0] == 403
+    assert h.request(h.owner, "GET", "/api/pr-review/boards/work")[0] == 200
+    assert h.request(h.owner, "GET", "/api/pr-review/people")[0] == 200
+
+
+def test_a_failed_board_read_is_its_own_reason_and_leaks_no_words(world, monkeypatch, caplog):
+    h = world
+    card(h)
+    post(h, batch(comment(1)))
+
+    class Broken:
+        def connection(self):
+            raise RuntimeError("board exploded: my private words")
+
+    monkeypatch.setattr(mapping, "_open", lambda gateway, workspace: Broken())
+    with caplog.at_level(logging.DEBUG):
+        _, listed, _ = h.request(h.owner, "GET", "/api/pr-review/prs")
+    assert listed["prs"][0]["card"] is None and listed["prs"][0]["card_reason"] == "lookup_failed"
+    assert st.reason_fields("lookup_failed")["next"] and "my private words" not in caplog.text
+    assert h.request(h.member, "GET", "/api/pr-review/prs")[1] == {"prs": []}
+
+
+# ── bounds ──
+
+
+def test_the_card_view_and_the_pr_list_are_paged(world):
+    h = world
+    number = card(h)
+    post(h, batch(*[comment(n, f"Comment {n}.") for n in range(1, 6)]))
+    _, page, _ = h.request(h.owner, "GET", f"/api/pr-review/cards/{number}?limit=2")
+    assert len(page["comments"]) == 2 and page["comments_total"] == 5 and page["has_more"] is True
+    _, last, _ = h.request(h.owner, "GET", f"/api/pr-review/cards/{number}?limit=2&offset=4")
+    assert len(last["comments"]) == 1 and last["has_more"] is False
+    for query in ("limit=0", "limit=501", "limit=x", "offset=-1"):
+        assert h.request(h.owner, "GET", f"/api/pr-review/cards/{number}?{query}")[0] == 400, query
+    other = card(h, title="Second", pr_url="https://github.com/acme/widgets/pull/8")
+    post(h, batch(comment(9), pr=8))
+    assert other and len(h.request(h.owner, "GET", "/api/pr-review/prs?limit=1")[1]["prs"]) == 1
+    assert h.request(h.owner, "GET", "/api/pr-review/prs?limit=101")[0] == 400
+
+
+def test_the_list_tool_shows_a_bounded_page_and_says_how_many_more(world, monkeypatch):
+    h = world
+    from commonplace.pr_review import tools
+
+    monkeypatch.setattr(tools, "LIST_MAX", 2)
+    number = card(h)
+    post(h, batch(*[comment(n, f"Comment {n}.") for n in range(1, 5)]))
+    ok, text = mcp(h, h.t1, "pr_review_list", card=number)
+    assert ok and text.count("rev 1") == 2 and "2 more not shown" in text
+
+
+# ── the take path is a checked write of its own ──
+
+
+def test_taking_a_round_is_a_checked_write_and_the_list_tool_cannot_take(world):
+    h = world
+    number = start(h)
+    assert {"pr_review_take", "pr_review_report"} <= enforce.CHECKED_WRITES
+    assert "pr_review_list" not in enforce.CHECKED_WRITES
+    ok, text = mcp(h, h.t1, "pr_review_list", card=number, take=True)
+    assert not ok
+    assert {c["status"] for c in rows(h).values()} == {"new"}
+
+
+# ── paths are normalised before the protected-path rule ──
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/ci.yml",
+        "./.github/workflows/ci.yml",
+        "//.github//workflows/ci.yml",
+        ".GitHub/Workflows/ci.yml",
+        "./PyProject.toml",
+        "a/../b.py",
+        "commonplace/guards/x.py",
+        ".github\\workflows\\ci.yml",
+    ],
+)
+def test_protected_paths_are_found_however_they_are_written(path):
+    assert review_store.is_protected(path)
+
+
+@pytest.mark.parametrize(
+    "path", ["app/main.py", "pyproject.toml.bak", "docs/.github-notes.md", "tests/test_x.py"]
+)
+def test_ordinary_paths_are_not_protected(path):
+    assert not review_store.is_protected(path)
+
+
+def test_a_fix_listed_with_a_dressed_up_protected_path_is_held(world):
+    h = world
+    number = start(h)
+    take(h, number)
+    post(h, batch(head=FIX, changed_files=["app/main.py", "./.GitHub//workflows/ci.yml"]))
+    mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}],
+    )
+    assert (rows(h)["1"]["status"], rows(h)["1"]["reason"]) == ("needs_you", "touches_checks")
+
+
+# ── a malformed body is answered 400 by the shared reader ──
+
+
+def test_a_body_that_is_not_an_object_is_a_400_on_every_write_route(world):
+    h = world
+    number = card(h)
+    for auth, path in (
+        (h.feeder, "/api/pr-review/comments"),
+        (h.owner, f"/api/pr-review/cards/{number}/decision"),
+        (h.owner, "/api/pr-review/boards/work"),
+    ):
+        method = "PUT" if "boards" in path else "POST"
+        status, body, _ = h.request(auth, method, path, [1, 2])
+        assert status == 400 and body == {"error": "Invalid JSON body"}, (path, status, body)

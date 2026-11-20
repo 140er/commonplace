@@ -48,6 +48,10 @@ REASONS = {
         "More than one card has this PR's link.",
         "Keep the link on one card.",
     ),
+    "lookup_failed": (
+        "The board could not be read just now, so the PR's card is not known.",
+        "Try again in a moment; nothing was lost.",
+    ),
     "no_coworker": (
         "No Coworker is set up to take this card.",
         "Start a Coworker on the card.",
