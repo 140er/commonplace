@@ -2,6 +2,9 @@
 setting, a person's own connections, the missing-connection rule and what a chat answer records."""
 
 import json
+import sqlite3
+from contextlib import closing, contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -29,10 +32,11 @@ def _record(h, scope, mode, allow=False):
 
 def _connection(h, user, machine, provider="claude", label="my subscription"):
     with h.db._lock, h.db._tx() as conn:
+        taken = conn.execute("SELECT COUNT(*) FROM model_connections").fetchone()[0]
         conn.execute(
             "INSERT INTO model_connections VALUES (?,?,?,?,?,?,?,NULL)",
             (
-                "mc_" + str(abs(hash((user, machine["machine_id"]))) % 10**16).zfill(16)[:16],
+                f"mc_{taken + 1:016x}",
                 h.workspace,
                 user,
                 provider,
@@ -519,6 +523,62 @@ def test_unset_chat_is_recorded_as_the_legacy_setup(relay_hub):
         None,
         None,
     )
+
+
+@contextmanager
+def _unreadable_mode_store(h, failure):
+    if failure != "locked_settings":
+        table = {
+            "dropped_settings": "model_mode_settings",
+            "dropped_needs": "model_connection_needs",
+        }[failure]
+        with h.db._lock, h.db._tx() as conn:
+            conn.execute(f"DROP TABLE {table}")
+        yield
+        return
+    # Shared-cache connections let a real table lock affect modes without locking auth reads.
+    uri = Path(h.db.path).as_uri() + "?cache=shared"
+    with (
+        closing(connect(uri, uri=True, check_same_thread=False, isolation_level=None)) as reader,
+        closing(connect(uri, uri=True, isolation_level=None)) as writer,
+    ):
+        reader.row_factory = row_factory
+        reader.execute("PRAGMA foreign_keys = ON")
+        with h.db._lock:
+            original, h.db._conn = h.db._conn, reader
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("UPDATE model_mode_settings SET mode=mode")
+            yield
+        finally:
+            with h.db._lock:
+                writer.rollback()
+                h.db._conn = original
+
+
+@pytest.mark.parametrize("failure", ["dropped_settings", "dropped_needs", "locked_settings"])
+def test_needs_me_still_answers_when_the_mode_store_cannot_be_read(relay_hub, failure):
+    h = relay_hub
+    h.machine()
+    assert h.propose_titled("Review this synthetic change")[0] == 201
+    assert h.request(h.owner, "PUT", SETTING, {"mode": "personal"})[0] == 200
+    model_modes.note_missing(h.db, h.workspace, h.admin, "work", "claude")
+    status, before, _ = h.request(h.owner, "GET", "/api/needs-me")
+    assert status == 200 and len(before["model_connections"]) == 1
+    assert before["approvals"]
+    expected = {key: value for key, value in before.items() if key != "model_connections"}
+    expected["count"] -= 1
+    with _unreadable_mode_store(h, failure):
+        if failure == "locked_settings":
+            with pytest.raises(model_modes.ModeUnavailable) as unavailable:
+                _decide(h, h.admin)
+            assert isinstance(unavailable.value.__cause__, sqlite3.OperationalError)
+            assert "locked" in str(unavailable.value.__cause__)
+        status, body, _ = h.request(h.owner, "GET", "/api/needs-me")
+        assert status == 200 and body == expected
+    if failure == "locked_settings":
+        # A temporary outage must not lose the person's pending connection item.
+        assert h.request(h.owner, "GET", "/api/needs-me")[:2] == (200, before)
 
 
 def test_an_unreadable_mode_store_refuses_chat_in_words(relay_hub):
