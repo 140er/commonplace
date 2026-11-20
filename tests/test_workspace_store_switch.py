@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import sqlite3
 import stat
 import sys
@@ -168,10 +169,7 @@ def test_maintenance_metadata_preflight_refuses_without_mutation(
     assert _maintenance_tree_snapshot(tmp_path) == before
 
 
-@pytest.fixture
-def workspace(tmp_path, monkeypatch):
-    data = tmp_path / "data"
-    root = workspace_root(data, WORKSPACE)
+def _seed_workspace(root):
     root.mkdir(parents=True)
     with closing(ThreadStore(str(root / "threads.sqlite3"))) as store:
         thread = store.store(
@@ -222,6 +220,31 @@ def workspace(tmp_path, monkeypatch):
         )
     (root / "palace" / "replica.json").write_text('{"replica_id":"fixture"}')
     (root / "palace" / "custom-sidecar").write_bytes(b"preserved\0")
+    return thread
+
+
+@pytest.fixture(scope="module")
+def workspace_seed(tmp_path_factory):
+    root = tmp_path_factory.mktemp("workspace-seed") / WORKSPACE
+    thread = None
+
+    def seed():
+        nonlocal thread
+        # Build under the requesting test's deterministic embedding fixture.
+        # All database handles are closed before any test copies this tree.
+        if thread is None:
+            thread = _seed_workspace(root)
+        return root, thread
+
+    return seed
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch, workspace_seed):
+    data = tmp_path / "data"
+    root = workspace_root(data, WORKSPACE)
+    seed, thread = workspace_seed()
+    shutil.copytree(seed, root)
     command = tmp_path / "backup_command.py"
     command.write_text(
         "import datetime,json,os\nprint(json.dumps({'completed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'off_host':True,'nonce':os.environ['COMMONPLACE_BACKUP_NONCE']}))\n"
@@ -236,6 +259,52 @@ def workspace(tmp_path, monkeypatch):
         ),
     )
     return data, root, thread
+
+
+def test_workspace_fixture_copies_keep_seed_and_other_databases_unchanged(
+    workspace, workspace_seed, tmp_path
+):
+    _, root, thread = workspace
+    seed, seeded_thread = workspace_seed()
+    before = _maintenance_tree_snapshot(seed)
+    other = tmp_path / "other-workspace"
+    shutil.copytree(seed, other)
+    assert thread == seeded_thread
+    for path in seed.rglob("*"):
+        if path.is_file():
+            relative = path.relative_to(seed)
+            assert (
+                (root / relative).read_bytes()
+                == (other / relative).read_bytes()
+                == path.read_bytes()
+            )
+            assert not os.path.samefile(path, root / relative)
+            assert not os.path.samefile(root / relative, other / relative)
+    with closing(ThreadStore(str(root / "threads.sqlite3"))) as store:
+        assert [message.raw for message in store.messages(thread.id)] == ["raw first", "raw second"]
+        store.append(
+            thread.id,
+            store.messages(thread.id)
+            + [ThreadMessage(2, "assistant", "message", "local write", "raw local write")],
+        )
+        store.put_doc("handoff", "local handoff write")
+    for relative in (
+        "boards.sqlite3",
+        "palace/knowledge_graph.sqlite3",
+        "palace/logstream.sqlite3",
+    ):
+        with closing(sqlite3.connect(root / relative)) as conn, conn:
+            conn.execute("INSERT INTO fixture VALUES ('local','local write')")
+    backend = ChromaBackend()
+    try:
+        open_collection(backend, root / "palace", "mempalace_drawers", create=True).add(
+            ids=["local"], documents=["local write"], embeddings=[[1.0, 0.3, -0.1]]
+        )
+    finally:
+        backend.close()
+    (root / "palace" / "custom-sidecar").write_bytes(b"local sidecar write")
+    assert _maintenance_tree_snapshot(seed) == before
+    assert _maintenance_tree_snapshot(other) == before
 
 
 def test_switch_write_rollback_every_record(workspace):
