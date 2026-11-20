@@ -14,6 +14,8 @@ import json
 import os
 import threading
 from datetime import timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,7 +62,8 @@ FILES = [
 
 
 @pytest.fixture
-def served(tmp_path, monkeypatch):
+def world(tmp_path, monkeypatch):
+    """A running gateway with one signed-in owner and one card; previews are published by tests."""
     for name in ("CHAT", "HOLD"):
         monkeypatch.setenv(f"COMMONPLACE_{name}_WORKER", "off")
     monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
@@ -75,15 +78,26 @@ def served(tmp_path, monkeypatch):
     board = BoardService(ToolContext(principal=person, gateway=gateway))
     board.board_add("work", wing="fixture")
     number = board.task_add(board="work", title="Probe page")["number"]
-    shown, _ = service.publish(gateway, person, number, "probe", FILES)
     server = gateway.build_server("127.0.0.1", 0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", cookie, shown["id"], number
+        yield SimpleNamespace(
+            origin=f"http://127.0.0.1:{server.server_address[1]}",
+            cookie=cookie,
+            gateway=gateway,
+            person=person,
+            number=number,
+        )
     finally:
         server.shutdown()
         server.server_close()
         db.close()
+
+
+@pytest.fixture
+def served(world):
+    shown, _ = service.publish(world.gateway, world.person, world.number, "probe", FILES)
+    return world.origin, world.cookie, shown["id"], world.number
 
 
 def test_a_preview_loads_its_own_files_but_never_the_viewers_session(served):
@@ -169,6 +183,88 @@ def test_links_lead_on_forms_post_nothing_and_the_key_ends_after_thirty_minutes(
             shot(page, "served-410-stopped")
             page.get_by_role("link", name=f"Open card #{number} in Commonplace").click()
             page.wait_for_url(f"{origin}/app/#/card/{number}")
+            context.close()
+        finally:
+            browser.close()
+
+
+@pytest.fixture
+def elsewhere():
+    """A second site on another host name (cookies are per host): where a hostile preview would
+    like to send the viewer. It keeps the headers of every request it gets."""
+    received = []
+
+    class Site(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(dict(self.headers))
+            body = b"<!doctype html><title>Elsewhere</title><h1>Elsewhere</h1>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    try:
+        yield f"http://localhost:{site.server_address[1]}/", received
+    finally:
+        site.shutdown()
+        site.server_close()
+
+
+NAVIGATORS = {
+    "location-href": "location.href = %s;",
+    "location-replace": "location.replace(%s);",
+    "top-location": "top.location = %s;",
+    "window-open-self": "window.open(%s, '_self');",
+    "meta-refresh": "document.head.insertAdjacentHTML('beforeend', "
+    "'<meta http-equiv=refresh content=\"0;url=' + %s + '\">');",
+}
+
+
+@pytest.mark.parametrize("how", sorted(NAVIGATORS))
+def test_a_preview_can_send_only_its_own_tab_elsewhere_and_takes_no_session_along(
+    world, elsewhere, how
+):
+    """Accepted risk, pinned: a sandboxed page is its own top-level page, so the browser lets a
+    script navigate that tab to another site (the policy has no top-navigation flag and adding
+    one would not matter). What the preview cannot do: the Open link opens it in its own tab with
+    no opener, and the other site gets no session cookie and no referrer. Whatever a page could
+    send by navigating it could already send by a popup, which the policy allows."""
+    site, received = elsewhere
+    shown, _ = service.publish(
+        world.gateway,
+        world.person,
+        world.number,
+        "hostile",
+        [
+            {
+                "path": "index.html",
+                "text": "<!doctype html><title>Hostile</title><h1>Hostile</h1>"
+                "<script src=go.js></script>",
+            },
+            {"path": "go.js", "text": NAVIGATORS[how] % json.dumps(site)},
+        ],
+    )
+    with playwright_api.sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context = browser.new_context()
+            context.add_cookies(
+                [{"name": sessions.COOKIE, "value": world.cookie, "url": world.origin}]
+            )
+            page = context.new_page()
+            page.set_default_timeout(20000)
+            page.goto(f"{world.origin}/p/{shown['id']}/")
+            page.wait_for_url(site)
+            page.locator("h1", has_text="Elsewhere").wait_for()
+            assert len(received) == 1
+            assert "Cookie" not in received[0] and "Referer" not in received[0], received[0]
+            assert world.cookie not in json.dumps(received[0])
             context.close()
         finally:
             browser.close()

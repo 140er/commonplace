@@ -29,7 +29,7 @@ export const OUTCOME_WORDS = {
   t3_missing: "The machine could not find its coding tool",
   busy: "The machine had reached its hourly limit",
   machine_revoked: "The machine was switched off or removed",
-  binding_not_attested: "The machine is no longer vouched for by an owner",
+  binding_not_attested: "The machine is no longer attested by an owner",
   binding_epoch_changed: "The machine's setup changed after the request",
   restart_unknown: "The runner restarted while starting",
   spawn_ambiguous: "The runner lost track while starting",
@@ -49,9 +49,11 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent. An owner can add one and vouch for it in Workspace settings, under Runner machines.",
-  machine_unavailable: "The machine this project starts agents on is switched off, removed or not vouched for. Check it in Workspace settings, under Runner machines.",
-  binding_not_attested: "The machine is not vouched for by an owner yet. Vouch for it in Workspace settings, under Runner machines.",
+  no_machine: "No machine is ready to run an agent. An owner can add one in Cloud workspaces, then attest it in Workspace settings, under Runner machines (the Attest form asks for the machine's provider instance id).",
+  machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Workspace settings, under Runner machines; attesting it asks for the machine's provider instance id.",
+  binding_not_attested: "The machine is not attested by an owner yet. Attest it in Workspace settings, under Runner machines (the Attest form asks for the machine's provider instance id).",
+  setup_only: "The machine you added only checks itself in this version, so no Coworker runs on it yet.",
+  setup_only_confirm: "The machine you added only checks itself in this version, so no Coworker runs on it yet. Confirming it is waiting for you in Needs me.",
   origin_not_released: "This card came from outside the workspace and has not been released for agents. Release it first, then start an agent.",
   not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
   outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
@@ -71,6 +73,8 @@ const START_REFUSALS = {
   use_orch_card_start: "This project starts agents from its Coworker config. Only a signed-in workspace owner can start one from the card.",
   not_configured: "This project has no Coworker config. Choose a machine, project and topic.",
 };
+// Where the person goes for the one working next step of a refusal.
+const START_LINKS = { setup_only: ["#/compute", "Open Add a machine"], setup_only_confirm: ["#/needs", "Open Needs me"] };
 // The card cannot be started whatever the setup: show no Start control and no complaint.
 export const NOT_CLAIMABLE = ["not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by"];
 const TEXT_CODES = { "card already has an active start": "active_start", "card was started recently": "started_recently" };
@@ -87,8 +91,8 @@ const choices = (list, picked) => list.map((item) => `<option value="${e(item)}"
 // The Start control for what the options route answered; empty when nothing should show.
 function startHTML(start, jobs) {
   if (!start || NOT_CLAIMABLE.includes(start.refusal)) return "";
-  const why = (text) => `<p class="run-start-why" data-run-start-why>${e(text)}</p>`;
-  if (start.refusal) return why(START_REFUSALS[start.refusal] || "An agent cannot be started on this card right now.");
+  const why = (text, link) => `<p class="run-start-why" data-run-start-why>${e(text)}${link ? ` <a href="${e(link[0])}" data-run-start-link>${e(link[1])}</a>` : ""}</p>`;
+  if (start.refusal) return why(START_REFUSALS[start.refusal] || "An agent cannot be started on this card right now.", START_LINKS[start.refusal]);
   if (jobs.some((job) => ACTIVE.includes(job.state))) return why(START_REFUSALS.active_start);
   const button = `<button class="btn sm" type="submit">Start agent</button>`;
   if (start.configured) {

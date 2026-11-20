@@ -958,7 +958,7 @@ def test_a_workspace_the_clock_made_unknown_tells_a_member_to_ask_the_owner(api)
 def test_blockers_name_themselves_and_a_drained_runner_is_called_drained(api, fleet):
     offline = fleet.enroll("runner-off")
     fleet.seen(offline, 4000)
-    never = fleet.enroll("runner-never")
+    fleet.enroll("runner-never")
     drained = fleet.enroll("runner-drained")
     fleet.seen(drained, 10)
     api.request("POST", f"{BASE}/runner/{drained['machine_id']}/drain", {"expected_seq": 0})
@@ -971,7 +971,6 @@ def test_blockers_name_themselves_and_a_drained_runner_is_called_drained(api, fl
     assert text["runner-never"]["never_connected"].startswith("Never connected:")
     assert items["runner-drained"]["status"]["label"] == "Drained"
     assert text["runner-drained"]["draining"].startswith(f"Drained: {overview.DRAIN_SCOPE}")
-    assert never is not None
 
 
 def test_a_removed_runner_is_informational_not_something_that_needs_attention(api, fleet):
@@ -1347,7 +1346,12 @@ def test_can_it_take_new_work_never_disagrees_between_status_blocker_and_allowed
         refuses_now = allowed.startswith(("No", "Not right now"))
         if code in ("online", "busy") and allowed != "Yes":
             problems.append(f"chip says it works, allowed does not: {where}")
-        if code == "full" and (allowed != "Yes, once a run finishes" or "full" not in wanted):
+        holders = {
+            "Yes, once a run finishes",
+            "Yes, once the finished card leaves Doing",
+            "Yes, once the uncertain run is resolved on its card",
+        }
+        if code == "full" and (allowed not in holders or "full" not in wanted):
             problems.append(f"full: {where}")
         if code == "limit_reached" and not (
             allowed == "Not right now: hourly limit reached"
@@ -1376,7 +1380,9 @@ def test_can_it_take_new_work_never_disagrees_between_status_blocker_and_allowed
         grants = allowed in ("Yes", "Yes, once it reports")
         if grants != (leased is not None):
             problems.append(f"lease {'granted' if leased else 'refused'}: {where}")
-        if allowed.startswith("Yes, once") and "a run finishes" in allowed:
+        if allowed.startswith("Yes, once") and (
+            "a run finishes" in allowed or "leaves Doing" in allowed or "uncertain" in allowed
+        ):
             if leased is not None:
                 problems.append(f"full but leased: {where}")
             else:
@@ -1446,3 +1452,146 @@ def test_a_draining_or_drained_runner_holding_a_finished_card_names_the_card_and
         f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
         "to free its place."
     )
+
+
+def _machine(attested=True, cap=1):
+    return {
+        "id": "m",
+        "label": "m",
+        "binding_state": "owner_attested" if attested else "unbound",
+        "max_in_flight": cap,
+        "max_starts_per_hour": 6,
+        "enabled": 1,
+        "revoked_at": None,
+    }
+
+
+def _allowed_for(**facts):
+    base = overview.blank_facts()
+    base.update(facts)
+    record = {"reason": "heartbeat", "status": "up"}
+    reasons = overview.can_take_new_work(_machine(), record, base)
+    return overview._allowed_to_start(reasons)
+
+
+def test_allowed_names_what_really_holds_the_place():
+    assert _allowed_for(running=1) == "Yes, once a run finishes"
+    assert (
+        _allowed_for(running=1, uncertain=1)
+        == "Yes, once the uncertain run is resolved on its card"
+    )
+    assert _allowed_for(running=0, finished_holding=1) == "Yes, once the finished card leaves Doing"
+
+
+def test_a_machine_that_is_not_approved_names_one_step_in_one_place():
+    record = {"reason": "heartbeat", "status": "up"}
+    facts = overview.blank_facts()
+    for guided, place, absent in (
+        (True, "Needs me", "Admin"),
+        (False, "Admin, Runner machines", "Needs me"),
+    ):
+        reasons = overview.can_take_new_work(_machine(attested=False), record, facts, guided=guided)
+        (reason,) = [r for r in reasons if r["code"] == "not_approved"]
+        assert place in reason["blocker"] and place in reason["detail"] and place in reason["next"]
+        assert absent not in reason["blocker"] + reason["detail"]
+        status = overview.runner_status(_machine(attested=False), record, facts, 0, reasons)
+        assert status["code"] == "not_approved" and status["next"] == reason["next"]
+    assert "Confirm this machine" in overview.CONFIRM_STEP
+    # It is something a person acts on, so the overview counts it as needing attention.
+    item = overview.runner_item(
+        _machine(attested=False),
+        {**record, "last_signal_at": None, "age_s": None, "last_signal_source": None},
+        facts,
+        0,
+        guided=True,
+    )
+    assert item["health"]["state"] == "attention"
+
+
+GUIDED = {
+    "connected": (
+        "waiting_approval",
+        "Waiting for your approval",
+        "It connected and waits for your approval in Add a machine below.",
+    ),
+    "failed": (
+        "not_finished",
+        "Not finished",
+        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine below.",
+    ),
+    "stalled": (
+        "not_finished",
+        "Not finished",
+        "This setup has not finished. Set up again or remove it in Add a machine below.",
+    ),
+}
+
+
+@pytest.mark.parametrize("state", sorted(GUIDED))
+@pytest.mark.parametrize("seen", [None, 5])
+def test_a_guided_machine_waiting_for_approval_reads_the_same_as_add_a_machine_and_the_hub_agrees(
+    api, fleet, state, seen
+):
+    """A machine added through the setup guide is switched off until the owner approves it. The overview says what Add a
+    machine says (waiting for approval, or not finished), never "turned off" or "never contacted", and the hub's lease
+    (the oracle) refuses it."""
+    from commonplace.runner import jobs
+
+    made = fleet.enroll(f"guided-{state}", attest=False)
+    if seen is not None:
+        fleet.seen(made, seen)
+    fleet.guided(made, state)
+    code, label, sentence = GUIDED[state]
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200, result
+    item = result["item"]
+    assert (item["status"]["code"], item["status"]["label"]) == (code, label)
+    assert item["status"]["detail"] == sentence
+    assert "Add a machine below" in item["status"]["next"]
+    assert item["intake"] == {"allowed": "No: not approved yet", "reasons": [code]}
+    assert [b["code"] for b in item["health"]["blockers"]] == [code]
+    assert item["health"]["state"] == "attention", "it is something the owner acts on"
+    assert item["last_seen"] is not None, "it connected: the row says when, not 'never contacted'"
+    text = json.dumps(item)
+    for claim in (
+        "turned this runner off",
+        "Turned off",
+        "turn it on again",
+        "never contacted",
+        "Disabled",
+    ):
+        assert claim not in text, claim
+    machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+    fleet.job(made, "queued", task=31000, project="other", binding_epoch=machine["binding_epoch"])
+    assert jobs.lease(fleet.store(), machine) is None
+    # The list counts it as needing attention too.
+    listed = by_name(read(api))[f"guided-{state}"]
+    assert listed["health"]["state"] == "attention"
+    assert listed["status"]["code"] == code
+
+
+def test_a_machine_the_owner_turned_off_is_still_disabled_when_no_setup_is_open(api, fleet):
+    made = fleet.enroll("owner-off")
+    fleet.seen(made, 5)
+    fleet.disable(made)
+    item = by_name(read(api))["owner-off"]
+    assert (
+        item["status"]["code"] == "disabled" and item["intake"]["allowed"] == "No: it is turned off"
+    )
+
+
+def test_an_attested_setup_only_machine_is_never_leased_work_and_the_overview_says_why(api, fleet):
+    """The oracle for the setup-only reason: even enabled and attested, the hub's lease refuses a machine the guide added
+    that has never sent a heartbeat, which is what "No: this setup only checks the machine" says."""
+    from commonplace.runner import jobs
+
+    made = fleet.enroll("guided-attested")
+    fleet.seen(made, 5)
+    fleet.guided(made, "connected", accepted=True)
+    item = by_name(read(api))["guided-attested"]
+    assert item["status"]["code"] == "set_up"
+    assert item["intake"]["allowed"] == "No: this setup only checks the machine"
+    machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+    assert machine["enabled"] == 1 and machine["binding_state"] == "owner_attested"
+    fleet.job(made, "queued", task=32000, project="other", binding_epoch=machine["binding_epoch"])
+    assert jobs.lease(fleet.store(), machine) is None

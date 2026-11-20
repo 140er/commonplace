@@ -575,6 +575,20 @@ def test_accept_enables_the_machine_but_never_attests_it(flow):
     assert len(row) == 1 and item["id"] in row[0]["target_ids"]
 
 
+def test_a_non_string_identity_digest_is_a_bad_request_not_a_conflict(flow):
+    made = flow.made()
+    credentials = flow.connect(made)
+    flow.finish_steps(credentials)
+    item = flow.get(made)
+    for digest in (7, ["x"], None):
+        got, result = flow.call(
+            "POST",
+            f"/{item['id']}/accept",
+            {"request_id": "r", "expected_version": item["version"], "identity_digest": digest},
+        )
+        assert (got, result["field"], result["reason"]) == (400, "identity_digest", "invalid")
+
+
 def test_a_null_request_id_is_refused_for_accept_and_close(flow):
     made = flow.made()
     credentials = flow.connect(made)
@@ -610,7 +624,71 @@ def test_the_overview_does_not_call_a_setup_only_machine_online_until_it_sends_a
     assert "cannot see whether it is switched on" in seen["status"]["detail"]
     assert seen["health"]["state"] == "unknown" and seen["health"]["state"] != "attention"
     assert flow.report(credentials, {"step": "heartbeat"})[0] == 200
-    assert row()["status"]["code"] == "online", "a heartbeat is what makes it Online"
+    # A heartbeat makes it an ordinary runner row: not attested yet, so "Not approved" (never Online without that).
+    assert row()["status"]["code"] == "not_approved"
+
+
+def _overview_row(flow):
+    status, listing = http(
+        flow.hub.port, "GET", "/api/compute/overview", cookie=flow.owner["cookie"]
+    )
+    assert status == 200, listing
+    return next(i for i in listing["items"] if i["kind"] == "runner" and i["name"] == "build-box")
+
+
+def test_a_setup_only_machine_makes_no_runner_claims_the_page_cannot_make(flow):
+    made = flow.made()
+    credentials = flow.connect(made)
+    assert flow.accept(made)[0] == 200
+    only = "This setup only checks the machine. Coworkers do not run on it in this version."
+
+    def check(attested):
+        row = _overview_row(flow)
+        assert row["status"]["code"] == "set_up"
+        assert row["health"]["blockers"] == [{"code": "setup_only", "text": only}], row["health"]
+        assert row["intake"] == {
+            "allowed": "No: this setup only checks the machine",
+            "reasons": ["setup_only"],
+        }
+        text = json.dumps(row)
+        for claim in ("Offline", "not approved", "Not approved", "Never connected"):
+            assert claim not in text, claim
+        assert row["intake"]["allowed"] != "Yes"
+
+    check(attested=False)
+    # Fifteen minutes and more of silence from a machine that never sends a heartbeat is not "offline".
+    with flow.hub.db._lock:
+        flow.hub.db._conn.execute(
+            "UPDATE connections SET last_used_at=? WHERE id IN (SELECT machine_connection_id FROM runner_machines)",
+            (control_db._iso(control_db._now() - timedelta(minutes=20)),),
+        )
+    check(attested=False)
+    # Attesting it does not make it run Coworkers: the install is setup-only whatever the binding says.
+    with flow.hub.db._lock:
+        flow.hub.db._conn.execute("UPDATE runner_machines SET binding_state='owner_attested'")
+    check(attested=True)
+    assert flow.report(credentials, {"step": "heartbeat"})[0] == 200
+    assert _overview_row(flow)["status"]["code"] != "set_up", (
+        "a heartbeat makes it an ordinary runner"
+    )
+
+
+def test_a_workspace_beside_only_a_setup_only_machine_does_not_say_no_machine_is_set_up(flow):
+    made = flow.made()
+    flow.connect(made)
+    assert flow.accept(made)[0] == 200
+    status, created = http(
+        flow.hub.port,
+        "POST",
+        "/api/compute/workspaces",
+        cookie=flow.owner["cookie"],
+        body={"name": "Build box", "image_source": "custom", "image": "ghcr.io/acme/tools:1.2"},
+    )
+    assert status == 201, created
+    _, listing = http(flow.hub.port, "GET", "/api/compute/overview", cookie=flow.owner["cookie"])
+    row = next(i for i in listing["items"] if i["kind"] == "workspace")
+    assert "No machine is set up yet" not in json.dumps(row)
+    assert "only checks itself" in row["status"]["detail"]
 
 
 def test_accept_replays_by_request_id_and_refuses_a_second_decision(flow):
@@ -846,7 +924,7 @@ def test_refusing_a_connected_machine_revokes_its_credentials(flow):
     credentials = flow.connect(made)
     status, result = flow.close(made)
     assert status == 200 and result["pairing"]["state"] == "declined"
-    assert result["pairing"]["state_label"] == "Not approved"
+    assert result["pairing"]["state_label"] == "Refused"
     assert flow.hub.db.authenticate_token(credentials["machine_token"]) is None
     assert flow.hub.db.authenticate_token(credentials["worker_token"]) is None
     with flow.hub.db._lock:
@@ -1185,9 +1263,13 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
         item = flow.get(made)
         assert item["stalled"] is True and item["state"] == state
         assert (item["sentence"], item["next"]) == (pairing.STALLED[0], pairing.STALLED[1])
+        assert item["state_label"] == "Not finished", (
+            "a stalled setup is not still 'waiting for your approval'"
+        )
         assert item["can_accept"] is False
         seen = flow.get(made, who=colleague)
         assert (seen["sentence"], seen["next"]) == (pairing.STALLED[0], pairing.STALLED[2])
+        assert seen["state_label"] == "Not finished"
     # The server refuses an approval of a stalled setup, with its own reason.
     refused = flow.accept(one, finish=False)
     assert (refused[0], refused[1]["reason"]) == (409, "stalled")
@@ -1242,7 +1324,7 @@ def test_removing_a_failed_or_stalled_setup_is_never_called_a_decline(flow, monk
     flow.connect(stuck)
     at(seconds=pairing.OFFLINE_SECONDS + 1)
     assert flow.close(stuck)[1]["pairing"]["state"] == "abandoned"
-    # The words "Not approved" are only for the owner's own refusal of a healthy connected machine.
+    # The word "Refused" is only for the owner's own refusal of a healthy connected machine.
     fine = flow.made(label="fine-box")
     flow.finish_steps(flow.connect(fine))
     refused = flow.close(fine)[1]["pairing"]

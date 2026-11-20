@@ -505,6 +505,10 @@ def in_flight(conn, machine_id, working):
 def lease(store, machine):
     from commonplace.projects import orchestration as orch
 
+    from .predicate import setup_only_refusal
+
+    if setup_only_refusal(store.gateway, machine, store.workspace_id):
+        return None  # a machine from the setup guide only checks itself in this version: nothing is leased to it
     on = orch.enabled(store.gateway.db, store.workspace_id)
     workers = orch.workers(store.gateway.db, store.workspace_id) if on else frozenset()
     _sweep(store)

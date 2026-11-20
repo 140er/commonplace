@@ -83,8 +83,8 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "Coworkers can run here only after a provider is connected (sign in from Needs me) and the machine is attested under Runner machines in Admin.",
-        "This machine is set up. Coworkers can run on it after the owner connects a provider.",
+        "Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version. A later version will let you sign in a provider and confirm the machine in Needs me.",
+        "This machine is set up and checked. Coworkers do not run on it in this version.",
     ),
     "offline": (
         "Offline",
@@ -111,7 +111,7 @@ STATES = {
         "The owner cancelled this setup.",
     ),
     "declined": (
-        "Not approved",
+        "Refused",
         "You said this is not your machine. Its access was removed.",
         "Choose Set up again if you want to add a machine with the same settings.",
         "The owner did not approve this machine.",
@@ -138,48 +138,49 @@ MEMBER_SENTENCE = {
 }
 # A member reads the same state names with the owner's decision in the third person.
 MEMBER_LABEL = {"connected": "Machine connected, waiting for the owner's approval"}
+STALLED_LABEL = "Not finished"
 STALLED = (
     "This setup has not finished.",
-    "Remove this machine and set it up again.",
-    "The owner can remove this machine and set it up again.",
+    "Choose Set up again, or Remove this machine.",
+    "The owner can set it up again or remove it.",
 )
 # Fixed causes a machine may report for a failed step: (what happened, what to do).
 CAUSES = {
     "run_as_root": (
         "The command was run as root.",
-        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Compute in the app and choose Set up again.",
+        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Cloud workspaces in the app and choose Set up again.",
     ),
     "unsupported_os": (
         "This system is not supported. Ubuntu 24.04 and Debian 12 or later are.",
-        "Use a supported system, then open Compute in the app and choose Set up again.",
+        "Use a supported system, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_python": (
         "A supported Python is not installed.",
-        "Install Python 3.10 or later on the machine, then open Compute in the app and choose Set up again.",
+        "Install Python 3.10 or later on the machine, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_prerequisite": (
         "A required program is missing.",
-        "Install what the machine printed, then open Compute in the app and choose Set up again.",
+        "Install what the machine printed, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_runner_program": (
         "The runner program is not installed on this machine, and this command does not install it yet.",
-        "Ask the person who runs this site for the runner program, then open Compute in the app and choose Set up again.",
+        "Ask the person who runs this site for the runner program, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_privilege": (
-        "The account is not allowed to set up its background service.",
-        "Allow the account to keep a service running when logged out, then open Compute in the app and choose Set up again.",
+        "The administrator confirmation was not given, or the password was wrong.",
+        "Open Cloud workspaces in the app, choose Set up again, run the new command and type your password carefully.",
     ),
     "no_service_manager": (
-        "The machine has no running user service manager.",
-        "Log in on the machine with a normal session, then open Compute in the app and choose Set up again.",
+        "The machine cannot keep a background service for this account right now.",
+        "Log in on the machine with a normal session, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "disk_full": (
         "There is not enough free disk space.",
-        "Free some space, then open Compute in the app and choose Set up again.",
+        "Free some space, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "cannot_reach_hub": (
         "The machine could not reach this site.",
-        "Check the machine's internet connection, then open Compute in the app and choose Set up again.",
+        "Check the machine's internet connection, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "service_failed": (
         "The background service did not start.",
@@ -405,6 +406,75 @@ def derive(row, steps, now_stamp):
     return "waiting", None
 
 
+def pending_machines(db, workspace_id):
+    """The machines of open setups the owner has not approved yet, by machine id: what a screen other than Add a
+    machine needs to say the same thing (reading never creates the tables, and nothing is written).
+
+    ``{machine_id: {state, stalled, failed, cause, connected_at, last_report_at}}``, ``state`` being the pairing's own
+    (``connected`` or ``failed``) and ``stalled`` the 15-minute rule, from the same ``derive`` and ``stalled`` the page uses."""
+    with db._lock:
+        have = {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
+            )
+        }
+        if len(have) < 3:
+            return {}
+        now, stamp = _now()
+        rows = db._conn.execute(
+            _SELECT
+            + "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NULL "
+            "AND e.machine_id IS NOT NULL",
+            (workspace_id,),
+        ).fetchall()
+        result = {}
+        for row in rows:
+            steps = _steps(db, row["id"])
+            state, failed = derive(row, steps, stamp)
+            if state not in ("connected", "failed"):
+                continue
+            cause = _cause(steps, failed)
+            result[row["machine_id"]] = {
+                "state": state,
+                "stalled": stalled(state, row, steps, stamp),
+                "failed": failed,
+                "cause": cause["text"] if cause else None,
+                "connected_at": row["consumed_at"],
+                "last_report_at": row["last_report_at"],
+            }
+        return result
+
+
+def guided_not_running(db, workspace_id):
+    """Machines from the setup guide that cannot run Coworkers in this version: the ones waiting for approval or not
+    finished, and the approved ones that have never sent a heartbeat (the setup-only service sends none)."""
+    if not hasattr(db, "_conn"):  # a stand-in control store (some runner tests) has no pairings
+        return set()
+    return set(pending_machines(db, workspace_id)) | setup_only_ids(db, workspace_id)
+
+
+def machine_ids(db, workspace_id):
+    """Machines added through the setup guide (a pairing that is not closed): their approval step is in Needs me."""
+    with db._lock:
+        have = {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','runner_enrollments')"
+            )
+        }
+        if len(have) < 2:
+            return set()
+        return {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
+                "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND e.machine_id IS NOT NULL",
+                (workspace_id,),
+            )
+        }
+
+
 def setup_only_ids(db, workspace_id):
     """Machines added through a pairing that has never sent a heartbeat (reading never creates the tables).
 
@@ -490,6 +560,7 @@ def view(db, row, now_stamp, *, owner):
     stuck = stalled(state, row, steps, now_stamp)
     if stuck:
         sentence, next_owner, next_member = STALLED
+        label = STALLED_LABEL
     result = {
         "id": row["id"],
         "kind": row["kind"],
@@ -846,6 +917,8 @@ def _fields(body, allowed, required):
         request = body["request_id"]
         if not isinstance(request, str) or not REQUEST_ID.fullmatch(request):
             raise refuse("request_id", "invalid")
+    if "identity_digest" in body and not isinstance(body["identity_digest"], str):
+        raise refuse("identity_digest", "invalid")
 
 
 def accept(db, principal, pairing_id, body):

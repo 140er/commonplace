@@ -58,10 +58,30 @@ def requester_ok(gateway, principal, machine) -> bool:
     return not requester_gaps(gateway, principal, machine)
 
 
+def setup_only_refusal(gateway, machine, workspace_id=None) -> str | None:
+    """``"setup_only"`` for a machine from the setup guide, which only checks itself in this version (no agent runs on
+    it, whatever its binding says); ``"setup_only_confirm"`` when its "Confirm this machine" card is up in Needs me.
+    ``None`` for every other machine. The one answer the start options, the request and the lease share."""
+    from commonplace.compute import pairing
+
+    db = gateway.db
+    try:
+        machine_id, workspace = machine["id"], workspace_id or machine["workspace_id"]
+    except (KeyError, IndexError):
+        return None  # a legacy runner row has no machine id: it was never added through the setup guide
+    if machine_id not in pairing.guided_not_running(db, workspace):
+        return None
+    from . import setup_approvals
+
+    return "setup_only_confirm" if setup_approvals.confirm_pending(db, machine) else "setup_only"
+
+
 def startable(gateway, machine, row, board) -> None:
     worker = gateway.db.authenticate_connection(machine["worker_connection_id"])
     if worker is None or worker.workspace_id != machine["workspace_id"]:
         raise Refused("worker unavailable")
+    if setup_only_refusal(gateway, machine):
+        raise Refused("setup_only")
     service = BoardService(ToolContext(worker, gateway), store=False)
     from commonplace.boards.store import active_blockers
     from commonplace.projects import orchestration as orch
