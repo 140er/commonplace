@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - `projects/model_modes.py`: the mode record (`org`, `personal`, `hybrid`, no record = `unset`), a person's connections, the `resolve_account` precedence matrix and the person's own Needs me items (card #617, `docs/system/model-modes.md`).
+  - `projects/model_modes.py`: the mode record (`org`, `personal`, `hybrid`, no record = `unset`), a person's connections, the `resolve_account` precedence matrix, provider-independent account snapshots and the person's own Needs me items (card #617, `docs/system/model-modes.md`).
 
 - **Promises:**
 
@@ -12,4 +12,4 @@
 
 - **Tests:**
 
-  - `tests/test_model_modes.py` (the precedence matrix, private machines, owner-only setting, connections, chat) and `tests/test_model_modes_runs.py` (card starts).
+  - `tests/test_model_modes.py` (the precedence matrix, private machines, owner-only setting, connections, chat), `tests/test_model_modes_runs.py` (card starts) and `tests/test_escalation_authority.py` (final-provider resolution from the snapshot).

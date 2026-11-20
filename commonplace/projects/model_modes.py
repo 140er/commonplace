@@ -477,6 +477,55 @@ def _not_found() -> Refusal:
     return Refusal("machine_not_found", "machine not found")
 
 
+@dataclass(frozen=True)
+class AccountSnapshot:
+    """Control rows captured before admission; resolve only after the model is final."""
+
+    board: str
+    person: str | None
+    rule: dict
+    own: tuple
+    use_own: bool
+    private: dict | None
+    machine: dict | None
+
+    def resolve(self, *, provider=None, substitute=False) -> Decision:
+        return _resolve_snapshot(self, provider, substitute)
+
+
+def snapshot_account(db, workspace_id, board, *, person, machine=None) -> AccountSnapshot:
+    """Read account authority without choosing a provider or recording a missing account."""
+    try:
+        with db._lock:
+            rule = effective_mode(db, workspace_id, board)
+            conn = db._conn
+            own = tuple(dict(c) for c in _usable(conn, workspace_id, person)) if person else ()
+            pref = (
+                conn.execute(
+                    "SELECT use_own FROM model_person_prefs WHERE workspace_id=? AND user_id=?",
+                    (workspace_id, person),
+                ).fetchone()
+                if person
+                else None
+            )
+            private = (
+                connection_of_machine(conn, workspace_id, machine["id"])
+                if machine is not None
+                else None
+            )
+            return AccountSnapshot(
+                board,
+                person,
+                rule,
+                own,
+                bool(pref and pref["use_own"]),
+                dict(private) if private is not None else None,
+                dict(machine) if machine is not None else None,
+            )
+    except sqlite3.Error as exc:
+        raise ModeUnavailable("model modes cannot be read") from exc
+
+
 def resolve_account(
     db,
     workspace_id: str,
@@ -493,36 +542,17 @@ def resolve_account(
     registry row a start names, or ``None`` for a surface that has not picked one (chat, the
     settings read). ``substitute`` lets a start that must use a person's account swap the named
     machine for that person's own (a config-driven start names a workspace machine)."""
-    try:
-        return _resolve_account(db, workspace_id, board, person, provider, machine, substitute)
-    except sqlite3.Error as exc:
-        raise ModeUnavailable("model modes cannot be read") from exc
+    return snapshot_account(db, workspace_id, board, person=person, machine=machine).resolve(
+        provider=provider, substitute=substitute
+    )
 
 
-def _resolve_account(db, workspace_id, board, person, provider, machine, substitute) -> Decision:
-    rule = effective_mode(db, workspace_id, board)
+def _resolve_snapshot(snapshot, provider, substitute) -> Decision:
+    board, person, machine = snapshot.board, snapshot.person, snapshot.machine
+    rule = snapshot.rule
     mode, source = rule["mode"], rule["source"]
-    with db._lock:
-        conn = db._conn
-        own = [
-            c
-            for c in (_usable(conn, workspace_id, person) if person else [])
-            if provider is None or c["provider"] == provider
-        ]
-        pref = (
-            conn.execute(
-                "SELECT use_own FROM model_person_prefs WHERE workspace_id=? AND user_id=?",
-                (workspace_id, person),
-            ).fetchone()
-            if person
-            else None
-        )
-        use_own = bool(pref and pref["use_own"])
-        private = (
-            connection_of_machine(conn, workspace_id, machine["id"])
-            if machine is not None
-            else None
-        )
+    own = [c for c in snapshot.own if provider is None or c["provider"] == provider]
+    use_own, private = snapshot.use_own, snapshot.private
     want, note = None, None
     if mode == "org":
         want = "org"
