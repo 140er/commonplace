@@ -6,6 +6,10 @@ read-only, query-only mode and emits a validated aggregate with fixed categorica
 labels and opaque identities. It neither discovers credentials nor sends data on
 its own. The optional report callback requires an explicitly authorized caller.
 
+Operational evidence stays private. Public validation reports use repository-relative
+test names and aggregate results; personal source locations and internal runner
+commands are not public evidence references.
+
 Preparing, starting, running and waiting requests can lack `startedAt`. When their
 valid request timestamp precedes the selected window's end, they remain eligible
 before the metadata scan limit, even if requested before the window starts. Python
