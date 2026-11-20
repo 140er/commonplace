@@ -55,7 +55,8 @@ def test_live_pairing_code_delivers_the_exact_owner_pinned_program(program_flow)
         "code": made["setup"]["code"],
         "delivery": {"purpose": pin["purpose"], "sha256": pin["sha256"]},
     }
-    connection = HTTPConnection("127.0.0.1", flow.hub.port)
+    host, port = flow.hub.server.server_address
+    connection = HTTPConnection(host, port)
     try:
         connection.request(
             "POST",

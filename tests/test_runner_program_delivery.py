@@ -59,7 +59,8 @@ def binary(flow, made, pin, *, changes=None, headers=None):
         "delivery": {"purpose": pin["purpose"], "sha256": pin["sha256"]},
         **(changes or {}),
     }
-    connection = HTTPConnection("127.0.0.1", flow.hub.port)
+    host, port = flow.hub.server.server_address
+    connection = HTTPConnection(host, port)
     try:
         connection.request(
             "POST",

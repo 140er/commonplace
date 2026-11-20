@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_runner_program_delivery import release as release
 
 from commonplace.runner import machine_setup
-from tests.test_runner_program_delivery import release as release
 
 
 @pytest.mark.parametrize("changed", [False, True], ids=["valid-control", "changed-installer"])
