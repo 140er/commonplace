@@ -1,0 +1,3 @@
+- **Promises:** Runner packages retain exact library and distribution metadata bytes from hash-verified installed wheels. CFFI's explicitly declared `cffi-gen-src` build launcher is verified at the interpreter's scripts location and omitted; no external entry becomes a package member.
+- **How it fails:** Unknown or undeclared external records, duplicate launcher declarations, unsafe launcher files and changed RECORD hashes refuse construction. Archive traversal and complete-prefix startup checks remain enforced.
+- **Tests:** `tests/test_runner_distribution_records.py` and the real-wheel controls in `tests/test_runner_prefix_inventory_round.py`.
