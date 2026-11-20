@@ -130,6 +130,9 @@ def test_tampered_download_is_refused_before_any_prefix_write(release, tmp_path)
         "permissions",
         "interpreter",
         "python-config",
+        "extra-file",
+        "startup-file",
+        "interpreter-startup-file",
     ],
 )
 def test_changed_or_foreign_prefix_is_preserved_and_refused(release, tmp_path, kind):
@@ -150,6 +153,7 @@ def test_changed_or_foreign_prefix_is_preserved_and_refused(release, tmp_path, k
     if kind == "file":
         target.write_bytes(b"# replaced, must not execute\n")
     elif kind == "file-link":
+        target.parent.chmod(0o700)
         target.unlink()
         foreign = tmp_path / "foreign.py"
         foreign.write_bytes(original)
@@ -166,6 +170,19 @@ def test_changed_or_foreign_prefix_is_preserved_and_refused(release, tmp_path, k
                 "include-system-site-packages = false", "include-system-site-packages = true"
             )
         )
+    elif kind in ("extra-file", "startup-file", "interpreter-startup-file"):
+        site = (
+            python.parent.parent
+            / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+        )
+        site.chmod(0o700)
+        extra = (
+            (python.parent / "python._pth")
+            if kind == "interpreter-startup-file"
+            else site / ("extra.py" if kind == "extra-file" else "untrusted.pth")
+        )
+        extra.write_text("must not be imported\n")
+        extra.chmod(0o600)
     else:
         target.chmod(0o644)
     with pytest.raises((ValueError, OSError)):

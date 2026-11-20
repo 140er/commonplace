@@ -61,7 +61,9 @@ venv without pip, installs the bundled files, imports the real installer, and
 checks a real cryptographic signature in that interpreter. Only then does it
 publish the complete prefix under
 `~/.commonplace-runner-programs/<sha256>/`. An existing prefix must pass integrity
-and ownership checks; altered or foreign files are preserved and refused.
+and ownership checks; altered, additional or foreign files are preserved and refused.
+Bundled library directories are private and read-only (0500), preventing
+untracked bytecode from accumulating when the ordinary setup service imports them.
 The bootstrap then continues the existing setup program in the delivered
 interpreter, passing the code through stdin and a fixed environment.
 

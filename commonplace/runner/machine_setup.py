@@ -189,10 +189,11 @@ def program_contents(raw, pin):
 
 
 def _private(info, *, directory=False, executable=False):
+    modes = (0o500, 0o700) if directory else (0o700,) if executable else (0o600,)
     if (
         (not stat.S_ISDIR(info.st_mode) if directory else not stat.S_ISREG(info.st_mode))
         or info.st_uid != os.getuid()
-        or stat.S_IMODE(info.st_mode) != (0o700 if directory or executable else 0o600)
+        or stat.S_IMODE(info.st_mode) not in modes
         or (not directory and info.st_nlink != 1)
     ):
         raise ValueError("unsafe program prefix")
@@ -247,6 +248,28 @@ def verify_program(prefix, pin, files):
     for name, raw in files.items():
         if _program_file(prefix, site + "/" + name) != raw:
             raise ValueError("installed program integrity check failed")
+    actual = set()
+    site_path = Path(prefix) / site
+    for directory, dirs, names in os.walk(site_path, followlinks=False):
+        _private(os.lstat(directory), directory=True)
+        for name in dirs:
+            _private(os.lstat(Path(directory) / name), directory=True)
+        for name in names:
+            path = Path(directory) / name
+            _private(os.lstat(path))
+            actual.add(path.relative_to(site_path).as_posix())
+    if actual != set(files):
+        raise ValueError("unexpected installed program files")
+    if set(os.listdir(Path(prefix) / "bin")) - {
+        "python",
+        "python3",
+        f"python{sys.version_info.major}.{sys.version_info.minor}",
+        "activate",
+        "activate.csh",
+        "activate.fish",
+        "Activate.ps1",
+    }:
+        raise ValueError("unexpected Python startup files")
     return Path(prefix) / "bin/python"
 
 
@@ -311,6 +334,11 @@ def install_program(home, raw, pin):
                             continue
                         raise ValueError("unexpected program link")
                     path.chmod(0o700 if path.is_dir() or path.parent == staged / "bin" else 0o600)
+                # Read-only library directories prevent untracked bytecode from
+                # accumulating when the ordinary setup service imports this package.
+                for directory in sorted((p for p in site.rglob("*") if p.is_dir()), reverse=True):
+                    directory.chmod(0o500)
+                site.chmod(0o500)
                 staged.chmod(0o700)
                 # Import the real installer and perform real cryptographic operations in the new interpreter.
                 check = subprocess.run(
