@@ -309,7 +309,10 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
         return False
     if decision.refusal is not None:
         if decision.refusal.code == "connection_missing":
-            model_modes.note_missing(db, ws, user, board, cli)
+            try:
+                model_modes.note_missing(db, ws, user, board, cli)
+            except (OSError, sqlite3.Error, TimeoutError) as exc:
+                log_failure(logger, "chat missing connection note failed", exc)
         _refuse_account(
             gateway, ws, board, message_id, user, decision.refusal.code, decision.refusal.message
         )
@@ -478,6 +481,14 @@ def lease(
         for row in rows:
             if row["cli"] is not None and row["cli"] not in clis:
                 continue
+            try:
+                saved = json.loads(row["account_snapshot"] or "{}")
+            except (TypeError, ValueError):
+                saved = {}
+            # An excluded poller must leave this message for its admitted machines. Rows
+            # without a usable snapshot are still claimed to refuse their unknown account.
+            if isinstance(saved, dict) and saved and machine["id"] not in saved:
+                continue
             if conn.execute(
                 "UPDATE chat_runner_jobs SET state='leased',machine_id=?,lease_hash=?,"
                 "lease_until=?,updated_at=? WHERE id=? AND state='queued'",
@@ -518,10 +529,6 @@ def lease(
     except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
         log_failure(logger, "chat model mode unreadable at lease", exc)
         account = None
-    try:
-        saved = json.loads(claimed["account_snapshot"] or "{}")
-    except (TypeError, ValueError):
-        saved = {}
     changed = account is not None and (
         not isinstance(saved, dict) or saved.get(machine["id"]) != current
     )
