@@ -1,9 +1,9 @@
-"""Pre-push quick check: changed files only, inside a time budget.
+"""Pre-push quick check: changed files, with an elapsed-time alarm.
 
-Runs what git is about to push through lint and format checks, ``docs-check``
+Runs what git is about to push through lint, format and mypy checks, ``docs-check``
 against the base branch, and the fast tests that map to the changed files. It is
 a quick check, never the full suite or CI, and says so in every run. When the
-budget runs out it prints what it skipped instead of failing or passing silently.
+target is exceeded it warns; it never stops or omits a check to meet the target.
 
 Install it with ``python -m commonplace.guards.hooks install``; run it by hand with
 ``python -m commonplace.guards.prepush --manual``.
@@ -28,10 +28,10 @@ from commonplace.guards import push_range
 from commonplace.guards.stacks import PlannedCommand, detect_stacks, plan_commands, run_command
 from commonplace.orch import docs_check
 
-DEFAULT_BUDGET_SECONDS = 60.0
+DEFAULT_BUDGET_SECONDS = 9.0
 BUDGET_ENV = "COMMONPLACE_PREPUSH_BUDGET"
 TESTS_DIR = "tests"
-# -v prints each test id before it runs, so a cut-off run shows where it stopped.
+# -v keeps the selected test ids visible in failure output.
 FAST_TEST_ARGS = ("-v", "-x", "-p", "no:cacheprovider")
 MAX_LISTED = 5
 MAX_OUTPUT_LINES = 20
@@ -106,7 +106,7 @@ def select_tests(
 
 
 class Budget:
-    """A wall-clock allowance shared by every step of one run."""
+    """Elapsed time and an informational target; never a command deadline."""
 
     def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
         self.seconds = seconds
@@ -190,8 +190,8 @@ class QuickReport:
 
     @property
     def exit_code(self) -> int:
-        """1 only when a check failed; skipped or cut-short work is reported, never a failure."""
-        return 1 if self.failed else 0
+        """Unchecked required work blocks the push, as does a failed check."""
+        return 1 if self.failed or not self.complete else 0
 
 
 def _say(stream: TextIO, text: str = "") -> None:
@@ -213,7 +213,7 @@ def _listed(names: Iterable[str]) -> str:
 
 
 def _file_steps(top: Path, changed: list[str]) -> list[tuple[str, PlannedCommand]]:
-    """Lint and format commands for the changed files, named ``lint <tool>`` / ``format <tool>``."""
+    """Canonical lint/format commands plus real Python typechecking, without fixes."""
     stacks = [stack for stack in detect_stacks(top) if stack.name != "tsc"]
     steps: list[tuple[str, PlannedCommand]] = []
     for command in plan_commands(top, stacks, changed):
@@ -234,33 +234,56 @@ def _file_steps(top: Path, changed: list[str]) -> list[tuple[str, PlannedCommand
             steps.append(("format cargo-fmt", command))
         else:
             steps.append((f"lint {command.name}", command))
+    python_files = tuple(path for path in changed if path.endswith((".py", ".pyi")))
+    python_paths = set(python_files)
+    paired_stubs = {
+        path for path in python_files if path.endswith(".pyi") and path[:-1] in python_paths
+    }
+    # Mypy gives a matching implementation and stub the same module name. Keep
+    # both checks, but put their explicit roots in different invocations.
+    python_batches = (
+        tuple(path for path in python_files if path not in paired_stubs),
+        tuple(path for path in python_files if path in paired_stubs),
+    )
+    for batch in python_batches:
+        if not batch:
+            continue
+        steps.append(
+            (
+                "typecheck mypy",
+                PlannedCommand(
+                    name="mypy",
+                    argv=("mypy", "--check-untyped-defs", "--", *batch),
+                    files=batch,
+                ),
+            )
+        )
     return steps
 
 
 def _run_command_step(
     name: str, command: PlannedCommand, top: Path, budget: Budget, env: dict[str, str]
 ) -> StepOutcome:
-    remaining = budget.remaining()
-    if remaining <= 0:
-        return StepOutcome(name, _SKIPPED, detail="budget spent before it started")
-    result = run_command(command, top, remaining, env=env)
+    result = run_command(command, top, None, env=env)
     if result.status == "passed":
         return StepOutcome(name, _PASSED, result.seconds)
     if result.status == "missing":
         return StepOutcome(
-            name, _SKIPPED, result.seconds, f"{command.argv[0]} is not installed in this worktree"
+            name, _FAILED, result.seconds, f"{command.argv[0]} is not installed in this worktree"
         )
     if result.status == "timeout":
-        return StepOutcome(name, _INCOMPLETE, result.seconds, "budget ran out while it was running")
-    lines = result.locations[:MAX_OUTPUT_LINES] or _tail(result.output)
+        return StepOutcome(name, _FAILED, result.seconds, "command did not finish")
+    lines = (
+        _tail(result.output)
+        if command.name == "mypy"
+        else result.locations[:MAX_OUTPUT_LINES] or _tail(result.output)
+    )
     return StepOutcome(name, _FAILED, result.seconds, lines=lines, rerun=command.fix)
 
 
 def _docs_step(top: Path, base: str, heads: list[str], budget: Budget) -> StepOutcome:
     if not (top / docs_check.MODULES).is_file():
         return StepOutcome("docs-check", _NA, detail=f"no {docs_check.MODULES} in this repo")
-    if budget.remaining() <= 0:
-        return StepOutcome("docs-check", _SKIPPED, detail="budget spent before it started")
     start = time.monotonic()
     problems: list[str] = []
     try:
@@ -268,7 +291,7 @@ def _docs_step(top: Path, base: str, heads: list[str], budget: Budget) -> StepOu
             problems += docs_check.check(top, base, head)
     except docs_check.DocsCheckError as exc:
         return StepOutcome(
-            "docs-check", _SKIPPED, detail=f"could not compare with {base}: {exc} (git fetch it)"
+            "docs-check", _FAILED, detail=f"could not compare with {base}: {exc} (git fetch it)"
         )
     seconds = time.monotonic() - start
     if problems:
@@ -294,15 +317,13 @@ def _test_step(top: Path, selection: ChangedTests, budget: Budget, env: dict[str
     if not selection.files:
         return StepOutcome("tests", _NA, detail="no fast test maps to the changed files")
     if importlib.util.find_spec("pytest") is None:
-        return StepOutcome("tests", _SKIPPED, detail="pytest is not installed in this worktree")
-    if budget.remaining() <= 0:
-        return StepOutcome("tests", _SKIPPED, detail="budget spent before it started")
+        return StepOutcome("tests", _FAILED, detail="pytest is not installed in this worktree")
     command = PlannedCommand(
         name="pytest",
         argv=(sys.executable, "-m", "pytest", *FAST_TEST_ARGS, *selection.files),
         files=selection.files,
     )
-    result = run_command(command, top, budget.remaining(), env=env)
+    result = run_command(command, top, None, env=env)
     count = _plural(len(selection.files), "test file")
     if result.status == "passed":
         return StepOutcome("tests", _PASSED, result.seconds, detail=count)
@@ -312,10 +333,10 @@ def _test_step(top: Path, selection: ChangedTests, budget: Budget, env: dict[str
         pending = [f for f in selection.files if f not in done]
         return StepOutcome(
             "tests",
-            _INCOMPLETE,
+            _FAILED,
             result.seconds,
             detail=(
-                f"budget ran out: {len(done)} of {count} confirmed finished; "
+                f"command did not finish: {len(done)} of {count} confirmed finished; "
                 f"not confirmed: {_listed(pending)}"
             ),
             rerun=rerun,
@@ -359,10 +380,10 @@ def run_quick_checks(
     clock: Callable[[], float] = time.monotonic,
     env: dict[str, str] | None = None,
 ) -> QuickReport:
-    """Run lint, format, docs-check and mapped tests for ``changed`` within the budget.
+    """Run lint, format, mypy, docs-check and mapped tests; time is an alarm only.
 
     ``files_current`` is False when the pushed commit is not the checked-out one: the
-    file-based steps would then read the wrong files, so they are skipped and reported.
+    file-based steps would then read the wrong files, so the push is refused.
     """
     stream = sys.stderr if out is None else out
     top = Path(repo_root)
@@ -373,7 +394,7 @@ def run_quick_checks(
     _say(
         stream,
         f"commonplace pre-push QUICK CHECK: {_plural(len(changed), 'changed file')}, "
-        f"budget {budget_seconds:g}s",
+        f"target <{budget_seconds:g}s (alarm only)",
     )
     _say(stream, "This is not the full test suite and not CI; a pass here is not a green build.")
 
@@ -391,7 +412,7 @@ def run_quick_checks(
             record(_run_command_step(name, command, top, budget, env))
     else:
         why = "the pushed commit is not the checked-out HEAD"
-        record(StepOutcome("lint/format", _SKIPPED, detail=why))
+        record(StepOutcome("lint/format/typecheck", _SKIPPED, detail=why))
     record(_docs_step(top, base, heads, budget))
     if files_current:
         selection = select_tests(top, changed)
@@ -413,7 +434,9 @@ def run_quick_checks(
 
 
 def _print_verdict(stream: TextIO, report: QuickReport) -> None:
-    took = f"{report.total_seconds:.1f}s of {report.budget_seconds:g}s"
+    took = f"{report.total_seconds:.2f}s; target <{report.budget_seconds:g}s"
+    if report.total_seconds >= report.budget_seconds:
+        _say(stream, "TIME ALARM: target exceeded; every required check was allowed to finish.")
     if report.failed:
         names = ", ".join(o.name for o in report.with_status(_FAILED))
         _say(stream, f"QUICK CHECK FAILED ({took}): {names}. The push is blocked until it passes.")
@@ -421,7 +444,7 @@ def _print_verdict(stream: TextIO, report: QuickReport) -> None:
         _say(
             stream,
             f"QUICK CHECK PASSED ({took}). Only the changed files and their mapped fast tests "
-            "were checked; the full suite and CI still decide.",
+            "were checked.",
         )
         return
     left = report.with_status(_SKIPPED) + report.with_status(_INCOMPLETE)
@@ -430,11 +453,11 @@ def _print_verdict(stream: TextIO, report: QuickReport) -> None:
             stream,
             "QUICK CHECK INCOMPLETE: not checked: "
             + "; ".join(f"{o.name} ({o.detail})" for o in left)
-            + ". This does not block the push, and it is not a pass for those.",
+            + ". The push is blocked until these checks can run.",
         )
         _say(
             stream,
-            f"Raise the budget with --budget SECONDS or {BUDGET_ENV}, or run the commands above.",
+            "Check out the pushed commit with clean tracked files and install the required tools.",
         )
 
 
@@ -462,16 +485,19 @@ def _resolve_base(top: Path, wanted: str | None) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m commonplace.guards.prepush",
-        description="Quick pre-push check on the files a push changes, within a time budget.",
+        description="Changed-file pre-push checks; elapsed time is an alarm, never a cutoff.",
     )
     parser.add_argument("remote", nargs="?", default="origin", help="remote name (git passes it)")
     parser.add_argument("url", nargs="?", help="remote url (git passes it)")
     parser.add_argument(
         "--budget",
         metavar="SECONDS",
-        help=f"time budget (default {DEFAULT_BUDGET_SECONDS:g}; env {BUDGET_ENV})",
+        help=f"elapsed-time alarm only (default {DEFAULT_BUDGET_SECONDS:g}; env {BUDGET_ENV})",
     )
     parser.add_argument("--base", help=f"base ref (default {docs_check.DEFAULT_BASE})")
+    parser.add_argument(
+        "--chain-hook", help="run the previous pre-push hook with the same input first"
+    )
     parser.add_argument(
         "--manual",
         action="store_true",
@@ -495,6 +521,26 @@ def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
     budget = parse_budget(args.budget or os.environ.get(BUDGET_ENV), warn)
     base = _resolve_base(top, args.base)
     source = sys.stdin if stdin is None else stdin
+    raw_bytes = b""
+    if not (args.manual or source.isatty()):
+        raw_bytes = (
+            sys.stdin.buffer.read()
+            if stdin is None
+            else source.read().encode("utf-8", errors="surrogateescape")
+        )
+    raw_input = raw_bytes.decode("utf-8", errors="surrogateescape")
+    if args.chain_hook and os.access(args.chain_hook, os.X_OK):
+        try:
+            previous = subprocess.run(
+                [args.chain_hook, args.remote, *([args.url] if args.url else [])],
+                input=raw_bytes,
+                check=False,
+            )
+        except OSError:
+            warn("the previous pre-push hook could not run. The push is blocked.")
+            return 1
+        if previous.returncode:
+            return 1
     head_sha = _git_out(top, "rev-parse", "HEAD") or ""
     try:
         if args.manual or source.isatty():
@@ -502,20 +548,33 @@ def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
                 push_range.PushUpdate("HEAD", head_sha, "refs/heads/HEAD", "0" * 40),
             ]
         else:
-            updates = push_range.parse_pre_push_lines(source.read())
+            updates = push_range.parse_pre_push_lines(raw_input)
         base_exists = _git_out(top, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
         changed = push_range.changed_files(
             top, updates, args.remote, default_ref=base if base_exists else None
         )
-    except push_range.PushRangeError as exc:
-        warn(f"cannot tell which files changed: {exc}. Not checked; the push is not blocked.")
-        return 0
+    except push_range.PushRangeError:
+        # Neither raw hook input nor remote arguments belong in diagnostics.
+        warn(
+            "cannot determine the changed files. The push is blocked; fetch the base and try again."
+        )
+        return 1
     pushed = [u for u in updates if not (u.is_delete or u.is_tag)]
     if not pushed:
         warn("nothing to check (only deletes or tags).")
         return 0
     heads = list(dict.fromkeys(u.local_sha for u in pushed))
-    changed = [path for path in changed if (top / path).exists()]
+    clean = (
+        subprocess.run(
+            ["git", "-C", str(top), "diff", "--quiet", "HEAD", "--"], check=False
+        ).returncode
+        == 0
+    )
+    if not clean:
+        warn(
+            "tracked files differ from HEAD. The push is blocked so checks cannot read other bytes."
+        )
+        return 1
     report = run_quick_checks(
         top,
         changed,
