@@ -249,6 +249,56 @@ def test_a_failure_after_the_rename_puts_the_files_back_where_the_rows_say(
     assert not files_of(h, identity).exists()
 
 
+def test_a_folder_that_cannot_be_put_back_leaves_a_deleted_preview_to_finish(
+    console_hub, monkeypatch
+):
+    """If the rename back fails too, the rows must not read ready over a missing folder: the
+    delete is recorded, the preview says files remain, and Finish deleting removes them."""
+    h = console_hub
+    _number, identity = published(h)
+    real_view, real_replace = store.view, os.replace
+
+    def failing_view(conn, row, *, revisions=False):
+        if revisions:
+            raise RuntimeError("could not read the result")
+        return real_view(conn, row, revisions=revisions)
+
+    def refusing_restore(source, target, *args, **kwargs):
+        if ".deleting-" in str(source):
+            raise OSError("read-only file system")
+        return real_replace(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(store, "view", failing_view)
+    monkeypatch.setattr(os, "replace", refusing_restore)
+    with pytest.raises(RuntimeError):
+        service.delete_files(h.gateway, h.person(h.hub.admin), identity, identity)
+    monkeypatch.undo()
+    shown = one(h, identity)
+    assert shown["state"] == "stopped" and shown["reason"] == "files_deleted"
+    assert shown["files_remaining"] is True
+    assert h.request(h.owner, "GET", "/api/previews")[1]["previews"][0]["files_remaining"] is True
+    assert list(store.root(h.gateway, h.workspace).glob(".deleting-*"))
+    status, body, _ = delete(h, h.owner, identity)
+    assert status == 200 and body["files_remaining"] is False
+    assert not list(store.root(h.gateway, h.workspace).glob(".deleting-*"))
+    assert one(h, identity)["files_remaining"] is False
+
+
+def test_a_removal_that_raises_still_answers_with_files_remaining(console_hub, monkeypatch):
+    h = console_hub
+    _number, identity = published(h)
+
+    def failing(path, *args, **kwargs):
+        raise PermissionError("not allowed")
+
+    monkeypatch.setattr(shutil, "rmtree", failing)
+    status, body, _ = delete(h, h.owner, identity)
+    assert status == 200 and body["files_remaining"] is True and body["reason"] == "files_deleted"
+    monkeypatch.undo()
+    status, body, _ = delete(h, h.owner, identity)
+    assert status == 200 and body["files_remaining"] is False
+
+
 def assert_untouched(h, identity):
     shown = one(h, identity)
     assert shown["state"] == "ready" and shown["url"] == f"/p/{identity}/"

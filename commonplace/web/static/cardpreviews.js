@@ -1,10 +1,11 @@
 import { api as request, escape as e, elapsed } from "./api.js";
 
 // "Previews" in the card panel: what a Coworker published for this card, from
-// GET /api/previews?card=<n>. A preview stays after the work session ends; Open shows it in a new tab
-// (/p/<id>/, only for signed-in people who can open the card). Stop keeps the files and Open again
-// serves them again. The owner also sees the stop rule here and can change it, and can delete
-// a preview's files after confirming; the server checks both again. A card the person cannot see answers 404, and then the section stays hidden.
+// GET /api/previews?card=<n>. A preview stays after the work session ends; Open shows it in a
+// new tab (/p/<id>/, only for signed-in people who can open the card). Stop keeps the files and
+// Open again serves them again. The owner also sees the stop rule here and can change it, and
+// can delete a preview's files after confirming; the server checks both again. A card the
+// person cannot see answers 404, and then the section stays hidden.
 
 export const STATE_WORDS = {
   ready: "Ready",

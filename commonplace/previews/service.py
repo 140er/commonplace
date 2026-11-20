@@ -27,8 +27,20 @@ log = logging.getLogger("commonplace.previews")
 
 
 def _remove_tree(path) -> None:
-    """The one place files are removed; callers look at the result instead of trusting it."""
-    shutil.rmtree(path, ignore_errors=True)
+    """The one place files are removed; callers look at the result instead of trusting it, so
+    no failure to remove escapes from here."""
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception as exc:
+        log_failure(log, "preview files could not be removed", exc)
+
+
+def _exists(path) -> bool:
+    """Whether a path is still there; a path that cannot be looked at counts as there."""
+    try:
+        return path.exists()
+    except OSError:
+        return True
 
 
 def _service(gateway, principal):
@@ -615,6 +627,32 @@ def reopen(gateway, principal, preview_id) -> dict:
     )
 
 
+def _mark_deleted(conn, workspace, row, actor) -> None:
+    """The rows of a delete: every revision's files gone, the preview stopped, one event."""
+    now = store.stamp(store.clock())
+    conn.execute(
+        "UPDATE preview_revisions SET deleted_at=? WHERE preview_id=? AND deleted_at IS NULL",
+        (now, row["id"]),
+    )
+    conn.execute(
+        "UPDATE previews SET state='stopped',reason='files_deleted',updated_at=? WHERE id=?",
+        (now, row["id"]),
+    )
+    store.event(conn, workspace, row["id"], row["card"], "files_deleted", actor)
+
+
+def _finish_unrestorable(db, workspace, row, actor) -> None:
+    """The folder could not be renamed back after a failed delete, so the rows must not read
+    ready over a folder that is no longer there. Record the delete instead: the preview reads
+    deleted with files remaining, and the owner's Finish deleting removes the aside folder."""
+    try:
+        with db._lock, db._tx() as conn:
+            _mark_deleted(conn, workspace, row, actor)
+            store.event(conn, workspace, row["id"], row["card"], "delete_incomplete", actor)
+    except Exception as exc:
+        log_failure(log, "preview delete could not be recorded after a failed restore", exc)
+
+
 def delete_files(gateway, principal, preview_id, confirm) -> dict:
     """Delete every revision's files of a preview. A signed-in workspace owner only, with the
     preview's own id repeated as confirmation; never called by a timer or a Coworker.
@@ -641,20 +679,7 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
                 state, _reason = store.effective(row)
                 if state == "building":
                     raise Refused("validating")
-                now = store.stamp(store.clock())
-                conn.execute(
-                    "UPDATE preview_revisions SET deleted_at=? WHERE preview_id=? "
-                    "AND deleted_at IS NULL",
-                    (now, row["id"]),
-                )
-                conn.execute(
-                    "UPDATE previews SET state='stopped',reason='files_deleted',updated_at=? "
-                    "WHERE id=?",
-                    (now, row["id"]),
-                )
-                store.event(
-                    conn, workspace, row["id"], row["card"], "files_deleted", principal.actor
-                )
+                _mark_deleted(conn, workspace, row, principal.actor)
                 folder = base / row["id"]
                 if folder.exists():
                     target = base / f".deleting-{row['id']}-{secrets.token_hex(4)}"
@@ -678,17 +703,21 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
                     log_failure(
                         log, "preview folder could not be put back after a failed delete", exc
                     )
+                    _finish_unrestorable(db, workspace, row, principal.actor)
             raise
     # The lock is released: the removal itself may take as long as the files need.
     leftovers = _leftovers(gateway, workspace, row["id"])
     for path in leftovers:
         _remove_tree(path)
-    if any(path.exists() for path in leftovers):
+    if any(_exists(path) for path in leftovers):
         log.warning("preview files could not be fully removed for %s", row["id"])
-        with db._lock, db._tx() as conn:
-            store.event(
-                conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
-            )
+        try:
+            with db._lock, db._tx() as conn:
+                store.event(
+                    conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
+                )
+        except Exception as exc:
+            log_failure(log, "a delete_incomplete event could not be recorded", exc)
         shown["files_remaining"] = True
     else:
         shown["files_remaining"] = False
