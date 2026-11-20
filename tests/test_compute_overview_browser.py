@@ -302,7 +302,7 @@ def test_every_state_reads_truthfully_and_nothing_says_running_on_old_data(serve
         shown = _shown(page)
         assert "5 runners" not in shown  # six were enrolled; the sentence counts them all
         expect(page.locator("[data-ov-summary]")).to_contain_text(
-            "7 runners, 1 machine, 7 cloud workspaces. 3 need attention: "
+            "7 runners, 1 target machine, 7 cloud workspaces. 3 need attention: "
         )
         # Runners: each state says what it is and how old the signal is.
         expect(_row(page, "build-runner")).to_contain_text("Online · Busy")
@@ -546,7 +546,7 @@ def test_a_member_reads_cloud_workspaces_only_and_is_offered_no_action(served, u
         _go(page, fx, ui)
         expect(_rows(page)).to_have_count(7)
         expect(page.locator(ROOT)).to_contain_text(
-            "Machines and runners are visible to the workspace owner."
+            "Runner machines in Admin and target machines are visible to the workspace owner."
         )
         _shot(page, f"{label}-29-member-list")
         text = page.locator(".compute").inner_text()
@@ -642,7 +642,7 @@ def test_on_a_phone_the_overview_is_folded_and_the_create_button_is_within_reach
             "the overview starts as one summary line on a phone"
         )
         expect(page.locator("[data-ov-summary]")).to_contain_text(
-            "7 runners, 1 machine, 7 cloud workspaces"
+            "7 runners, 1 target machine, 7 cloud workspaces"
         )
         create = page.get_by_role("button", name=re.compile("^New cloud workspace"))
         box = create.bounding_box()
@@ -1211,12 +1211,25 @@ def test_a_paused_tab_marks_every_row_as_of_its_last_read_and_offers_refresh(ser
             context, page, errors = _open(browser, fx, ui, size)
             page.clock.install()
             reads = _count_reads(page)
+            workspace_reads = []
+            page.route("**/api/compute/workspaces", lambda route: workspace_reads.append(route))
             _visit(page, fx, ui)
             _go(page, fx, ui)
             row = _row(page, "build-runner")
             status_before = row.locator("[data-ov-chip]").inner_text()
             page.get_by_role("button", name="Pause automatic updates").click()
             reads_at_pause = len(reads)
+            # The other section finishes loading after Pause: its new signature must not trigger an overview read.
+            assert workspace_reads
+            with page.expect_response(lambda r: r.url.endswith("/api/compute/workspaces")):
+                for route in workspace_reads:
+                    route.continue_()
+            page.unroute("**/api/compute/workspaces")
+            expect(page.locator(".compute-ws-row")).to_have_count(7)
+            page.clock.run_for(10000)
+            assert len(reads) == reads_at_pause, (
+                "a changed workspace signature must preserve the paused snapshot"
+            )
             expect(page.locator("[data-ov-stale]")).to_be_hidden()
             page.clock.run_for(900000)  # fifteen minutes with no automatic read
             assert len(reads) == reads_at_pause, ("paused: nothing was read", reads)
@@ -1243,6 +1256,13 @@ def test_a_paused_tab_marks_every_row_as_of_its_last_read_and_offers_refresh(ser
             expect(row.locator("[data-ov-chip]")).to_have_text(status_before)
             expect(page.locator("[data-ov-stale]")).to_be_hidden()
             expect(page.locator("[data-ov-stale-retry]")).to_be_hidden()
+            manual_reads = len(reads)
+            page.clock.run_for(10000)
+            assert len(reads) == manual_reads, "manual Refresh keeps automatic updates paused"
+            with page.expect_request(lambda r: r.url.endswith(OVERVIEW)):
+                page.get_by_role("button", name="Resume automatic updates").click()
+            expect(page.get_by_role("button", name="Pause automatic updates")).to_be_visible()
+            assert len(reads) == manual_reads + 1
             context.close()
         finally:
             browser.close()

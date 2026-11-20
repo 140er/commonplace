@@ -49,12 +49,12 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent yet. Add one under Add a machine in Cloud workspaces. In this version a machine only checks itself, so no Coworker runs on it yet.",
+  no_machine: "No machine is ready to run an agent yet. Add one under Add a machine in Cloud workspaces. In this version a machine only checks itself. Coworkers do not run on it in this version.",
   machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
   binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
-  setup_waiting: "The machine you added connected and waits for your approval. In this version it only checks itself, so no Coworker runs on it yet.",
-  setup_unfinished: "The machine you added did not finish its setup. In this version it only checks itself, so no Coworker runs on it yet.",
-  setup_only: "The machine you added only checks itself in this version, so no Coworker runs on it yet.",
+  setup_waiting: "The machine you added connected and waits for your approval. Coworkers do not run on it in this version.",
+  setup_unfinished: "The machine you added is not finished. Coworkers do not run on it in this version.",
+  setup_only: "The machine you added only checks itself in this version. Coworkers do not run on it in this version.",
   origin_not_released: "This card came from outside the workspace and has not been released for agents. Release it first, then start an agent.",
   not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
   outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
@@ -93,7 +93,10 @@ const choices = (list, picked) => list.map((item) => `<option value="${e(item)}"
 // The Start control for what the options route answered; empty when nothing should show.
 function startHTML(start, jobs) {
   if (!start || NOT_CLAIMABLE.includes(start.refusal)) return "";
-  const why = (text, link) => `<p class="run-start-why" data-run-start-why>${e(text)}${link ? ` <a href="${e(link[0])}" data-run-start-link>${e(link[1])}</a>` : ""}</p>`;
+  const why = (text, link) => {
+    const href = link?.[0] === '#/compute' && globalThis.document?.documentElement?.dataset?.ui === 'deck' ? '#/compute/management' : link?.[0];
+    return `<p class="run-start-why" data-run-start-why>${e(text)}${link ? ` <a href="${e(href)}" data-run-start-link>${e(link[1])}</a>` : ""}</p>`;
+  };
   if (start.refusal) return why(START_REFUSALS[start.refusal] || "An agent cannot be started on this card right now.", START_LINKS[start.refusal]);
   if (jobs.some((job) => ACTIVE.includes(job.state))) return why(START_REFUSALS.active_start);
   const button = `<button class="btn sm" type="submit">Start agent</button>`;

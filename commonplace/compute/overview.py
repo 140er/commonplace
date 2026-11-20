@@ -96,7 +96,7 @@ ONLY_RUNNERS_SENTENCE = "No machine for a cloud workspace yet: the one you set u
 NEXT_STEP = {
     "offline": "Check that the machine is on and the runner program is running there.",
     "slow": "Wait a little: a busy machine or a poor connection can delay a report. If it stays like this, check the machine's network.",
-    "never_connected": "Finish its setup on the machine (Admin, Runner machines lists what to run there).",
+    "never_connected": "Start the runner agent on the machine with the tokens shown when it was enrolled in Admin > Runner machines (they are shown once; revoke and enrol it again if they are lost).",
     "unknown": "Nothing to do yet; this clears when the machine reports again.",
     # Not verified and verification expired have no step here: no control verifies a machine in this version (enrollment
     # is checked by a signed receipt, never set by hand), and the status sentence says so instead of pointing at one.
@@ -195,45 +195,57 @@ SETUP_ONLY_BLOCKER = (
 )
 
 
-ADD_A_MACHINE = "Add a machine below"
+ADD_A_MACHINE = pairing.ADD_A_MACHINE
+GUIDED_SETUP_CODES = ("waiting_approval", "finishing_setup", "not_finished", "set_up")
+HIDDEN_LIMIT_CODES = (*GUIDED_SETUP_CODES, "not_approved")
 NO_CAPACITY = "Not used in this version: no Coworker runs on this machine"
 
 
 def pending_reason(pending):
-    """The one reason a machine from the setup guide that the owner has not approved yet cannot take work, in the
-    words Add a machine uses for the same pairing: waiting for approval, or not finished (a step failed, or nothing
-    more came for 15 minutes)."""
-    if pending["state"] == "connected" and not pending["stalled"]:
+    """The one reason a machine from an unfinished guided setup cannot take work. The words
+    (chip, sentence, next step) are the pairing's own (``pairing.pending_words``), the same on every screen."""
+    code, label, sentence, step = pairing.pending_words(pending)
+    if pending.get("accepted"):
+        sentence += " Coworkers do not run on it in this version."
+    if code == "finishing_setup":
         return {
-            "code": "waiting_approval",
+            "code": code,
+            "kind": "no",
+            "allowed": "No: setup not finished",
+            "blocker": "Approved: this machine is finishing its setup.",
+            "label": label,
+            "tone": "wait",
+            "detail": sentence,
+            "next": step,
+        }
+    if code == "waiting_approval":
+        return {
+            "code": code,
             "kind": "no",
             "allowed": "No: not approved yet",
             "blocker": f"Not approved: it connected and waits for your approval in {ADD_A_MACHINE}.",
-            "label": "Waiting for your approval",
+            "label": label,
             "tone": "wait",
-            "detail": f"It connected and waits for your approval in {ADD_A_MACHINE}.",
-            "next": f"Once it has finished its setup and printed its fingerprint, compare it and approve the machine in {ADD_A_MACHINE}.",
+            "detail": sentence,
+            "next": step,
         }
-    if pending["state"] == "failed":
-        what = (
-            f"A setup step failed: {pending['cause'].rstrip('.')}."
-            if pending["cause"]
-            else "A setup step failed."
-        )
-        fact = f"{pending['cause'].rstrip('.')}." if pending["cause"] else "A setup step failed."
-    else:
-        what = "This setup has not finished."
-        fact = "Nothing more came from the machine for 15 minutes."
+    fact = (
+        f"{pending['cause'].rstrip('.')}."
+        if pending["state"] == "failed" and pending["cause"]
+        else "A setup step failed."
+        if pending["state"] == "failed"
+        else "Nothing more came from the machine for 15 minutes."
+    )
     return {
-        "code": "not_finished",
+        "code": code,
         "kind": "no",
         "allowed": "No: setup not finished",
         # The chip says "Not finished" and the sentence says what happened: the blocker adds the fact once and the step.
         "blocker": f"{fact} Set up again or remove it in {ADD_A_MACHINE}.",
-        "label": "Not finished",
+        "label": label,
         "tone": "bad",
-        "detail": f"{what} Set up again or remove it in {ADD_A_MACHINE}.",
-        "next": f"Open it in {ADD_A_MACHINE} and choose Set up again, or remove it.",
+        "detail": sentence,
+        "next": step,
     }
 
 
@@ -994,13 +1006,13 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "Revoked",
             "The owner removed this runner and its access is cancelled.",
         )
-    if "waiting_approval" in codes or "not_finished" in codes:
+    if codes.intersection(("waiting_approval", "finishing_setup", "not_finished")):
         waiting = next(
             item
             for item in (
                 reasons if reasons is not None else can_take_new_work(machine, record, facts)
             )
-            if item["code"] in ("waiting_approval", "not_finished")
+            if item["code"] in ("waiting_approval", "finishing_setup", "not_finished")
         )
         return _status(
             waiting["code"],
@@ -1040,9 +1052,8 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
         return _status(
             "set_up",
             "quiet",
-            "Set up and checked",
-            "The machine passed its setup checks. This page cannot see whether it is switched on right now, "
-            "and this version only checks the machine: Coworkers do not run on it in this version.",
+            pairing.SET_UP_LABEL,
+            f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Coworkers do not run on it in this version.",
         )
     if reason == "no_heartbeat":
         return _status(
@@ -1225,7 +1236,7 @@ def _runner_usage(machine, facts, now, *, silent="", takes_no_work=False):
             spend_line += f" (and {_runs(spend['unknown_runs'])} of unknown cost)"
     usage["summary"] = f"{in_progress} · {resources} · {spend_line}"
     if takes_no_work:
-        # A machine that takes no work here has no run capacity or resources to show: say so instead of "0 of 1 in use".
+        # Guided setup only checks the machine; developer runners retain their recorded usage.
         usage["runs"]["text"] = NO_CAPACITY
         usage["resources"] = {"known": False, "reason": "not_used", "text": NO_CAPACITY}
         usage["summary"] = f"{NO_CAPACITY} · {spend_line}"
@@ -1300,7 +1311,7 @@ def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, 
             facts,
             now,
             silent={"offline": "offline", "slow": "slow to report"}.get(status["code"], ""),
-            takes_no_work=status["code"] in ("waiting_approval", "not_finished", "set_up"),
+            takes_no_work=status["code"] in GUIDED_SETUP_CODES,
         ),
         "placement": {"approved": machine["binding_state"] == "owner_attested"},
         "draining": facts["drain"]["draining"],
@@ -1537,7 +1548,7 @@ def read(store, principal, *, session_hash):
         if manage
         else {
             "kinds": ["machine", "runner"],
-            "text": "Machines and runners are visible to the workspace owner.",
+            "text": "Runner machines in Admin and target machines are visible to the workspace owner.",
         },
         "truncated": truncated,
     }
@@ -1699,9 +1710,17 @@ def detail(store, principal, kind, item_id, *, session_hash):
         raise not_found()
     item["activity"] = _runner_activity(store, item_id, now)
     machine = _machine_row(store, item_id)
+    # Omit unused capacity settings while setup or approval still blocks new work.
+    limits = (
+        []
+        if item["status"]["code"] in HIDDEN_LIMIT_CODES
+        else [
+            {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
+            {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
+        ]
+    )
     item["facts"] = [
-        {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
-        {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
+        *limits,
         {
             "label": "Allowed to start card runs",
             "value": item["intake"]["allowed"],

@@ -476,6 +476,40 @@ def test_runner_detail_lists_recent_runs_and_limits(api, fleet):
     )
 
 
+def test_not_approved_detail_hides_unused_capacity_figures(api, fleet):
+    made = fleet.enroll("runner-not-approved")
+    fleet.seen(made, 10)
+    registry.patch(api.env.db, api.env.principal, made["machine_id"], {"topics": ["review"]})
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    item = result["item"]
+    assert item["status"]["code"] == "not_approved"
+    facts = {fact["label"]: fact["value"] for fact in item["facts"]}
+    assert facts["Allowed to start card runs"].startswith("No:")
+    assert not {"Runs at once", "Starts per hour"} & facts.keys()
+
+
+def test_not_approved_developer_runner_keeps_recorded_usage(api, fleet):
+    made = fleet.enroll("runner-recorded-usage")
+    fleet.seen(made, 10)
+    card = fleet.work(made)
+    fleet.job(made, "started", task=card)
+    fleet.resources(made, seconds_ago=120, memory_mb=6144, cpu_free=3.5)
+    registry.patch(api.env.db, api.env.principal, made["machine_id"], {"topics": ["review"]})
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    for item in (by_name(read(api))["runner-recorded-usage"], result["item"]):
+        assert item["status"]["code"] == "not_approved"
+        usage = item["usage"]
+        assert usage["runs"]["running"] == 1
+        assert usage["runs"]["text"].startswith("1 of ")
+        assert usage["resources"]["known"] is True
+        assert usage["resources"]["memory_available_mb"] == 6144
+        assert "6.0 GiB memory free" in usage["summary"]
+        assert "Not used in this version" not in usage["summary"]
+    assert result["item"]["activity"][0]["text"].startswith(f"Started: demo card {card}")
+
+
 def test_unknown_ids_kinds_and_paths_are_refused_with_a_reason(api):
     assert api.request(path=f"{BASE}/workspace/nothing") == (
         404,
@@ -507,7 +541,7 @@ def test_a_member_sees_cloud_workspaces_only_with_no_machine_names_or_addresses(
     assert [i["name"] for i in result["items"]] == ["Shared box"]
     assert result["hidden"] == {
         "kinds": ["machine", "runner"],
-        "text": "Machines and runners are visible to the workspace owner.",
+        "text": "Runner machines in Admin and target machines are visible to the workspace owner.",
     }
     item = result["items"][0]
     assert item["actions"] == [] and item["basis"] is None
@@ -1506,19 +1540,19 @@ GUIDED = {
     "connected": (
         "waiting_approval",
         "Waiting for your approval",
-        "It connected and waits for your approval in Add a machine below.",
+        "It connected and waits for your approval in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
         "No: not approved yet",
     ),
     "failed": (
         "not_finished",
         "Not finished",
-        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine below.",
+        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
         "No: setup not finished",
     ),
     "stalled": (
         "not_finished",
         "Not finished",
-        "This setup has not finished. Set up again or remove it in Add a machine below.",
+        "This setup has not finished. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
         "No: setup not finished",
     ),
 }
@@ -1544,10 +1578,10 @@ def test_a_guided_machine_waiting_for_approval_reads_the_same_as_add_a_machine_a
     item = result["item"]
     assert (item["status"]["code"], item["status"]["label"]) == (code, label)
     assert item["status"]["detail"] == sentence
-    assert "Add a machine below" in item["status"]["next"]
+    assert "Add a machine in Cloud workspaces" in item["status"]["next"]
     assert item["intake"] == {"allowed": allowed, "reasons": [code]}
     blocker = item["health"]["blockers"][0]["text"]
-    assert "Add a machine below" in blocker
+    assert "Add a machine in Cloud workspaces" in blocker
     assert blocker.count("not finished") + blocker.count("has not finished") <= 0, (
         "the fact is said once, not three times"
     )
@@ -1588,17 +1622,18 @@ def test_a_machine_the_owner_turned_off_is_still_disabled_when_no_setup_is_open(
     )
 
 
-def test_an_attested_setup_only_machine_is_never_leased_work_and_the_overview_says_why(api, fleet):
-    """The oracle for the setup-only reason: even enabled and attested, the hub's lease refuses a machine the guide added
-    that has never sent a heartbeat, which is what "No: this setup only checks the machine" says."""
+def test_an_attested_unfinished_setup_is_never_leased_work_and_the_overview_says_why(api, fleet):
+    """An older accepted setup with only prerequisites reported is still finishing, even when enabled and attested.
+    Approval does not invent completed checks, and the hub's lease still refuses it."""
     from commonplace.runner import jobs
 
     made = fleet.enroll("guided-attested")
     fleet.seen(made, 5)
     fleet.guided(made, "connected", accepted=True)
     item = by_name(read(api))["guided-attested"]
-    assert item["status"]["code"] == "set_up"
-    assert item["intake"]["allowed"] == "No: this setup only checks the machine"
+    assert (item["status"]["code"], item["status"]["label"]) == ("finishing_setup", "Approved")
+    assert item["intake"]["allowed"] == "No: setup not finished"
+    assert "Coworkers do not run on it in this version" in item["status"]["detail"]
     machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
     assert machine["enabled"] == 1 and machine["binding_state"] == "owner_attested"
     fleet.job(made, "queued", task=32000, project="other", binding_epoch=machine["binding_epoch"])

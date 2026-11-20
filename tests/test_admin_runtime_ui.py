@@ -38,6 +38,10 @@ def test_runtime_labels_explain_connection_and_activity(hub):
     run(hub, "labels")
 
 
+def test_guided_machines_keep_pairing_states_without_requester_controls(hub):
+    run(hub, "guided")
+
+
 def test_next_page_source_error_keeps_rows_and_retry_cursor(hub):
     run(hub, "page-error")
 

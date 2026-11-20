@@ -31,7 +31,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [r.name, r.coordinator || r.seat_name, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Coworkers', agents);
     if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Coworkers', agents);
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
-    html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Binding', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.enabled ? 'enabled' : 'disabled', `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, `${r.max_in_flight} in flight; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
+    html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Setup', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.guided ? r.guided.label : r.enabled ? 'enabled' : 'disabled', r.guided && !r.revoked_at ? 'Coworkers do not run on it in this version.' : `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, r.guided && !r.revoked_at ? 'Not used in this version' : `${r.max_in_flight} in flight; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready' && machines.error) html += sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready') html += requesterContent(machines);
     return html;
@@ -39,7 +39,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
 
   // Owner-only: who may ask a machine to start work. Each change names one agent; the server re-checks the owner and vets an addition.
   function requesterContent(machines) {
-    const unrevoked = (machines.items || []).filter(r => !r.revoked_at);
+    const unrevoked = (machines.items || []).filter(r => !r.revoked_at && !r.guided);
     if (!unrevoked.length) return '';
     const offered = machines.requester_candidates || [];
     const button = (action, machine, ref, text, name) => `<button type="button" class="btn" data-admin-section="runtime" data-admin-action="${action}" data-admin-machine="${e(machine)}" data-admin-requester="${e(ref)}" aria-label="${e(text)} ${e(name)}"${writing.has(machine) ? ' disabled' : ''}>${e(text)}</button>`;

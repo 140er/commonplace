@@ -69,10 +69,10 @@ STATES = {
         "The owner has started adding this machine. It has not connected yet.",
     ),
     "connected": (
-        "Machine connected, waiting for your approval",
+        "Waiting for your approval",
         "The machine used the code and connected. It cannot do anything until you approve it.",
         "Wait for the machine to finish its setup, compare its fingerprint with the line 'Machine fingerprint:' in its window, then approve or choose This is not my machine.",
-        "Waiting for the owner's approval.",
+        "Nothing is needed from you.",
     ),
     "approved": (
         "Approved",
@@ -93,7 +93,7 @@ STATES = {
         "This machine has not been heard from for over 15 minutes. The owner can check it.",
     ),
     "failed": (
-        "A step failed",
+        "Not finished",
         "A setup step failed on the machine.",
         "Open it to see the cause, then choose Set up again.",
         "A setup step failed on this machine. The owner can set it up again.",
@@ -137,7 +137,7 @@ MEMBER_SENTENCE = {
     "declined": "The owner did not approve this machine. Its access was removed.",
 }
 # A member reads the same state names with the owner's decision in the third person.
-MEMBER_LABEL = {"connected": "Machine connected, waiting for the owner's approval"}
+MEMBER_LABEL = {"connected": "Waiting for the owner's approval"}
 STALLED_LABEL = "Not finished"
 STALLED = (
     "This setup has not finished.",
@@ -350,7 +350,11 @@ _SELECT = (
 
 
 def _steps(db, pairing_id):
-    rows = db._conn.execute(
+    return _step_rows(db._conn, pairing_id)
+
+
+def _step_rows(conn, pairing_id):
+    rows = conn.execute(
         "SELECT step, state, cause, reported_at FROM machine_pairing_steps WHERE pairing_id=?",
         (pairing_id,),
     ).fetchall()
@@ -406,44 +410,119 @@ def derive(row, steps, now_stamp):
     return "waiting", None
 
 
+# The words every screen uses for an unfinished guided setup and for one that is set up and checked:
+# Add a machine, the overview and Admin > Runner machines all take them from here.
+ADD_A_MACHINE = "Add a machine in Cloud workspaces"
+WAITING_LABEL = "Waiting for your approval"
+NOT_FINISHED_LABEL = STALLED_LABEL
+SET_UP_LABEL = STATES["ready"][0]
+SET_UP_SENTENCE = STATES["ready"][1]
+SET_UP_NEXT = STATES["ready"][2]
+
+
+def pending_words(pending):
+    """``(code, label, sentence, next)`` for an unfinished guided setup, including older accepted setups whose checks
+    never finished. Approval alone does not establish that the machine passed its setup checks."""
+    if pending.get("accepted"):
+        if pending["stalled"]:
+            return "not_finished", STALLED_LABEL, STALLED[0], STALLED[1]
+        label, sentence, step, _ = STATES[pending["state"]]
+        code = "finishing_setup" if pending["state"] == "approved" else "not_finished"
+        return code, label, sentence, step
+    if pending["state"] == "connected" and not pending["stalled"]:
+        return (
+            "waiting_approval",
+            WAITING_LABEL,
+            f"It connected and waits for your approval in {ADD_A_MACHINE}. Coworkers do not run on it in this version.",
+            f"Once it has finished its setup and printed its fingerprint, compare it with the line 'Machine fingerprint:' in its window, then approve the machine in {ADD_A_MACHINE} or choose This is not my machine.",
+        )
+    what = (
+        f"A setup step failed: {pending['cause'].rstrip('.')}."
+        if pending["state"] == "failed" and pending["cause"]
+        else "A setup step failed."
+        if pending["state"] == "failed"
+        else "This setup has not finished."
+    )
+    return (
+        "not_finished",
+        NOT_FINISHED_LABEL,
+        f"{what} Set up again or remove it in {ADD_A_MACHINE}. Coworkers do not run on it in this version.",
+        f"Open {ADD_A_MACHINE}. Choose Set up again, or Remove this machine.",
+    )
+
+
+def guided_state(db, workspace_id):
+    """The story of every machine added through the setup guide that has not become an ordinary runner, by machine id:
+    ``{state, label, sentence, next}``. Admin > Runner machines shows this instead of enabled/disabled/unbound (the
+    machine is switched off at its code exchange: an implementation detail), and the overview builds its chip and
+    sentence from the same words."""
+    with db._lock:
+        return guided_state_on_connection(db._conn, workspace_id)
+
+
+def guided_state_on_connection(conn, workspace_id):
+    """The same projection for a read-only Admin connection; no writes or store initialization."""
+    result = {}
+    for machine_id, pending in _pending_machines(conn, workspace_id).items():
+        code, label, sentence, step = pending_words(pending)
+        result[machine_id] = {"state": code, "label": label, "sentence": sentence, "next": step}
+    for machine_id in _setup_only_ids(conn, workspace_id):
+        if machine_id in result:
+            continue  # approval alone does not mean its setup steps finished
+        result[machine_id] = {
+            "state": "set_up",
+            "label": SET_UP_LABEL,
+            "sentence": SET_UP_SENTENCE,
+            "next": SET_UP_NEXT,
+        }
+    return result
+
+
 def pending_machines(db, workspace_id):
-    """The machines of open setups the owner has not approved yet, by machine id: what a screen other than Add a
-    machine needs to say the same thing (reading never creates the tables, and nothing is written).
+    """The machines of unfinished open setups, by machine id: what a screen other than Add a machine needs to say the
+    same thing (reading never creates the tables, and nothing is written).
 
     ``{machine_id: {state, stalled, failed, cause, connected_at, last_report_at}}``, ``state`` being the pairing's own
-    (``connected`` or ``failed``) and ``stalled`` the 15-minute rule, from the same ``derive`` and ``stalled`` the page uses."""
+    (``connected``, ``approved`` or ``failed``) and ``stalled`` the 15-minute rule, from the same ``derive`` and ``stalled``
+    the page uses. Older accepted setups without a heartbeat also carry ``accepted=True``."""
     with db._lock:
-        have = {
-            r[0]
-            for r in db._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
-            )
+        return _pending_machines(db._conn, workspace_id)
+
+
+def _pending_machines(conn, workspace_id):
+    have = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
+        )
+    }
+    if len(have) < 3:
+        return {}
+    now, stamp = _now()
+    rows = conn.execute(
+        _SELECT + "WHERE p.workspace_id=? AND p.closed_reason IS NULL "
+        "AND e.machine_id IS NOT NULL AND (p.accepted_at IS NULL OR NOT EXISTS ("
+        "SELECT 1 FROM machine_pairing_steps s WHERE s.pairing_id=p.id AND s.step=?))",
+        (workspace_id, HEARTBEAT),
+    ).fetchall()
+    result = {}
+    for row in rows:
+        steps = _step_rows(conn, row["id"])
+        state, failed = derive(row, steps, stamp)
+        if state not in ("connected", "approved", "failed"):
+            continue
+        cause = _cause(steps, failed)
+        result[row["machine_id"]] = {
+            "state": state,
+            "stalled": stalled(state, row, steps, stamp),
+            "failed": failed,
+            "cause": cause["text"] if cause else None,
+            "connected_at": row["consumed_at"],
+            "last_report_at": row["last_report_at"],
         }
-        if len(have) < 3:
-            return {}
-        now, stamp = _now()
-        rows = db._conn.execute(
-            _SELECT
-            + "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NULL "
-            "AND e.machine_id IS NOT NULL",
-            (workspace_id,),
-        ).fetchall()
-        result = {}
-        for row in rows:
-            steps = _steps(db, row["id"])
-            state, failed = derive(row, steps, stamp)
-            if state not in ("connected", "failed"):
-                continue
-            cause = _cause(steps, failed)
-            result[row["machine_id"]] = {
-                "state": state,
-                "stalled": stalled(state, row, steps, stamp),
-                "failed": failed,
-                "cause": cause["text"] if cause else None,
-                "connected_at": row["consumed_at"],
-                "last_report_at": row["last_report_at"],
-            }
-        return result
+        if row["accepted_at"] is not None:
+            result[row["machine_id"]]["accepted"] = True
+    return result
 
 
 def setup_only_ids(db, workspace_id):
@@ -453,24 +532,28 @@ def setup_only_ids(db, workspace_id):
     screen must not call them Online or Offline.
     """
     with db._lock:
-        have = {
-            r[0]
-            for r in db._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
-            )
-        }
-        if len(have) < 3:
-            return set()
-        return {
-            r[0]
-            for r in db._conn.execute(
-                "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
-                "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NOT NULL "
-                "AND e.machine_id IS NOT NULL AND NOT EXISTS ("
-                "SELECT 1 FROM machine_pairing_steps s WHERE s.pairing_id=p.id AND s.step=?)",
-                (workspace_id, HEARTBEAT),
-            )
-        }
+        return _setup_only_ids(db._conn, workspace_id)
+
+
+def _setup_only_ids(conn, workspace_id):
+    have = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
+        )
+    }
+    if len(have) < 3:
+        return set()
+    return {
+        r[0]
+        for r in conn.execute(
+            "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
+            "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NOT NULL "
+            "AND e.machine_id IS NOT NULL AND NOT EXISTS ("
+            "SELECT 1 FROM machine_pairing_steps s WHERE s.pairing_id=p.id AND s.step=?)",
+            (workspace_id, HEARTBEAT),
+        )
+    }
 
 
 def fingerprint(row):
@@ -532,6 +615,10 @@ def view(db, row, now_stamp, *, owner):
     if stuck:
         sentence, next_owner, next_member = STALLED
         label = STALLED_LABEL
+    if owner and row["machine_id"] and not row["accepted_at"] and state in ("connected", "failed"):
+        _, label, sentence, next_owner = pending_words(
+            {"state": state, "stalled": stuck, "cause": cause["text"] if cause else None}
+        )
     result = {
         "id": row["id"],
         "kind": row["kind"],

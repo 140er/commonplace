@@ -19,6 +19,7 @@ from commonplace.account import tables
 from commonplace.compute import pairing
 from commonplace.runner import registry
 from tests.runner_harness import (
+    attest,
     cli_token,
     http,
     member,
@@ -347,7 +348,7 @@ def test_a_member_reads_a_view_without_secrets_and_cannot_write(people):
     assert set(item) == set(pairing.MEMBER_VIEW)
     assert "fingerprint" not in item and "grant" not in item and "version" not in item
     assert made["setup"]["code"] not in json.dumps(listing)
-    assert item["next"] == "Waiting for the owner's approval."
+    assert item["next"] == "Nothing is needed from you."
     assert "you" not in item["sentence"].lower().split(), (
         "a member reads the owner's decision, not their own"
     )
@@ -490,10 +491,7 @@ def test_the_machine_appears_as_it_connects_with_identity_and_grants_in_words(fl
     made = flow.made(requesters=[], max_runtime_mode="auto-accept-edits")
     credentials = flow.connect(made)
     item = flow.get(made)
-    assert (
-        item["state"] == "connected"
-        and item["state_label"] == "Machine connected, waiting for your approval"
-    )
+    assert item["state"] == "connected" and item["state_label"] == "Waiting for your approval"
     # Groups of eight over the whole digest, the way the installer prints them.
     assert re.fullmatch(r"(?:[0-9a-f]{8} ){7}[0-9a-f]{8}", item["fingerprint"])
     assert item["grant"]["wings"] == ["shared"] and item["grant"]["projects"] == ["demo"]
@@ -815,7 +813,7 @@ def test_a_failed_step_shows_its_cause_and_next_step_and_recovers(flow):
     bad = {"step": "service", "state": "failed", "cause": "service_failed"}
     assert flow.report(credentials, bad)[0] == 200
     item = flow.get(made)
-    assert item["state"] == "failed" and item["state_label"] == "A step failed"
+    assert item["state"] == "failed" and item["state_label"] == "Not finished"
     assert item["cause"] == {
         "step": "service",
         "code": "service_failed",
@@ -1277,7 +1275,13 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
     for made, state in ((one, "connected"), (two, "approved")):
         item = flow.get(made)
         assert item["stalled"] is True and item["state"] == state
-        assert (item["sentence"], item["next"]) == (pairing.STALLED[0], pairing.STALLED[1])
+        if state == "connected":
+            _, _, sentence, step = pairing.pending_words(
+                {"state": state, "stalled": True, "cause": None}
+            )
+            assert (item["sentence"], item["next"]) == (sentence, step)
+        else:
+            assert (item["sentence"], item["next"]) == (pairing.STALLED[0], pairing.STALLED[1])
         assert item["state_label"] == "Not finished", (
             "a stalled setup is not still 'waiting for your approval'"
         )
@@ -1353,12 +1357,12 @@ def test_a_member_reads_the_owners_approval_in_the_third_person(people):
     assert "ready" not in flow.get(waiting, who=colleague)["sentence"].lower()
     flow.connect(waiting)
     item = flow.get(waiting, who=colleague)
-    assert item["state_label"] == "Machine connected, waiting for the owner's approval"
-    assert item["next"] == "Waiting for the owner's approval."
+    assert item["state_label"] == "Waiting for the owner's approval"
+    assert item["next"] == "Nothing is needed from you."
     options = flow.call("GET", "/options", who=colleague)[1]["states"]["connected"]
     assert options["label"] == item["state_label"]
     owner = flow.get(waiting)
-    assert owner["state_label"] == "Machine connected, waiting for your approval"
+    assert owner["state_label"] == "Waiting for your approval"
     assert "fingerprint" in owner["next"].lower() and "Machine fingerprint:" in owner["next"]
 
 
@@ -1396,3 +1400,118 @@ def test_a_refused_check_is_in_the_audit_trail_and_a_wrong_typed_cause_is_a_bad_
             made, report={"step": "files", "state": "failed", "cause": cause}
         )
         assert status == 400, cause
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "waiting",
+        "failed",
+        "stalled",
+        "ready",
+        "attested",
+        "accepted_unfinished",
+        "accepted_stalled",
+        "accepted_failed",
+    ],
+)
+def test_guided_machine_state_matches_admin_add_and_overview(flow, monkeypatch, stage):
+    at = clock(monkeypatch)
+    made = flow.made()
+    credentials = flow.connect(made)
+    if stage in ("failed", "accepted_failed"):
+        assert (
+            flow.report(
+                credentials, {"step": "service", "state": "failed", "cause": "service_failed"}
+            )[0]
+            == 200
+        )
+    elif stage == "stalled":
+        at(seconds=pairing.OFFLINE_SECONDS + 1)
+    elif stage in ("ready", "attested"):
+        assert flow.accept(made)[0] == 200
+        if stage == "attested":
+            attest(flow.hub, flow.owner, credentials)
+    if stage.startswith("accepted_"):
+        # Older servers allowed approval before every setup step finished.
+        with flow.hub.db._lock:
+            flow.hub.db._conn.execute(
+                "UPDATE machine_pairings SET accepted_at=?, accepted_by=? WHERE id=?",
+                (control_db._iso(control_db._now()), flow.owner["user_id"], made["pairing"]["id"]),
+            )
+            flow.hub.db._conn.execute(
+                "UPDATE runner_machines SET enabled=1 WHERE id=?", (credentials["machine_id"],)
+            )
+        if stage == "accepted_stalled":
+            at(seconds=pairing.OFFLINE_SECONDS + 1)
+    item = flow.get(made)
+    status, listing = http(flow.hub.port, "GET", "/api/runners", cookie=flow.owner["cookie"])
+    assert status == 200
+    machine = next(m for m in listing["machines"] if m["id"] == credentials["machine_id"])
+    assert machine.get("guided"), "Admin must read the pairing state, including after an attest"
+    guided = machine["guided"]
+    status, detail = http(
+        flow.hub.port,
+        "GET",
+        f"/api/compute/overview/runner/{machine['id']}",
+        cookie=flow.owner["cookie"],
+    )
+    assert status == 200
+    overview = detail["item"]
+    expected = (
+        "Waiting for your approval"
+        if stage == "waiting"
+        else "Not finished"
+        if stage in ("failed", "stalled", "accepted_stalled", "accepted_failed")
+        else "Approved"
+        if stage == "accepted_unfinished"
+        else "Set up and checked"
+    )
+    assert guided["label"] == item["state_label"] == overview["status"]["label"] == expected
+    assert guided["sentence"] == item["sentence"]
+    assert overview["status"]["detail"].startswith(guided["sentence"].rstrip("."))
+    assert guided["next"] == item["next"]
+    status, runtime = http(
+        flow.hub.port,
+        "GET",
+        f"/api/admin/workspaces/{flow.owner['workspace']}/runtime",
+        cookie=flow.owner["cookie"],
+    )
+    assert status == 200
+    registered = next(m for m in runtime["machines"]["items"] if m["id"] == machine["id"])
+    assert registered["guided"] == guided, (
+        "Admin's runtime inventory uses the same pairing projection"
+    )
+    limits = {f["label"] for f in overview["facts"]}
+    assert not {"Runs at once", "Starts per hour"} & limits, (
+        "no unused capacity figures beside Allowed: No"
+    )
+    assert overview["intake"]["allowed"].startswith("No:")
+    for secret in (
+        made["setup"]["code"],
+        credentials["machine_token"],
+        credentials["worker_token"],
+    ):
+        assert secret not in json.dumps(listing)
+
+
+def test_developer_token_route_keeps_its_working_attestation(flow):
+    status, credentials = http(
+        flow.hub.port,
+        "POST",
+        "/api/runners",
+        cookie=flow.owner["cookie"],
+        body={
+            "label": "developer-box",
+            "projects": ["demo"],
+            "topics": ["worker"],
+            "wings": ["shared"],
+        },
+    )
+    assert status == 201
+    attest(flow.hub, flow.owner, credentials)
+    status, listing = http(flow.hub.port, "GET", "/api/runners", cookie=flow.owner["cookie"])
+    assert status == 200
+    machine = next(m for m in listing["machines"] if m["id"] == credentials["machine_id"])
+    assert machine.get("guided") is None
+    assert machine["binding_state"] == "owner_attested" and machine["enabled"]

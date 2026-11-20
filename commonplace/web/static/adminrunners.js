@@ -70,7 +70,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
     if (wingsError) return `${boxes}<p>The wing list could not be loaded. Type a wing name to add it, or reload to try again.</p><label>Add wings (comma separated)<input name="typed_wings" autocomplete="off"></label>`;
     return boxes || '<p>No readable wings yet.</p>';
   };
-  const enrollForm = () => `<form class="agent-form" data-runner-form="enroll"><h3>Add runner</h3>
+  const enrollForm = () => `<form class="agent-form" data-runner-form="enroll"><h3>Add a runner agent (developer route, with tokens)</h3>
     <label>Label<input name="label" required maxlength="40" pattern="[a-z0-9][a-z0-9._-]*" autocomplete="off"></label>
     <label>Projects (comma separated)<input name="projects" required autocomplete="off"></label>
     <label>Topics (comma separated)<input name="topics" required autocomplete="off"></label>
@@ -86,7 +86,20 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       <button type="button" class="btn" data-runner-action="revoke-confirm" data-runner-id="${id}" aria-label="Confirm revoking ${e(m.label)}">Revoke machine</button>
       <button type="button" class="btn" data-runner-action="revoke-cancel" data-runner-id="${id}">Keep machine</button></div>`;
   };
+  // A machine added through Add a machine: the pairing's own state in the pairing's own words (the same as Add a machine
+  // and the overview), no enabled/disabled/unbound, and no forms that guided setup cannot fill (Attest needs a provider
+  // id it never reports; the grant and wings edits change nothing for a machine that takes no work).
+  const guidedView = m => {
+    const g = m.guided;
+    const href = globalThis.document?.documentElement?.dataset?.ui === 'deck' ? '#/compute/management' : '#/compute';
+    const limitation = 'Coworkers do not run on it in this version.';
+    const notice = `${g.sentence} ${g.next}`.includes(limitation) ? '' : `<p>${limitation}</p>`;
+    return `<article class="runner-machine runner-guided" aria-label="${e(m.label)}" data-guided="${e(g.state)}"><h3>${e(m.label)}</h3>
+      <p class="runner-guided-state"><strong>${e(g.label)}</strong></p><p>${e(g.sentence)}</p><p>${e(g.next)}</p>${notice}
+      <p><a class="btn" href="${href}" data-runner-guided-link>Open Add a machine</a></p></article>`;
+  };
   const machineView = m => {
+    if (m.guided && !m.revoked_at) return guidedView(m);
     const id = e(m.machine_id), live = !m.revoked_at;
     const state = m.revoked_at ? 'revoked' : m.enabled ? 'enabled' : 'disabled';
     const forms = live ? `<form class="agent-form" data-runner-form="attest" data-runner-id="${id}"><h4>Attest</h4>
@@ -222,7 +235,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
     stop();
     host = container;
     host.innerHTML = `<section class="settings-section runner-block" aria-labelledby="runner-heading"><h2 id="runner-heading">Runner machines</h2>
-      <p>Enroll a machine so one worker can start and work cards on every wing you grant it. The worker can write only to those wings. Attestation is your own statement and is not verified.</p>
+      <p>A machine added with Add a machine in Cloud workspaces is listed here with the state shown there. Runner agents enrolled with tokens are the developer route: the worker of one can write only to the wings you grant it, and attestation is your own statement and is not verified.</p>
       <div data-runner-reveal></div><p role="status" aria-live="polite" data-runner-status></p>
       <div data-runner-enroll-slot></div><div data-runner-list><p>Loading runner machines…</p></div></section>`;
     host.addEventListener('submit', onSubmit);

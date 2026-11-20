@@ -403,9 +403,7 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
             _assert_touch_targets(page)
         # The machine connects; the page notices by itself and asks for one approval.
         credentials = fx.connect(setup_of(command))
-        expect(section).to_contain_text(
-            "Machine connected, waiting for your approval", timeout=20000
-        )
+        expect(section).to_contain_text("Waiting for your approval", timeout=20000)
         expect(page.locator("[data-pr-command]")).to_have_count(0)
         sheet = page.locator(".compute-pr-sheet")
         expect(sheet).to_contain_text("build-box")
@@ -571,9 +569,9 @@ def test_a_failed_step_shows_its_cause_and_next_step_and_recovers(served, ui, si
     def body(page, label, context):
         section = _section(page)
         _open_pairing(page)
-        expect(section).to_contain_text("Machine connected, waiting for your approval")
+        expect(section).to_contain_text("Waiting for your approval")
         fx.report(credentials, "service", "failed", "service_failed")
-        expect(section).to_contain_text("A step failed", timeout=20000)
+        expect(section).to_contain_text("Not finished", timeout=20000)
         expect(section).to_contain_text(
             "Background service started failed. The background service did not start."
         )
@@ -586,9 +584,7 @@ def test_a_failed_step_shows_its_cause_and_next_step_and_recovers(served, ui, si
         # Running the same command again fixes it, and the page follows without a reload.
         fx.report(credentials, "service")
         fx.report(credentials, "check")
-        expect(section).to_contain_text(
-            "Machine connected, waiting for your approval", timeout=20000
-        )
+        expect(section).to_contain_text("Waiting for your approval", timeout=20000)
         expect(section.locator(".compute-pr-cause")).to_have_count(0)
 
     _run(fx, ui, size, body)
@@ -665,7 +661,7 @@ def test_the_overview_says_what_add_a_machine_says_for_connected_failed_and_stal
         rows = {
             "wait-box": (
                 "Waiting for your approval",
-                "It connected and waits for your approval in Add a machine below.",
+                "It connected and waits for your approval in Add a machine in Cloud workspaces.",
             ),
             "fail-box": (
                 "Not finished",
@@ -680,7 +676,7 @@ def test_the_overview_says_what_add_a_machine_says_for_connected_failed_and_stal
         for name, (_chip, sentence) in rows.items():
             page.get_by_role("button", name=f"Status and activity of {name}").click()
             expect(ov).to_contain_text(sentence)
-            expect(ov).to_contain_text("Add a machine below")
+            expect(ov).to_contain_text("Add a machine in Cloud workspaces")
             expect(ov).to_contain_text(
                 "No: not approved yet" if name == "wait-box" else "No: setup not finished"
             )
@@ -689,7 +685,7 @@ def test_the_overview_says_what_add_a_machine_says_for_connected_failed_and_stal
             page.keyboard.press("Escape")
         # The same words as the card below it for the same machine.
         _open_pairing(page, "wait-box")
-        expect(_section(page)).to_contain_text("Machine connected, waiting for your approval")
+        expect(_section(page)).to_contain_text("Waiting for your approval")
         _shot_of(page, ".compute-pr", f"{label}-13-add-a-machine-wait-box")
         _no_sideways_scroll(page)
 
@@ -713,7 +709,8 @@ def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_gui
         assert "Workspace settings" not in why.inner_text()
         anchor = page.locator("[data-run-start-link]")
         expect(anchor).to_have_text(link)
-        assert anchor.get_attribute("href") == href
+        expected = "#/compute/management" if ui == "deck" and href == "#/compute" else href
+        assert anchor.get_attribute("href") == expected
         _nothing_past_the_edge_of(page, "[data-run-start-why]")
         _shot(page, f"{label}-14-card-start-refusal-{name}")
         _shot_of(page, "[data-run-start-why]", f"{label}-14-card-start-refusal-{name}-text")
@@ -754,7 +751,7 @@ def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_gui
             page,
             label,
             "setup-only",
-            "only checks itself in this version, so no Coworker runs on it yet",
+            "only checks itself in this version. Coworkers do not run on it in this version",
             "Open Add a machine",
             "#/compute",
         )
@@ -766,6 +763,186 @@ def _pairing_id(fx):
     status, result = fx.call("GET", "/api/compute/pairings", cookie=fx.cookie)
     assert status == 200, result
     return result["pairings"][0]["id"]
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize(
+    "layout,viewport,touch",
+    [
+        ("desktop", (1280, 800), False),
+        ("phone", (390, 844), True),
+        ("narrow", (320, 844), True),
+        ("tablet-touch", (768, 1024), True),
+    ],
+)
+def test_guided_states_match_on_all_three_screens(served, monkeypatch, ui, layout, viewport, touch):
+    """One fixture fleet on all three surfaces, including Admin and the real developer enrollment form."""
+    fx = served
+    # The fixture has no memory worker. Its wing inventory is the same synthetic list served by the picker.
+    monkeypatch.setattr("commonplace.web.agents.workspace_wing_names", lambda *args: list(WINGS))
+    _, waiting = fx.add(label="review-waiting")
+    fx.report(fx.connect(waiting), "prerequisites")
+    _, failed = fx.add(label="review-failed")
+    fx.report(fx.connect(failed), "service", "failed", "service_failed")
+    _, stalled = fx.add(label="review-stalled")
+    fx.connect(stalled)
+    with fx.db._lock:
+        fx.db._conn.execute(
+            "UPDATE runner_enrollments SET consumed_at=? WHERE machine_label=?",
+            (control_db._iso(control_db._now() - timedelta(minutes=16)), "review-stalled"),
+        )
+    fx.ready(label="review-ready")
+    _, attested = fx.ready(label="review-attested")
+    status, listing = fx.call("GET", "/api/runners", cookie=fx.cookie)
+    assert status == 200
+    machine = next(m for m in listing["machines"] if m["id"] == attested["machine_id"])
+    status, _ = fx.call(
+        "POST",
+        f"/api/runners/{machine['id']}/attest",
+        {
+            "topics": machine["topics"],
+            "worker_connection_id": machine["worker_connection_id"],
+            "provider_instance_id": "fixture-provider",
+        },
+        cookie=fx.cookie,
+    )
+    assert status == 200
+    for suffix in ("unfinished", "stalled", "failed"):
+        name = f"review-approved-{suffix}"
+        legacy, setup = fx.add(label=name)
+        credentials = fx.connect(setup)
+        if suffix == "failed":
+            fx.report(credentials, "service", "failed", "service_failed")
+        # Legacy approvals did not require every setup step to have finished.
+        with fx.db._lock:
+            fx.db._conn.execute(
+                "UPDATE machine_pairings SET accepted_at=?, accepted_by=? WHERE id=?",
+                (control_db._iso(control_db._now()), fx.owner, legacy["id"]),
+            )
+            fx.db._conn.execute(
+                "UPDATE runner_machines SET enabled=1 WHERE id=?", (credentials["machine_id"],)
+            )
+            if suffix == "stalled":
+                fx.db._conn.execute(
+                    "UPDATE runner_enrollments SET consumed_at=? WHERE machine_label=?",
+                    (control_db._iso(control_db._now() - timedelta(minutes=16)), name),
+                )
+    states = {
+        "review-waiting": "Waiting for your approval",
+        "review-failed": "Not finished",
+        "review-stalled": "Not finished",
+        "review-ready": "Set up and checked",
+        "review-attested": "Set up and checked",
+        "review-approved-unfinished": "Approved",
+        "review-approved-stalled": "Not finished",
+        "review-approved-failed": "Not finished",
+    }
+    limitation = "Coworkers do not run on it in this version."
+
+    def body(page, label, context):
+        label = f"{ui}-{layout}"
+        # Check Admin first: the pinned-base failure must expose its missing guided state, before copy changes elsewhere.
+        page.goto(f"{fx.origin}/app/?ui={ui}#/admin")
+        expect(page.locator(".runner-block .runner-guided")).to_have_count(8)
+        route = "#/compute/management" if ui == "deck" else "#/compute"
+        page.goto(f"{fx.origin}/app/?ui={ui}{route}")
+        section = _section(page)
+        for name, state in states.items():
+            row = section.locator(".compute-pr-row", has=page.get_by_text(name, exact=True))
+            expect(row).to_contain_text(state)
+            if state == "Set up and checked":
+                expect(row).to_contain_text(limitation)
+            _open_pairing(page, name)
+            expect(section.locator(".compute-pr-detail")).to_contain_text(state)
+            _shot_of(page, ".compute-pr", f"{label}-matched-add-{name}")
+            page.get_by_role("button", name="Back to the list", exact=True).click()
+        if touch:
+            _assert_touch_targets(page)
+        _nothing_past_the_edge(page)
+        fold = page.locator("[data-ov-fold]")
+        if fold.count() and fold.get_attribute("open") is None:
+            page.locator("[data-ov-fold-summary]").click()
+        ov = page.locator("[data-ov]")
+        for name, state in states.items():
+            row = ov.locator(
+                ".compute-ov-row", has=page.get_by_role("heading", name=name, exact=True)
+            )
+            expect(row).to_contain_text(state)
+            row.get_by_role("button", name=f"Status and activity of {name}", exact=True).click()
+            expect(ov).to_contain_text(limitation)
+            assert (
+                "Runs at once" not in ov.inner_text() and "Starts per hour" not in ov.inner_text()
+            )
+            _shot_of(page, "[data-ov]", f"{label}-matched-overview-{name}")
+            page.keyboard.press("Escape")
+        _no_sideways_scroll(page)
+        page.goto(f"{fx.origin}/app/?ui={ui}#/admin")
+        admin = page.locator(".runner-block")
+        expect(admin.locator(".runner-guided")).to_have_count(8)
+        expect(admin).not_to_contain_text("can start and work cards")
+        runtime = page.locator('[data-admin-panel="runtime"]')
+        for name, state in states.items():
+            inventory = runtime.locator("tr", has=page.get_by_text(name, exact=True))
+            expect(inventory).to_contain_text(state)
+            expect(inventory).to_contain_text(limitation)
+            assert not re.search(r"disabled|unbound|in flight|starts/hour", inventory.inner_text())
+        expect(runtime.locator("[data-admin-machine]")).to_have_count(0)
+        _shot_of(page, '[data-admin-panel="runtime"]', f"{label}-matched-admin-inventory")
+        for name, state in states.items():
+            row = admin.get_by_role("article", name=name, exact=True)
+            expect(row).to_contain_text(state)
+            expect(row).to_contain_text(limitation)
+            assert not re.search(r"disabled|unbound|not verified|Attest", row.inner_text())
+            expect(row.locator("form")).to_have_count(0)
+            link = row.get_by_role("link", name="Open Add a machine", exact=True)
+            expect(link).to_have_attribute(
+                "href", "#/compute/management" if ui == "deck" else "#/compute"
+            )
+            link.focus()
+            expect(link).to_be_focused()
+            assert link.bounding_box()["height"] >= 44
+            _shot_of(page, f'.runner-guided[aria-label="{name}"]', f"{label}-matched-admin-{name}")
+        # The developer route still enrolls and attests a runner agent with tokens.
+        form = admin.locator('[data-runner-form="enroll"]')
+        expect(form).to_contain_text("developer route, with tokens")
+        form.get_by_label("Label", exact=True).fill("developer-box")
+        form.get_by_label("Projects (comma separated)", exact=True).fill("demo")
+        form.get_by_label("Topics (comma separated)", exact=True).fill("worker")
+        form.get_by_label("Fixture", exact=True).check()
+        form.get_by_role("button", name="Add runner", exact=True).click()
+        expect(admin.locator('[data-runner-secret="machine"]')).to_be_visible()
+        expect(admin.locator('[data-runner-secret="worker"]')).to_be_visible()
+        expect(admin).to_contain_text("shown again")
+        # Credentials are never part of a capture.
+        admin.get_by_role("button", name="Done", exact=True).click()
+        developer = admin.get_by_role("article", name="developer-box", exact=True)
+        expect(developer).to_contain_text("unbound, not verified")
+        attest_form = developer.locator('[data-runner-form="attest"]')
+        attest_form.get_by_label("Provider instance id", exact=True).fill("fixture-provider")
+        attest_form.get_by_role("button", name="Attest", exact=True).click()
+        expect(developer).to_contain_text("owner_attested, not verified")
+        expect(admin.locator("[data-runner-status]")).to_contain_text("This is your statement")
+        _shot_of(
+            page, '.runner-machine[aria-label="developer-box"]', f"{label}-developer-route-attested"
+        )
+        if touch:
+            sizes = admin.locator(
+                "button:visible, select:visible, input:visible:not([type=checkbox]), fieldset label:visible"
+            ).evaluate_all("els => els.map(el => el.getBoundingClientRect().height)")
+            assert sizes and min(sizes) >= 44, sizes
+            fonts = admin.locator(
+                "p:visible, label:visible, small:visible, button:visible"
+            ).evaluate_all("els => els.map(el => parseFloat(getComputedStyle(el).fontSize))")
+            assert min(fonts) >= 14, fonts
+        _no_sideways_scroll(page)
+        # The link really returns to the guide in both looks.
+        admin.get_by_role("article", name="review-attested", exact=True).get_by_role(
+            "link", name="Open Add a machine", exact=True
+        ).click()
+        expect(page.locator("#compute-pairing")).to_be_visible()
+        _no_sideways_scroll(page)
+
+    _run(fx, ui, "phone" if touch else "desktop", body, viewport=viewport, touch=touch)
 
 
 def _nothing_past_the_edge_of(page, selector):
@@ -849,7 +1026,7 @@ def test_a_machine_without_the_runner_program_says_so_before_its_code_is_spent(s
     def body(page, label, context):
         section = _section(page)
         _open_pairing(page, "bare-box")
-        expect(section).to_contain_text("A step failed")
+        expect(section).to_contain_text("Not finished")
         expect(section).to_contain_text(pairing.CAUSES["missing_runner_program"][0])
         expect(section).to_contain_text(pairing.CAUSES["missing_runner_program"][1])
         expect(section.get_by_role("button", name="Approve this machine")).to_have_count(0)
@@ -1163,11 +1340,9 @@ def test_a_background_check_keeps_focus_and_does_not_announce_again(served, ui):
         notice = page.locator("[data-pr-notice]")
         page.get_by_role("button", name="Cancel this setup").focus()
         credentials = fx.connect(setup)
-        expect(_section(page)).to_contain_text(
-            "Machine connected, waiting for your approval", timeout=20000
-        )
+        expect(_section(page)).to_contain_text("Waiting for your approval", timeout=20000)
         said = notice.inner_text()
-        assert "Machine connected" in said
+        assert "Waiting for your approval" in said
         # More checks arrive; the person is still on a real control and nothing is said twice.
         fx.report(credentials, "prerequisites")
         fx.report(credentials, "files")
@@ -1207,16 +1382,14 @@ def test_the_page_says_where_to_run_the_command_and_what_approval_grants(served,
         assert above, "the numbered lines are above the command"
         _shot(page, f"{label}-04b-run-steps")
         credentials = fx.connect(setup_of(page.locator("[data-pr-command]").inner_text()))
-        expect(section).to_contain_text(
-            "Machine connected, waiting for your approval", timeout=20000
-        )
+        expect(section).to_contain_text("Waiting for your approval", timeout=20000)
         # The machine has not finished: the fingerprint is not offered yet and Approve says why it waits.
         expect(section).to_contain_text("Waiting for the machine to print its fingerprint.")
         approve = page.get_by_role("button", name="Approve this machine")
         expect(approve).to_have_attribute("aria-disabled", "true")
         expect(section).to_contain_text("You can approve once the machine has finished its setup")
         approve.click(force=True)  # a press while it waits changes nothing
-        expect(section).to_contain_text("Machine connected, waiting for your approval")
+        expect(section).to_contain_text("Waiting for your approval")
         _shot(page, f"{label}-05a-connected-waiting-fingerprint")
         fx.steps(credentials)
         expect(page.locator(".compute-pr-fingerprint")).to_be_visible(timeout=20000)
@@ -1284,7 +1457,7 @@ def test_set_up_again_after_a_failure_cancels_the_old_setup_and_makes_a_new_comm
     def body(page, label, context):
         section = _section(page)
         _open_pairing(page)
-        expect(section).to_contain_text("A step failed")
+        expect(section).to_contain_text("Not finished")
         expect(section).to_contain_text(pairing.CAUSES["service_failed"][1])
         again = section.get_by_role("button", name="Set up again")
         remove = section.get_by_role("button", name="Remove this machine")

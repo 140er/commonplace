@@ -24,10 +24,11 @@ const MODES = {
   "full-access": "Full access, runs without asking",
 };
 const QUIET_MODES = new Set(["auto", "full-access"]);
-const AUTO_WARNING = "In this setting the agents on this machine run without asking before each action. Only choose it for a machine you trust with every project listed.";
+const AUTO_WARNING = "In a later version this setting would let agents on the machine run without asking before each action; in this version nothing runs on it. Only choose it for a machine you would trust with every project listed.";
 const MEMBER_INTRO = "This is a read-only view of the machines being added. Only the workspace owner adds a machine and approves it.";
-const OWNER_INTRO = "A machine here is a computer that runs Coworkers (a runner). To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added, its settings are under Runner machines in Admin; cloud workspaces are below.";
+const OWNER_INTRO = "A runner machine is a computer for Coworkers. To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added it is also listed under Runner machines in Admin, with the same state; cloud workspaces are below.";
 const NO_OFF_SWITCH = "There is no switch here to turn machine setup off.";
+const FORM_NOTE = "These settings are recorded for later; nothing uses them in this version.";
 const GRANTS_NOTE = "Approving records the access listed above; nothing uses it in this version.";
 const RUN_STEPS = ["Open a terminal on that machine. On Ubuntu: press the Super key, type Terminal and press Enter.", "Paste the command below (Ctrl+Shift+V) and press Enter. Do not type sudo in front of it.", "Wait for the steps below to turn to Done. This page updates by itself."];
 const WAIT_FINGERPRINT = "Waiting for the machine to print its fingerprint.";
@@ -192,6 +193,7 @@ export function createPairing(ctx) {
       + `<fieldset class="compute-pr-kinds"><legend class="compute-ws-legend">Kind of machine</legend>`
       + `<label class="compute-check"><input type="radio" name="pr_kind" value="runner" checked><span><strong>${e(runner?.label || "Runner machine")}</strong><small>${e(runner?.description || "A machine that runs Coworkers.")}</small></span></label>`
       + `<label class="compute-check"><input type="radio" name="pr_kind" value="target" disabled aria-describedby="pr-target-note"><span><strong>${e(target?.label || "Script target")}</strong><small id="pr-target-note">${e(target?.description || "A machine that runs approved scripts over SSH.")} Not available yet: ${e(text("reasons", "kind_unavailable", "Script targets cannot be set up from the app yet.").replace(/^Script targets cannot be set up from the app yet\.?$/, "it cannot be set up from the app yet."))}</small></span></label></fieldset>`
+      + `<p class="compute-plain" data-pr-form-note>${e(FORM_NOTE)}</p>`
       + `<div class="compute-summary compute-ws-summary" data-pr-summary role="alert" tabindex="-1">${summaryHTML()}</div>`
       + `<div class="compute-fields">`
       + `<div class="compute-field"><label for="pr_label">Name${required}</label><input id="pr_label" name="pr_label" value="${e(values.pr_label)}" maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false" data-pr-control="pr_label" aria-describedby="pr-label-help pr-error-label"${invalid("label")}><small id="pr-label-help">Lowercase letters, numbers, dots and dashes. Example: build-box.</small><span id="pr-error-label">${err("label")}</span></div>`
@@ -266,7 +268,7 @@ export function createPairing(ctx) {
   function rowHTML(item) {
     return `<li class="compute-row compute-pr-row" data-pr-id="${e(item.id)}" data-state="${e(item.state)}"><header><strong class="compute-ws-name">${e(item.label)}</strong><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item))}">${e(item.state_label)}</span></header>`
       // A settled machine's next step only repeats the note at the top of the section, so its row leaves it out.
-      + `<p>${e(item.sentence)}</p>${item.state === "ready" ? (item.binding_state === "owner_attested" ? "" : `<p class="compute-pr-next">${e(CANNOT_RUN_YET)}</p>`) : `<p class="compute-pr-next">${e(item.next)}</p>`}${item.last_report_at ? `<p class="compute-quiet">Last seen at ${e(clockText(item.last_report_at))}.</p>` : ""}`
+      + `<p>${e(item.sentence)}</p>${item.state === "ready" ? `<p class="compute-pr-next">${e(CANNOT_RUN_YET)}</p>` : `<p class="compute-pr-next">${e(item.next)}</p>`}${item.last_report_at ? `<p class="compute-quiet">Last seen at ${e(clockText(item.last_report_at))}.</p>` : ""}`
       + `<div class="compute-actions"><button type="button" class="btn" data-pr-action="open" data-id="${e(item.id)}" aria-label="Open ${e(item.label)}">Open</button></div></li>`;
   }
 

@@ -12,7 +12,7 @@ import { escape as e } from "./api.js";
 
 const BASE = "/api/compute/overview";
 const enc = encodeURIComponent;
-const KIND_WORDS = { runner: ["Runner", "Runners"], machine: ["Machine", "Machines"], workspace: ["Cloud workspace", "Cloud workspaces"] };
+const KIND_WORDS = { runner: ["Runner", "Runners"], machine: ["Target machine", "Target machines"], workspace: ["Cloud workspace", "Cloud workspaces"] };
 const KIND_ORDER = ["runner", "machine", "workspace"];
 const esc = value => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
 const LOAD_ERROR = "The overview could not be loaded. Nothing is shown rather than a guess.";
@@ -285,7 +285,7 @@ export function createOverview(ctx) {
   const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn compute-ov-pause" data-ov-action="pause">${paused ? "Resume automatic updates" : "Pause automatic updates"}</button></header>`
     + (data?.can_manage === false
       ? '<p class="compute-plain">The cloud workspaces in this workspace and what each is doing. “Last reported” is the last time its machine reported on it, not a live check.</p>'
-      : '<p class="compute-plain">Every machine, runner and cloud workspace in this workspace. A runner is a machine that runs Coworkers; a machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>');
+      : '<p class="compute-plain">Every runner machine, target machine and cloud workspace in this workspace. A runner machine is a computer for Coworkers; a target machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>');
 
   function panelKey() { return detail ? `${detail.kind}:${detail.id}` : ""; }
   function slots() {
@@ -552,9 +552,9 @@ export function createOverview(ctx) {
       const host = ctx.host();
       setText(host?.querySelector?.("[data-ov-meta]"), metaText());
       if (staleAt() !== paintedStale) paint();
-      // The workspaces list moved (created, renamed, discarded): read the overview again, once.
+      // The workspaces list moved (created, renamed, discarded): read again once, unless the owner paused updates.
       const signature = ctx.workspaceSignature?.() || "";
-      if (signature !== seenSignature && !loading) { seenSignature = signature; void load({ quiet: true }); }
+      if (!paused && signature !== seenSignature && !loading) { seenSignature = signature; void load({ quiet: true }); }
     }
     scheduleClock();
   }
