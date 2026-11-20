@@ -56,7 +56,7 @@ def test_an_owner_deletes_the_files_and_everything_says_so(console_hub):
     status, body, _ = delete(h, h.owner, identity)
     assert status == 200
     assert (body["state"], body["reason"], body["url"]) == ("stopped", "files_deleted", None)
-    assert body["revisions"][0]["files_deleted"] is True and "files_remaining" not in body
+    assert body["revisions"][0]["files_deleted"] is True and body["files_remaining"] is False
     assert not files_of(h, identity).exists()
     assert not list(store.root(h.gateway, h.workspace).glob(".deleting-*"))
     listed = h.request(h.owner, "GET", f"/api/previews?card={number}")[1]
@@ -175,10 +175,14 @@ def test_a_removal_that_leaves_files_says_so_and_asking_again_finishes_it(consol
             )
         ]
     assert "delete_incomplete" in kinds
+    # The list says so too, so the card can offer to finish the job.
+    assert one(h, identity)["files_remaining"] is True
+    assert h.request(h.owner, "GET", "/api/previews")[1]["previews"][0]["files_remaining"] is True
     monkeypatch.undo()
     status, body, _ = delete(h, h.owner, identity)
-    assert status == 200 and "files_remaining" not in body
+    assert status == 200 and body["files_remaining"] is False
     assert not list(store.root(h.gateway, h.workspace).glob(".deleting-*"))
+    assert one(h, identity)["files_remaining"] is False
 
 
 def test_a_rename_the_disk_refuses_changes_nothing(console_hub, monkeypatch):
@@ -229,6 +233,15 @@ def test_a_revision_table_from_the_first_slice_gains_the_deleted_column():
     columns = [r[1] for r in Db._conn.execute("PRAGMA table_info(preview_revisions)")]
     assert columns[-1] == "deleted_at"
     assert Db._conn.execute("SELECT deleted_at FROM preview_revisions").fetchall() == [(None,)]
+
+
+def test_a_body_that_is_not_an_object_is_an_input_error(console_hub):
+    h = console_hub
+    _number, identity = published(h)
+    for body in (None, [identity], "x"):
+        status, answer, _ = h.request(h.owner, "DELETE", f"/api/previews/{identity}", body)
+        assert status == 400, (body, status, answer)
+    assert one(h, identity)["state"] == "ready"
 
 
 def test_the_served_address_says_the_files_were_deleted(console_hub):

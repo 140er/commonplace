@@ -218,10 +218,11 @@ const cases = {
   async deleteflow() {
     const { slot, mount, handlers } = fakeSlot();
     const sent = [];
-    let deleted = false, remaining = true;
+    let deleted = false, left = false;
     const api = async (url, options) => {
-      if (options?.method === 'DELETE') { sent.push([url, options.body]); deleted = true; const r = { files_remaining: remaining }; remaining = false; return r; }
-      return found([deleted ? preview({ state: 'stopped', reason: 'files_deleted', reason_text: 'A workspace owner deleted the files of this preview.', url: null }) : preview()], { can_delete: true });
+      // The first delete leaves files behind; the second removes them.
+      if (options?.method === 'DELETE') { sent.push([url, options.body]); deleted = true; left = sent.length === 1; return { files_remaining: left }; }
+      return found([deleted ? preview({ state: 'stopped', reason: 'files_deleted', reason_text: 'A workspace owner deleted the files of this preview.', url: null, files_remaining: left }) : preview()], { can_delete: true });
     };
     await attachCardPreviews(mount, { ...card, number: 26 }, { api });
     handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
@@ -233,8 +234,17 @@ const cases = {
     handlers.click(clickOn('previewDeleteConfirm', 'pv_0123456789abcdef'));
     await wait(); await wait();
     assert.deepEqual(sent, [['/api/previews/pv_0123456789abcdef', { confirm: 'pv_0123456789abcdef' }]]);
-    assert.ok(slot.innerHTML.includes('Some files could not be removed. Delete files again to finish.'));
+    assert.ok(slot.innerHTML.includes('Delete files again to finish.'));
     assert.ok(slot.innerHTML.includes('deleted the files') && !slot.innerHTML.includes('data-preview-open'));
+    // The retry the note promises is there, and it finishes the job.
+    assert.ok(slot.innerHTML.includes('>Finish deleting<') && slot.innerHTML.includes('data-preview-delete="pv_0123456789abcdef"'));
+    handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
+    assert.ok(slot.innerHTML.includes('that were left behind last time'));
+    handlers.click(clickOn('previewDeleteConfirm', 'pv_0123456789abcdef'));
+    await wait(); await wait();
+    assert.equal(sent.length, 2);
+    assert.ok(slot.innerHTML.includes('Deleted the files. People can no longer open this preview.'));
+    assert.ok(!slot.innerHTML.includes('data-preview-delete='));
   },
   async stale() {
     const { slot, mount } = fakeSlot();

@@ -110,6 +110,8 @@ def install(gateway) -> None:
                     body = http_util.read_json(h)
                 except ValueError:
                     return
+                if not isinstance(body, dict):
+                    raise ValueError("send {confirm: <preview id>}")
                 send(200, service.delete_files(gateway, principal, parts[0], body.get("confirm")))
             elif len(parts) == 2 and method == "POST" and parts[1] == "stop":
                 send(200, service.stop(gateway, principal, parts[0]))

@@ -3,8 +3,8 @@ import { api as request, escape as e, elapsed } from "./api.js";
 // "Previews" in the card panel: what a Coworker published for this card, from
 // GET /api/previews?card=<n>. A preview stays after the work session ends; Open shows it in a new tab
 // (/p/<id>/, only for signed-in people who can open the card). Stop keeps the files and Open again
-// serves them again. The workspace owner also sees the stop rule here and can change it, and can
-// delete a preview's files after confirming; the server checks both again. A card the person cannot see answers 404, and then the section stays hidden.
+// serves them again. The owner also sees the stop rule here and can change it, and can delete
+// a preview's files after confirming; the server checks both again. A card the person cannot see answers 404, and then the section stays hidden.
 
 export const STATE_WORDS = {
   ready: "Ready",
@@ -51,14 +51,17 @@ function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
     ? `<p class="run-reason" data-preview-stops>Stops being served on <time datetime="${e(preview.stops_at)}">${e(day(preview.stops_at))}</time> under the workspace rule. The files are kept.</p>`
     : "";
   const label = `${preview.name}`;
+  // Files to delete: a served or stopped preview, or a deleted one whose removal left files behind.
+  const retry = preview.reason === "files_deleted" && preview.files_remaining === true;
+  const deletable = (url && state !== "building") || retry;
   const acts = [
     state === "ready" && url ? `<a class="btn sm primary" href="${e(url)}" target="_blank" rel="noopener noreferrer" data-preview-open aria-label="Open preview ${e(label)} in a new tab">Open</a>` : "",
     state === "ready" ? `<button class="btn sm" type="button" data-preview-stop="${e(preview.id)}" aria-label="Stop preview ${e(label)}">Stop</button>` : "",
     state === "stopped" && url ? `<button class="btn sm" type="button" data-preview-reopen="${e(preview.id)}" aria-label="Open preview ${e(label)} again">Open again</button>` : "",
-    canDelete && url && state !== "building" && confirming !== preview.id ? `<button class="btn sm danger" type="button" data-preview-delete="${e(preview.id)}" aria-label="Delete the files of preview ${e(label)}">Delete files</button>` : "",
+    canDelete && deletable && confirming !== preview.id ? `<button class="btn sm danger" type="button" data-preview-delete="${e(preview.id)}" aria-label="${retry ? "Finish deleting the files of" : "Delete the files of"} preview ${e(label)}">${retry ? "Finish deleting" : "Delete files"}</button>` : "",
   ].join("");
-  const confirm = canDelete && url && confirming === preview.id
-    ? `<div class="preview-confirm" role="group" aria-label="Delete the files of preview ${e(label)}"><p class="run-reason">Delete the files of <b>${e(preview.name)}</b> (${e(mib(preview.size_bytes))}, this card)? People can no longer open it, and this cannot be undone.</p><div class="preview-acts"><button class="btn sm danger" type="button" data-preview-delete-confirm="${e(preview.id)}">Delete files</button><button class="btn sm" type="button" data-preview-delete-cancel>Cancel</button></div></div>`
+  const confirm = canDelete && deletable && confirming === preview.id
+    ? `<div class="preview-confirm" role="group" aria-label="Delete the files of preview ${e(label)}"><p class="run-reason">${retry ? `Remove the files of <b>${e(preview.name)}</b> that were left behind last time?` : `Delete the files of <b>${e(preview.name)}</b> (${e(mib(preview.size_bytes))}, this card)? People can no longer open it, and this cannot be undone.`}</p><div class="preview-acts"><button class="btn sm danger" type="button" data-preview-delete-confirm="${e(preview.id)}">Delete files</button><button class="btn sm" type="button" data-preview-delete-cancel>Cancel</button></div></div>`
     : "";
   return `<li data-preview="${e(preview.id)}" data-state="${e(state)}"><p class="run-line"><span class="tag run-state">${e(STATE_WORDS[state])}</span><b>${e(preview.name)}</b>${revision}${published}</p><p class="run-reason" data-preview-reason>${e(preview.reason_text || "")}</p>${preview.next ? `<p class="run-reason" data-preview-next>${e(preview.next)}</p>` : ""}${stops}${acts ? `<div class="preview-acts">${acts}</div>` : ""}${confirm}</li>`;
 }
