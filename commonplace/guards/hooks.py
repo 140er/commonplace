@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -77,8 +78,10 @@ exec "$PY" -m %(run)s
 """
 
 
-def render(hook: str) -> str:
+def render(hook: str, previous: Path | None = None) -> str:
     module, run = HOOKS[hook]
+    if previous is not None and hook == "pre-push":
+        run += " --chain-hook " + shlex.quote(str(previous / hook))
     return _TEMPLATE % {"marker": MARKER, "hook": hook, "module": module, "run": run}
 
 
@@ -101,6 +104,72 @@ def hooks_dir(repo: str | os.PathLike[str]) -> Path:
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "not a git repository")
     return Path(proc.stdout.strip())
+
+
+# Forward these even when absent today, so later hooks in the previous directory
+# still run. Additional executable hook names already present are forwarded too.
+GIT_HOOK_NAMES = (
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-receive",
+    "update",
+    "proc-receive",
+    "post-receive",
+    "post-update",
+    "reference-transaction",
+    "push-to-checkout",
+    "pre-auto-gc",
+    "post-rewrite",
+    "sendemail-validate",
+    "fsmonitor-watchman",
+    "p4-changelist",
+    "p4-prepare-changelist",
+    "p4-post-changelist",
+    "p4-pre-submit",
+    "post-index-change",
+)
+
+
+def stage_pre_push(repo: str | os.PathLike[str], destination: Path) -> Path:
+    """Prepare a new hook directory without changing any hook or Git configuration.
+
+    All other hooks forward to their original paths. The new pre-push replays
+    stdin to the previous pre-push before running the additional checks. Activation
+    and restoration of the exact prior hooksPath are separate, reviewed steps.
+    """
+    previous = hooks_dir(repo).resolve()
+    destination = destination.resolve()
+    if destination.is_relative_to(previous):
+        raise ValueError("stage outside the active hook directory to preserve it")
+    # mkdir must fail on an existing destination: never overwrite a hook chain.
+    destination.mkdir(parents=True, exist_ok=False)
+    names = set(GIT_HOOK_NAMES)
+    if previous.is_dir():
+        names.update(
+            path.name
+            for path in previous.iterdir()
+            if path.is_file() and not path.name.endswith(".sample")
+        )
+    for name in sorted(names):
+        path = destination / name
+        if name == "pre-push":
+            text = render(name, previous)
+        else:
+            target = shlex.quote(str(previous / name))
+            text = f'#!/bin/sh\nif [ -x {target} ]; then exec {target} "$@"; fi\nexit 0\n'
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o755)
+    return destination
 
 
 @dataclass(frozen=True)
@@ -186,13 +255,21 @@ def main(argv: list[str] | None = None) -> int:
         "--force", action="store_true", help="replace a hook of your own (kept as .bak)"
     )
     sub.add_parser("status", help="show what each hook would use in this worktree")
+    staged = sub.add_parser(
+        "stage-pre-push", help="prepare a separate hook chain; do not change hooks or Git config"
+    )
+    staged.add_argument("directory", type=Path, help="a new, unused directory")
     args = parser.parse_args(argv)
     try:
         if args.command == "status":
             print("\n".join(status(".")))
             return 0
+        if args.command == "stage-pre-push":
+            path = stage_pre_push(".", args.directory)
+            print(f"Staged pre-push chain: {path}. No Git configuration or existing hook changed.")
+            return 0
         results = install(".", args.force)
-    except (RuntimeError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"hooks: {exc}", file=sys.stderr)
         return 2
     for result in results:

@@ -299,7 +299,7 @@ def _parse_locations(files: tuple[str, ...], output: str) -> list[str]:
 def _execute(
     command: PlannedCommand,
     cwd: Path,
-    hard_timeout_seconds: float,
+    hard_timeout_seconds: float | None,
     env: dict[str, str] | None,
 ) -> tuple[str, str, list[str]]:
     """Run one command and return (status, output, locations)."""
@@ -348,7 +348,7 @@ def _execute(
 def _run_one(
     command: PlannedCommand,
     cwd: Path,
-    hard_timeout_seconds: float,
+    hard_timeout_seconds: float | None,
     clock: Callable[[], float],
     env: dict[str, str] | None,
 ) -> CommandResult:
@@ -360,12 +360,12 @@ def _run_one(
 def run_command(
     command: PlannedCommand,
     cwd: Path | str,
-    hard_timeout_seconds: float,
+    hard_timeout_seconds: float | None,
     *,
     clock: Callable[[], float] = time.monotonic,
     env: dict[str, str] | None = None,
 ) -> CommandResult:
-    """Run one planned command with its own hard timeout; ``clock`` is read twice."""
+    """Run a planned command; None allows it to finish without a wall-clock cutoff."""
     return _run_one(command, Path(cwd), hard_timeout_seconds, clock, env)
 
 

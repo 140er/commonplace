@@ -1,4 +1,4 @@
-"""Pre-push quick check: changed-file selection, the time budget and the worktree case."""
+"""Pre-push checks: changed files, typechecking, elapsed alarms and worktree bytes."""
 
 import io
 import os
@@ -41,6 +41,7 @@ exit "${TOOL_EXIT:-0}"
 
 
 def _fake_ruff(root: Path) -> Path:
+    _write(root / ".venv" / "bin" / "mypy", FAKE_TOOL, 0o755)
     return _write(root / ".venv" / "bin" / "ruff", FAKE_TOOL, 0o755)
 
 
@@ -140,17 +141,17 @@ def test_selection_is_sorted_and_deduplicated(tree):
 
 
 def test_budget_defaults_and_overrides():
-    warnings = []
-    assert prepush.parse_budget(None, warnings.append) == 60.0
-    assert prepush.parse_budget("", warnings.append) == 60.0
+    warnings: list[str] = []
+    assert prepush.parse_budget(None, warnings.append) == 9.0
+    assert prepush.parse_budget("", warnings.append) == 9.0
     assert prepush.parse_budget("12.5", warnings.append) == 12.5
     assert warnings == []
 
 
 @pytest.mark.parametrize("bad", ["abc", "0", "-3", "nan", "inf"])
 def test_an_unusable_budget_warns_and_uses_the_default(bad):
-    warnings = []
-    assert prepush.parse_budget(bad, warnings.append) == 60.0
+    warnings: list[str] = []
+    assert prepush.parse_budget(bad, warnings.append) == 9.0
     assert len(warnings) == 1 and repr(bad) in warnings[0]
 
 
@@ -182,7 +183,7 @@ def test_a_green_run_says_it_is_a_quick_check_not_the_full_suite(repo):
     _fake_ruff(repo)
     report, text = _run(repo)
     names = {o.name: o.status for o in report.outcomes}
-    assert names["lint ruff"] == names["format ruff"] == "passed"
+    assert names["lint ruff"] == names["format ruff"] == names["typecheck mypy"] == "passed"
     assert names["tests"] == "passed"
     assert report.exit_code == 0 and report.complete
     assert "QUICK CHECK" in text.splitlines()[0]
@@ -200,54 +201,53 @@ def test_a_failing_check_fails_the_run_and_prints_the_fix(repo, monkeypatch):
     assert "run: ruff check --fix" in text
 
 
-def test_budget_runs_out_mid_check_and_the_rest_is_reported_skipped(repo, monkeypatch):
+def test_elapsed_alarm_never_cuts_off_a_check_or_omits_later_checks(repo, monkeypatch):
     _fake_ruff(repo)
-    monkeypatch.setenv("TOOL_SLEEP", "30")
-    report, text = _run(repo, budget=1.0)
+    now = [0.0]
+    original = prepush.run_command
+
+    def run(command, top, timeout, **kwargs):
+        assert timeout is None
+        result = original(command, top, timeout, **kwargs)
+        now[0] += 10.0
+        return result
+
+    monkeypatch.setattr(prepush, "run_command", run)
+    report, text = _run(repo, budget=1.0, clock=lambda: now[0])
     status = {o.name: o.status for o in report.outcomes}
-    assert status["lint ruff"] == "incomplete"
-    assert status["format ruff"] == "skipped"
-    assert status["tests"] == "skipped"
-    assert report.exit_code == 0, "cut-short work is reported, never a failure"
-    assert not report.complete
-    assert "QUICK CHECK INCOMPLETE" in text
-    assert "QUICK CHECK PASSED" not in text
-    assert "not a pass for those" in text
-    assert report.total_seconds < 10
+    assert status["lint ruff"] == status["format ruff"] == "passed"
+    assert status["typecheck mypy"] == status["tests"] == "passed"
+    assert report.exit_code == 0 and report.complete
+    assert report.total_seconds == 40.0
+    assert "TIME ALARM" in text and "QUICK CHECK PASSED" in text
 
 
-def test_budget_runs_out_mid_tests_and_names_what_was_not_confirmed(repo, monkeypatch):
+def test_a_test_failure_after_the_elapsed_alarm_still_blocks_the_push(repo, monkeypatch):
     _fake_ruff(repo)
-    for name, body in {
-        "test_a.py": "def test_a():\n    assert True\n",
-        "test_b.py": "def test_b():\n    assert True\n",
-        "test_c.py": "import time\n\ndef test_c():\n    time.sleep(60)\n",
-    }.items():
-        _write(repo / "tests" / name, body)
-    changed = ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
-    report, text = _run(repo, budget=6.0, changed=changed)
+    _write(repo / "tests/test_mod.py", "def test_bad():\n    assert False\n")
+    ticks = iter((0.0, 40.0))
+    report, text = _run(repo, budget=1.0, clock=lambda: next(ticks))
     tests = next(o for o in report.outcomes if o.name == "tests")
-    assert tests.status == "incomplete"
-    assert "2 of 3 test files confirmed finished" in tests.detail
-    assert "test_c.py" in tests.detail and "test_a.py" not in tests.detail
+    assert tests.status == "failed"
     assert "python -m pytest" in (tests.rerun or "")
-    assert report.exit_code == 0
-    assert "QUICK CHECK INCOMPLETE" in text
+    assert report.exit_code == 1
+    assert "TIME ALARM" in text and "QUICK CHECK FAILED" in text
 
 
-def test_a_tool_missing_from_the_worktree_is_skipped_loudly(repo, monkeypatch):
+def test_a_tool_missing_from_the_worktree_blocks_the_push(repo, monkeypatch):
     monkeypatch.setattr(sys, "executable", str(repo / "bin" / "python"))
     report, text = _run(repo, env={"PATH": str(repo / "empty")})
     lint = next(o for o in report.outcomes if o.name == "lint ruff")
-    assert lint.status == "skipped" and "ruff is not installed" in lint.detail
-    assert "[SKIPPED] lint ruff" in text
+    assert lint.status == "failed" and "ruff is not installed" in lint.detail
+    assert report.exit_code == 1 and "QUICK CHECK FAILED" in text
 
 
-def test_a_pushed_commit_that_is_not_checked_out_skips_file_steps(repo):
+def test_a_pushed_commit_that_is_not_checked_out_is_not_checked_as_head(repo):
     _fake_ruff(repo)
     report, text = _run(repo, files_current=False)
     status = {o.name: o.status for o in report.outcomes}
-    assert status["lint/format"] == status["tests"] == "skipped"
+    assert status["lint/format/typecheck"] == status["tests"] == "skipped"
+    assert report.exit_code == 1 and not report.complete
     assert "not the checked-out HEAD" in text
     assert Path(os.environ["TOOL_LOG"]).exists() is False
 
@@ -264,7 +264,7 @@ def test_docs_check_runs_against_the_base_when_the_repo_has_modules_md(repo):
     assert "python -m commonplace orch docs-check --base main --head HEAD" in text
 
 
-def test_docs_check_with_an_unknown_base_is_skipped_not_failed(repo):
+def test_docs_check_with_an_unknown_base_blocks_the_push(repo):
     _write(repo / "MODULES.md", "# Modules\n")
     out = io.StringIO()
     report = prepush.run_quick_checks(
@@ -276,7 +276,8 @@ def test_docs_check_with_an_unknown_base_is_skipped_not_failed(repo):
         env={"PATH": ""},
     )
     docs = next(o for o in report.outcomes if o.name == "docs-check")
-    assert docs.status == "skipped" and "origin/nope" in docs.detail
+    assert docs.status == "failed" and "origin/nope" in docs.detail
+    assert report.exit_code == 1
 
 
 # ── worktree: each tree's own tools win ────────────────────────────────
@@ -369,7 +370,35 @@ def test_a_tool_beside_the_interpreter_in_use_is_found(repo, monkeypatch):
     other = repo.parent / "other-env" / "bin"
     _fake_ruff(other.parent.parent / "other-env-root")  # unrelated, must not be used
     _write(other / "ruff", FAKE_TOOL, 0o755)
+    _write(other / "mypy", FAKE_TOOL, 0o755)
     monkeypatch.setattr(sys, "executable", str(other / "python"))
     report, _ = _run(repo, env={"PATH": "", "TOOL_LOG": os.environ["TOOL_LOG"]})
     lint = next(o for o in report.outcomes if o.name == "lint ruff")
     assert lint.status == "passed"
+
+
+def test_dirty_tracked_files_cannot_mask_a_pushed_error(repo, monkeypatch, capsys):
+    _fake_ruff(repo)
+    _write(repo / "pkg/mod.py", "X = 99\n")
+    monkeypatch.chdir(repo)
+    assert prepush.main(["--manual", "--base", "main"]) == 1
+    assert "tracked files differ from HEAD" in capsys.readouterr().err
+    assert not Path(os.environ["TOOL_LOG"]).exists()
+
+
+def test_bad_hook_input_fails_closed_without_echoing_it(repo, monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+    private_input = "private-ref private-value malformed-input\n"
+    assert prepush.main(["origin", "url"], stdin=io.StringIO(private_input)) == 1
+    output = capsys.readouterr().err
+    assert "push is blocked" in output and "private-" not in output
+
+
+def test_real_typechecker_rejects_a_stub_with_a_space_in_its_path(repo):
+    _fake_ruff(repo)
+    (repo / ".venv/bin/mypy").unlink()  # use the real development typechecker
+    _write(repo / "stub dir/a b.pyi", 'VALUE: int = "wrong type"\n')
+    report, text = _run(repo, changed=["notes.md", "stub dir/a b.pyi"])
+    mypy = next(outcome for outcome in report.outcomes if outcome.name == "typecheck mypy")
+    assert mypy.status == "failed" and report.exit_code == 1
+    assert "stub dir/a b.pyi:1" in text

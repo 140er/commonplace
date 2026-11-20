@@ -35,17 +35,46 @@ commonplace.guards.hooks status` shows what a worktree would use.
 - **Commit** (through pre-commit, pinned to the same Ruff as the merge checks):
   fixes Python lint and formatting in the staged files.
 - **Push** is a **quick check**, not the full test suite and not CI. It looks at the
-  files the push changes and runs, within a time budget: `ruff check` and
+  files the push changes and runs: `ruff check` and
   `ruff format --check` on them (plus `cargo fmt --check` for changed Rust files),
+  actual `mypy --check-untyped-defs` on changed Python files and stubs,
   `docs-check` against the base branch, and the fast tests whose names match the
   changed modules (`commonplace/guards/stacks.py` selects `tests/test_guards_stacks.py`
   and `tests/test_stacks*.py`; no marked-slow tests). Nothing is edited.
-  A failed check blocks the push. The budget is 60 seconds for everything; set it
-  with `COMMONPLACE_PREPUSH_BUDGET=120` or `--budget`. When it runs out, the
-  step that was running is stopped, later steps are not started, and the run
-  lists exactly what was skipped or cut off: that does not block the push, and it
-  is never printed as a pass. Run the same check by hand against the base with
+  A failed or unavailable required check blocks the push. The nine-second target
+  is an alarm: exceeding it never stops a command or omits a later check.
+  `COMMONPLACE_PREPUSH_BUDGET` and `--budget` set that alarm, not a timeout.
+  Checks require clean tracked files and the pushed commit checked out, so they
+  inspect the bytes being pushed. Mypy uses the project's normal configuration
+  and imports; existing type errors are reported, including dependency errors.
+  No ignore rules or external typechecking service are added. Run by hand with
   `python -m commonplace.guards.prepush --manual --base origin/develop`.
+
+### Review and activate a preserved hook chain
+
+For an existing clone, prepare a separate directory before any shared change:
+
+```bash
+python -m commonplace.guards.hooks status
+git config --show-origin --get-all core.hooksPath
+python -m commonplace.guards.hooks stage-pre-push /absolute/path/to/new-hook-directory
+```
+
+Staging never changes Git configuration or an existing hook, and refuses an
+existing destination. Other hooks forward to their original executable paths.
+Pre-push runs the original hook first with identical arguments and stdin, and
+propagates its refusal before the additional checks. Review the generated files,
+the effective previous hook directory and every configuration scope before
+activation. Keep the previous hooks and configuration intact; do not run the
+older `install --force` command to replace them.
+
+In a disposable Git fixture, activate with that fixture's local `core.hooksPath`
+set to the staged directory and exercise real commits and pushes. Shared clone
+activation is a separate reviewed step: all linked worktrees can be affected,
+and each needs its development environment. Restore the exact prior local
+`core.hooksPath` value to undo activation; if no local value existed, unset the
+new local value so the previous inherited/default hooks apply again. No original
+hook needs restoration because staging leaves its bytes and mode intact.
 
 ## Running Tests
 

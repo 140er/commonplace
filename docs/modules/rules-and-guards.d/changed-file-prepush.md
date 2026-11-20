@@ -1,0 +1,9 @@
+- **Owns:**
+  - The changed-file pre-push check runs canonical Ruff checks and real mypy with untyped function bodies checked, retains Rust formatting, documentation validation and mapped tests, and measures elapsed time against a nine-second alarm.
+- **Promises:**
+  - The alarm never kills or omits work. Missing tools, failed documentation comparison, invalid push input, another pushed checkout or dirty tracked files block the push. Existing type errors remain visible; no ignore rules are introduced.
+  - `guards/hooks.py stage-pre-push` prepares a fresh directory without changing configuration or existing hooks. Other hooks forward to their previous paths; the prior pre-push receives the same arguments and stdin and retains its refusal. Activation and exact configuration rollback are separate reviewed steps.
+- **How it fails:**
+  - Full imported typechecking and mapped tests can exceed the elapsed target. Python typechecking does not claim coverage of untyped JavaScript or Rust; their existing checks remain. A push containing another commit must check out and validate that commit before proceeding.
+- **Tests:**
+  - `test_guards_prepush.py` checks non-cutting alarms, late test failures, actual typechecker arguments, missing tools, dirty tracked bytes and private malformed-input diagnostics. `test_guards_hooks.py` exercises real Git pushes with real formatting, lint and type mutations, spaces, deletions, a new branch, chain refusals, exact stdin replay and unchanged original hooks/configuration.

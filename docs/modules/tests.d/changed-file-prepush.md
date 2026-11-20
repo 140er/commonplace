@@ -1,0 +1,4 @@
+- **Owns:**
+  - Real pre-push regressions use disposable local Git fixtures and the development environment's actual Ruff and mypy, preserving original hook/configuration bytes and restoring mutated source bytes.
+- **Tests:**
+  - `test_guards_hooks.py` rejects format, lint and type mutations through Git, verifies the remote ref stays unchanged, checks new-branch mixed-file selection with spaces and deletions, and proves a prior hook still refuses and receives exact stdin and arguments. `test_guards_prepush.py` keeps all checks running past the elapsed alarm and blocks missing tools, unavailable source bytes and late test failures.

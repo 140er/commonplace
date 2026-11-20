@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,121 @@ def test_the_cli_installs_and_reports(clone, capsys, monkeypatch):
     assert "pre-push: written" in capsys.readouterr().out
     assert hooks.main(["status"]) == 0
     assert "pre-commit: installed" in capsys.readouterr().out
+
+
+def test_staging_preserves_existing_hooks_and_configuration(clone, tmp_path):
+    directory = hooks.hooks_dir(clone)
+    original = b"#!/bin/sh\necho original\n"
+    (directory / "pre-commit").write_bytes(original)
+    (directory / "pre-commit").chmod(0o755)
+    config = (clone / ".git/config").read_bytes()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged hooks")
+    assert (directory / "pre-commit").read_bytes() == original
+    with pytest.raises(ValueError, match="outside the active hook directory"):
+        hooks.stage_pre_push(clone, directory / "nested")
+    assert not (directory / "nested").exists()
+    assert (clone / ".git/config").read_bytes() == config
+    assert not (directory / "pre-push").exists()
+    result = subprocess.run([str(staged / "pre-commit")], capture_output=True, text=True)
+    assert result.returncode == 0 and result.stdout == "original\n"
+    with pytest.raises(FileExistsError):
+        hooks.stage_pre_push(clone, staged)
+    assert (directory / "pre-commit").read_bytes() == original
+
+
+def test_staging_uses_the_effective_custom_hooks_path(clone, tmp_path):
+    custom = tmp_path / "custom hooks"
+    custom.mkdir()
+    git(clone, "config", "core.hooksPath", str(custom))
+    original = custom / "pre-commit"
+    original.write_text("#!/bin/sh\nexit 17\n")
+    original.chmod(0o755)
+    staged = hooks.stage_pre_push(clone, tmp_path / "overlay")
+    assert subprocess.run([str(staged / "pre-commit")]).returncode == 17
+    assert git(clone, "config", "--get", "core.hooksPath").stdout.strip() == str(custom)
+
+
+def test_real_push_checks_types_format_and_lint_and_preserves_previous_hook_input(clone, tmp_path):
+    """Real Git + Ruff + mypy, with all hook installation confined to this fixture."""
+    source = clone / "probe.py"
+    clean = b"VALUE: int = 1\n"
+    source.write_bytes(clean)
+    (clone / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    (clone / ".gitignore").write_text(".mypy_cache/\n.ruff_cache/\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "typed fixture")
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(clone, "remote", "add", "origin", str(remote))
+    git(clone, "push", "-q", "origin", "main")
+    previous = hooks.hooks_dir(clone) / "pre-push"
+    previous.write_text(
+        '#!/bin/sh\ncat > "$CHAIN_INPUT"\nprintf "%s\\n" "$@" > "$CHAIN_ARGS"\n'
+        'exit "${CHAIN_EXIT:-0}"\n'
+    )
+    previous.chmod(0o755)
+    original_hook = previous.read_bytes()
+    config = (clone / ".git/config").read_bytes()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged")
+    env = dict(
+        os.environ,
+        **IDENTITY,
+        COMMONPLACE_PYTHON=sys.executable,
+        CHAIN_INPUT=str(tmp_path / "stdin"),
+        CHAIN_ARGS=str(tmp_path / "args"),
+    )
+
+    def push():
+        return git(
+            clone,
+            "-c",
+            f"core.hooksPath={staged}",
+            "push",
+            "-q",
+            "origin",
+            "main:refs/heads/feature",
+            check=False,
+            env=env,
+        )
+
+    def commit_source(content):
+        source.write_bytes(content)
+        git(clone, "add", "probe.py")
+        git(clone, "commit", "-qm", "fixture mutation")
+
+    # A new branch, a space in both directory and filename, a deletion and mixed file types.
+    (clone / "space dir").mkdir()
+    (clone / "space dir/a b.py").write_text("OTHER: int = 2\n")
+    (clone / "f.txt").unlink()
+    (clone / "note.md").write_text("fixture\n")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-qm", "mixed changes")
+    good = push()
+    assert good.returncode == 0, good.stderr
+    assert "typecheck mypy" in good.stderr and "QUICK CHECK PASSED" in good.stderr
+    accepted = git(remote, "rev-parse", "refs/heads/feature").stdout.strip()
+    expected = f"refs/heads/main {accepted} refs/heads/feature {'0' * 40}\n"
+    assert Path(env["CHAIN_INPUT"]).read_text() == expected
+    assert Path(env["CHAIN_ARGS"]).read_text().splitlines() == ["origin", str(remote)]
+    for mutation, failing_step in (
+        (b"VALUE: int=1\n", "format ruff"),
+        (b"VALUE: int = UNDEFINED_NAME\n", "lint ruff"),
+        (b'VALUE: int = "wrong type"\n', "typecheck mypy"),
+    ):
+        try:
+            commit_source(mutation)
+            bad = push()
+            assert bad.returncode != 0, bad.stderr
+            assert f"] {failing_step}" in bad.stderr and "QUICK CHECK FAILED" in bad.stderr
+            assert git(remote, "rev-parse", "refs/heads/feature").stdout.strip() == accepted
+        finally:
+            source.write_bytes(clean)
+        commit_source(clean)
+    env["CHAIN_EXIT"] = "23"
+    assert push().returncode != 0
+    assert git(remote, "rev-parse", "refs/heads/feature").stdout.strip() == accepted
+    env.pop("CHAIN_EXIT")
+    restored = push()
+    assert restored.returncode == 0, restored.stderr
+    assert source.read_bytes() == clean and previous.read_bytes() == original_hook
+    assert (clone / ".git/config").read_bytes() == config
