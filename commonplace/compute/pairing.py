@@ -441,7 +441,7 @@ def pending_words(pending):
         "not_finished",
         NOT_FINISHED_LABEL,
         f"{what} Set up again or remove it in {ADD_A_MACHINE}. Coworkers do not run on it in this version.",
-        f"Open it in {ADD_A_MACHINE} and choose Set up again, or remove it.",
+        f"Open {ADD_A_MACHINE}. Choose Set up again, or Remove this machine.",
     )
 
 
