@@ -18,10 +18,9 @@ _CARD = {
 
 
 def _line(p) -> str:
-    where = f" {p['url']}" if p["url"] and p["state"] == "ready" else ""
     return (
         f"{p['id']}  #{p['card']}  {p['name']}  revision {p['revision']}  {p['state']}"
-        f" ({p['reason']}): {p['reason_text']}{where}"
+        f" ({p['reason']}): {p['reason_text']}"
     )
 
 
@@ -36,7 +35,9 @@ def _guard(call):
         return call()
     except NotFound:
         raise ToolError("no: preview or card not found") from None
-    except Forbidden:
+    except Forbidden as exc:
+        if exc.args == ("card",):
+            raise ToolError("no: you cannot publish to this card") from None
         raise ToolError("no: you cannot do that to this preview") from None
     except Refused as exc:
         raise _refused(exc) from None
@@ -56,7 +57,8 @@ def preview_publish(ctx, args):
     head = "Published" if created else "Already published, unchanged"
     return (
         f"{head}: {shown['name']} for #{shown['card']}, revision {shown['revision']}.\n"
-        f"Open it at {shown['url']} (signed-in people who can open the card; never public).\n"
+        f"People open it from card #{shown['card']}, under Previews (signed-in people who can "
+        "open the card; never public).\n"
         f"{_line(shown)}"
     )
 
@@ -91,11 +93,14 @@ register(
     LocalTool(
         name="preview_publish",
         description=(
-            "Publish a built web bundle as a preview of a card, so people who can open the card "
-            "reopen it from the card after your session ends. Send card, a name and files "
-            "(each {path, text} or {path, base64}); index.html is required. Up to 5 MiB and 500 "
-            "files. Publishing the same name again adds a revision. Only signed-in people who can "
-            "open the card can open it; it is never public. Files holding credentials are refused."
+            "Publish a built static web page as a preview of a card, so people who can open the "
+            "card reopen it from the card after your session ends. Send card, a name and files "
+            "(each {path, text} or {path, base64}); index.html is required at the top, and links "
+            "between the files must be relative. Up to 5 MiB and 500 files. The page runs "
+            "isolated: no network requests, cookies or storage. Publishing the same name again "
+            "adds a revision. People who can open the card open it while signed in; the address "
+            "they open holds a key for 30 minutes, so it is never public but can be passed on "
+            "within that time. Files holding credentials are refused."
         ),
         input_schema={
             "type": "object",
