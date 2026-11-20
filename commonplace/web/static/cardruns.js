@@ -29,7 +29,7 @@ export const OUTCOME_WORDS = {
   t3_missing: "The machine could not find its coding tool",
   busy: "The machine had reached its hourly limit",
   machine_revoked: "The machine was switched off or removed",
-  binding_not_attested: "The machine is no longer vouched for by an owner",
+  binding_not_attested: "The machine is no longer attested by an owner",
   binding_epoch_changed: "The machine's setup changed after the request",
   restart_unknown: "The runner restarted while starting",
   spawn_ambiguous: "The runner lost track while starting",
@@ -49,9 +49,9 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent. An owner can add one and vouch for it in Workspace settings, under Runner machines.",
-  machine_unavailable: "The machine this project starts agents on is switched off, removed or not vouched for. Check it in Workspace settings, under Runner machines.",
-  binding_not_attested: "The machine is not vouched for by an owner yet. Vouch for it in Workspace settings, under Runner machines.",
+  no_machine: "No machine is ready to run an agent. An owner can add one and attest it in Workspace settings, under Runner machines.",
+  machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Workspace settings, under Runner machines.",
+  binding_not_attested: "The machine is not attested by an owner yet. Attest it in Workspace settings, under Runner machines.",
   origin_not_released: "This card came from outside the workspace and has not been released for agents. Release it first, then start an agent.",
   not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
   outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",

@@ -83,8 +83,8 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "Coworkers can run here only after a provider is connected (sign in from Needs me) and the machine is attested under Runner machines in Admin.",
-        "This machine is set up. Coworkers can run on it after the owner connects a provider.",
+        "This version only checks the machine: Coworkers do not run on it yet. To get ready for later, sign in a provider and confirm this machine, both in Needs me.",
+        "This machine is set up and checked. Coworkers do not run on it in this version.",
     ),
     "offline": (
         "Offline",
@@ -138,6 +138,7 @@ MEMBER_SENTENCE = {
 }
 # A member reads the same state names with the owner's decision in the third person.
 MEMBER_LABEL = {"connected": "Machine connected, waiting for the owner's approval"}
+STALLED_LABEL = "Not finished"
 STALLED = (
     "This setup has not finished.",
     "Remove this machine and set it up again.",
@@ -147,39 +148,39 @@ STALLED = (
 CAUSES = {
     "run_as_root": (
         "The command was run as root.",
-        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Compute in the app and choose Set up again.",
+        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Cloud workspaces in the app and choose Set up again.",
     ),
     "unsupported_os": (
         "This system is not supported. Ubuntu 24.04 and Debian 12 or later are.",
-        "Use a supported system, then open Compute in the app and choose Set up again.",
+        "Use a supported system, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_python": (
         "A supported Python is not installed.",
-        "Install Python 3.10 or later on the machine, then open Compute in the app and choose Set up again.",
+        "Install Python 3.10 or later on the machine, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_prerequisite": (
         "A required program is missing.",
-        "Install what the machine printed, then open Compute in the app and choose Set up again.",
+        "Install what the machine printed, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_runner_program": (
         "The runner program is not installed on this machine, and this command does not install it yet.",
-        "Ask the person who runs this site for the runner program, then open Compute in the app and choose Set up again.",
+        "Ask the person who runs this site for the runner program, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_privilege": (
-        "The account is not allowed to set up its background service.",
-        "Allow the account to keep a service running when logged out, then open Compute in the app and choose Set up again.",
+        "The administrator confirmation was not given, or the password was wrong.",
+        "Open Cloud workspaces in the app, choose Set up again, run the new command and type your password carefully.",
     ),
     "no_service_manager": (
-        "The machine has no running user service manager.",
-        "Log in on the machine with a normal session, then open Compute in the app and choose Set up again.",
+        "The machine cannot keep a background service for this account right now.",
+        "Log in on the machine with a normal session, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "disk_full": (
         "There is not enough free disk space.",
-        "Free some space, then open Compute in the app and choose Set up again.",
+        "Free some space, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "cannot_reach_hub": (
         "The machine could not reach this site.",
-        "Check the machine's internet connection, then open Compute in the app and choose Set up again.",
+        "Check the machine's internet connection, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "service_failed": (
         "The background service did not start.",
@@ -405,6 +406,27 @@ def derive(row, steps, now_stamp):
     return "waiting", None
 
 
+def machine_ids(db, workspace_id):
+    """Machines added through the setup guide (a pairing that is not closed): their approval step is in Needs me."""
+    with db._lock:
+        have = {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','runner_enrollments')"
+            )
+        }
+        if len(have) < 2:
+            return set()
+        return {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
+                "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND e.machine_id IS NOT NULL",
+                (workspace_id,),
+            )
+        }
+
+
 def setup_only_ids(db, workspace_id):
     """Machines added through a pairing that has never sent a heartbeat (reading never creates the tables).
 
@@ -490,6 +512,7 @@ def view(db, row, now_stamp, *, owner):
     stuck = stalled(state, row, steps, now_stamp)
     if stuck:
         sentence, next_owner, next_member = STALLED
+        label = STALLED_LABEL
     result = {
         "id": row["id"],
         "kind": row["kind"],
@@ -846,6 +869,8 @@ def _fields(body, allowed, required):
         request = body["request_id"]
         if not isinstance(request, str) or not REQUEST_ID.fullmatch(request):
             raise refuse("request_id", "invalid")
+    if "identity_digest" in body and not isinstance(body["identity_digest"], str):
+        raise refuse("identity_digest", "invalid")
 
 
 def accept(db, principal, pairing_id, body):
