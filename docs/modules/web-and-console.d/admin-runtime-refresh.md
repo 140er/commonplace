@@ -1,0 +1,4 @@
+- **Owns:** Admin machine inventory descriptions and section refresh focus in `admin.js`, developer machine limit descriptions in `adminrunners.js`, and the phone control size in `screens.css`.
+- **Promises:** Machine concurrency is labelled as a configured limit. Refresh retains keyboard focus while loading and after success or failure, and a response preserves a link the reader has focused meanwhile. Phone section controls have a minimum height of 44px in both looks.
+- **How it fails:** A busy Refresh remains focusable with `aria-disabled`; the existing in-flight request guard refuses repeated reads. Session, owner and workspace checks still fence completion. No runner grant, readiness or observed usage is changed.
+- **Tests:** `tests/workbench_e2e/test_admin_runtime_refresh.py`, `tests/test_admin_ui.py`, `tests/test_admin_runtime_ui.py`, `tests/test_admin_runners_ui.py`.

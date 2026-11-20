@@ -31,7 +31,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [r.name, r.coordinator || r.seat_name, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Coworkers', agents);
     if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Coworkers', agents);
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
-    html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Setup', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.guided ? r.guided.label : r.enabled ? 'enabled' : 'disabled', r.guided && !r.revoked_at ? 'Coworkers do not run on it in this version.' : `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, r.guided && !r.revoked_at ? 'Not used in this version' : `${r.max_in_flight} in flight; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
+    html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Setup', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.guided ? r.guided.label : r.enabled ? 'enabled' : 'disabled', r.guided && !r.revoked_at ? 'Coworkers do not run on it in this version.' : `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, r.guided && !r.revoked_at ? 'Not used in this version' : `Limit: ${r.max_in_flight} run${r.max_in_flight === 1 ? '' : 's'} at once; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready' && machines.error) html += sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready') html += requesterContent(machines);
     return html;
@@ -137,17 +137,23 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
 
   function panel(key) {
     const item = sections.get(key), busy = requests.has(key);
-    const button = (action, text) => `<button type="button" class="btn" data-admin-section="${key}" data-admin-action="${action}" aria-label="${e(text)} ${e(label(key))}"${busy ? ' disabled' : ''}>${e(text)}</button>`;
+    const button = (action, text) => `<button type="button" class="btn" data-admin-section="${key}" data-admin-action="${action}" aria-label="${e(text)} ${e(label(key))}"${busy ? action === 'refresh' ? ' aria-disabled="true"' : ' disabled' : ''}>${e(text)}</button>`;
     return `<div data-admin-panel="${key}" aria-busy="${busy}">${item.data ? content(key, item.data) : ''}${busy ? `<p role="status">${item.data ? 'Refreshing' : 'Loading'} ${e(label(key))}…</p>` : ''}${item.error ? `<p role="status">${e(item.error)}</p>${item.restricted ? '' : button('retry', 'Retry')}` : ''}${item.data ? `${item.data.recorded_at ? `<p class="quiet">Recorded at ${value(item.data.recorded_at)}</p>` : ''}${button('refresh', 'Refresh')}${item.data.has_more ? button('more', 'Load more') : ''}` : ''}</div>`;
   }
 
   function render() {
     if (!host || !live) return;
-    (body || host).innerHTML = `<div class="admin settings"><p class="admin-workspace">${e(current().workspace_name || '')}</p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
+    const target = body || host, active = globalThis.document?.activeElement;
+    const inside = active && target.contains?.(active);
+    const refresh = inside && active.dataset?.adminAction === 'refresh' ? active.dataset.adminSection : null;
+    const href = inside && active.tagName === 'A' ? active.getAttribute('href') : null;
+    target.innerHTML = `<div class="admin settings"><p class="admin-workspace">${e(current().workspace_name || '')}</p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
       if (!sections.has(key) || (key === 'index-stats' && !instanceOwner())) return '';
       if (key === 'deploy') return `<section class="settings-section" data-admin-section="deploy"><h2>${e(title)}</h2>${panel('deploy')}${panel('health')}</section>`;
       return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Needs-me</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;
     }).join('')}</div>`;
+    if (refresh) target.querySelector(`[data-admin-section="${refresh}"][data-admin-action="refresh"]`)?.focus({ preventScroll: true });
+    else if (href) [...target.querySelectorAll('a[href]')].find(link => link.getAttribute('href') === href)?.focus({ preventScroll: true });
   }
 
   function stop() {

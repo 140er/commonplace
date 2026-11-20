@@ -115,6 +115,10 @@
 .admin small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
 .admin button { margin: 8px 8px 0 0; }
 .admin .quiet { color: var(--muted); font-size: 12px; }
+@media (max-width: 699px) {
+  .admin button[data-admin-action],
+  :root[data-ui="deck"] .admin button[data-admin-action] { min-height: 44px; }
+}
 @media (max-width: 900px) {
   .admin table, .admin tbody, .admin tr, .admin td { display: block; }
   .admin thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
