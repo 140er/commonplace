@@ -6,7 +6,7 @@ const threads = Array.from({ length: 31 }, (_, n) => ({ id: `thread_${n.toString
 const snapshot = { coverage: {}, threads, models: [], daily: [], metrics: {}, sinks: [], spans: [], handoffs: [], collected_at: 1795089600, window_start: 1795003200, window_end: 1795089600 };
 
 function harness() {
-  let available = threads;
+  let available = threads, sources = [{ id: 'source', enabled: true }], failure = null;
   const nodes = new Map();
   const node = name => {
     if (!nodes.has(name)) nodes.set(name, { innerHTML: '', value: '', dataset: {}, setAttribute() {}, focus() {}, querySelector() { return null; } });
@@ -16,7 +16,8 @@ function harness() {
   const root = { classList: { add() {}, remove() {} }, contains: () => true, ownerDocument: { hidden: false, addEventListener() {}, removeEventListener() {} }, querySelector: selector => node(selector.match(/data-ca-([^\]=" ]+)/)?.[1]), querySelectorAll: () => [], addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} };
   const controller = mount({ root, api: async url => {
     requests.push(url);
-    if (url === '/api/compute/activity') return { hosts: [{ id: 'source', enabled: true }] };
+    if (url === '/api/compute/activity') return { hosts: sources };
+    if (failure) throw failure;
     const query = new URL(url, 'https://example.test').searchParams;
     const selected = available.filter(row => !query.get('model') || row.model === query.get('model'));
     const offset = Number(query.get('offset'));
@@ -24,6 +25,7 @@ function harness() {
   } });
   const settled = () => new Promise(resolve => setImmediate(resolve));
   return { node, requests, stop: () => controller.stop(), settled, retain: rows => { available = rows; },
+    replaceSource: id => { sources = [{ id, enabled: true }]; }, fail: error => { failure = error; },
     click: (key, value = '') => listeners.get('click')({ target: { closest: () => ({ dataset: key === 'tab' ? { caTab: value } : {}, hasAttribute: attr => attr === `data-ca-${key}` }) } }),
     model: value => { node('model').value = value; listeners.get('change')({ target: node('model') }); },
   };
@@ -74,3 +76,44 @@ test('PR state counts disclose retained provenance beside the count', () => {
   assert.doesNotMatch(metric, /Recorded within the selected window/);
   assert.match(html, /Merge events in this window/);
 });
+
+for (const [name, error] of [['503', { status: 503 }], ['network', new TypeError('Network unavailable')]]) {
+  test(`automatic source replacement clears the previous snapshot and page before a ${name} failure`, async () => {
+    const h = harness();
+    try {
+      await h.settled(); h.click('tab', 'trace'); await h.settled();
+      h.model('gpt-6.1-sol'); await h.settled(); h.click('next'); await h.settled();
+      assert.match(h.node('body').innerHTML, /Threads 26–29 of 29 retained/);
+      h.replaceSource('replacement'); h.fail(error); h.click('refresh'); await h.settled();
+      assert.equal(h.node('host').value, 'replacement');
+      assert.match(h.node('body').innerHTML, /Activity is unavailable/);
+      assert.doesNotMatch(h.node('body').innerHTML, /data-ca-thread|Threads 26/);
+      assert.equal(h.node('fresh').textContent, 'No aggregate snapshot available.');
+      const failed = new URL(h.requests.at(-1), 'https://example.test');
+      assert.equal(failed.pathname, '/api/compute/activity/replacement');
+      assert.equal(failed.searchParams.get('offset'), '0');
+      assert.equal(failed.searchParams.get('model'), '');
+      const replacement = { ...threads[0], id: 'replacement-thread' };
+      h.retain([replacement]); h.fail(null); h.click('refresh'); await h.settled();
+      assert.match(h.node('body').innerHTML, /Threads 1–1 of 1 retained/);
+      assert.ok(h.node('body').innerHTML.includes(replacement.id));
+      assert.equal(h.node('model').value, '');
+    } finally { h.stop(); }
+  });
+
+  test(`a same-source ${name} failure keeps the retained snapshot, query and stale disclosure`, async () => {
+    const h = harness();
+    try {
+      await h.settled(); h.click('tab', 'trace'); await h.settled();
+      h.model('gpt-6.1-sol'); await h.settled(); h.click('next'); await h.settled();
+      h.fail(error); h.click('refresh'); await h.settled();
+      assert.equal(h.node('host').value, 'source');
+      assert.match(h.node('body').innerHTML, /Threads 26–29 of 29 retained/);
+      assert.ok(h.node('body').innerHTML.includes(threads[27].id));
+      assert.match(h.node('problem').textContent, /Retained values below may be stale/);
+      const query = new URL(h.requests.at(-1), 'https://example.test').searchParams;
+      assert.equal(query.get('offset'), '25');
+      assert.equal(query.get('model'), 'gpt-6.1-sol');
+    } finally { h.stop(); }
+  });
+}

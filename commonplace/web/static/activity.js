@@ -140,9 +140,14 @@ export function mount(context) {
       const sources = await ctx.api(BASE, { signal: controller.signal });
       if (mine !== epoch || stopped) return;
       hosts = sources.hosts || [];
-      if (!hosts.some(row => row.id === host)) host = hosts[0]?.id || '';
+      const nextHost = hosts.some(row => row.id === host) ? host : hosts[0]?.id || '';
+      if (nextHost !== host) {
+        host = nextHost; offset = 0; model = ''; data = null; pageFocus = '';
+        find('model').value = '';
+      }
       find('host').innerHTML = hosts.length ? hosts.map(row => `<option value="${e(row.id)}">Host ${short(row.id)}</option>`).join('') : '<option value="">No connected source</option>';
       find('host').value = host;
+      if (!data?.snapshot) paint();
       const readPage = () => ctx.api(`${BASE}/${encodeURIComponent(host)}?window=${window}&offset=${offset}&view=${tab === 'live' ? 'live' : 'all'}&model=${encodeURIComponent(['trace', 'live'].includes(tab) ? model : '')}`, { signal: controller.signal });
       data = host ? await readPage() : null;
       if (mine !== epoch || stopped) return;

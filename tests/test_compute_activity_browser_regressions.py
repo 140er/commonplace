@@ -3,6 +3,7 @@
 import copy
 import importlib
 import shutil
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from test_compute_activity_api import activity_hub, enrolled, request  # noqa: F401
@@ -165,3 +166,78 @@ def test_phone_first_summary_is_above_fixed_navigation(activity_page, width):
     footer = page.locator("[data-deck=tabs]").bounding_box()
     assert first and footer
     assert first["y"] + first["height"] <= footer["y"]
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+@pytest.mark.parametrize("failure", ["503", "network"])
+def test_automatic_source_replacement_drops_old_snapshot_and_paging(activity_page, width, failure):
+    page = activity_page
+    page.set_viewport_size({"width": width, "height": 700 if width < 600 else 844})
+    page.locator("[data-ca-tab=trace]").click()
+    page.locator("[data-ca-model]").select_option("gpt-6.1-sol")
+    page.get_by_text("Threads 1–25 of 115 retained", exact=False).wait_for()
+    page.get_by_role("button", name="Next", exact=True).click()
+    page.get_by_text("Threads 26–50 of 115 retained", exact=False).wait_for()
+    original = page.locator("[data-ca-host]").input_value()
+    old_thread = page.locator("[data-ca-body] [data-ca-thread]").first.get_attribute(
+        "data-ca-thread"
+    )
+    response = page.request.get(
+        page.url.split("/app/")[0] + f"/api/compute/activity/{original}?window=1"
+    )
+    assert response.status == 200
+    replacement = identity("machine", "replacement")
+    new_thread = identity("thread", "replacement")
+    retained = response.json()
+    retained["snapshot"]["threads"] = [
+        {**retained["snapshot"]["threads"][0], "id": new_thread, "model": "other"}
+    ]
+    retained["thread_models"] = ["other"]
+    retained["page"] = {"offset": 0, "total": 1, "next": None}
+    failed = True
+    reads = []
+    waiting = []
+
+    def read(route):
+        reads.append(route.request.url)
+        if not failed:
+            route.fulfill(json=retained)
+        else:
+            waiting.append(route)
+
+    page.route(
+        "**/api/compute/activity",
+        lambda route: route.fulfill(json={"hosts": [{"id": replacement, "enabled": True}]}),
+    )
+    page.route("**/api/compute/activity/**", read)
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.wait_for_function(
+        "id => document.querySelector('[data-ca-host]').value === id", arg=replacement
+    )
+    assert waiting
+    assert page.locator('[data-ca-body][aria-busy="true"]').count() == 1
+    assert page.locator("[data-ca-body] [data-ca-thread]").count() == 0
+    assert page.locator("[data-ca-fresh]").inner_text() == "No aggregate snapshot available."
+    if failure == "503":
+        waiting[0].fulfill(status=503, json={"error": "synthetic_read_failure"})
+    else:
+        waiting[0].abort("failed")
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert page.locator("[data-ca-host]").input_value() == replacement
+    assert page.get_by_role("heading", name="Activity is unavailable", exact=True).count() == 1
+    assert page.locator("[data-ca-body] [data-ca-thread]").count() == 0
+    assert page.locator("[data-ca-fresh]").inner_text() == "No aggregate snapshot available."
+    assert reads
+    query = parse_qs(urlparse(reads[-1]).query, keep_blank_values=True)
+    assert query["offset"] == ["0"]
+    assert query["model"] == [""]
+    failed = False
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.get_by_text("Threads 1–1 of 1 retained", exact=False).wait_for()
+    assert page.locator("[data-ca-model]").input_value() == ""
+    assert (
+        page.locator("[data-ca-body] [data-ca-thread]").get_attribute("data-ca-thread")
+        == new_thread
+    )
+    assert page.locator(f'[data-ca-thread="{old_thread}"]').count() == 0
+    assert page.get_by_role("button", name="Next", exact=True).is_disabled()
