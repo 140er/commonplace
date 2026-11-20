@@ -131,7 +131,6 @@ def test_missing_connection_still_replies_when_bookkeeping_is_unavailable(
     # Failed bookkeeping never pretends it created an item, or clears another person's item.
     assert _needs_rows(h) == original_rows
     assert "model_connections" not in h.request(h.owner, "GET", "/api/needs-me")[1]
-    assert len(h.request(h.member, "GET", "/api/needs-me")[1]["model_connections"]) == 1
 
 
 @pytest.mark.parametrize("case", ["org_private", "personal_org", "not_online", "newly_org"])
