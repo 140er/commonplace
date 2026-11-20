@@ -7,7 +7,7 @@ Enable public access only after the operator verifies authentication, backups, D
 | Host | Serves | Proxied to the gateway |
 |---|---|---|
 | commonplace.run (+ www → 308) | Website (static, Caddy) | nothing |
-| app.cmmn.dev | The app | `/app*`, `/api/*`, `/health*` |
+| app.cmmn.dev | The app | `/app*`, `/api/*`, `/health*`, `/p/*` |
 | cmmn.dev | MCP, OAuth, short links, short-name redirects | `/mcp`, `/oauth/*`, `/.well-known/*`, `/s/*`, `/health*` |
 
 Caddy template: `deploy/commonplace-public.caddy.example`. Copy it to an operator-owned file, replace documentation bind addresses and the static root, and validate the host configuration before reloading Caddy. The private site is configured separately.
@@ -118,7 +118,7 @@ Record each item as a separate explicit owner act before device acceptance:
 1. DNS records above (Cloudflare API token or by hand).
 2. Add the environment lines to the operator-owned `.env`; deploy with the external `COMPOSE_FILE` and env paths described in `commonplace/DEPLOY.md`.
 3. Install the filled-in Caddy site in the operator-owned configuration, validate the full configuration and reload the host service.
-4. Check: `curl -I https://commonplace.run`, `curl https://cmmn.dev/.well-known/oauth-protected-resource`, `curl -i https://cmmn.dev/mcp` (401 with `resource_metadata`), sign in on `https://app.cmmn.dev/app/`.
+4. Check: `curl -I https://commonplace.run`, `curl https://cmmn.dev/.well-known/oauth-protected-resource`, `curl -i https://cmmn.dev/mcp` (401 with `resource_metadata`), sign in on `https://app.cmmn.dev/app/`. Preview addresses are routed to the gateway too: `curl -i https://app.cmmn.dev/p/pv_0000000000000000/` must answer 404 (not a 302 to the app page), or a published preview cannot open.
 5. claude.ai: Settings → Connectors → Add custom connector → `https://cmmn.dev/mcp`. ChatGPT: same URL as a developer-mode connector.
 
 Rollback: restore the previous operator-owned public Caddy site and reload Caddy. DNS can stay.

@@ -93,6 +93,7 @@ def test_caddy_preserves_api_paths_and_has_exclusive_static_fallback():
         "/mcp",
         "/health",
         "/healthz",
+        "/p/*",
         "/s/*",
         "/oauth/*",
         "/.well-known/*",
@@ -1390,3 +1391,12 @@ def test_stage_archive_records_the_archived_commit(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert not (bare / ".release-commit").exists()
+
+
+def test_public_template_routes_preview_addresses_to_the_gateway_on_the_app_host_only():
+    text = (DEPLOY / "commonplace-public.caddy.example").read_text()
+    app = re.search(r"@app path (.+)", text)[1].split()
+    agent = re.search(r"@agent path (.+)", text)[1].split()
+    assert "/p/*" in app
+    assert "/p/*" not in agent
+    assert "/p/*" in (DEPLOY / "commonplace" / "DEPLOY.md").read_text()
