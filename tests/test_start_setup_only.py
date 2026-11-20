@@ -17,8 +17,11 @@ world, owner, options = (
 )  # the fixtures and helper of the card-start suite
 
 
-def guide(world, *, accepted=True, heartbeat=False):
-    """Make the world's machine the kind the setup guide adds: an exchanged enrollment and a pairing for it."""
+def guide(world, *, accepted=True, heartbeat=False, complete=None):
+    """An exchanged enrollment and pairing. Accepted setups normally passed every check; complete=False recreates an
+    older accepted setup that never finished."""
+    if complete is None:
+        complete = accepted
     db = world.db
     enrollment.ensure(db)
     pairing.ensure(db)
@@ -63,6 +66,11 @@ def guide(world, *, accepted=True, heartbeat=False):
                 stamp,
             ),
         )
+        if complete:
+            db._conn.executemany(
+                "INSERT INTO machine_pairing_steps(pairing_id, step, state, cause, reported_at) VALUES (?,?,?,?,?)",
+                [(pid, step, "ok", None, stamp) for step in pairing.STEPS],
+            )
         if heartbeat:
             db._conn.execute(
                 "INSERT INTO machine_pairing_steps(pairing_id, step, state, cause, reported_at) VALUES (?,?,?,?,?)",
@@ -83,6 +91,23 @@ def test_a_setup_only_machine_is_never_offered_requested_or_leased(world, owner,
     status, refused = owner.call("POST", "/api/card-starts", {"task": card})
     assert status >= 400 and world.all_jobs() == [], (status, refused)
     assert predicate.setup_only_refusal(world.gw, world.machine()) == "setup_only"
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_an_accepted_setup_without_completed_checks_refuses_starts_as_unfinished(
+    world, owner, configured
+):
+    card = world.card(board=BOARD if configured else PLAIN)
+    if configured:
+        world.configure()
+    guide(world, complete=False)
+    status, body = options(owner, card)
+    assert status == 200, body
+    assert body["refusal"] == "setup_unfinished"
+    assert not body.get("machines"), "an unfinished machine is never offered"
+    status, refused = owner.call("POST", "/api/card-starts", {"task": card})
+    assert status >= 400 and world.all_jobs() == [], (status, refused)
+    assert predicate.setup_only_refusal(world.gw, world.machine()) == "setup_unfinished"
 
 
 def test_the_same_machine_with_a_heartbeat_is_an_ordinary_runner(world, owner):
