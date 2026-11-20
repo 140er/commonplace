@@ -14,7 +14,6 @@ import secrets
 import shutil
 from datetime import timedelta
 
-from commonplace import redact
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import require_visible, task_row
 from commonplace.extensions import ToolContext, ToolError
@@ -111,7 +110,7 @@ def _name(raw) -> str:
     if not 1 <= len(name) <= store.MAX_NAME or any(ord(c) < 32 or ord(c) == 127 for c in name):
         raise ValueError("name must be text of 1 to 80 characters")
     # The name is shown to everyone who can open the card: it must not carry a credential.
-    if redact.find_kinds(name, bundle.SECRET_KINDS):
+    if bundle.secret_kind(name):
         raise ValueError("name looks like it holds a credential; choose a plain name")
     return name
 
@@ -464,6 +463,9 @@ def _mark_leftovers(shown, leftover_ids) -> dict:
     """A deleted preview whose removal left files says so, so the owner can delete again."""
     if shown["reason"] == "files_deleted":
         shown["files_remaining"] = shown["id"] in leftover_ids
+        if shown["files_remaining"]:
+            shown["reason_text"] = "The preview is stopped, but some files could not be removed."
+            shown["next"] = "The workspace owner can use Finish deleting on this card to try again."
     return shown
 
 
@@ -790,7 +792,7 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
         shown["files_remaining"] = True
     else:
         shown["files_remaining"] = False
-    return shown
+    return _mark_leftovers(shown, {shown["id"]} if shown["files_remaining"] else set())
 
 
 RULE_BOUNDS = {"stop_days_after_pr": (1, 365), "max_age_days": (1, 3650)}

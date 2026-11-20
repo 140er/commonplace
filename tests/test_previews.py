@@ -703,7 +703,8 @@ def test_refused_attempts_do_not_count_toward_the_cap_and_the_refusal_is_accurat
         service.publish(h.gateway, person, number, "c", PAGE)
     assert caught.value.reason == "too_many_previews"
     text = service.refusal_payload(caught.value)
-    assert "at most 200 previews" in text["error"] and "not available yet" in text["next"]
+    assert "at most 200 previews" in text["error"] and "Delete files" in text["next"]
+    assert "on its card" in text["next"] and "free a place" in text["next"]
     assert "25" not in text["error"] and "MiB" not in text["error"]
     assert caught.value.detail["preview"]["state"] == "failed"  # recorded, never silently dropped
     # Republishing a name that already holds a preview is not a new place.

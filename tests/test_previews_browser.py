@@ -1,4 +1,5 @@
-"""A hostile preview in a real browser: its own files load, the viewer's session does not.
+"""A hostile preview in a real browser: its own files load, the viewer's session does not, and it
+cannot move the page the person is looking at.
 
 Needs the Playwright package and a Chromium cache; Playwright is deliberately not a declared
 dependency (as for the other browser suites), so run
@@ -115,14 +116,16 @@ def test_a_preview_loads_its_own_files_but_never_the_viewers_session(served):
             page.on("requestfailed", lambda r: seen.append(f"failed: {r.url} {r.failure}"))
             page.on("response", lambda r: seen.append(f"response: {r.status} {r.url}"))
             page.goto(f"{origin}/p/{identity}/")
+            # The tab shows the viewer; the preview runs in its frame.
+            frame = page.frame_locator("iframe")
             # Waiting by selector, not by an evaluated string: the page's policy forbids eval.
             try:
-                page.locator("body[data-result]").wait_for(state="attached", timeout=5000)
+                frame.locator("body[data-result]").wait_for(state="attached", timeout=5000)
             except playwright_api.TimeoutError:
                 pytest.fail("no result: " + " | ".join(seen))
-            result = json.loads(page.locator("body").get_attribute("data-result"))
+            result = json.loads(frame.locator("body").get_attribute("data-result"))
             # Its own stylesheet and script loaded under the sandbox policy ...
-            assert page.locator("h1").evaluate("e => getComputedStyle(e).color") == "rgb(1, 2, 3)"
+            assert frame.locator("h1").evaluate("e => getComputedStyle(e).color") == "rgb(1, 2, 3)"
             # ... but the page has no origin of its own, so the session stays out of reach.
             assert result == {
                 "cookie": "blocked",
@@ -150,23 +153,27 @@ def test_links_lead_on_forms_post_nothing_and_the_key_ends_after_thirty_minutes(
             page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
             page.goto(f"{origin}/p/{identity}/")
             keyed = page.url
-            assert "/~" in keyed
-            # A link between the preview's own pages works under the sandbox.
-            page.click("#docs")
-            page.locator("h1", has_text="Docs page").wait_for()
-            assert page.url == keyed + "docs/"
-            # A form in the preview posts nothing anywhere (form-action 'none').
+            assert "/~" in keyed and keyed.endswith("/")
+            frame = page.frame_locator("iframe")
+            # A link between the preview's own pages works inside the frame; the tab stays put.
+            frame.locator("#docs").click()
+            frame.locator("h1", has_text="Docs page").wait_for()
+            assert page.url == keyed
+            assert page.frames[1].url == keyed + "~files/docs/"
+            # A form in the preview posts nothing anywhere (the frame may not submit forms).
             page.goto(keyed)
             # The browser reports the refusal on the console: wait for that, not for a timer.
             with page.expect_event(
-                "console", predicate=lambda m: "form-action" in m.text, timeout=10000
+                "console", predicate=lambda m: "Blocked form submission" in m.text, timeout=10000
             ):
-                page.locator("#leak button").click(no_wait_after=True)
+                frame.locator("#leak button").click(no_wait_after=True)
             assert posts == []
             # The address the browser shows is a key: a browser with no session opens it ...
             anonymous = browser.new_context()
             stranger = anonymous.new_page()
             assert stranger.goto(keyed).status == 200
+            stranger.frame_locator("iframe").locator("h1", has_text="Probe").wait_for()
+            shot(stranger, "served-viewer")
             # ... until it ends after thirty minutes, and then it gets the sign-in page.
             moment = store.clock()
             monkeypatch.setattr(store, "clock", lambda: moment + timedelta(minutes=31))
@@ -188,10 +195,37 @@ def test_links_lead_on_forms_post_nothing_and_the_key_ends_after_thirty_minutes(
             browser.close()
 
 
+def test_the_viewer_is_never_framed_and_a_file_opened_as_a_page_shows_the_viewer(served):
+    origin, cookie, identity, _number = served
+    with playwright_api.sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context = browser.new_context()
+            context.add_cookies([{"name": sessions.COOKIE, "value": cookie, "url": origin}])
+            page = context.new_page()
+            page.goto(f"{origin}/p/{identity}/")
+            keyed = page.url
+            # The file address opened in a tab of its own lands on the viewer, not on the file.
+            page.goto(keyed + "~files/docs/")
+            assert page.url == keyed + "docs/"
+            assert page.locator("iframe").get_attribute("sandbox") == "allow-scripts"
+            context.close()
+        finally:
+            browser.close()
+
+
+APP_HOST = "app.example.test"
+SHARED_HOST = "cmmn.example.test"  # same registrable domain as the app: shares its session cookie
+OTHER_HOST = "elsewhere.test"  # a different domain
+RESOLVER = "--host-resolver-rules=" + ",".join(
+    f"MAP {host} 127.0.0.1" for host in (APP_HOST, SHARED_HOST, OTHER_HOST)
+)
+
+
 @pytest.fixture
 def elsewhere():
-    """A second site on another host name (cookies are per host): where a hostile preview would
-    like to send the viewer. It keeps the headers of every request it gets."""
+    """A second site on this machine, reachable under two other host names. It keeps the headers
+    of every request it gets."""
     received = []
 
     class Site(BaseHTTPRequestHandler):
@@ -204,67 +238,125 @@ def elsewhere():
             self.end_headers()
             self.wfile.write(body)
 
+        do_POST = do_GET
+
         def log_message(self, *args):
             pass
 
     site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
     threading.Thread(target=site.serve_forever, daemon=True).start()
     try:
-        yield f"http://localhost:{site.server_address[1]}/", received
+        yield site.server_address[1], received
     finally:
         site.shutdown()
         site.server_close()
 
 
+# Each attempt a hostile page can make to move the tab or reach another site, with what the
+# browser says when it refuses.
 NAVIGATORS = {
-    "location-href": "location.href = %s;",
-    "location-replace": "location.replace(%s);",
-    "top-location": "top.location = %s;",
-    "window-open-self": "window.open(%s, '_self');",
-    "meta-refresh": "document.head.insertAdjacentHTML('beforeend', "
-    "'<meta http-equiv=refresh content=\"0;url=' + %s + '\">');",
+    "location-href": ("location.href = %s;", "frame-src"),
+    "location-replace": ("location.replace(%s);", "frame-src"),
+    "top-location": ("top.location = %s;", "navigation"),
+    "parent-location": ("parent.location.href = %s;", "navigation"),
+    "window-open": ("window.open(%s);", "popup"),
+    "window-open-top": ("window.open(%s, '_top');", "navigation"),
+    "meta-refresh": (
+        "document.head.insertAdjacentHTML('beforeend', "
+        "'<meta http-equiv=refresh content=\"0;url=' + %s + '\">');",
+        "frame-src",
+    ),
+    "form-submit": (
+        "const f = document.createElement('form'); f.action = %s; f.target = '_top'; "
+        "document.body.append(f); f.submit();",
+        "Blocked form submission",
+    ),
+    "link-to-top": (
+        "const a = document.createElement('a'); a.href = %s; a.target = '_top'; "
+        "document.body.append(a); a.click();",
+        "navigation",
+    ),
+}
+REFUSED = {
+    "frame-src": ("Framing", "frame-src"),
+    "navigation": ("Unsafe attempt to initiate navigation", "sandboxed"),
+    "popup": ("Blocked opening", "allow-popups"),
+    "Blocked form submission": ("Blocked form submission", "sandbox"),
 }
 
 
-@pytest.mark.parametrize("how", sorted(NAVIGATORS))
-def test_a_preview_can_send_only_its_own_tab_elsewhere_and_takes_no_session_along(
-    world, elsewhere, how
-):
-    """Accepted risk, pinned: a sandboxed page is its own top-level page, so the browser lets a
-    script navigate that tab to another site (the policy has no top-navigation flag and adding
-    one would not matter). What the preview cannot do: the Open link opens it in its own tab with
-    no opener, and the other site gets no session cookie and no referrer. Whatever a page could
-    send by navigating it could already send by a popup, which the policy allows."""
-    site, received = elsewhere
-    shown, _ = service.publish(
-        world.gateway,
-        world.person,
-        world.number,
-        "hostile",
-        [
-            {
-                "path": "index.html",
-                "text": "<!doctype html><title>Hostile</title><h1>Hostile</h1>"
-                "<script src=go.js></script>",
-            },
-            {"path": "go.js", "text": NAVIGATORS[how] % json.dumps(site)},
-        ],
-    )
+def test_a_framed_preview_cannot_move_the_page_or_reach_another_site(world, elsewhere):
+    """A hostile preview tries every way it knows to send the tab to another site, once to a
+    host that shares the app's cookie domain (where the session cookie would be sent) and once to
+    an unrelated host. The tab stays on the viewer, the other site is never asked for anything
+    and the browser says why it refused. On the old design (the preview as the tab's own page)
+    every navigation here succeeded and carried the shared-domain session cookie along."""
+    port, received = elsewhere
+    targets = {
+        "shared": f"http://{SHARED_HOST}:{port}/oauth/authorize?client_id=x",
+        "other": f"http://{OTHER_HOST}:{port}/",
+    }
+    previews = {}
+    for label, target in targets.items():
+        files = [{"path": "index.html", "text": "<!doctype html><title>Hostile</title>"}]
+        for how, (code, _why) in NAVIGATORS.items():
+            files.append(
+                {
+                    "path": f"{how}.html",
+                    "text": "<!doctype html><title>Hostile</title><h1>Hostile</h1><script>"
+                    + (code % json.dumps(target))
+                    + "</script>",
+                }
+            )
+        shown, _ = service.publish(world.gateway, world.person, world.number, label, files)
+        previews[label] = shown["id"]
+    app = f"http://{APP_HOST}:{world.origin.rsplit(':', 1)[1]}"
     with playwright_api.sync_playwright() as pw:
-        browser = pw.chromium.launch()
+        browser = pw.chromium.launch(args=[RESOLVER])
         try:
             context = browser.new_context()
             context.add_cookies(
-                [{"name": sessions.COOKIE, "value": world.cookie, "url": world.origin}]
+                [
+                    {
+                        "name": sessions.COOKIE,
+                        "value": world.cookie,
+                        "domain": ".example.test",
+                        "path": "/",
+                    }
+                ]
             )
             page = context.new_page()
             page.set_default_timeout(20000)
-            page.goto(f"{world.origin}/p/{shown['id']}/")
-            page.wait_for_url(site)
-            page.locator("h1", has_text="Elsewhere").wait_for()
-            assert len(received) == 1
-            assert "Cookie" not in received[0] and "Referer" not in received[0], received[0]
-            assert world.cookie not in json.dumps(received[0])
+            seen, problems = [], []
+            page.on("console", lambda m: seen.append(m.text))
+            # The fixture is honest: opened as a page, the shared host does get the session cookie.
+            page.goto(targets["shared"])
+            assert world.cookie in received.pop().get("Cookie", "")
+            page.goto(f"{app}/p/{previews['shared']}/")
+            keyed = page.url
+            for label, identity in previews.items():
+                for how, (_code, refusal) in NAVIGATORS.items():
+                    prefix, tail = REFUSED[refusal]
+                    page.goto(f"{app}/p/{identity}/")
+                    base = page.url
+                    seen.clear()
+                    try:
+                        with page.expect_event(
+                            "console",
+                            predicate=lambda m, prefix=prefix, tail=tail: (
+                                m.text.startswith(prefix) and tail in m.text
+                            ),
+                            timeout=10000,
+                        ):
+                            page.goto(f"{base}{how}.html")
+                    except playwright_api.TimeoutError:
+                        problems.append(f"{label} {how}: the browser said {seen}")
+                        continue
+                    assert page.url == f"{base}{how}.html", (label, how, page.url)
+                    assert len(page.frames) == 2
+            assert not problems, "\n".join(problems)
+            assert received == [], received
+            assert keyed.startswith(app)
             context.close()
         finally:
             browser.close()

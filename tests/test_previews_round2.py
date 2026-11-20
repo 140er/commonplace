@@ -99,7 +99,9 @@ def test_the_page_policy_refuses_form_posts_and_the_texts_name_the_key():
 
     text = extensions.get("preview_publish").description
     assert "30 minutes" in text and "static" in text and "relative" in text
-    assert "no network requests, cookies or storage" in text
+    assert "inside a viewer, with no cookies or storage" in text
+    assert "cannot load other websites, move the viewer or open popups" in text
+    assert "no network requests" not in text
 
 
 # ── M2, M3: what a stored preview says to people on the card ──

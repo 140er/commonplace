@@ -169,6 +169,8 @@ def test_a_removal_that_leaves_files_says_so_and_asking_again_finishes_it(consol
     monkeypatch.setattr(service, "_remove_tree", lambda path: None)
     status, body, _ = delete(h, h.owner, identity)
     assert status == 200 and body["files_remaining"] is True and body["reason"] == "files_deleted"
+    assert "some files could not be removed" in body["reason_text"]
+    assert "Finish deleting" in body["next"]
     with h.db._lock:
         kinds = [
             r[0]
@@ -179,6 +181,7 @@ def test_a_removal_that_leaves_files_says_so_and_asking_again_finishes_it(consol
     assert "delete_incomplete" in kinds
     # The list says so too, so the card can offer to finish the job.
     assert one(h, identity)["files_remaining"] is True
+    assert "some files could not be removed" in one(h, identity)["reason_text"]
     assert h.request(h.owner, "GET", "/api/previews")[1]["previews"][0]["files_remaining"] is True
     monkeypatch.undo()
     status, body, _ = delete(h, h.owner, identity)
