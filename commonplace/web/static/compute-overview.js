@@ -187,6 +187,7 @@ export function createOverview(ctx) {
   const timers = ctx.timers || globalThis;
   let forceFilters = false, filterShown = { kind: "all", status: "all" };
   let data = null, loadError = "", loading = false, fetchedMono = 0, tries = 0, refreshFailed = false, failedSaid = false, paused = false, foldOpen = null;
+  let readVersion = 0, detailVersion = 0;
   let kind = "all", status = "all", detail = null, detailBusy = false, detailFailed = false, opener = "", timer = null, clockTimer = null, previous = null, seenSignature = "";
   // What each slot of the section holds right now, so a repaint writes only what changed.
   let painted = {}, announced = "", paintedStale = "";
@@ -473,15 +474,17 @@ export function createOverview(ctx) {
   // refresh after every app event) must not turn into a read each; a button press never passes it.
   async function load({ quiet = false, say = false, within = 0 } = {}) {
     const page = ctx.epoch();
-    if (loading || (within && data && (paused || mono() - fetchedMono < within || ctx.doc?.hidden))) return; // the screen's own reloads never read for a hidden tab or a paused overview
+    if (loading || (paused && !say) || (within && data && (mono() - fetchedMono < within || ctx.doc?.hidden))) return; // automatic reads, including pairing changes, respect Pause; explicit Refresh still reads
+    const version = ++readVersion;
     loading = true;
     if (say && data === null && loadError) announce("Trying again…"); // the one thing said at the start of a retry
     if (!quiet) paint();
     let result = null, failure = null;
     try { result = await ctx.request(BASE); } catch (error) { failure = error; }
-    loading = false;
     if (!ctx.valid(page)) return;
     if (failure?.status === 401 && ctx.denied(failure)) return;
+    if (version !== readVersion) return; // Pause or reset invalidated this reply; it cannot clear a newer read's loading state
+    loading = false;
     if (!failure && Array.isArray(result?.items)) {
       const said = changes(result);
       data = result; fetchedMono = mono(); tries = 0; refreshFailed = false; failedSaid = false; loadError = "";
@@ -508,17 +511,20 @@ export function createOverview(ctx) {
       loadError = LOAD_ERROR; paint();  // the alert speaks (once: its text never changes); the count is plain text beside it
       if (say && tries > 1) announce(`Could not load it again. Tried ${tries} times.`); // a retry the person made gets its answer
     }
-    if (detail && data && !detailBusy && !failure) void loadDetail(detail.kind, detail.id, { quiet: true });
+    if (detail && data && !detailBusy && !failure) void loadDetail(detail.kind, detail.id, { quiet: true, automatic: !say });
     schedule();
   }
 
-  async function loadDetail(detailKind, id, { quiet = false } = {}) {
+  async function loadDetail(detailKind, id, { quiet = false, automatic = false } = {}) {
+    if (automatic && paused) return;
     const page = ctx.epoch();
+    const version = ++detailVersion;
     if (!quiet) { detailBusy = true; detailFailed = false; paint("detail"); announce("Loading details…"); }
     let result = null, failure = null;
     try { result = await ctx.request(`${BASE}/${enc(detailKind)}/${enc(id)}`); } catch (error) { failure = error; }
     if (!ctx.valid(page) || !detail || detail.id !== id) return;
     if (failure?.status === 401 && ctx.denied(failure)) return;
+    if (version !== detailVersion) return;
     detailBusy = false;
     if (!failure && result?.item) { detail = { kind: detailKind, id, item: result.item }; detailFailed = false; }
     else if (failure?.status === 404) { detail = null; paint("opener"); announce("That item is no longer available."); return; }
@@ -571,6 +577,7 @@ export function createOverview(ctx) {
     void loadDetail(detail.kind, id);
   }
   function close() {
+    detailVersion++;
     detail = null; detailBusy = false; detailFailed = false;
     paint("opener");
   }
@@ -598,6 +605,8 @@ export function createOverview(ctx) {
     if (action === "attention") { status = status === "attention" ? "all" : "attention"; paint(); showing(); return true; }
     if (action === "pause") {
       paused = !paused;
+      // Freeze the last completed read immediately, even if a transport cannot abort. A fresh explicit read need not wait for it.
+      if (paused) { readVersion++; detailVersion++; loading = false; detailBusy = false; }
       paint();
       if (paused) { if (timer !== null) { timers.clearTimeout(timer); timer = null; } announce("Automatic updates paused. Statuses and ages stay as of the last read."); }
       else { announce("Automatic updates resumed."); void load({ quiet: true }); }
@@ -631,6 +640,7 @@ export function createOverview(ctx) {
     scheduleClock();
   }
   function reset() {
+    readVersion++; detailVersion++;
     if (timer !== null) { timers.clearTimeout(timer); timer = null; }
     if (clockTimer !== null) { timers.clearTimeout(clockTimer); clockTimer = null; }
     ctx.doc?.removeEventListener?.("visibilitychange", visibility);

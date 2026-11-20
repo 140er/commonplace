@@ -1,0 +1,4 @@
+- **Owns:** `compute-overview.js` keeps a paused Overview snapshot across automatic pairing checks and replies already in flight, including open details. A paused or reset read cannot clear a newer request's loading state.
+- **Promises:** Every automatic read respects Pause. Explicit Refresh and opening details still work while paused; Resume can start a fresh read without waiting for an older automatic request. Expired-session refusals still reach the existing sign-in handler.
+- **How it fails:** Late replies from invalidated reads are discarded without changing the snapshot or reporting a false refresh failure. Request identity remains monotonic across reset.
+- **Tests:** `tests/test_compute_pause_snapshot.py` runs the real Overview and controller pairing callback; `tests/test_compute_overview_browser.py` covers both paths in Classic and Deck on desktop and phone, plus manual Refresh and Resume.

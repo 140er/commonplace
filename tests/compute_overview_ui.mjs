@@ -810,6 +810,149 @@ const cases = {
     assert.doesNotMatch(f.shown(), /Start|Stop|Restart|Drain|Resume/, 'a member is offered no action');
   },
 
+  async 'pause-pairing-check'() {
+    // The real controller wires an automatic Add check to the real Overview, with no copied callback.
+    const timers = [], listeners = new Map(), calls = [];
+    let html = '', machineState = 'waiting';
+    const host = { get innerHTML() { return html; }, set innerHTML(value) { html = value; }, querySelector: () => null, addEventListener(kind, fn) { listeners.set(kind, fn); }, removeEventListener(kind) { listeners.delete(kind); } };
+    const schedule = (fn, ms) => { const timer = { fn, ms, live: true }; timers.push(timer); return timer; };
+    const cancel = timer => { if (timer) timer.live = false; };
+    const originalTimers = [globalThis.setTimeout, globalThis.clearTimeout];
+    const pairing = () => ({ id: 'pair_fixture', label: 'Paired fixture', state: machineState, state_label: machineState, sentence: 'Synthetic setup.', next: 'Synthetic next step.', steps: [], can_close: true });
+    const api = async path => {
+      calls.push(path);
+      if (path === '/api/compute/overview') return overviewOf(fleet(), { as_of: new Date((clock + calls.filter(p => p === path).length) * 1000).toISOString() });
+      if (path === '/api/compute/pairings') return { pairings: [pairing()], total: 1, setup_enabled: true };
+      if (path === '/api/compute/pairings/options') return { kinds: [], wings: [] };
+      if (path === '/api/compute/pairings/pair_fixture') return { pairing: pairing() };
+      if (path === '/api/compute') return { gateways: [], nodes: [], scopes: [], executions: [], can_manage: true, capabilities: {} };
+      if (path === '/api/compute/workspaces') return { workspaces: [], total: 0, can_manage: true };
+      throw failure(404, { error: 'not_found' });
+    };
+    const user = { workspace: 'w', actor: 'user:u' }, doc = new EventTarget();
+    const ui = createCompute({ mount: () => host, api, current: () => user, route: () => '#/compute', doc, events: new EventTarget(), now: () => clock, requestId: () => 'r', schedule, cancel });
+    const click = (kind, action, extra = {}) => {
+      const target = { dataset: { [kind === 'ov' ? 'ovAction' : 'prAction']: action, ...extra }, getAttribute: () => null, closest: selector => selector === '.compute-ov' ? target : null };
+      listeners.get('click')({ target: { closest: selector => selector === `[data-${kind}-action]` ? target : null } });
+    };
+    const reads = () => calls.filter(path => path === '/api/compute/overview').length;
+    try {
+      [globalThis.setTimeout, globalThis.clearTimeout] = [schedule, cancel];
+      ui.show(); await flush();
+      click('pr', 'open', { id: 'pair_fixture' });
+      click('ov', 'pause'); await flush();
+      const before = reads(), meta = text(html).match(/Updated .*?Automatic updates are paused;/)?.[0];
+      assert.ok(meta, 'the real Overview is paused');
+      machineState = 'connected';
+      const check = timers.filter(timer => timer.live && timer.ms < 10000).at(-1);
+      assert.ok(check, 'the real pairing scheduled its automatic check');
+      check.live = false; check.fn(); await flush();
+      assert.ok(calls.includes('/api/compute/pairings/pair_fixture'), 'the check actually ran');
+      assert.equal(reads(), before, 'pairing must not read a paused Overview');
+      assert.ok(text(html).includes(meta), 'the snapshot time is retained');
+      click('ov', 'refresh'); await flush();
+      assert.equal(reads(), before + 1, 'manual Refresh is allowed while paused');
+      assert.match(text(html), /Resume automatic updates/);
+      click('ov', 'pause'); await flush();
+      assert.equal(reads(), before + 2, 'Resume reads immediately');
+    } finally {
+      ui.stop();
+      [globalThis.setTimeout, globalThis.clearTimeout] = originalTimers;
+    }
+  },
+
+  async 'pause-inflight-overview'() {
+    const f = fixture();
+    await f.ui.load(); f.ui.start();
+    const snapshot = f.ui.state.data, before = f.nodes.meta.textContent;
+    let resolve;
+    f.state.answers.set('/api/compute/overview', () => new Promise(done => { resolve = done; }));
+    await f.fire();
+    assert.equal(f.ui.state.loading, true);
+    f.click('pause');
+    resolve(overviewOf([], { as_of: new Date((clock + 30) * 1000).toISOString() })); await flush();
+    assert.equal(f.ui.state.data, snapshot, 'an automatic reply cannot replace the paused snapshot');
+    assert.ok(f.nodes.meta.textContent.startsWith(before.split('It refreshes')[0]), 'the server read time stays fixed');
+    assert.equal(f.ui.state.refreshFailed, false);
+    assert.equal(f.liveTimers(30000).length, 0);
+    f.ui.reset();
+  },
+
+  async 'pause-manual-refresh-pending'() {
+    const f = fixture(); await f.ui.load();
+    let oldReply, freshReply;
+    f.state.answers.set('/api/compute/overview', () => new Promise(done => { oldReply = done; }));
+    const oldRead = f.ui.load({ quiet: true });
+    f.click('pause');
+    f.state.answers.set('/api/compute/overview', () => new Promise(done => { freshReply = done; }));
+    f.click('refresh'); await flush();
+    assert.equal(f.calls.length, 3, 'manual Refresh starts without waiting for the old automatic read');
+    oldReply(overviewOf([], { as_of: '2026-11-20T12:01:00Z' })); await oldRead;
+    assert.equal(f.ui.state.loading, true, 'the old reply cannot clear the newer read’s loading state');
+    freshReply(overviewOf(fleet(), { as_of: '2026-11-20T12:02:00Z' })); await flush();
+    assert.equal(f.ui.state.data.as_of, '2026-11-20T12:02:00Z');
+    assert.equal(f.ui.state.paused, true);
+    assert.equal(f.ui.state.loading, false);
+    f.ui.reset();
+  },
+
+  async 'pause-resume-pending'() {
+    const f = fixture(); await f.ui.load();
+    let oldReply;
+    f.state.answers.set('/api/compute/overview', () => new Promise(done => { oldReply = done; }));
+    const oldRead = f.ui.load({ quiet: true });
+    f.click('pause');
+    f.state.answers.set('/api/compute/overview', overviewOf(fleet(), { as_of: '2026-11-20T12:02:00Z' }));
+    f.click('pause'); await flush();
+    assert.equal(f.calls.length, 3, 'Resume starts a fresh read while the previous automatic request is still pending');
+    assert.equal(f.ui.state.data.as_of, '2026-11-20T12:02:00Z');
+    oldReply(overviewOf([], { as_of: '2026-11-20T12:01:00Z' })); await oldRead;
+    assert.equal(f.ui.state.data.as_of, '2026-11-20T12:02:00Z', 'the older reply cannot overwrite resumed data');
+    assert.equal(f.ui.state.paused, false);
+    f.ui.reset();
+  },
+
+  async 'pause-inflight-detail'() {
+    const f = fixture(); await f.ui.load(); f.ui.start();
+    const path = '/api/compute/overview/runner/mach_1';
+    f.state.answers.set(path, detailOf(fleet()[0]));
+    f.click('detail', { id: 'mach_1', kind: 'runner' }); await flush();
+    const snapshot = f.ui.state.detail.item;
+    let resolve;
+    f.state.answers.set(path, () => new Promise(done => { resolve = done; }));
+    await f.fire();
+    assert.equal(typeof resolve, 'function', 'the automatic detail read is in flight');
+    f.click('pause');
+    resolve(detailOf(fleet()[0], { name: 'Late automatic detail' })); await flush();
+    assert.equal(f.ui.state.detail.item, snapshot, 'an automatic detail reply cannot replace paused details');
+    f.ui.reset();
+  },
+
+  async 'pause-inflight-denial'() {
+    const f = fixture(); await f.ui.load();
+    let reject;
+    f.state.answers.set('/api/compute/overview', () => new Promise((_, done) => { reject = done; }));
+    const pending = f.ui.load({ quiet: true });
+    f.click('pause');
+    reject(failure(401, { error: 'sign_in' })); await pending;
+    assert.deepEqual(f.state.denied, [401], 'Pause must not suppress an expired-session refusal');
+    f.ui.reset();
+  },
+
+  async 'pause-explicit-detail'() {
+    const f = fixture(); await f.ui.load();
+    f.click('pause');
+    const path = '/api/compute/overview/runner/mach_1';
+    f.state.answers.set(path, detailOf(fleet()[0], { name: 'Explicit detail' }));
+    f.click('detail', { id: 'mach_1', kind: 'runner' }); await flush();
+    assert.equal(f.ui.state.detail.item.name, 'Explicit detail', 'opening details explicitly still reads while paused');
+    f.state.answers.set(path, detailOf(fleet()[0], { name: 'Explicit refresh detail' }));
+    f.click('refresh'); await flush();
+    assert.equal(f.ui.state.detail.item.name, 'Explicit refresh detail', 'manual Refresh also refreshes the open details');
+    assert.equal(f.ui.state.paused, true);
+    f.ui.reset();
+  },
+
   async 'in-compute'() {
     // The production Compute controller embeds the overview above the cloud workspaces, for an owner and for a member.
     for (const owner of [true, false]) {
