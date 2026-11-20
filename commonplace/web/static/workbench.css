@@ -148,7 +148,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
     left: 0; width: auto; height: 100vh; border: 0; box-shadow: none;
   }
   .shell.chat-open .chat-scrim { display: none; }
-  .shell:not(.chat-open):not(.ctx-pushed) .context .ctx-body { overflow: visible; }
+  .shell:not(.chat-open):not(.ctx-pushed):not(.panel-open) .context .ctx-body { overflow: visible; }
 }
 .shell.chat-open #details-btn, .shell.ctx-pushed #details-btn { display: none; }
 

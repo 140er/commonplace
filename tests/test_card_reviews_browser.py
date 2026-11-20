@@ -316,6 +316,39 @@ def test_every_review_state_reads_in_words_for_owner_and_member(
     page.close()
 
 
+@pytest.mark.parametrize("role", ["owner", "member"])
+@pytest.mark.parametrize("size", ["phone", "narrow-320"])
+def test_long_classic_review_keeps_header_and_composer_in_place(browser, role, size):  # noqa: F811
+    page, errors, _ = open_shell(browser, "classic", size, cards(), member=role == "member")
+    page.route(
+        "**/api/pr-review/cards/**",
+        lambda route: route.fulfill(json=answer_for("needs-you", role == "owner")),
+    )
+    page.evaluate("location.hash='#/card/7'")
+    section = page.locator("#card-panel [data-card-reviews]")
+    section.get_by_text("1 comment needs you.").wait_for()
+    for target in (section.locator("h3"), section.locator(".run-list > li").last):
+        target.scroll_into_view_if_needed()
+        geometry = page.evaluate(
+            """() => Object.fromEntries(
+                ['#card-panel', '.ctx-head', '.ctx-body', '.ctx-foot', '.workbench-details']
+                .map(selector => {
+                    const e = document.querySelector(selector), r = e.getBoundingClientRect();
+                    return [selector, {top: r.top, bottom: r.bottom, scrollTop: e.scrollTop,
+                        overflow: getComputedStyle(e).overflowY}];
+                }))"""
+        )
+        assert geometry[".ctx-body"]["overflow"] == "auto", geometry
+        assert geometry[".workbench-details"]["scrollTop"] == 0, geometry
+        assert geometry[".ctx-head"]["top"] >= geometry["#card-panel"]["top"], geometry
+        assert geometry[".ctx-foot"]["top"] >= geometry[".ctx-body"]["bottom"] - 1, geometry
+        assert abs(geometry[".ctx-foot"]["bottom"] - geometry["#card-panel"]["bottom"]) <= 1, (
+            geometry
+        )
+    assert not errors, errors
+    page.close()
+
+
 def test_the_owner_answers_and_focus_holds_through_the_answer_and_a_background_reload(browser):  # noqa: F811
     page, errors, _ = open_shell(browser, "deck", "desktop", cards())
     answered = {"done": False}
