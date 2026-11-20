@@ -29,7 +29,14 @@ MAX_CONNECTIONS = 5
 LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()'-]{0,59}")
 PROVIDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 CONNECTION_ID = re.compile(r"mc_[0-9a-f]{16}")
-RECORD_KEYS = ("mode", "mode_source", "account_kind", "account_label", "account_person")
+RECORD_KEYS = (
+    "mode",
+    "mode_source",
+    "account_kind",
+    "account_label",
+    "account_person",
+    "account_connection_id",
+)
 COLUMNS = {key: "TEXT" for key in RECORD_KEYS}
 
 SCHEMA = """
@@ -111,15 +118,17 @@ class Decision:
     exclude_private: bool = False
     note: str | None = None
     refusal: Refusal | None = None
+    connection_id: str | None = None
 
     def record(self) -> dict:
-        """The run-record columns (``RECORD_KEYS``); ``account_person`` is hub-internal."""
+        """Internal run-record fields; person and connection ids never enter public views."""
         return {
             "mode": self.mode,
             "mode_source": self.mode_source,
             "account_kind": self.kind,
             "account_label": self.label,
             "account_person": self.person if self.kind == "person" else None,
+            "account_connection_id": self.connection_id,
         }
 
     def public(self) -> dict:
@@ -537,7 +546,9 @@ def _decide(db, workspace_id, board, person, provider, machine, substitute) -> D
         )  # another person's machine does not exist here
     if want is None:
         if private is not None:
-            return Decision(**base, kind="person", label=private["label"])
+            return Decision(
+                **base, kind="person", label=private["label"], connection_id=private["id"]
+            )
         return Decision(**base, exclude_private=machine is not None)
     if want == "org":
         if private is not None:
@@ -575,7 +586,13 @@ def _decide(db, workspace_id, board, person, provider, machine, substitute) -> D
         )
     picked = next((c for c in own if c["machine_id"] == machine["id"]), None)
     if picked is not None:
-        return Decision(**base, kind="person", label=picked["label"], machine_id=machine["id"])
+        return Decision(
+            **base,
+            kind="person",
+            label=picked["label"],
+            machine_id=machine["id"],
+            connection_id=picked["id"],
+        )
     if not substitute:
         return Decision(
             **base,
@@ -585,7 +602,13 @@ def _decide(db, workspace_id, board, person, provider, machine, substitute) -> D
                 "yours. Pick one of your own machines.",
             ),
         )
-    return Decision(**base, kind="person", label=own[0]["label"], machine_id=own[0]["machine_id"])
+    return Decision(
+        **base,
+        kind="person",
+        label=own[0]["label"],
+        machine_id=own[0]["machine_id"],
+        connection_id=own[0]["id"],
+    )
 
 
 def visible_label(row, viewer: str | None):

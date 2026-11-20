@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -80,6 +81,7 @@ ACCOUNT_COLUMNS = {
     "account_kind": "TEXT",
     "account_label": "TEXT",
     "account_person": "TEXT",
+    "account_connection_id": "TEXT",
 }
 STOP_COLUMNS = {
     "run_id": "TEXT",
@@ -477,13 +479,14 @@ def create_in(
     if account is not None:
         conn.execute(
             "UPDATE runner_jobs SET mode=?, mode_source=?, account_kind=?, account_label=?, "
-            "account_person=? WHERE id=?",
+            "account_person=?, account_connection_id=? WHERE id=?",
             (
                 account["mode"],
                 account["mode_source"],
                 account["account_kind"],
                 account["account_label"],
                 account["account_person"],
+                account.get("account_connection_id"),
                 job,
             ),
         )
@@ -603,7 +606,7 @@ def lease(store, machine):
                 continue
             authority.enter_context(store.gateway.db._lock)
             current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
-            refusal = binding_problem(current, row)
+            refusal = binding_problem(current, row) or account_problem(store, current, row)
             if refusal:
                 _update(conn, row, dict(state="cancelled", outcome_code=refusal, updated_at=now))
                 authority.pop_all().close()
@@ -654,6 +657,37 @@ def binding_problem(machine, row, *, starting=False):
     return None
 
 
+def account_problem(store, machine, row):
+    """Recheck the admitted connection under the caller's runner/control fences.
+
+    Mode changes affect new admissions only. Old shared jobs remain usable on shared
+    machines; an old personal job without a pin cannot establish its original identity.
+    Never reconstruct that pin from the account's label or its current connection.
+    """
+    from commonplace.projects import model_modes
+
+    saved = dict(row)
+    if saved.get("account_kind") == "person" and not saved.get("account_connection_id"):
+        return "account_changed"
+    try:
+        connection = model_modes.connection_of_machine(
+            store.gateway.db._conn, store.workspace_id, machine["id"]
+        )
+    except sqlite3.Error:
+        return "mode_unavailable"
+    if saved.get("account_kind") != "person":
+        return "account_changed" if connection is not None else None
+    if (
+        connection is None
+        or connection["id"] != saved["account_connection_id"]
+        or connection["user_id"] != saved.get("account_person")
+        or connection["label"] != saved.get("account_label")
+        or (saved.get("model_provider") and connection["provider"] != saved["model_provider"])
+    ):
+        return "account_changed"
+    return None
+
+
 def starting(store, machine, lease_token, *, validate):
     """Serialize fresh control validation through the guarded write and commit."""
     _sweep(store)
@@ -668,7 +702,11 @@ def starting(store, machine, lease_token, *, validate):
             raise Conflict("start is not leased")
         authority.enter_context(store.gateway.db._lock)
         current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
-        refusal = validate(row) or binding_problem(current, row, starting=True)
+        refusal = (
+            validate(row)
+            or binding_problem(current, row, starting=True)
+            or account_problem(store, current, row)
+        )
         if retry:
             if refusal:
                 raise Conflict(refusal)
