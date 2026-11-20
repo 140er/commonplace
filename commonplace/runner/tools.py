@@ -1,11 +1,17 @@
 """Requester operations and MCP registration for optional machine starts."""
 
+import logging
+import sqlite3
+
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import task_row
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
+from commonplace.http_util import log_failure
 
 from . import jobs, registry
 from .predicate import Refused, grant_values, requester_ok, startable
+
+logger = logging.getLogger(__name__)
 
 MODES = ("approval-required", "auto-accept-edits", "auto", "full-access")
 STRING = {"type": "string", "minLength": 1}
@@ -207,9 +213,12 @@ def card_start(
         ) from None
     if account.refusal is not None:
         if account.refusal.code == "connection_missing" and person:
-            model_modes.note_missing(
-                ctx.db, ctx.principal.workspace_id, person, board["slug"], None
-            )
+            try:
+                model_modes.note_missing(
+                    ctx.db, ctx.principal.workspace_id, person, board["slug"], None
+                )
+            except (OSError, sqlite3.Error, TimeoutError) as exc:
+                log_failure(logger, "card start missing connection note failed", exc)
         raise runner_bridge.StartRefused(account.refusal.code, account.refusal.message)
     status, row = jobs.create(
         store,

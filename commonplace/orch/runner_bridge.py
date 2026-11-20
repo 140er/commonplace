@@ -395,9 +395,12 @@ def _account(gateway, workspace_id, board, requested_by, version, model, machine
             "mode_unavailable", "the model mode cannot be read right now; retry shortly"
         ) from None
     if decision.refusal is not None and decision.refusal.code == "connection_missing" and person:
-        model_modes.note_missing(
-            gateway.db, workspace_id, person, board, model.provider if model else None
-        )
+        try:
+            model_modes.note_missing(
+                gateway.db, workspace_id, person, board, model.provider if model else None
+            )
+        except (OSError, sqlite3.Error, TimeoutError) as exc:
+            log_failure(logger, "card start missing connection note failed", exc)
     return decision
 
 
