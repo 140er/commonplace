@@ -1,4 +1,4 @@
-# Review comment originals
+### Review comment originals
 
 An original-word read returns the comment id, stored revision and verbatim body from the same row, after the normal card visibility check. The response grants no additional permission.
 
