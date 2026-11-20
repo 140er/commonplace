@@ -76,6 +76,112 @@ def test_filtered_trace_live_recap_trace_roundtrip_keeps_one_query(activity_page
 
 
 @pytest.mark.parametrize("width", [1440, 390, 320])
+@pytest.mark.parametrize("failure", ["503", "network"])
+@pytest.mark.parametrize("mode", ["ack-list-failure", "ack-read-failure", "external-read-failure"])
+def test_inactive_consent_evicts_cached_aggregates_before_failed_reads(
+    activity_page, width, failure, mode
+):
+    page = activity_page
+    page.set_viewport_size({"width": width, "height": 700 if width < 600 else 844})
+    page.locator("[data-ca-tab=trace]").click()
+    page.locator("[data-ca-model]").select_option("gpt-6.1-sol")
+    page.get_by_text("Threads 1–25 of 115 retained", exact=False).wait_for()
+    page.get_by_role("button", name="Next", exact=True).click()
+    page.get_by_text("Threads 26–50 of 115 retained", exact=False).wait_for()
+    source = page.locator("[data-ca-host]").input_value()
+    consent_url = page.url.split("/app/")[0] + f"/api/compute/activity/{source}/consent"
+    waiting = []
+
+    def should_fail(request):
+        if request.method != "GET":
+            return False
+        path = urlparse(request.url).path
+        return path == (
+            "/api/compute/activity"
+            if mode == "ack-list-failure"
+            else f"/api/compute/activity/{source}"
+        )
+
+    def read(route):
+        if should_fail(route.request):
+            waiting.append(route)
+        else:
+            route.continue_()
+
+    if mode == "external-read-failure":
+        response = page.request.post(consent_url, data={"enabled": False})
+        assert response.status == 200
+        assert response.json() == {"enabled": False}
+    page.route("**/api/compute/activity**", read)
+    with page.expect_request(should_fail):
+        if mode == "external-read-failure":
+            page.get_by_role("button", name="Refresh", exact=True).click()
+        else:
+            with page.expect_response(lambda response: response.url == consent_url) as ack:
+                page.get_by_role("button", name="Stop aggregate access", exact=True).click()
+            assert ack.value.status == 200
+            assert ack.value.json() == {"enabled": False}
+    page.locator('[data-ca-body][aria-busy="true"]').wait_for()
+    assert waiting
+    try:
+        assert page.locator("[data-ca-body] [data-ca-thread]").count() == 0
+        assert page.locator("[data-ca-fresh]").inner_text() == "No aggregate snapshot available."
+        assert page.get_by_role("button", name="Stop aggregate access", exact=True).is_hidden()
+    finally:
+        if failure == "503":
+            waiting[0].fulfill(status=503, json={"error": "synthetic_read_failure"})
+        else:
+            waiting[0].abort("failed")
+        page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert page.get_by_role("heading", name="Activity is unavailable", exact=True).count() == 1
+    assert page.locator("[data-ca-body] [data-ca-thread]").count() == 0
+    assert page.locator("[data-ca-fresh]").inner_text() == "No aggregate snapshot available."
+    assert "Retained values below" not in page.locator("[data-ca-problem]").inner_text()
+    page.unroute("**/api/compute/activity**", read)
+    response = page.request.post(consent_url, data={"enabled": True})
+    assert response.status == 200
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.get_by_text("Threads 1–25 of 130 retained", exact=False).wait_for()
+    assert page.locator("[data-ca-model]").input_value() == ""
+    assert page.locator("[data-ca-body] [data-ca-thread]").count() == 25
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+@pytest.mark.parametrize("failure", ["503", "network"])
+def test_active_consent_keeps_same_source_offline_snapshot_and_query(activity_page, width, failure):
+    page = activity_page
+    page.set_viewport_size({"width": width, "height": 700 if width < 600 else 844})
+    page.locator("[data-ca-tab=trace]").click()
+    page.locator("[data-ca-model]").select_option("gpt-6.1-sol")
+    page.get_by_text("Threads 1–25 of 115 retained", exact=False).wait_for()
+    page.get_by_role("button", name="Next", exact=True).click()
+    page.get_by_text("Threads 26–50 of 115 retained", exact=False).wait_for()
+    source = page.locator("[data-ca-host]").input_value()
+    first = page.locator("[data-ca-body] [data-ca-thread]").first.get_attribute("data-ca-thread")
+    stamp = page.locator("[data-ca-fresh]").inner_text()
+
+    def offline(route):
+        if failure == "503":
+            route.fulfill(status=503, json={"error": "synthetic_offline"})
+        else:
+            route.abort("failed")
+
+    page.route("**/api/compute/activity**", offline)
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert page.locator("[data-ca-host]").input_value() == source
+    assert "Threads 26–50 of 115 retained" in page.locator(".ca-page").inner_text()
+    assert page.locator("[data-ca-model]").input_value() == "gpt-6.1-sol"
+    assert (
+        page.locator("[data-ca-body] [data-ca-thread]").first.get_attribute("data-ca-thread")
+        == first
+    )
+    assert page.locator("[data-ca-fresh]").inner_text() == stamp
+    assert "Retained values below may be stale" in page.locator("[data-ca-problem]").inner_text()
+    assert page.get_by_role("button", name="Stop aggregate access", exact=True).is_visible()
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
 def test_keyboard_paging_keeps_visible_focus_and_announces_range(activity_page, width):
     page = activity_page
     page.set_viewport_size({"width": width, "height": 844})

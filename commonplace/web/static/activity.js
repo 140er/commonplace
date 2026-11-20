@@ -105,6 +105,9 @@ export function mount(context) {
   root.classList.add('compute-activity');
   root.innerHTML = `<header class="ca-title"><div><h1>Activity</h1><p>Where agent time went, from your local collector.</p></div><div class="ca-actions"><button type="button" class="btn" data-ca-disable aria-label="Stop aggregate access" title="Stop aggregate access" hidden><span class="ca-action-full">Stop aggregate access</span><span class="ca-action-short" aria-hidden="true">Revoke</span></button><button type="button" class="btn" data-ca-pause aria-label="Pause updates" title="Pause updates" aria-pressed="false"><span class="ca-action-full">Pause updates</span><span class="ca-action-short" aria-hidden="true">Pause</span></button><button type="button" class="btn" data-ca-refresh>Refresh</button></div></header><div class="ca-controls"><label>Source<select data-ca-host aria-label="Activity source"><option>Loading sources…</option></select></label><label>Window<select data-ca-window><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label><label data-ca-model-label hidden>Thread model<select data-ca-model><option value="">All models</option></select></label></div><p class="ca-fresh" data-ca-fresh role="status">Loading aggregate snapshots…</p><div data-ca-problem role="alert"></div><nav class="ca-tabs" aria-label="Activity views">${[['recap', 'Recap'], ['sinks', 'Time sinks'], ['trace', 'Trace'], ['live', 'Live']].map(([id, title]) => `<button type="button" data-ca-tab="${id}" aria-pressed="${id === tab}">${title}</button>`).join('')}</nav><div data-ca-body aria-busy="true"><section class="ca-panel"><h2>Recap</h2><p>Loading recorded activity…</p></section></div>`;
   const find = name => root.querySelector(`[data-ca-${name}]`);
+  function clearSnapshot() {
+    data = null; offset = 0; model = ''; pageFocus = ''; find('model').value = '';
+  }
   function paint() {
     if (stopped) return;
     find('problem').textContent = problem;
@@ -113,7 +116,7 @@ export function mount(context) {
     find('body').setAttribute('aria-busy', String(!!pending));
     for (const button of root.querySelectorAll('[data-ca-tab]')) button.setAttribute('aria-pressed', String(button.dataset.caTab === tab));
     const focusedPage = pageFocus || (root.contains(doc?.activeElement) ? doc.activeElement?.hasAttribute?.('data-ca-next') ? 'next' : doc.activeElement?.hasAttribute?.('data-ca-prev') ? 'prev' : '' : '');
-    const snapshot = data?.snapshot;
+    const snapshot = hosts.some(row => row.id === host && row.enabled) ? data?.snapshot : null;
     find('fresh').textContent = snapshot ? `LOCAL · ${data.state === 'stale' || Date.now() / 1000 - Math.min(snapshot.collected_at, snapshot.window_end) > 180 ? 'Stale snapshot' : 'Snapshot'} collected ${date(snapshot.collected_at)} · ${date(snapshot.window_start)} – ${date(snapshot.window_end)} · Europe/Amsterdam${snapshot.coverage.partial ? ' · PARTIAL: collection limit or unreadable source; see coverage' : ''}${paused ? ' · Updates paused' : ''}` : paused ? 'Updates paused.' : 'No aggregate snapshot available.';
     if (pending && !snapshot) { find('body').innerHTML = '<section class="ca-panel"><h2>Loading Activity</h2><p>Loading recorded activity for this view…</p></section>'; return; }
     if (problem && !snapshot) { find('body').innerHTML = '<section class="ca-panel"><h2>Activity is unavailable</h2><p>n/a: the protected aggregate source could not be read. Use Refresh to try again.</p></section>'; return; }
@@ -141,9 +144,8 @@ export function mount(context) {
       if (mine !== epoch || stopped) return;
       hosts = sources.hosts || [];
       const nextHost = hosts.some(row => row.id === host) ? host : hosts[0]?.id || '';
-      if (nextHost !== host) {
-        host = nextHost; offset = 0; model = ''; data = null; pageFocus = '';
-        find('model').value = '';
+      if (nextHost !== host || hosts.some(row => row.id === nextHost && row.enabled === false)) {
+        host = nextHost; clearSnapshot();
       }
       find('host').innerHTML = hosts.length ? hosts.map(row => `<option value="${e(row.id)}">Host ${short(row.id)}</option>`).join('') : '<option value="">No connected source</option>';
       find('host').value = host;
@@ -162,14 +164,23 @@ export function mount(context) {
     } catch (error) {
       if (controller.signal.aborted || mine !== epoch || stopped) return;
       if ([401, 403, 404].includes(error?.status)) { data = null; }
-      problem = error?.status === 401 || error?.status === 403 ? 'Activity requires the signed-in enrolling owner. Sign in with that account.' : 'Activity could not be refreshed. Retained values below may be stale. Use Refresh to retry.';
+      problem = error?.status === 401 || error?.status === 403 ? 'Activity requires the signed-in enrolling owner. Sign in with that account.' : data?.snapshot ? 'Activity could not be refreshed. Retained values below may be stale. Use Refresh to retry.' : 'Activity could not be refreshed. No aggregate snapshot is available. Use Refresh to retry.';
     } finally {
       if (mine === epoch && !stopped) { pending = null; paint(); schedule(); }
     }
   }
   async function enable(enabled = true) {
     if (!host || pending) return;
-    try { await ctx.api(`${BASE}/${encodeURIComponent(host)}/consent`, { method: 'POST', body: { enabled } }); await load(); }
+    const targetHost = host;
+    try {
+      await ctx.api(`${BASE}/${encodeURIComponent(targetHost)}/consent`, { method: 'POST', body: { enabled } });
+      if (stopped) return;
+      if (!enabled) {
+        hosts = hosts.map(row => row.id === targetHost ? { ...row, enabled: false } : row);
+        if (host === targetHost) clearSnapshot();
+      }
+      await load();
+    }
     catch { problem = 'Aggregate reporting could not be enabled. Refresh and try again.'; paint(); }
   }
   const click = event => {

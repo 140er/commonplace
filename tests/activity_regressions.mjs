@@ -6,7 +6,7 @@ const threads = Array.from({ length: 31 }, (_, n) => ({ id: `thread_${n.toString
 const snapshot = { coverage: {}, threads, models: [], daily: [], metrics: {}, sinks: [], spans: [], handoffs: [], collected_at: 1795089600, window_start: 1795003200, window_end: 1795089600 };
 
 function harness() {
-  let available = threads, sources = [{ id: 'source', enabled: true }], failure = null;
+  let available = threads, sources = [{ id: 'source', enabled: true }], failure = null, listingFailure = null;
   const nodes = new Map();
   const node = name => {
     if (!nodes.has(name)) nodes.set(name, { innerHTML: '', value: '', dataset: {}, setAttribute() {}, focus() {}, querySelector() { return null; } });
@@ -14,9 +14,16 @@ function harness() {
   };
   const listeners = new Map(), requests = [];
   const root = { classList: { add() {}, remove() {} }, contains: () => true, ownerDocument: { hidden: false, addEventListener() {}, removeEventListener() {} }, querySelector: selector => node(selector.match(/data-ca-([^\]=" ]+)/)?.[1]), querySelectorAll: () => [], addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} };
-  const controller = mount({ root, api: async url => {
+  const controller = mount({ root, api: async (url, options) => {
     requests.push(url);
-    if (url === '/api/compute/activity') return { hosts: sources };
+    if (url === '/api/compute/activity') {
+      if (listingFailure) throw listingFailure;
+      return { hosts: sources };
+    }
+    if (url.endsWith('/consent')) {
+      sources = sources.map(row => ({ ...row, enabled: options.body.enabled }));
+      return { enabled: options.body.enabled };
+    }
     if (failure) throw failure;
     const query = new URL(url, 'https://example.test').searchParams;
     const selected = available.filter(row => !query.get('model') || row.model === query.get('model'));
@@ -26,6 +33,7 @@ function harness() {
   const settled = () => new Promise(resolve => setImmediate(resolve));
   return { node, requests, stop: () => controller.stop(), settled, retain: rows => { available = rows; },
     replaceSource: id => { sources = [{ id, enabled: true }]; }, fail: error => { failure = error; },
+    consentEnabled: enabled => { sources = sources.map(row => ({ ...row, enabled })); }, failListing: error => { listingFailure = error; },
     click: (key, value = '') => listeners.get('click')({ target: { closest: () => ({ dataset: key === 'tab' ? { caTab: value } : {}, hasAttribute: attr => attr === `data-ca-${key}` }) } }),
     model: value => { node('model').value = value; listeners.get('change')({ target: node('model') }); },
   };
@@ -116,4 +124,32 @@ for (const [name, error] of [['503', { status: 503 }], ['network', new TypeError
       assert.equal(query.get('model'), 'gpt-6.1-sol');
     } finally { h.stop(); }
   });
+}
+
+for (const [name, error] of [['503', { status: 503 }], ['network', new TypeError('Network unavailable')]]) {
+  for (const mode of ['ack-list-failure', 'ack-read-failure', 'external-read-failure']) {
+    test(`${mode}: inactive consent evicts cached aggregates before a ${name} failure`, async () => {
+      const h = harness();
+      try {
+        await h.settled(); h.click('tab', 'trace'); await h.settled();
+        h.model('gpt-6.1-sol'); await h.settled(); h.click('next'); await h.settled();
+        assert.match(h.node('body').innerHTML, /Threads 26–29 of 29 retained/);
+        if (mode === 'ack-list-failure') h.failListing(error); else h.fail(error);
+        if (mode === 'external-read-failure') { h.consentEnabled(false); h.click('refresh'); }
+        else h.click('disable');
+        await h.settled();
+        assert.match(h.node('body').innerHTML, /Activity is unavailable/);
+        assert.doesNotMatch(h.node('body').innerHTML, /data-ca-thread|Threads 26/);
+        assert.equal(h.node('fresh').textContent, 'No aggregate snapshot available.');
+        assert.equal(h.node('disable').hidden, true);
+        assert.doesNotMatch(h.node('problem').textContent, /Retained values below/);
+        h.fail(null); h.failListing(null); h.consentEnabled(true); h.click('refresh'); await h.settled();
+        assert.match(h.node('body').innerHTML, /Threads 1–25 of 31 retained/);
+        const query = new URL(h.requests.at(-1), 'https://example.test').searchParams;
+        assert.equal(query.get('offset'), '0');
+        assert.equal(query.get('model'), '');
+        assert.equal(h.node('model').value, '');
+      } finally { h.stop(); }
+    });
+  }
 }
