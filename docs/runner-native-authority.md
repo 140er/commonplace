@@ -4,42 +4,27 @@ Status: design for the native host prerequisite; execution remains unavailable.
 This document does not provision an issuer, approve a provider account, or certify
 the installed host. Legacy installation and grant receipts remain setup-only.
 
-## Inspected boundary and implementation ownership
+## Native integration boundary
 
-The existing adapter is `commonplace/runner/host_interface.py`. It checks the
-owner's separately selected issuer pin and current signed setup grant, verifies
-release bytes, and invokes `runner-status` through sealed executable bytes. The
-request is bounded private stdin; its nonce-bound response is verified locally
-by `host_authority.py` and independently at the hub by `host_status.py` and
-`lifecycle.py`. Both paths retain `agent_ready: false`.
+The runner adapter checks the owner's independently selected issuer pin and
+current signed setup grant, verifies release bytes, and invokes the native
+status interface through sealed executable bytes. The bounded private request
+carries a nonce; both the local verifier and the hub independently verify the
+response. Existing version 1 receipts retain `agent_ready: false`.
 
-Two distinct T3 Code source repositories were inspected: the installed launcher's
-source tree at `d4fc4a20ab20adc78b5f58b425784b902d430a6c`, and the registered
-development project at `e7d0ff550f2ac51bac0958021e6caededa7ca18b`. Relevant source
-paths in both are:
+Native integration must enforce one current authority at each entry point:
+authenticated RPC and CLI ingress, thread/run admission, workspace preparation,
+provider-session acquisition, queued/recovered dispatch, and the final provider
+request. Runtime policy must intersect project, topic, real workspace roots and
+mode ceilings with that authority. Neither a transport-authenticated caller nor
+an adapter preflight can supply these native checks.
 
-| Native source | Present behavior | Required additional boundary |
-| --- | --- | --- |
-| `apps/server/src/cli/acpMcpBridge.ts` and `mcp/AcpMcpStdioBridge.ts` | `acp-mcp-call` transports a tool invocation to an authenticated MCP endpoint. | Bind the caller to the particular signed runner authority; transport authentication alone supplies no runner grant. |
-| `apps/server/src/mcp/OrchestratorMcpService.ts` | Resolves launches and applies caller/runtime rules. | Deny runner-originated launch, send, resume, delegate and mutation requests outside the current grant, including direct requests bypassing the installer. |
-| `apps/server/src/orchestration-v2/Orchestrator.ts` | Prepares workspaces, dispatches runs and chooses provider sessions. | Recheck the same native authority before workspace effects, session acquisition, queued dispatch and recovery. |
-| `apps/server/src/orchestration-v2/RuntimePolicy.ts` | Resolves a thread's mode and worktree/project directory. | Intersect with grant ceilings and descriptor-verified workspace roots; reject overrides that widen either. |
-| `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts` | Constructs provider `turn/start` parameters, including cwd, approval and sandbox policy. | Reject a changed account/session or stronger policy immediately before the native provider request. |
-
-Searching both repositories' server and packages found no `runner-status`,
-`runner-host-status`, `scope_enforced` or `watchdog_seconds` implementation. Direct
-credential-free discovery of the existing installed Node entrypoint succeeded
-with version `0.1.3` and help that does not advertise `runner-status`. The launcher
-itself failed under a disposable home because it resolves its code relative to
-that home; that failure is not evidence of missing native capability. No existing
-configuration or provider credential was imported for either probe.
-
-The listed revisions are source inspection evidence, not proof of installed
-release provenance. Hashing the small entrypoint shim does not pin its imported
-bundle and dependencies. Neither CLI availability nor provider sign-in proves
-the missing capability. The native changes belong to the host product, outside
-this repository. They require their own managed checkout and release route;
-editing either inspected shared checkout is not authorized by this design.
+A compatible native release must implement the signed status and scoped
+execution protocol and pass its actual enforcement evidence before execution
+can become available. CLI presence, public help, a source revision or provider
+sign-in alone proves none of those capabilities. Installation-specific source
+inventory and probe results belong in private operational evidence, not this
+design.
 
 ## Selected architecture and provisioning prerequisites
 
@@ -268,12 +253,3 @@ Artifact delivery and the later fresh-target binding/run journey are separate
 work. Delivery must preserve setup-only state until this native prerequisite has
 landed and passed its own evidence and independent reviews. This design supplies
 no live issuer signature, native enforcement proof or productive-run result.
-
-## File contract for the current repository slice
-
-The initial slice owns this design, `docs/system/runner-native-authority.md`, and
-the matching new documentation fragments under `docs/modules/project-docs.d`,
-`docs/modules/runner.d` and `docs/modules/tests.d`. Native source is read-only.
-Any Python adapter changes require a separately reported exact file list after
-the native interface and protected principal/store are available. It does not own
-artifact delivery, Compute overview, Activity UI or validation infrastructure.

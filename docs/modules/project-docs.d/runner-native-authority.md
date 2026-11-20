@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - The inspected native sources, owner-selected isolated authority, pending privileged provisioning, independent issuer/hub pins, versioned scope and required live proof are identified before implementation.
+  - Native authority responsibilities, isolated custody, privileged provisioning boundaries, independent issuer/hub pins, versioned scope and required live proof are defined before implementation.
 
 - **How it fails:**
 
