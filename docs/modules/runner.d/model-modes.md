@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - `runner/model_modes_api.py` (the owner-only mode routes, a person's connection routes and the read-only `model_mode` tool) and the account columns of the run record (`mode`, `mode_source`, `account_kind`, `account_label`, `account_person`) on `runner_jobs` and `run_ledger`.
+  - `runner/model_modes_api.py` (the owner-only mode routes, a person's connection routes and the read-only `model_mode` tool) and the account columns of the run record (`mode`, `mode_source`, `account_kind`, `account_label`, `account_person`) on `runner_jobs` and `run_ledger`, plus the per-machine account snapshot on `chat_runner_jobs`.
 
 - **Promises:**
 
@@ -8,7 +8,7 @@
 
 - **How it fails:**
 
-  - A refused start names the code (`connection_missing`, `machine_not_your_account`, `machine_not_org_account`, `no_requesting_person`, `mode_unavailable`); a chat message gets the same words as a reply, and a queued message whose connection or mode changed is skipped at lease, never moved to another account.
+  - A refused start names the code (`connection_missing`, `machine_not_your_account`, `machine_not_org_account`, `no_requesting_person`, `mode_unavailable`); a chat message gets the same words as a reply, and a queued message whose connection or mode changed is skipped at lease, never moved to another account, even when the new account is valid. Older queue rows without a saved account remain stored and are refused with a resend reply.
 
 - **Tests:**
 

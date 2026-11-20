@@ -509,6 +509,81 @@ def test_a_mode_change_after_queueing_never_moves_the_message_to_another_account
     assert _replies(h, h.owner, "connection_missing")
 
 
+@pytest.mark.parametrize("change", ["org_to_personal", "personal_to_org", "replace_connection"])
+def test_a_queued_message_keeps_its_account_when_both_decisions_are_valid(relay_hub, change):
+    h = relay_hub
+    machine = h.machine(label="own-1")
+    h.set_main_model("claude", "claude-haiku-5-5")
+    personal = change != "org_to_personal"
+    if personal:
+        _connection(h, h.admin, machine)
+    h.request(h.owner, "PUT", SETTING, {"mode": "personal" if personal else "org"})
+    assert _decide(h, h.admin, machine=_machine_row(h, machine)).refusal is None
+    assert h.poll(machine)[0] == 204
+    h.post(h.owner, "Keep the account this message was queued for.")
+    assert h.jobs()[0]["state"] == "queued"
+
+    if personal:
+        with h.db._lock, h.db._tx() as conn:
+            conn.execute(
+                "UPDATE model_connections SET revoked_at='2026-11-20T00:00:01Z' "
+                "WHERE workspace_id=? AND user_id=?",
+                (h.workspace, h.admin),
+            )
+    if change in ("org_to_personal", "replace_connection"):
+        # A replacement deliberately has the same person, machine, provider and label.
+        _connection(h, h.admin, machine)
+    if change != "replace_connection":
+        h.request(h.owner, "PUT", SETTING, {"mode": "org" if personal else "personal"})
+    assert _decide(h, h.admin, machine=_machine_row(h, machine)).refusal is None
+
+    assert h.poll(machine)[0] == 204
+    [job] = h.jobs()
+    assert (job["state"], job["code"]) == ("skipped", "account_changed")
+    [reply] = _replies(h, h.owner, "account_changed")
+    assert "Send it again" in reply["text"]
+
+
+def test_a_person_can_lease_on_each_unchanged_eligible_account(relay_hub):
+    h = relay_hub
+    first, second = h.machine(label="first"), h.machine(label="second")
+    h.set_main_model("claude", "claude-haiku-5-5")
+    _connection(h, h.admin, first, label="first subscription")
+    _connection(h, h.admin, second, label="second subscription")
+    h.request(h.owner, "PUT", SETTING, {"mode": "personal"})
+    assert h.poll(first)[0] == 204
+    assert h.poll(second)[0] == 204
+    h.post(h.owner, "Either of my unchanged accounts may answer.")
+    assert h.poll(second)[0] == 200
+    [row] = _chat_rows(h)
+    assert (row["account_kind"], row["account_person"], row["account_label"]) == (
+        "person",
+        h.admin,
+        "second subscription",
+    )
+
+
+def test_schema_upgrade_preserves_an_old_queue_but_refuses_its_unpinned_account(relay_hub):
+    h = relay_hub
+    machine = h.machine()
+    h.set_main_model("claude", "claude-haiku-5-5")
+    assert h.poll(machine)[0] == 204
+    h.post(h.owner, "A queued message from before account snapshots.")
+    [before] = h.jobs()
+    with h.db._lock:
+        h.db._conn.execute("ALTER TABLE chat_runner_jobs DROP COLUMN account_snapshot")
+    h.relay().ensure_schema(h.db)
+    [after] = h.jobs()
+    assert (after["id"], after["state"], after["account_snapshot"]) == (
+        before["id"],
+        "queued",
+        None,
+    )
+    assert h.poll(machine)[0] == 204
+    assert h.jobs()[0]["code"] == "account_changed"
+    assert _replies(h, h.owner, "account_changed")
+
+
 def test_unset_chat_is_recorded_as_the_legacy_setup(relay_hub):
     h = relay_hub
     machine = h.machine()

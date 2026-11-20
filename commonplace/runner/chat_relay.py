@@ -69,6 +69,7 @@ def ensure_schema(db) -> None:
                 user_id TEXT NOT NULL,
                 cli TEXT,
                 model TEXT,
+                account_snapshot TEXT,
                 state TEXT NOT NULL CHECK (state IN ('queued','leased','done','failed','expired','skipped')),
                 code TEXT NOT NULL DEFAULT '',
                 machine_id TEXT,
@@ -89,6 +90,10 @@ def ensure_schema(db) -> None:
                 seen_at TEXT NOT NULL
             );
         """)
+        if "account_snapshot" not in {
+            row[1] for row in db._conn.execute("PRAGMA table_info(chat_runner_jobs)")
+        }:
+            db._conn.execute("ALTER TABLE chat_runner_jobs ADD COLUMN account_snapshot TEXT")
 
 
 def _stamp(now: float) -> str:
@@ -276,6 +281,14 @@ def _refuse_account(gateway, workspace_id, board, message_id, user_id, code, tex
         log_failure(logger, "chat account refusal reply failed", exc)
 
 
+def _account_snapshot(db, workspace_id, account, machine):
+    connection = model_modes.connection_of_machine(db._conn, workspace_id, machine["id"])
+    return {
+        "account": account.record(),
+        "connection": connection["id"] if connection is not None else None,
+    }
+
+
 def enqueue(gateway, principal, board: str, message_id: int, now: float, decision=None) -> bool:
     db = gateway.db
     sweep(db, now)
@@ -316,11 +329,42 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
         return False
     if main_active(gateway, principal, board, now) and not any(m["relay_always"] for m in eligible):
         return False
-    agents = [
-        machine["worker_connection_id"]
-        for machine in (registry.get_machine(db, ws, m["machine_id"]) for m in eligible)
-        if machine is not None
-    ]
+    accounts, agents = {}, []
+    try:
+        with db._lock:
+            for candidate in eligible:
+                machine = registry.get_machine(db, ws, candidate["machine_id"])
+                if machine is None:
+                    continue
+                account = model_modes.decide(
+                    db, ws, board, person=user, provider=cli, machine=machine
+                )
+                if account.refusal is None:
+                    accounts[machine["id"]] = _account_snapshot(db, ws, account, machine)
+                    agents.append(machine["worker_connection_id"])
+    except model_modes.ModeUnavailable as exc:
+        log_failure(logger, "chat model mode unreadable at queue", exc)
+        _refuse_account(
+            gateway,
+            ws,
+            board,
+            message_id,
+            user,
+            "mode_unavailable",
+            "The model mode cannot be read right now, so this message was not sent. Try again shortly.",
+        )
+        return False
+    if not accounts:
+        _refuse_account(
+            gateway,
+            ws,
+            board,
+            message_id,
+            user,
+            "account_changed",
+            "The account for this message changed. Send it again to use the current account.",
+        )
+        return False
     runner = _store(gateway, ws)
     # The budget check and the insert share one runner write transaction, like a card start.
     with runner.transaction() if runner is not None else nullcontext() as rconn:
@@ -332,20 +376,20 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
                 for agent in agents
             ]
             stop = stops[0] if stops and all(stops) else None
-        capped, inserted = _insert(db, ws, board, message_id, user, cli, model, stop, now)
+        capped, inserted = _insert(db, ws, board, message_id, user, cli, model, stop, now, accounts)
     if stop is not None and inserted:
         _refuse(gateway, ws, board, message_id, user, stop)
     return bool(inserted and not capped and stop is None)
 
 
-def _insert(db, ws, board, message_id, user, cli, model, stop, now):
+def _insert(db, ws, board, message_id, user, cli, model, stop, now, accounts):
     with db._lock, db._tx() as conn:
         capped = stop is None and _used_today(conn, ws, user, now) >= DAILY_CAP
         skipped = capped or stop is not None
         inserted = conn.execute(
             "INSERT OR IGNORE INTO chat_runner_jobs "
-            "(id,workspace_id,board,message_id,user_id,cli,model,state,code,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "(id,workspace_id,board,message_id,user_id,cli,model,state,code,created_at,updated_at,account_snapshot) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 "chat_" + secrets.token_hex(8),
                 ws,
@@ -358,6 +402,7 @@ def _insert(db, ws, board, message_id, user, cli, model, stop, now):
                 "budget_exceeded" if stop is not None else "daily_limit" if capped else "",
                 _stamp(now),
                 _stamp(now),
+                json.dumps(accounts, sort_keys=True),
             ),
         ).rowcount
     return capped, inserted
@@ -460,26 +505,49 @@ def lease(
             log_failure(logger, "chat relay finish failed", exc)
         return None
     try:
-        account = model_modes.decide(
-            db,
-            claimed["workspace_id"],
-            claimed["board"],
-            person=claimed["user_id"],
-            provider=claimed["cli"],
-            machine=machine,
-        )
+        with db._lock:
+            account = model_modes.decide(
+                db,
+                claimed["workspace_id"],
+                claimed["board"],
+                person=claimed["user_id"],
+                provider=claimed["cli"],
+                machine=machine,
+            )
+            current = _account_snapshot(db, claimed["workspace_id"], account, machine)
     except model_modes.ModeUnavailable as exc:
         log_failure(logger, "chat model mode unreadable at lease", exc)
         account = None
-    if account is None or account.refusal is not None:
+    try:
+        saved = json.loads(claimed["account_snapshot"] or "{}")
+    except (TypeError, ValueError):
+        saved = {}
+    changed = account is not None and (
+        not isinstance(saved, dict) or saved.get(machine["id"]) != current
+    )
+    if account is None or account.refusal is not None or changed:
         # The mode or the connection changed since the message was queued: never run it on a
         # different account, and tell the person.
+        code = (
+            "mode_unavailable"
+            if account is None
+            else account.refusal.code
+            if account.refusal is not None
+            else "account_changed"
+        )
+        text = (
+            "The model mode cannot be read right now; try again shortly."
+            if account is None
+            else account.refusal.message
+            if account.refusal is not None
+            else "The account for this message changed. Send it again to use the current account."
+        )
         with db._lock:
             _finish(
                 db._conn,
                 claimed,
                 "skipped",
-                account.refusal.code if account else "mode_unavailable",
+                code,
                 now,
             )
         _refuse_account(
@@ -488,10 +556,8 @@ def lease(
             claimed["board"],
             claimed["message_id"],
             claimed["user_id"],
-            account.refusal.code if account else "mode_unavailable",
-            account.refusal.message
-            if account
-            else "The model mode cannot be read right now; try again shortly.",
+            code,
+            text,
         )
         return None
     try:
