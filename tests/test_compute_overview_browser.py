@@ -1373,6 +1373,114 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
 REFRESH = {"name": "Refresh", "exact": True}
 
 
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_pairing_checks_keep_the_paused_overview_snapshot(served, ui, size):
+    fx = served
+
+    def body(page, label, context):
+        page.clock.install()
+        reads = _count_reads(page)
+        state = {"value": "waiting"}
+
+        def pairing():
+            return {
+                "id": "pair_pause_fixture",
+                "label": "Pause pairing fixture",
+                "state": state["value"],
+                "state_label": f"Fixture {state['value']}",
+                "sentence": "Synthetic setup for the paused snapshot check.",
+                "next": "No real machine is contacted.",
+                "steps": [],
+                "can_close": True,
+            }
+
+        page.route(
+            "**/api/compute/pairings",
+            lambda route: route.fulfill(
+                json={"pairings": [pairing()], "total": 1, "setup_enabled": True}
+            ),
+        )
+        page.route(
+            "**/api/compute/pairings/options",
+            lambda route: route.fulfill(json={"kinds": [], "wings": []}),
+        )
+        page.route(
+            "**/api/compute/pairings/pair_pause_fixture",
+            lambda route: route.fulfill(json={"pairing": pairing()}),
+        )
+        # Install routes before the screen's real controller starts reading Add a machine.
+        page.reload()
+        _go(page, fx, ui)
+        page.locator('[data-pr-action="open"][data-id="pair_pause_fixture"]').click()
+        page.get_by_role("button", name="Pause automatic updates").click()
+        count = len(reads)
+        meta = page.locator(".compute-ov-meta").inner_text()
+        state["value"] = "connected"
+        with page.expect_response(
+            lambda response: response.url.endswith("/pairings/pair_pause_fixture")
+        ):
+            page.clock.run_for(3000)
+        expect(page.locator(".compute-pr")).to_contain_text("Fixture connected")
+        assert len(reads) == count, "the pairing check must not read a paused Overview"
+        expect(page.locator(".compute-ov-meta")).to_have_text(meta)
+        _shot(page, f"{label}-pause-pairing-check")
+        with page.expect_response(lambda response: response.url.endswith(OVERVIEW)):
+            page.get_by_role("button", name="Refresh", exact=True).click()
+        page.evaluate("async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); }")
+        expect(page.get_by_role("button", name="Resume automatic updates")).to_be_visible()
+        with page.expect_request(lambda request: request.url.endswith(OVERVIEW)):
+            page.get_by_role("button", name="Resume automatic updates").click()
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_late_automatic_reply_keeps_the_paused_overview_snapshot(served, ui, size):
+    fx = served
+
+    def body(page, label, context):
+        page.clock.install()
+        page.reload()
+        _go(page, fx, ui)
+        held = []
+
+        def hold(route):
+            held.append(route)
+            page.evaluate("window.__pausedOverviewHeld = true")
+
+        page.route(f"**{OVERVIEW}", hold)
+        with page.expect_request(lambda request: request.url.endswith(OVERVIEW)):
+            page.clock.run_for(31000)
+        page.wait_for_function("window.__pausedOverviewHeld === true")
+        assert len(held) == 1
+        page.get_by_role("button", name="Pause automatic updates").click()
+        before = page.locator("[data-ov-slot='list']").inner_html()
+        meta = page.locator(".compute-ov-meta").inner_text()
+        route = held.pop()
+        payload = route.fetch().json()
+        payload["as_of"] = "2026-11-20T18:00:00Z"
+        payload["items"][0]["name"] = "Late automatic fixture"
+        with page.expect_event(
+            "requestfinished", predicate=lambda request: request.url.endswith(OVERVIEW)
+        ):
+            route.fulfill(json=payload)
+        page.evaluate("async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); }")
+        expect(page.locator("[data-ov-slot='list']")).to_have_js_property("innerHTML", before)
+        expect(page.locator(".compute-ov-meta")).to_have_text(meta)
+        _shot(page, f"{label}-pause-late-overview-reply")
+        page.unroute(f"**{OVERVIEW}")
+        with page.expect_response(lambda response: response.url.endswith(OVERVIEW)):
+            page.get_by_role("button", name="Refresh", exact=True).click()
+        page.evaluate("async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); }")
+        expect(page.get_by_role("button", name="Resume automatic updates")).to_be_visible()
+        with page.expect_request(lambda request: request.url.endswith(OVERVIEW)):
+            page.get_by_role("button", name="Resume automatic updates").click()
+
+    _run(fx, ui, size, body)
+
+
 def _refuse_overview(page):
     page.route(
         f"**{OVERVIEW}",
