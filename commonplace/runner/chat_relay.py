@@ -329,6 +329,17 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
         else frozenset(),
     )
     if not eligible:
+        if decision.kind == "person" and not main_active(gateway, principal, board, now):
+            _refuse_account(
+                gateway,
+                ws,
+                board,
+                message_id,
+                user,
+                "no_runner",
+                "Your own account has no available chat runner. Start your runner with the "
+                "selected provider enabled, then send this message again.",
+            )
         return False
     if main_active(gateway, principal, board, now) and not any(m["relay_always"] for m in eligible):
         return False
