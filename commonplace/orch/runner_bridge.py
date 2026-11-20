@@ -381,7 +381,7 @@ def _account(gateway, workspace_id, board, requested_by, version, model, machine
         None,
     )
     try:
-        decision = model_modes.decide(
+        decision = model_modes.resolve_account(
             gateway.db,
             workspace_id,
             board,

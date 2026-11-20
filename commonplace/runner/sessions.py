@@ -164,7 +164,7 @@ def _authority(gateway, ws, conn, version, board, row=None):
     # Model modes (card #617): a board session belongs to the person who accepted the config and
     # never runs on another account than the mode gives that person.
     try:
-        account = model_modes.decide(
+        account = model_modes.resolve_account(
             gateway.db,
             ws,
             board["slug"],
@@ -184,7 +184,7 @@ def _new(conn, gateway, ws, version, board):
     role = next(r for r in config.roles.values() if r.kind == "orchestrator" and r.parent is None)
     machine = registry.get_machine(gateway.db, ws, config.runner.machine)
     choice = models.effective(gateway.db, ws, board["slug"], role.model_role).choice
-    account = model_modes.decide(
+    account = model_modes.resolve_account(
         gateway.db,
         ws,
         board["slug"],

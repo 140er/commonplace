@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - The account of a config-driven start: `runner_bridge._account` decides the mode and account, swaps in the person's own machine in personal mode and pins it on the run.
+  - The account of a config-driven start: `runner_bridge._account` calls `projects.model_modes.resolve_account` for the mode and account, swaps in the person's own machine in personal mode and pins it on the run.
 
 - **Promises:**
 

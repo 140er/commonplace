@@ -9,8 +9,8 @@ It holds a provider name, a label of the person's choosing and the machine, neve
 A machine behind an active connection is private to that person: it serves no other person's
 start and no org run, in every mode.
 
-``decide`` is the one place the precedence matrix lives. It reads the control rows and returns a
-``Decision``: the account a run is billed to and its run-record fields, or a refusal with a code,
+``resolve_account`` is the one place the precedence matrix lives. It reads the control rows and
+returns a ``Decision``: the account a run is billed to and its run-record fields, or a refusal with a code,
 plain words and the next step. It fails closed: a store it cannot read raises ``ModeUnavailable``
 and no start is admitted on a guess.
 """
@@ -477,7 +477,7 @@ def _not_found() -> Refusal:
     return Refusal("machine_not_found", "machine not found")
 
 
-def decide(
+def resolve_account(
     db,
     workspace_id: str,
     board: str,
@@ -494,12 +494,12 @@ def decide(
     settings read). ``substitute`` lets a start that must use a person's account swap the named
     machine for that person's own (a config-driven start names a workspace machine)."""
     try:
-        return _decide(db, workspace_id, board, person, provider, machine, substitute)
+        return _resolve_account(db, workspace_id, board, person, provider, machine, substitute)
     except sqlite3.Error as exc:
         raise ModeUnavailable("model modes cannot be read") from exc
 
 
-def _decide(db, workspace_id, board, person, provider, machine, substitute) -> Decision:
+def _resolve_account(db, workspace_id, board, person, provider, machine, substitute) -> Decision:
     rule = effective_mode(db, workspace_id, board)
     mode, source = rule["mode"], rule["source"]
     with db._lock:
@@ -658,7 +658,7 @@ def needs(db, principal) -> list[dict]:
         ).fetchall()
     items = []
     for row in rows:
-        decision = decide(
+        decision = resolve_account(
             db,
             principal.workspace_id,
             row["board"],
@@ -690,7 +690,7 @@ def effective_for(db, workspace_id: str, board: str, person: str | None, roles: 
     provider (or ``None``). A role with nothing usable carries the refusal's reason."""
     result = {}
     for role, provider in roles.items():
-        decision = decide(db, workspace_id, board, person=person, provider=provider)
+        decision = resolve_account(db, workspace_id, board, person=person, provider=provider)
         entry = decision.public()
         entry["reason"] = decision.refusal.message if decision.refusal else None
         result[role] = entry
