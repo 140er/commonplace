@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS pr_review_prs (
     rounds_used INTEGER NOT NULL DEFAULT 0,
     last_round_at TEXT NOT NULL DEFAULT '', loop_stopped INTEGER NOT NULL DEFAULT 0,
     public INTEGER, decided_event INTEGER NOT NULL DEFAULT 0,
+    question_card INTEGER NOT NULL DEFAULT 0, question_event INTEGER NOT NULL DEFAULT 0,
+    question_snapshot TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     PRIMARY KEY (repo, pr)
 );
@@ -960,8 +962,45 @@ class ReviewStore:
                 n += 1
         return n
 
+    @staticmethod
+    def _decision_snapshot(conn, repo, pr):
+        return [
+            [row["id"], row["rev"], row["status"]]
+            for row in conn.execute(
+                "SELECT id, rev, status FROM pr_review_comments WHERE repo=? AND pr=? "
+                "AND status IN ('new', 'needs_you') ORDER BY id",
+                (repo, pr),
+            )
+        ]
+
+    def bind_question(self, repo, pr, card, place):
+        """Place a board question and bind its event to the current actionable revisions.
+
+        Hold the review write transaction across placement: an answer cannot be applied in
+        the gap between publishing the question and binding it. ``place`` returns its exact
+        board event id, or zero if a concurrent board change prevented that identification.
+        """
+        with self._tx() as conn:
+            snapshot = self._decision_snapshot(conn, repo, pr)
+            question_id = place()
+            if question_id:
+                conn.execute(
+                    "UPDATE pr_review_prs SET question_card=?, question_event=?, question_snapshot=? "
+                    "WHERE repo=? AND pr=? AND question_event < ?",
+                    (card, question_id, json.dumps(snapshot), repo, pr, question_id),
+                )
+
     def decide(
-        self, repo: str, pr: int, choice: str, by: str, now: datetime, *, event_id: int = 0
+        self,
+        repo: str,
+        pr: int,
+        choice: str,
+        by: str,
+        now: datetime,
+        *,
+        event_id: int = 0,
+        question_id: int = 0,
+        card_id: int = 0,
     ) -> dict:
         """A person's answer to the one Needs me item of a PR: ``again`` (two more rounds and the
         held comments return to ``new``), ``mine`` (the loop stops for this PR) or ``dismiss``
@@ -976,7 +1015,18 @@ class ReviewStore:
             if pr_row is None:
                 raise Refused("not_found")
             if event_id and event_id <= pr_row["decided_event"]:
-                return {"choice": choice, "counts": self.counts(repo, pr)}
+                return {"choice": choice, "counts": self.counts(repo, pr), "applied": False}
+            if question_id and (
+                not event_id
+                or event_id <= question_id
+                or pr_row["question_event"] != question_id
+                or pr_row["question_card"] != card_id
+                or json.loads(pr_row["question_snapshot"])
+                != self._decision_snapshot(conn, repo, pr)
+            ):
+                # An unapplied historical answer is stale too. Validate both the exact
+                # question and its revisions after BEGIN IMMEDIATE, before any side effect.
+                return {"choice": choice, "counts": self.counts(repo, pr), "applied": False}
             if event_id:
                 # The board event that carried the answer: it is applied once, never again.
                 conn.execute(
@@ -1016,7 +1066,7 @@ class ReviewStore:
                     self._move(
                         conn, row, st.SKIPPED, "dismissed_by_person", by, at, kind="dismissed"
                     )
-        return {"choice": choice, "counts": self.counts(repo, pr)}
+        return {"choice": choice, "counts": self.counts(repo, pr), "applied": True}
 
 
 def _migrate(conn) -> None:
@@ -1027,6 +1077,18 @@ def _migrate(conn) -> None:
     if "decided_event" not in prs:
         conn.execute(
             "ALTER TABLE pr_review_prs ADD COLUMN decided_event INTEGER NOT NULL DEFAULT 0"
+        )
+    if "question_card" not in prs:
+        conn.execute(
+            "ALTER TABLE pr_review_prs ADD COLUMN question_card INTEGER NOT NULL DEFAULT 0"
+        )
+    if "question_event" not in prs:
+        conn.execute(
+            "ALTER TABLE pr_review_prs ADD COLUMN question_event INTEGER NOT NULL DEFAULT 0"
+        )
+    if "question_snapshot" not in prs:
+        conn.execute(
+            "ALTER TABLE pr_review_prs ADD COLUMN question_snapshot TEXT NOT NULL DEFAULT '[]'"
         )
     comments = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_comments)")}
     if "reply_posted" not in comments:

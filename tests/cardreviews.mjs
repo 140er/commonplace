@@ -60,6 +60,28 @@ const clickOn = (attr, id) => {
   return { target: { closest: (selector) => selector === name ? button : null } };
 };
 const focused = () => { const a = globalThis.document.activeElement; return a ? `${a.name}=${a.value}` : null; };
+async function partialAnswer(reason) {
+  for (const choice of ['again', 'mine', 'dismiss']) {
+    const { status, handlers, mount } = fakeSlot();
+    let current = view([ALL[4]]);
+    await attachCardReviews(mount, card, { api: async (url, init) => {
+      if (init?.method === 'POST') {
+        current = view([]);
+        return { choice, card_answered: false, card_answer_reason: reason, card_question_pending: true };
+      }
+      return current;
+    }, schedule: () => {} });
+    handlers.click(clickOn('reviewAnswer', choice));
+    await wait(); await wait();
+    const text = status.textContent;
+    assert.ok(!text.includes('card moved to Backlog'), text);
+    assert.ok(text.includes('The card still has'), text);
+    assert.ok(text.includes('answer it on the card'), text);
+    if (reason === 'unrelated_question') assert.ok(text.includes('another question'), text);
+    if (reason === 'card_refused') assert.ok(text.includes('could not be saved'), text);
+    assert.equal(focused(), 'data-review-heading=reviews');
+  }
+}
 const ALL = [
   comment(),
   comment({ id: 2, status: 'working', status_text: 'The Coworker is working on it', round: 1 }),
@@ -214,6 +236,9 @@ const cases = {
     assert.equal(status.textContent, 'Only a workspace owner can decide this.');
     assert.equal(focused(), 'data-review-answer=mine');
   },
+  async answerunrelated() { await partialAnswer('unrelated_question'); },
+  async answercardrefused() { await partialAnswer('card_refused'); },
+  async answernoconfirmation() { await partialAnswer(undefined); },
   async repaint() {
     // A background reload keeps focus on the same control and says nothing new.
     const { status, mount } = fakeSlot();

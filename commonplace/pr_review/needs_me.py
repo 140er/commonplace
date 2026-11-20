@@ -51,14 +51,35 @@ def question(pr: int, counts: dict) -> str:
     return f"{QUESTION_START}{pr} need a decision: {waiting} of {total}"
 
 
+def place_ask(gateway, workspace_id, store, repo, pr, facts, principal, rounds):
+    """Both question writers share the same revision binding and publication order."""
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext
+
+    from . import mapping
+
+    def place():
+        shown = BoardService(ToolContext(principal=principal, gateway=gateway)).ask(
+            question(pr, store.counts(repo, pr)),
+            options(rounds),
+            task=facts["number"],
+            context="Open the card to see each comment, its status and the reason.",
+            person_reason="Review comments need a person's decision.",
+        )
+        return mapping.question_event(
+            gateway, workspace_id, facts["number"], version=shown["version"]
+        )
+
+    store.bind_question(repo, pr, facts["number"], place)
+
+
 def raise_ask(gateway, workspace_id, store, pr_row, facts, setting, now) -> bool:
     """Ask the owner once on the card. True when an ask was placed; a card that cannot take one
     (done, held elsewhere) keeps the comments visible as ``needs you`` and the reason on them."""
     if facts.get("ask"):
         return False
     from commonplace import sessions
-    from commonplace.boards.service import BoardService
-    from commonplace.extensions import ToolContext, ToolError
+    from commonplace.extensions import ToolError
 
     person = (
         sessions.person_principal(gateway.db, setting["enabled_by"], workspace_id)
@@ -67,14 +88,16 @@ def raise_ask(gateway, workspace_id, store, pr_row, facts, setting, now) -> bool
     )
     if person is None:
         return False
-    counts = store.counts(pr_row["repo"], pr_row["pr"])
     try:
-        BoardService(ToolContext(principal=person, gateway=gateway)).ask(
-            question(pr_row["pr"], counts),
-            options(setting.get("rounds") or 2),
-            task=facts["number"],
-            context="Open the card to see each comment, its status and the reason.",
-            person_reason="Review comments need a person's decision.",
+        place_ask(
+            gateway,
+            workspace_id,
+            store,
+            pr_row["repo"],
+            pr_row["pr"],
+            facts,
+            person,
+            setting.get("rounds") or 2,
         )
     except ToolError as exc:
         log_failure(logger, "review loop could not place its question", exc)
@@ -97,13 +120,15 @@ def apply_answers(gateway, workspace_id, store, now) -> int:
         )
         if event is None or event["id"] <= pr_row["decided_event"]:
             continue
-        store.decide(
+        result = store.decide(
             pr_row["repo"],
             pr_row["pr"],
             CHOICES[event["choice"]],
             event["stamp_user"] or "person",
             now,
             event_id=event["id"],
+            question_id=event["question_id"],
+            card_id=found["card"],
         )
-        applied += 1
+        applied += int(result["applied"])
     return applied

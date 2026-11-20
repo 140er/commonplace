@@ -13,8 +13,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from commonplace.boards.service import BoardService
-from commonplace.extensions import WORK_PROFILES, LocalTool, ToolContext, ToolError, register
+from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
 from commonplace.http_util import log_failure
 
 from . import guide, mapping, needs_me, status as st
@@ -174,14 +173,16 @@ def pr_review_report(ctx, args):
         for shown in stored
     ]
     if asked and not facts.get("ask"):
-        counts = store.counts(repo, pr)
         try:
-            BoardService(ToolContext(principal=ctx.principal, gateway=ctx.gateway)).ask(
-                needs_me.question(pr, counts),
-                needs_me.options(store.board(facts["board"])["rounds"]),
-                task=facts["number"],
-                context="Open the card to see each comment, its status and the reason.",
-                person_reason="Review comments need a person's decision.",
+            needs_me.place_ask(
+                ctx.gateway,
+                ctx.principal.workspace_id,
+                store,
+                repo,
+                pr,
+                facts,
+                ctx.principal,
+                store.board(facts["board"])["rounds"],
             )
             lines.append(
                 "One question was placed on the card for the workspace owner; end your turn."

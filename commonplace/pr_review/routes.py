@@ -266,22 +266,35 @@ def _decision(gateway, principal, store, facts, owner, h, send):
         return send(404, NOT_FOUND)
     if choice not in THEN:
         raise Invalid("choice must be again, mine or dismiss")
-    event_id = _answer_question(gateway, principal, store, facts, choice)
+    event_id, card_reason = _answer_question(gateway, principal, store, facts, choice)
     shown = store.decide(repo, pr, choice, f"user:{principal.user_id}", _now(), event_id=event_id)
     if choice == "again":
         _wake(gateway, principal.workspace_id, _now())
-    return send(200, {**shown, "card_answered": bool(event_id)})
+    current = mapping.card_facts(
+        gateway, principal.workspace_id, facts["number"], principal=principal
+    )
+    return send(
+        200,
+        {
+            **shown,
+            "card_answered": bool(event_id),
+            "card_answer_reason": card_reason,
+            "card_question_pending": bool(
+                current and current["status"] == "review" and current["ask"]
+            ),
+        },
+    )
 
 
-def _answer_question(gateway, principal, store, facts, choice) -> int:
+def _answer_question(gateway, principal, store, facts, choice) -> tuple[int, str | None]:
     """Answer the card's own question too, when it is the loop's, so the Needs me item goes and
     the card moves on (back to its Coworker, or to Backlog for "I will do it myself"). Returns
-    the board event id of that answer (0 when the card had no question of the loop's)."""
+    the board event id and a fixed reason when the card could not follow the comment decision."""
     from commonplace.boards.service import BoardService
     from commonplace.extensions import ToolContext, ToolError
 
     if not is_ours(facts.get("ask"), facts.get("pr_number")) or facts.get("status") != "review":
-        return 0
+        return 0, "unrelated_question" if facts.get("ask") else "no_question"
     label = {
         "again": options(store.board(facts["board"])["rounds"])[0],
         "mine": MINE,
@@ -289,15 +302,15 @@ def _answer_question(gateway, principal, store, facts, choice) -> int:
     }[choice]
     try:
         BoardService(ToolContext(principal=principal, gateway=gateway)).decide(
-            facts["number"], choice=label, then=THEN[choice]
+            facts["number"], choice=label, then=THEN[choice], version=facts["version"]
         )
     except ToolError as exc:  # the comments still follow the answer; the card keeps its question
         http_util.log_failure(logger, "review answer could not answer the card's question", exc)
-        return 0
+        return 0, "card_refused"
     event = mapping.last_answer(
         gateway, principal.workspace_id, facts["number"], [label], pr=facts["pr_number"]
     )
-    return event["id"] if event else 0
+    return (event["id"], None) if event else (0, "card_changed")
 
 
 def _reader(gateway, principal, store):

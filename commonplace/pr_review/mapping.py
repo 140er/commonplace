@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 _CARD = (
     "SELECT t.id, t.status, t.assignee, t.branch, t.pr_repo, t.pr_state, t.pr_head, t.checks, "
-    "t.ask, t.review_kind, t.pr_url, t.created_by, b.id AS board_id, b.slug AS board, "
+    "t.ask, t.review_kind, t.pr_url, t.created_by, t.version, b.id AS board_id, b.slug AS board, "
     "b.wing AS wing FROM tasks t JOIN boards b ON b.id=t.board_id WHERE t.pr_number=? ORDER BY t.id"
 )
 _ONE = (
     "SELECT t.id, t.status, t.assignee, t.branch, t.pr_repo, t.pr_state, t.pr_head, t.checks, "
-    "t.ask, t.review_kind, t.pr_url, t.pr_number, t.created_by, b.id AS board_id, "
+    "t.ask, t.review_kind, t.pr_url, t.pr_number, t.created_by, t.version, b.id AS board_id, "
     "b.slug AS board, b.wing AS wing FROM tasks t JOIN boards b ON b.id=t.board_id WHERE t.id=?"
 )
 
@@ -43,6 +43,7 @@ def _facts(row) -> dict:
         "wing",
         "pr_url",
         "created_by",
+        "version",
     )
     return {"number": row["id"], **{k: row[k] for k in keys}}
 
@@ -139,9 +140,24 @@ def pr_problem(pr_row, facts) -> str | None:
     return None
 
 
+def question_event(gateway, workspace_id, number, *, version) -> int:
+    """The exact question just placed, or zero if the card changed before it could be bound."""
+    store = _open(gateway, workspace_id)
+    if store is None:
+        return 0
+    with store.connection() as conn:
+        row = conn.execute(
+            "SELECT e.id FROM task_events e JOIN tasks t ON t.id=e.task_id "
+            "WHERE t.id=? AND t.version=? AND e.to_status='review' "
+            "AND e.kind IN ('ask','handoff','move') ORDER BY e.id DESC LIMIT 1",
+            (number, version),
+        ).fetchone()
+    return row["id"] if row else 0
+
+
 def last_answer(gateway, workspace_id: str, number: int, choices: list, *, pr: int) -> dict | None:
-    """The newest matching answer to this PR's own question, as ``{id, choice, stamp_user}``.
-    An unrelated question may offer the same words without deciding any review comment.
+    """The answer to the card's latest question, including its exact ``question_id``.
+    Never search past a newer question, even one for the same PR or offering the same words.
     """
     from .needs_me import is_ours
 
@@ -149,15 +165,15 @@ def last_answer(gateway, workspace_id: str, number: int, choices: list, *, pr: i
     if store is None or not choices:
         return None
     with store.connection() as conn:
-        rows = conn.execute(
-            "SELECT e.id, e.choice, e.stamp_user, (SELECT a.text FROM task_events a "
-            "WHERE a.task_id=e.task_id AND a.id < e.id AND a.to_status='review' "
-            "AND a.kind IN ('ask','handoff','move') ORDER BY a.id DESC LIMIT 1) AS question "
-            "FROM task_events e WHERE e.task_id=? AND e.kind='decide' "
-            "ORDER BY e.id DESC LIMIT 20",
+        row = conn.execute(
+            "SELECT e.id, e.choice, e.stamp_user, a.id AS question_id, a.text AS question "
+            "FROM task_events e JOIN task_events a ON a.task_id=e.task_id AND a.id < e.id "
+            "WHERE e.task_id=? AND e.kind='decide' AND a.id=("
+            "SELECT id FROM task_events WHERE task_id=e.task_id AND to_status='review' "
+            "AND kind IN ('ask','handoff','move') ORDER BY id DESC LIMIT 1) "
+            "ORDER BY e.id DESC LIMIT 1",
             (number,),
-        ).fetchall()
-    for row in rows:
-        if row["choice"] in choices and is_ours(row["question"], pr):
-            return {"id": row["id"], "choice": row["choice"], "stamp_user": row["stamp_user"]}
+        ).fetchone()
+    if row and row["choice"] in choices and is_ours(row["question"], pr):
+        return {key: row[key] for key in ("id", "choice", "stamp_user", "question_id")}
     return None

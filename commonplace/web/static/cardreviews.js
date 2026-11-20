@@ -164,6 +164,25 @@ const ANSWER_DONE = {
   dismiss: "Done. The waiting comments are set aside.",
 };
 
+function decisionWords(choice, result) {
+  if (result?.card_answered === true) return ANSWER_DONE[choice] || "Done.";
+  const comment = {
+    again: "Done. The comments are ready for another round.",
+    mine: "Done. The Coworker stops answering these comments.",
+    dismiss: ANSWER_DONE.dismiss,
+  }[choice] || "Done.";
+  if (result?.card_answer_reason === "unrelated_question") {
+    return `${comment} The card still has another question; answer it on the card before continuing.`;
+  }
+  if (result?.card_answer_reason === "card_refused") {
+    return `${comment} The answer to the card's question could not be saved. The card still has that question; answer it on the card before continuing.`;
+  }
+  if (result?.card_question_pending) {
+    return `${comment} The card still has a question; answer it on the card before continuing.`;
+  }
+  return `${comment} The card's move was not confirmed. Check its status on the card before continuing.`;
+}
+
 // Load the card's review comments into the slot inside `mount` and wire the answers.
 export async function attachCardReviews(mount, card, { api = request, previous = null, schedule = (fn, ms) => setTimeout(fn, ms) } = {}) {
   const slot = mount.querySelector?.("[data-card-reviews]");
@@ -237,8 +256,8 @@ export async function attachCardReviews(mount, card, { api = request, previous =
     say("Saving your answer…");
     let note;
     try {
-      await api(`/api/pr-review/cards/${encodeURIComponent(card.number)}/decision`, { method: "POST", body: { choice } });
-      note = ANSWER_DONE[choice] || "Done.";
+      const result = await api(`/api/pr-review/cards/${encodeURIComponent(card.number)}/decision`, { method: "POST", body: { choice } });
+      note = decisionWords(choice, result);
       wanted = '[data-review-heading="reviews"]';
     } catch (error) {
       note = refusalWords(error);
