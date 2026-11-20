@@ -214,7 +214,7 @@ def test_the_tools_speak_of_versions_kib_and_what_is_served(console_hub):
     assert "30 minutes" in text and "never public" not in text
     ok, listed = mcp(h, h.t1, "preview_list", card=number)
     assert ok and "previews served" in listed and "previews open" not in listed
-    assert "0 MiB of" not in listed and "KiB of 500 MiB" in listed
+    assert " 0 MiB of" not in listed and "bytes of 500 MiB used" in listed
     assert tools._size(2048) == "2 KiB" and tools._size(10) == "10 bytes"
     assert tools._size(3 * 1024 * 1024) == "3 MiB"
 
