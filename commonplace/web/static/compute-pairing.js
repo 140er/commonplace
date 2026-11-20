@@ -127,7 +127,7 @@ export function causeHTML(item) {
 export function createPairing(ctx) {
   let list = null, total = 0, options = null, setupEnabled = false, loadError = "", loading = false, serverTime = "", pollError = false;
   let mode = "", selected = null, setup = null, values = {}, errors = {}, formError = "", busy = false, confirm = "", copyNote = "", notice = "", requestId = "";
-  let timer = null, lastSaid = "";
+  let timer = null, lastSaid = "", machinesKnown = null;
   // The state each open pairing was last seen in, so a change is said once whichever read found it (a check or a reload).
   const observed = new Map();
   const find = id => list?.find(item => item.id === id);
@@ -218,7 +218,8 @@ export function createPairing(ctx) {
   }
 
   function actionsHTML(item) {
-    if (!manage()) return "";
+    // A member has no control over a machine, but is never stranded in a detail: the way back to the list is theirs too.
+    if (!manage()) return '<div class="compute-actions compute-pr-actions"><button type="button" class="btn" data-pr-action="close">Back to the list</button></div>';
     if (confirm) {
       const decline = confirm === "decline";
       // The safe answer comes first and takes focus: a second Enter must never remove access.
@@ -243,10 +244,10 @@ export function createPairing(ctx) {
 
   // The clock line changes on every check; it is written in place and never decides whether the section repaints.
   function clockText_(item) {
-    const checked = serverTime ? `Checked at ${clockText(serverTime)}.` : "";
-    const stale = pollError ? ` Could not check just now. Showing what was true at ${clockText(serverTime)}; trying again.` : "";
+    // While checks fail the status line says so once, in words; this line only says how old what is shown is.
+    const checked = serverTime ? `${pollError ? "Last checked" : "Checked"} at ${clockText(serverTime)}.` : "";
     const heard = item.last_report_at ? ` Last seen at ${clockText(item.last_report_at)}.` : "";
-    return checked + heard + stale;
+    return checked + heard;
   }
   function detailHTML(item, clock = true) {
     const owner = manage();
@@ -362,6 +363,10 @@ export function createPairing(ctx) {
   }
   function paint(focus = "") {
     const host = ctx.host(), root = host?.querySelector?.("[data-pr-root]");
+    // A machine appearing, being approved or removed changes the overview's rows and sentences: it reads again now
+    // instead of showing "Nothing here yet" beside a machine until its own next poll.
+    const known = list === null ? null : list.map(item => `${item.id}:${item.state}`).join();
+    if (known !== null && known !== machinesKnown) { const first = machinesKnown === null; machinesKnown = known; if (!first) ctx.changed?.(); }
     const signature = inner(false);
     if (root && !focus && signature === shownRoot) { writeClock(); writeProblem(); return; }
     const restore = focus ? null : holdFocus();
@@ -539,7 +544,7 @@ export function createPairing(ctx) {
     let note = "Copied. Paste it on the machine.";
     // No clipboard, or a copy that does not return a promise, is a failed copy: never claim "Copied." without proof.
     try { const done = ctx.copy(setup.command); if (typeof done?.then !== "function") throw new Error("no clipboard"); await done; }
-    catch { note = "Copying is not available here. Select the command above and copy it yourself."; selectCommand(); }
+    catch { note = "Copying is not available here. The command above is selected: press Ctrl+C to copy it."; selectCommand(); }
     if (!ctx.valid(page)) return;
     copyNote = note;
     // In place: the command keeps its node, focus and selection (the fallback selects it for the person to copy).
@@ -621,7 +626,7 @@ export function createPairing(ctx) {
 
   function reset() {
     if (timer !== null) { ctx.cancel(timer); timer = null; }
-    list = null; total = 0; options = null; setupEnabled = false; loadError = ""; loading = false; serverTime = ""; pollError = false;
+    list = null; total = 0; options = null; setupEnabled = false; loadError = ""; loading = false; serverTime = ""; pollError = false; machinesKnown = null;
     observed.clear();
     mode = ""; selected = null; setup = null; values = {}; errors = {}; formError = ""; busy = false; confirm = ""; copyNote = ""; notice = ""; lastSaid = ""; requestId = "";
   }
