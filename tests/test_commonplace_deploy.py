@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import stat
 import subprocess
 import sys
@@ -654,14 +655,32 @@ fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")).replace(
     env.update(fakes.get("env", {}))
     for key in fakes.get("unset", []):
         env.pop(key, None)
-    result = subprocess.run(
-        [str(bin_dir / "bash"), str(DEPLOY_SH), *fakes.get("args", [])],
+    command = [str(bin_dir / "bash"), str(DEPLOY_SH), *fakes.get("args", [])]
+    # A runner may ignore SIGINT. Bash cannot trap a signal ignored on entry;
+    # reset it in a child before exec, without changing the runner's handler.
+    launcher = (
+        "import os, signal, sys; "
+        "signal.signal(signal.SIGINT, signal.SIG_DFL); "
+        "os.execv(sys.argv[1], sys.argv[1:])"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", launcher, *command],
         env=env,
         stdin=subprocess.DEVNULL,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=30,
-    )
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate()
+        finally:
+            # Only this fixture's private group, also when the test is interrupted.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     calls = (
         [json.loads(line) for line in calls_file.read_text().splitlines()[previous_calls:]]
         if calls_file.exists()
@@ -741,10 +760,20 @@ def test_deploy_sh_holds_invocation_proof(tmp_path, scenario):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
-@pytest.mark.parametrize("signal", ["HUP", "INT", "TERM"])
-def test_deploy_sh_releases_reference_on_signal(tmp_path, signal):
-    result, calls = run_deploy(tmp_path, gc=True, hold_signal=f'kill -{signal} "$PPID"')
-    assert result.returncode == {"HUP": 129, "INT": 130, "TERM": 143}[signal]
+@pytest.mark.parametrize("inherited_sigint", ["default", "ignored"])
+@pytest.mark.parametrize("signal_name", ["HUP", "INT", "TERM"])
+def test_deploy_sh_releases_reference_on_signal(tmp_path, signal_name, inherited_sigint):
+    previous = signal.signal(
+        signal.SIGINT, signal.SIG_IGN if inherited_sigint == "ignored" else signal.SIG_DFL
+    )
+    try:
+        result, calls = run_deploy(tmp_path, gc=True, hold_signal=f'kill -{signal_name} "$PPID"')
+        assert signal.getsignal(signal.SIGINT) == (
+            signal.SIG_IGN if inherited_sigint == "ignored" else signal.SIG_DFL
+        )
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert result.returncode == {"HUP": 129, "INT": 130, "TERM": 143}[signal_name]
     assert not (tmp_path / "reference").exists()
     assert any(call[:2] == ["systemctl", "stop"] for call in calls)
     assert not any(call[0] == "docker" for call in calls)
