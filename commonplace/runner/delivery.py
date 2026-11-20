@@ -95,8 +95,8 @@ def build(source, output, dependencies):
     Their wheel RECORD hashes must match before any bytes enter the release.
     The resulting whole-archive digest is the operator's explicit distribution pin.
     """
-    if set(dependencies) != DEPENDENCIES:
-        raise ValueError("all three dependency version pins are required")
+    if not DEPENDENCIES <= set(dependencies) <= DEPENDENCIES | {"typing-extensions"}:
+        raise ValueError("exact applicable dependency version pins are required")
     source, output = Path(source).resolve(), Path(output).absolute()
     tracked = (
         subprocess.run(
@@ -115,7 +115,7 @@ def build(source, output, dependencies):
         if path.is_symlink() or not path.is_file():
             raise ValueError("source must contain regular tracked files")
         files["site/" + relative] = path.read_bytes()
-    for name in sorted(DEPENDENCIES):
+    for name in sorted(dependencies):
         distribution = importlib.metadata.distribution(name)
         if distribution.version != dependencies[name]:
             raise ValueError("installed dependency does not match its version pin")

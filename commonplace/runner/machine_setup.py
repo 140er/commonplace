@@ -25,6 +25,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import operator
 import os
 import platform
 import re
@@ -37,6 +38,8 @@ import urllib.error
 import urllib.request
 import venv
 import zipfile
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -127,6 +130,142 @@ def program_pin(value):
     return value
 
 
+def _distribution_name(name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        raise ValueError("invalid dependency name")
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _release_version(text):
+    # The release format accepts numeric release versions, not arbitrary PEP 440 syntax.
+    # Unknown metadata must be reviewed rather than silently treated as satisfied.
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,7}", text):
+        raise ValueError("unsupported dependency version")
+    parts = tuple(int(part) for part in text.split("."))
+    return parts + (0,) * (8 - len(parts))
+
+
+def _version_satisfies(version, constraints, *, abi=False):
+    actual = _release_version(version)
+    compare = {
+        "==": operator.eq,
+        "!=": operator.ne,
+        "<": operator.lt,
+        "<=": operator.le,
+        ">": operator.gt,
+        ">=": operator.ge,
+    }
+    answers = []
+    for clause in constraints.split(","):
+        match = re.fullmatch(r"\s*(==|!=|<=|>=|<|>)\s*([0-9][0-9.]*)\s*", clause)
+        if match is None:
+            raise ValueError("invalid dependency version constraint")
+        bound = _release_version(match[2])
+        if abi and len(match[2].split(".")) > 2 and actual[:2] == bound[:2]:
+            raise ValueError("patch-specific Python requirement unsupported by ABI pin")
+        answers.append(compare[match[1]](actual, bound))
+    return all(answers)
+
+
+def _dependency_marker(marker, python):
+    # This deliberately bounded metadata grammar covers the distributed wheels.
+    # Never eval metadata or ignore an unknown marker, including an inactive extra.
+    match = re.fullmatch(
+        r"\s*(python_version|python_full_version|platform_python_implementation|implementation_name|extra)"
+        r"\s*(==|!=|<=|>=|<|>)\s*(['\"])([A-Za-z0-9_.-]+)\3\s*",
+        marker,
+    )
+    if match is None:
+        raise ValueError("unsupported dependency marker")
+    key, op, _, value = match.groups()
+    if key in ("python_version", "python_full_version"):
+        # The format pins an ABI, not a patch release; ambiguous patch bounds refuse.
+        return _version_satisfies(python, op + value, abi=True)
+    if op not in ("==", "!="):
+        raise ValueError("invalid dependency marker comparison")
+    actual = {
+        "platform_python_implementation": "CPython",
+        "implementation_name": "cpython",
+        "extra": "",
+    }[key]
+    return (actual == value) if op == "==" else (actual != value)
+
+
+def program_dependencies(dependencies, files, python_tag):
+    """Require exactly the applicable, version-satisfied wheel metadata closure.
+
+    Shared by the offline builder (through program_contents) and the stdlib launcher.
+    No installed package, dependency resolver or network is needed on the target.
+    """
+    allowed = {"cryptography", "cffi", "pycparser", "typing-extensions"}
+    abi = re.fullmatch(r"cpython-(3)([0-9]+)t?", python_tag)
+    if abi is None or (int(abi[1]), int(abi[2])) < MIN_PYTHON:
+        raise ValueError("unsupported program Python ABI")
+    python = abi[1] + "." + str(int(abi[2]))
+    if not {"cryptography", "cffi", "pycparser"} <= set(dependencies) <= allowed:
+        raise ValueError("missing or extra dependency pins")
+    metadata = {}
+    directories = set()
+    for path, raw in files.items():
+        parts = path.split("/")
+        if not any(part.endswith(".dist-info") for part in parts):
+            continue
+        if not parts[0].endswith(".dist-info"):
+            raise ValueError("invalid dependency metadata location")
+        directories.add(parts[0])
+        if len(parts) != 2 or parts[1] != "METADATA":
+            continue
+        message = BytesParser(policy=policy.default).parsebytes(raw)
+        if message.defects or any(
+            len(message.get_all(key, [])) != 1
+            for key in ("Metadata-Version", "Name", "Version", "Requires-Python")
+        ):
+            raise ValueError("invalid dependency metadata")
+        name, version = _distribution_name(str(message["Name"])), str(message["Version"])
+        folder = name.replace("-", "_") + "-" + version + ".dist-info"
+        if (
+            name in metadata
+            or name not in dependencies
+            or version != dependencies[name]
+            or folder != parts[0]
+            or str(message["Metadata-Version"]) not in ("2.1", "2.2", "2.3", "2.4")
+            or not _version_satisfies(python, str(message["Requires-Python"]), abi=True)
+        ):
+            raise ValueError("dependency metadata does not match program")
+        required = []
+        for text in message.get_all("Requires-Dist", []):
+            requirement = re.fullmatch(
+                r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*([^;]*?)(?:\s*;\s*(.+))?\s*", str(text)
+            )
+            if requirement is None:
+                raise ValueError("invalid dependency requirement")
+            target, constraints, marker = requirement.groups()
+            target = _distribution_name(target)
+            constraints = constraints.strip()
+            # Validate constraints even for a dependency behind an inactive marker.
+            if constraints:
+                _version_satisfies("0", constraints)
+            active = marker is None or _dependency_marker(marker, python)
+            if active:
+                if target not in dependencies or (
+                    constraints and not _version_satisfies(dependencies[target], constraints)
+                ):
+                    raise ValueError("unsatisfied program dependency")
+                required.append(target)
+        metadata[name] = (folder, required)
+    if set(metadata) != set(dependencies) or directories != {row[0] for row in metadata.values()}:
+        raise ValueError("missing or extra distribution metadata")
+    closure = {"cryptography"}
+    pending = ["cryptography"]
+    while pending:
+        for target in metadata[pending.pop()][1]:
+            if target not in closure:
+                closure.add(target)
+                pending.append(target)
+    if closure != set(dependencies):
+        raise ValueError("unexpected program dependency")
+
+
 def program_contents(raw, pin):
     """Verify the whole package before creating a prefix; never use archive extraction paths."""
     program_pin(pin)
@@ -156,7 +295,6 @@ def program_contents(raw, pin):
                 manifest[k] != pin[k] for k in ("version", "purpose", "python", "system", "machine")
             )
             or not isinstance(manifest["dependencies"], dict)
-            or set(manifest["dependencies"]) != {"cryptography", "cffi", "pycparser"}
             or any(
                 not isinstance(v, str) or not re.fullmatch(r"[0-9][A-Za-z0-9.+-]{0,79}", v)
                 for v in manifest["dependencies"].values()
@@ -185,6 +323,7 @@ def program_contents(raw, pin):
             if hashlib.sha256(data).hexdigest() != expected["sha256"]:
                 raise ValueError("program entry integrity check failed")
             files[name[5:]] = data
+    program_dependencies(manifest["dependencies"], files, manifest["python"])
     return manifest, files
 
 
@@ -221,6 +360,32 @@ def _program_file(prefix, relative, *, executable=False):
         os.close(fd)
 
 
+def _program_tree(fd, relative, files, directories):
+    """Exact tree through owned descriptors: no links, ignored caches or empty extras."""
+    _private(os.fstat(fd), directory=True)
+    expected = {
+        name.rsplit("/", 1)[-1]
+        for name in files | directories
+        if name.rpartition("/")[0] == relative
+    }
+    if set(os.listdir(fd)) != expected:
+        raise ValueError("unexpected Python startup tree")
+    for name in expected:
+        path = relative + "/" + name if relative else name
+        if path in directories:
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            try:
+                _program_tree(child, path, files, directories)
+            finally:
+                os.close(child)
+        else:
+            child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            try:
+                _private(os.fstat(child), executable=path == "bin/python")
+            finally:
+                os.close(child)
+
+
 def verify_program(prefix, pin, files):
     site = f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
     receipt = json.loads(_program_file(prefix, "program-install.json"))
@@ -248,20 +413,23 @@ def verify_program(prefix, pin, files):
     for name, raw in files.items():
         if _program_file(prefix, site + "/" + name) != raw:
             raise ValueError("installed program integrity check failed")
-    actual = set()
-    site_path = Path(prefix) / site
-    for directory, dirs, names in os.walk(site_path, followlinks=False):
-        _private(os.lstat(directory), directory=True)
-        for name in dirs:
-            _private(os.lstat(Path(directory) / name), directory=True)
-        for name in names:
-            path = Path(directory) / name
-            _private(os.lstat(path))
-            actual.add(path.relative_to(site_path).as_posix())
-    if actual != set(files):
-        raise ValueError("unexpected installed program files")
-    if set(os.listdir(Path(prefix) / "bin")) != {"python"}:
-        raise ValueError("unexpected Python startup files")
+    # Inventory the whole prefix, not just today's site-packages. System Python
+    # may also process prefix-relative dist-packages, archives or startup files.
+    expected_files = {"bin/python", "pyvenv.cfg", "program-install.json", "program.zip"}
+    expected_files.update(site + "/" + name for name in files)
+    expected_dirs = {
+        "bin",
+        "include",
+        f"include/python{sys.version_info.major}.{sys.version_info.minor}",
+    }
+    for name in expected_files:
+        parts = name.split("/")
+        expected_dirs.update("/".join(parts[:i]) for i in range(1, len(parts)))
+    fd = os.open(prefix, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        _program_tree(fd, "", expected_files, expected_dirs)
+    finally:
+        os.close(fd)
     return Path(prefix) / "bin/python"
 
 
@@ -340,6 +508,7 @@ def install_program(home, raw, pin):
                     directory.chmod(0o500)
                 site.chmod(0o500)
                 staged.chmod(0o700)
+                verify_program(staged, pin, files)
                 # Import the real installer and perform real cryptographic operations in the new interpreter.
                 check = subprocess.run(
                     [
@@ -358,7 +527,6 @@ def install_program(home, raw, pin):
                 )
                 if check.returncode:
                     raise ValueError("delivered runner cannot start on this machine")
-                verify_program(staged, pin, files)
                 os.rename(staged, prefix)
                 os.fsync(root_fd)
             return prefix / "bin/python"
@@ -505,7 +673,18 @@ class LiveProbe:
 
     def _run(self, argv):
         try:
-            return subprocess.run(argv, capture_output=True, text=True, timeout=20)
+            return subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "LANG": "C",
+                    "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}",
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{os.getuid()}/bus",
+                },
+            )
         except (OSError, subprocess.SubprocessError):
             return None
 

@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from packaging.requirements import Requirement
 
 from commonplace.compute import pairing
 from commonplace.runner import delivery, machine_setup, registry
@@ -46,6 +47,12 @@ def release(tmp_path_factory):
     folder = tmp_path_factory.mktemp("real-runner-program")
     archive = folder / "program.zip"
     versions = {name: importlib.metadata.version(name) for name in delivery.DEPENDENCIES}
+    for text in importlib.metadata.requires("cryptography") or ():
+        requirement = Requirement(text)
+        if requirement.name == "typing-extensions" and (
+            requirement.marker is None or requirement.marker.evaluate({"extra": ""})
+        ):
+            versions[requirement.name] = importlib.metadata.version(requirement.name)
     pin = delivery.build(Path(__file__).resolve().parents[1], archive, versions)
     return SimpleNamespace(raw=archive.read_bytes(), pin=pin, archive=archive, versions=versions)
 

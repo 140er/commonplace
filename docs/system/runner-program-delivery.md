@@ -11,6 +11,12 @@ An offline builder verifies exact installed dependency versions and wheel RECORD
 hashes; the stdlib bootstrap verifies the complete package before publishing a
 private, complete venv. Existing prefixes must still match their delivered files
 and Python's normalized configuration keys; duplicate keys refuse reuse.
+An exact whole-prefix tree refuses unexpected directories and files before
+interpreter startup, including Debian's prefix-relative `dist-packages`.
+Bundled distribution metadata must match exact pins and applicable dependency
+markers, including cryptography 48's Python 3.10 typing-extensions requirement.
+The initial probe reconstructs the same account-local session bus environment
+as the existing host adapter; no inherited provider credential is passed.
 
 This is program delivery only. It retains all account, owner, enrollment,
 attestation, job, session, snapshot and admission fences. No readiness flag or

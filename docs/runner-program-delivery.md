@@ -26,6 +26,15 @@ python -m commonplace.runner.delivery \
   --dependency cffi==2.0.0 --dependency pycparser==3.0
 ```
 
+For a Python 3.10 build with cryptography 48.0.0, also pass
+`--dependency typing-extensions==4.15.0` from that provisioned environment.
+Python 3.11 and later omit this conditional dependency. Both the builder and
+launcher check the bundled wheel metadata for applicable requirements, satisfied
+version constraints and the exact dependency set. Missing, extra, duplicate or
+invalid distribution metadata refuses the release. The format accepts numeric
+release versions and simple comparison markers used by these wheels; unfamiliar
+metadata syntax requires a reviewed format update and is refused.
+
 The builder verifies each dependency against its installed wheel RECORD hash;
 it does not install dependencies or select a newer version. It packages tracked
 Python source, verified dependencies and a per-file inventory. It refuses to
@@ -62,10 +71,18 @@ checks a real cryptographic signature in that interpreter. Only then does it
 publish the complete prefix under
 `~/.commonplace-runner-programs/<sha256>/`. An existing prefix must pass integrity
 and ownership checks; altered, additional or foreign files are preserved and refused.
+Verification inventories every directory and file under the prefix, including
+empty directories and all prefix-relative Python startup locations. Only the
+installed tree is allowed; added `dist-packages`, startup archives, aliases,
+links or caches refuse reuse before Python starts. The OS interpreter and its
+standard library remain trusted prerequisites.
 Bundled library directories are private and read-only (0500), preventing
 untracked bytecode from accumulating when the ordinary setup service imports them.
 The bootstrap then continues the existing setup program in the delivered
-interpreter, passing the code through stdin and a fixed environment.
+interpreter, passing the code through stdin and a fixed environment. The initial
+service-manager probe and the existing host adapter reconstruct the current
+account's session directory and bus address; they do not inherit provider
+credentials or caller-supplied bus addresses.
 
 For a delivery-only installation check, the downloaded launcher also accepts
 `--program-only` after its public envelope. That stops before enrollment, service
