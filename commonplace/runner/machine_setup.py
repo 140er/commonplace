@@ -374,6 +374,9 @@ def _reason_lines(exc, lines, code):
         if code not in line
         and "token" not in line.lower()
         and not line.startswith("Machine fingerprint")
+        and not line.startswith(
+            "Continue in Needs me"
+        )  # nothing is waiting there for a machine set up this way
     ]
     if exc is None:
         reason = None

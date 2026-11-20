@@ -227,15 +227,25 @@ const cases = {
     assert.ok(!free.includes('<option value="lab">'), 'only the first machine\'s projects are listed at first');
     // Nothing can be started: a plain reason and no button.
     const refused = cardRunsHTML([], '', { configured: false, refusal: 'no_machine', machines: [] });
-    assert.ok(refused.includes('No machine is ready') && refused.includes('Runner machines') && !refused.includes('Start agent'));
-    // A machine from the setup guide only checks itself: the refusal says so and links the one working next step.
-    const guided = cardRunsHTML([], '', { configured: false, refusal: 'setup_only', machines: [] });
-    assert.ok(guided.includes('only checks itself in this version, so no Coworker runs on it yet') && guided.includes('href="#/compute"') && guided.includes('Open Add a machine'));
-    assert.ok(!/Workspace settings|Runner machines|attest/i.test(guided), 'no dead end for a guided machine');
-    const confirm = cardRunsHTML([], '', { configured: true, refusal: 'setup_only_confirm' });
-    assert.ok(confirm.includes('href="#/needs"') && confirm.includes('Open Needs me') && confirm.includes('waiting for you in Needs me') && !confirm.includes('Start agent'));
-    // An Admin-enrolled machine keeps Attest and the text names the field the form asks for.
-    assert.ok(refused.includes('provider instance id'));
+    assert.ok(refused.includes('No machine is ready'));
+    // A machine from the setup guide only checks itself: the refusal says which step it is at and links the Add a machine card.
+    for (const refusal of ['setup_waiting', 'setup_unfinished', 'setup_only']) {
+      const html = cardRunsHTML([], '', { configured: refusal === 'setup_only', refusal, machines: [] });
+      assert.ok(html.includes('only checks itself') && html.includes('so no Coworker runs on it yet'), refusal);
+      assert.ok(html.includes('href="#/compute"') && html.includes('Open Add a machine'), refusal);
+      assert.ok(!/Workspace settings|Runner machines|attest|Needs me/i.test(html), `no dead end for a guided machine (${refusal})`);
+    }
+    assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_waiting', machines: [] }).includes('waits for your approval'));
+    assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_unfinished', machines: [] }).includes('did not finish its setup'));
+    // No machine at all points at Add a machine in Cloud workspaces, never at an Admin form.
+    assert.ok(refused.includes('Add one under Add a machine in Cloud workspaces') && refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
+    // An Admin-enrolled machine is attested where that screen really is, and the text says where the provider instance id comes from.
+    for (const refusal of ['machine_unavailable', 'binding_not_attested', 'not_writable', 'outside_worker_wing', 'worker_unavailable']) {
+      const html = cardRunsHTML([], '', { configured: true, refusal });
+      assert.ok(html.includes('Admin &gt; Runner machines') && html.includes('href="#/admin"') && !html.includes('Workspace settings'), refusal);
+    }
+    const attest = cardRunsHTML([], '', { configured: true, refusal: 'binding_not_attested' });
+    assert.ok(attest.includes('provider instance id') && attest.includes('providerInstances'));
     // A card nobody may take shows neither the control nor a complaint.
     for (const refusal of ['not_todo', 'assigned', 'blocked_by', 'waiting_on_person', 'proposal_open']) {
       const html = cardRunsHTML([], '', { configured: true, refusal });

@@ -255,19 +255,6 @@ def _setup_steps(requests):
     ]
 
 
-def confirm_pending(db, machine):
-    """Is the machine's "Confirm this machine" card up in Needs me (the machine-access grant acknowledged, not yet
-    attested)? Read-only: nothing is requested or written."""
-    if machine["binding_state"] == "owner_attested":
-        return False
-    try:
-        _item, scope, _frozen = context(db, machine)
-        with db._lock:
-            return _prerequisites(db, machine, scope)
-    except Exception:
-        return False
-
-
 def attention(db, owner):
     if not owner.person or owner.role != "owner" or not enrollment.enabled(db, owner.workspace_id):
         return []

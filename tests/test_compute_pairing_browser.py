@@ -427,7 +427,9 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         page.get_by_role("button", name="Approve this machine").click()
         expect(section).to_contain_text("Set up and checked", timeout=20000)
         expect(page.get_by_role("button", name="Approve this machine")).to_have_count(0)
-        expect(section).to_contain_text("Confirming it in Needs me: not available in this version")
+        assert "Needs me" not in section.inner_text(), (
+            "nothing is waiting in Needs me for a machine set up this way"
+        )
         expect(section).to_contain_text(
             "Nothing more to do here. This version only checks the machine"
         )
@@ -619,8 +621,8 @@ def test_the_overview_row_of_a_machine_from_the_guide_names_one_step_in_one_plac
         fx.report(credentials, "heartbeat")
         page.get_by_role("button", name="Refresh").first.click()
         expect(ov).to_contain_text("Not approved", timeout=20000)
-        expect(ov).to_contain_text("Confirm this machine in Needs me")
-        assert "Admin, Runner machines" not in ov.inner_text().split("Not approved")[1][:400]
+        expect(ov).to_contain_text("Attest it in Admin > Runner machines")
+        assert "Needs me" not in ov.inner_text()
         expect(page.locator("[data-ov-summary]")).to_contain_text("needs attention")
         _shot_of(page, "[data-ov]", f"{label}-11-overview-not-approved-detail")
         _no_sideways_scroll(page)
@@ -679,7 +681,10 @@ def test_the_overview_says_what_add_a_machine_says_for_connected_failed_and_stal
             page.get_by_role("button", name=f"Status and activity of {name}").click()
             expect(ov).to_contain_text(sentence)
             expect(ov).to_contain_text("Add a machine below")
-            expect(ov).to_contain_text("No: not approved yet")
+            expect(ov).to_contain_text(
+                "No: not approved yet" if name == "wait-box" else "No: setup not finished"
+            )
+            expect(ov).to_contain_text("Not used in this version")
             _shot_of(page, "[data-ov]", f"{label}-12-overview-{name}-detail")
             page.keyboard.press("Escape")
         # The same words as the card below it for the same machine.
@@ -689,6 +694,85 @@ def test_the_overview_says_what_add_a_machine_says_for_connected_failed_and_stal
         _no_sideways_scroll(page)
 
     _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_guided_machine(
+    served, ui, size
+):
+    fx = served
+    service = BoardService(ToolContext(principal=fx.principal, gateway=fx.gateway))
+    card = service.task_add("A card to start", board="compute")["number"]
+
+    def refusal(page, label, name, text, link, href):
+        page.goto(f"{fx.origin}/app/{'?ui=deck' if ui == 'deck' else ''}#/card/{card}")
+        page.reload()  # the same address: read the options again
+        why = page.locator("[data-run-start-why]")
+        expect(why).to_contain_text(text, timeout=20000)
+        assert "Workspace settings" not in why.inner_text()
+        anchor = page.locator("[data-run-start-link]")
+        expect(anchor).to_have_text(link)
+        assert anchor.get_attribute("href") == href
+        _nothing_past_the_edge_of(page, "[data-run-start-why]")
+        _shot(page, f"{label}-14-card-start-refusal-{name}")
+        _shot_of(page, "[data-run-start-why]", f"{label}-14-card-start-refusal-{name}-text")
+
+    def body(page, label, context):
+        # 1. No machine at all: add one under Add a machine in Cloud workspaces.
+        refusal(
+            page,
+            label,
+            "no-machine",
+            "Add one under Add a machine in Cloud workspaces",
+            "Open Cloud workspaces",
+            "#/compute",
+        )
+        # 2. A machine from the guide that connected and waits for approval.
+        _, setup = fx.add(label="card-box")
+        credentials = fx.connect(setup)
+        fx.report(credentials, "prerequisites")
+        refusal(
+            page, label, "waiting", "waits for your approval", "Open Add a machine", "#/compute"
+        )
+        # 3. The same machine, approved: it only checks itself in this version.
+        for step in ("files", "service", "check"):
+            fx.report(credentials, step)
+        item = fx.view({"id": _pairing_id(fx)})
+        status, result = fx.call(
+            "POST",
+            f"/api/compute/pairings/{item['id']}/accept",
+            {
+                "request_id": "accept-card",
+                "expected_version": item["version"],
+                "identity_digest": item["identity_digest"],
+            },
+            cookie=fx.cookie,
+        )
+        assert status == 200, result
+        refusal(
+            page,
+            label,
+            "setup-only",
+            "only checks itself in this version, so no Coworker runs on it yet",
+            "Open Add a machine",
+            "#/compute",
+        )
+
+    _run(fx, ui, size, body)
+
+
+def _pairing_id(fx):
+    status, result = fx.call("GET", "/api/compute/pairings", cookie=fx.cookie)
+    assert status == 200, result
+    return result["pairings"][0]["id"]
+
+
+def _nothing_past_the_edge_of(page, selector):
+    right = page.locator(selector).evaluate("el => el.getBoundingClientRect().right")
+    assert right <= page.evaluate("window.innerWidth") + 0.5, (
+        "the refusal reaches past the screen edge"
+    )
 
 
 @pytest.mark.parametrize("ui", UIS)
@@ -1139,7 +1223,7 @@ def test_the_page_says_where_to_run_the_command_and_what_approval_grants(served,
         expect(approve).not_to_have_attribute("aria-disabled", "true")
         text = section.locator(".compute-pr-detail").inner_text()
         assert "Approving records the access listed above; nothing uses it in this version." in text
-        assert "does not connect a provider" in text and "It does not connect a provider" in text
+        assert "nothing uses it in this version" in text and "Needs me" not in text
         grants = page.evaluate(
             "() => document.querySelector('[data-pr-grants]').getBoundingClientRect().bottom"
             " <= document.querySelector('[data-pr-action=approve]').getBoundingClientRect().top"

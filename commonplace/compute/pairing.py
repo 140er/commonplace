@@ -83,7 +83,7 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version. A later version will let you sign in a provider and confirm the machine in Needs me.",
+        "Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version.",
         "This machine is set up and checked. Coworkers do not run on it in this version.",
     ),
     "offline": (
@@ -444,35 +444,6 @@ def pending_machines(db, workspace_id):
                 "last_report_at": row["last_report_at"],
             }
         return result
-
-
-def guided_not_running(db, workspace_id):
-    """Machines from the setup guide that cannot run Coworkers in this version: the ones waiting for approval or not
-    finished, and the approved ones that have never sent a heartbeat (the setup-only service sends none)."""
-    if not hasattr(db, "_conn"):  # a stand-in control store (some runner tests) has no pairings
-        return set()
-    return set(pending_machines(db, workspace_id)) | setup_only_ids(db, workspace_id)
-
-
-def machine_ids(db, workspace_id):
-    """Machines added through the setup guide (a pairing that is not closed): their approval step is in Needs me."""
-    with db._lock:
-        have = {
-            r[0]
-            for r in db._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','runner_enrollments')"
-            )
-        }
-        if len(have) < 2:
-            return set()
-        return {
-            r[0]
-            for r in db._conn.execute(
-                "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
-                "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND e.machine_id IS NOT NULL",
-                (workspace_id,),
-            )
-        }
 
 
 def setup_only_ids(db, workspace_id):
