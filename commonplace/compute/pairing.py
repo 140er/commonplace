@@ -83,7 +83,7 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "This version only checks the machine: Coworkers do not run on it yet. That needs a connected provider (sign in from Needs me) and an owner's attestation under Runner machines in Admin, and a later version.",
+        "This version only checks the machine: Coworkers do not run on it yet. To get ready for later, sign in a provider and confirm this machine, both in Needs me.",
         "This machine is set up and checked. Coworkers do not run on it in this version.",
     ),
     "offline": (
@@ -404,6 +404,27 @@ def derive(row, steps, now_stamp):
     if row["consumed_at"]:
         return "connected", None
     return "waiting", None
+
+
+def machine_ids(db, workspace_id):
+    """Machines added through the setup guide (a pairing that is not closed): their approval step is in Needs me."""
+    with db._lock:
+        have = {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','runner_enrollments')"
+            )
+        }
+        if len(have) < 2:
+            return set()
+        return {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT e.machine_id FROM machine_pairings p JOIN runner_enrollments e ON e.id=p.enrollment_id "
+                "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND e.machine_id IS NOT NULL",
+                (workspace_id,),
+            )
+        }
 
 
 def setup_only_ids(db, workspace_id):

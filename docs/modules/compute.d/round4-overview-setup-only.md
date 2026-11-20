@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - Attesting a setup-only machine does not turn the answer into "Yes": the install is setup-only whatever its binding says. A heartbeat makes it an ordinary runner row.
+  - Attesting a setup-only machine does not turn the answer into "Yes": the install is setup-only whatever its binding says. A heartbeat makes it an ordinary runner row. The Not approved reason names one step in one place (Needs me for a guided machine, Admin's Attest otherwise) and counts as needing attention; "Allowed" names what holds a full runner's place; a turned-off runner says there is no control to turn it on again.
 
 - **How it fails:**
 
