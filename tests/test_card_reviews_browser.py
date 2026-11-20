@@ -417,7 +417,8 @@ def test_the_settings_link_opens_real_project_settings_and_survives_reload(
     page.locator("#card-panel").wait_for(state="hidden")
     page.goto(f"{origin}/app/?ui={look}#/board/work/settings")
     section.wait_for()
-    page.get_by_role("button", name="Close project settings", exact=True).click()
+    # Project settings use Back and Escape; the surrounding panel's close icon is hidden.
+    page.keyboard.press("Escape")
     page.wait_for_url("**/#/board/work")
     page.locator("#card-panel").wait_for(state="hidden")
     assert not errors, errors

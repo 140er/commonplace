@@ -389,7 +389,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   [data-project-reviews] label.set-check { min-height: 44px; align-items: center; }
 }
 @media (pointer: coarse), (max-width: 699px) {
-  [data-project-reviews] .set-note, [data-project-reviews] label { font-size: 14px; line-height: 21px; }
+  section.set-sec[data-project-reviews-section] [data-project-reviews] :is(.set-note, label) { font-size: 14px; line-height: 21px; }
   section.set-sec[data-project-reviews-section] [data-project-reviews] .btn { font-size: 14px; }
   [data-project-reviews] input:not([type="checkbox"]), [data-project-reviews] select { font-size: 16px; }
 }
