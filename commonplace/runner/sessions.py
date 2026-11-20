@@ -52,7 +52,25 @@ def _open(gateway, ws):
     configs.open_store(gateway, ws)
     with st.connection() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
     return st
+
+
+def _migrate(conn):
+    """Keep existing sessions and thread bindings, leaving unknown account pins NULL."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_sessions)")}
+    if all(name in columns for name in model_modes.COLUMNS):
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_sessions)")}
+        for name, datatype in model_modes.COLUMNS.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE runner_sessions ADD COLUMN {name} {datatype}")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def board_state(gateway, ws, board):
@@ -156,6 +174,8 @@ def _authority(gateway, ws, conn, version, board, row=None):
         )
     except model_modes.ModeUnavailable:
         return "mode_unavailable"
+    if row and any(dict(row).get(key) != value for key, value in account.record().items()):
+        return "account_changed"
     return account.refusal.code if account.refusal is not None else None
 
 
@@ -164,6 +184,16 @@ def _new(conn, gateway, ws, version, board):
     role = next(r for r in config.roles.values() if r.kind == "orchestrator" and r.parent is None)
     machine = registry.get_machine(gateway.db, ws, config.runner.machine)
     choice = models.effective(gateway.db, ws, board["slug"], role.model_role).choice
+    account = model_modes.decide(
+        gateway.db,
+        ws,
+        board["slug"],
+        person=version.decided_by.removeprefix("user:"),
+        provider=choice.provider,
+        machine=machine,
+    )
+    if account.refusal is not None:
+        raise jobs.Conflict(account.refusal.code)
     conn.execute(
         "INSERT INTO runner_sessions(board,id,state,config_version,config_sha256,machine_id,binding_epoch,"
         "project,topic,runtime_mode,requested_by,model_provider,model,updated_at) VALUES (?,?, 'idle',?,?,?,?,?,?,?,?,?,?,?)",
@@ -182,6 +212,11 @@ def _new(conn, gateway, ws, version, board):
             choice.model,
             jobs._now(),
         ),
+    )
+    record = account.record()
+    conn.execute(
+        "UPDATE runner_sessions SET " + ",".join(f"{key}=?" for key in record) + " WHERE board=?",
+        (*record.values(), board["slug"]),
     )
     return conn.execute("SELECT * FROM runner_sessions WHERE board=?", (board["slug"],)).fetchone()
 
