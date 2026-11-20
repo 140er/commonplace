@@ -460,6 +460,11 @@ class ControlDB:
             params["wid"] = workspace_id
         connection_scope = f"connection_id IN (SELECT id FROM connections WHERE {scope})"
         plan = []
+        if "oauth_client_approvals" in present:
+            approval_scope = "approved_by = :uid"
+            if workspace_id is not None:
+                approval_scope += " AND workspace_id = :wid"
+            plan.append(("oauth_client_approvals", approval_scope, params))
         for table in ("oauth_codes", "oauth_tokens", "runner_connections"):
             if table in present:
                 plan.append((table, connection_scope, params))
@@ -487,6 +492,7 @@ class ControlDB:
         # Literal control-table statements keep the write boundary explicit.
         # A plan can narrow these predicates, never choose a content table.
         statements = {
+            "oauth_client_approvals": "DELETE FROM oauth_client_approvals WHERE ",
             "oauth_codes": "DELETE FROM oauth_codes WHERE ",
             "oauth_tokens": "DELETE FROM oauth_tokens WHERE ",
             "runner_connections": "DELETE FROM runner_connections WHERE ",

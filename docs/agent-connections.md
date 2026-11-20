@@ -29,6 +29,22 @@ Connect the client and ask the agent to call `session_start`. It returns effecti
 rules and authorized memories. Saved memory text is quoted data; proposed rules
 still need the owner's acceptance in **Rules**.
 
+## Approve an OAuth client
+
+Registering an OAuth client does not give it access to a workspace. Before its
+first authorization, sign in as an owner of that workspace, open the client's
+normal OAuth connection flow, check its name and code destination, then tick
+**Approve this client for workspace** and choose **Allow**. The checkbox starts
+unticked. Approval covers only that client ID in this workspace; members can
+then connect it with their own permissions and consent to their own scopes.
+Ask a workspace owner to complete this step if you see the approval notice.
+
+Existing registrations also require approval for new authorizations. Previously
+issued access and refresh tokens keep their original expiry and revocation
+behavior, but do not approve a registration. An unapproved pending code cannot
+be exchanged. Revoke an existing connection under **Settings → Agents** to stop
+its tokens. See [the approval and migration contract](system/oauth-client-owner-approval.md).
+
 ## Limit what the agent reads
 
 Under **Restrict access or set a parent**, **Read wings (comma separated)** accepts

@@ -13,7 +13,7 @@ from commonplace import oauth, ratelimit, sessions
 from commonplace.account import deletion
 from commonplace.oauth import store
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
-from tests.test_commonplace_oauth import VERIFIER, Client
+from tests.test_commonplace_oauth import VERIFIER, Client, client_approval
 
 CAPABILITY = "account:delete:person"
 CONSENT = (
@@ -52,7 +52,7 @@ def consent(client, *, checked=True, events=False):
     path = client.authorize_path(client.cid, redirect_uri=CALLBACK, scope="memory:read")
     status, _, html = client.request("GET", path)
     assert status == 200, html
-    data = {"request": field(html), "decision": "allow"}
+    data = {"request": field(html), "decision": "allow", **client_approval(html)}
     if checked:
         data["grant_person_delete"] = "1"
     if events:
@@ -490,6 +490,7 @@ def test_actual_deletion_keeps_shared_workspace_and_owner_handover_rules(phone, 
     db.add_member(workspace, other, "member", actor=phone.hub.admin)
     if account_role == "member":
         email, deleting, remaining = "member@example.test", other, phone.hub.admin
+        phone.approve(phone.cid, redirect_uri=CALLBACK, scope="memory:read")
         phone.login(email)
     else:
         email, deleting, remaining = "owner@example.com", phone.hub.admin, other

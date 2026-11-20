@@ -271,14 +271,30 @@ def _show_authorize(gateway, h, *, status=200):
     if principal:
         workspace = gateway.db.workspace(principal.workspace_id)["name"]
         consent = ""
+        with gateway.db._lock:
+            approved = store.client_approved(
+                gateway.db._conn, principal.workspace_id, client["client_id"]
+            )
+            owner = store.conn_role(gateway.db._conn, principal) == "owner"
+        if not approved:
+            if owner:
+                consent = (
+                    '<label><input type="checkbox" name="approve_client" value="1"> '
+                    f"Approve this client for {escape(workspace)}. Members of this workspace "
+                    "may then connect it with their own permissions.</label>"
+                )
+            else:
+                consent = (
+                    "<p>A workspace owner must approve this client before you can connect it.</p>"
+                )
         if import_grant.IMPORT_SCOPE in parameters["scope"].split():
             if import_grant.eligible(gateway.db, principal.user_id, principal.workspace_id):
-                consent = (
+                consent += (
                     '<label><input type="checkbox" name="grant_import" value="1"> '
                     f"{escape(import_grant.SCOPE_TEXT)}</label>"
                 )
             else:
-                consent = f"<p>{escape(import_grant.OWNER_ONLY_TEXT)}</p>"
+                consent += f"<p>{escape(import_grant.OWNER_ONLY_TEXT)}</p>"
         if import_grant.READER_SCOPE in parameters["scope"].split():
             if import_grant.eligible(gateway.db, principal.user_id, principal.workspace_id):
                 consent += (
@@ -409,6 +425,16 @@ def _submit_authorize(gateway, h):
                 or principal.user_id != pending["user_id"]
                 or principal.workspace_id != pending["workspace_id"]
                 or not secrets.compare_digest(pending["session_hash"], store.digest(session))
+                or not conn.execute(
+                    "SELECT 1 FROM sessions WHERE id_hash=? AND user_id=? AND workspace_id=? "
+                    "AND revoked_at IS NULL AND expires_at>?",
+                    (
+                        pending["session_hash"],
+                        principal.user_id,
+                        principal.workspace_id,
+                        store.iso(),
+                    ),
+                ).fetchone()
             ):
                 raise OAuthError("invalid_request", "Invalid authorization form", 403)
             if data.get("decision") not in ("allow", "deny"):
@@ -476,6 +502,7 @@ def _submit_authorize(gateway, h):
                         principal,
                         dict(parameters, scope=" ".join(granted)),
                         person_capabilities=person_capabilities,
+                        approve_client=data.get("approve_client") == "1",
                     )
                     location = _response(parameters, code=code)
             login = False

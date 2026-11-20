@@ -92,6 +92,7 @@ RULES = {
     "machine_pairings": Rule(workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")),
     "memberships": Rule(user=_U, workspace=_W),
     "meta": Rule(),
+    "oauth_client_approvals": Rule(user=("approved_by",), workspace=_W),
     "oauth_clients": Rule(),
     "oauth_codes": Rule(connection=_C, credential=True),
     "oauth_person_grants": Rule(user=_U, workspace=_W, connection=_C, credential=True),
