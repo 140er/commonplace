@@ -169,6 +169,10 @@ EXACT = {
     ("GET", "/api/tool-policy"): "authenticated",
     ("POST", "/api/tool-policy"): "authenticated",
     **{(method, "/api/previews"): "authenticated" for method in ("GET", "POST")},
+    ("POST", "/api/pr-review/comments"): "authenticated",
+    ("GET", "/api/pr-review/watch"): "authenticated",
+    ("GET", "/api/pr-review/prs"): "authenticated",
+    **{(method, "/api/pr-review/people"): "authenticated" for method in ("GET", "PUT")},
 }
 PREFIX = {
     ("GET", "/api/runners/enrollments/"): "unavailable",
@@ -176,6 +180,7 @@ PREFIX = {
     ("GET", "/api/instance-admin/"): "authenticated",
     **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/previews/"): "authenticated" for method in ("GET", "POST", "PUT")},
+    **{(method, "/api/pr-review/"): "authenticated" for method in ("GET", "POST", "PUT")},
     **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/coworkers/"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/admin/instance/"): "authenticated",

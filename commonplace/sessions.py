@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .control_db import ControlDB, Principal
-from .policy import PIPELINE_SCOPE, SCOPES, Policy
+from .policy import FEED_SCOPES, SCOPES, Policy
 
 COOKIE = "cmmn_session"
 LINK_MINUTES = 15
@@ -81,7 +81,7 @@ def person_policy(role: Optional[str] = None) -> Policy:
         "bots:chat",
         "bots:confirm",
         "bots:learned",
-        PIPELINE_SCOPE,  # the deploy script's own token scope, never a person's
+        *FEED_SCOPES,  # the feeders' own token scopes, never a person's
     }
     if role != "owner":
         excluded.add("private:read")

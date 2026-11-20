@@ -37,7 +37,7 @@ from . import bots_grant, decide_grant, tokens
 from .admission import GATE
 from .db_busy import BUSY_TIMEOUT_S, begin_immediate
 from .decide_grant import DECIDE_SCOPE
-from .policy import PIPELINE_SCOPE, Policy
+from .policy import FEED_SCOPES, PIPELINE_SCOPE, Policy
 
 SCHEMA_VERSION = 1
 ROLES = ("owner", "member")
@@ -147,6 +147,9 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
+
+
+_FEED_NAMES = {PIPELINE_SCOPE: "pipeline", "pr_review:write": "review-comment"}
 
 
 class ControlError(ValueError):
@@ -800,10 +803,12 @@ class ControlDB:
             raise ControlError("only an owner's connection can hold the admin scope")
         if "private:read" in policy.scopes and role != "owner":
             raise ControlError("only an owner's connection can hold the private:read scope")
-        if PIPELINE_SCOPE in policy.scopes:
-            if policy.scopes != (PIPELINE_SCOPE,) or role != "owner" or parent is not None:
+        for feed in FEED_SCOPES:
+            if feed in policy.scopes and (
+                policy.scopes != (feed,) or role != "owner" or parent is not None
+            ):
                 raise ControlError(
-                    "a pipeline token holds only the pipeline:write scope, belongs to a "
+                    f"a {_FEED_NAMES[feed]} token holds only the {feed} scope, belongs to a "
                     "workspace owner and has no parent"
                 )
         if DECIDE_SCOPE in policy.scopes:
@@ -852,17 +857,19 @@ class ControlDB:
         now = _now()
         expires = _iso(now + timedelta(days=expires_days)) if expires_days else None
         with self._lock:
-            if (
-                PIPELINE_SCOPE in policy.scopes
-                and self._conn.execute(
-                    "SELECT 1 FROM connections WHERE workspace_id=? AND revoked_at IS NULL "
-                    "AND (expires_at IS NULL OR expires_at > ?) AND policy LIKE ?",
-                    (ws["id"], _iso(now), f'%"{PIPELINE_SCOPE}"%'),
-                ).fetchone()
-            ):
-                raise ControlError(
-                    "this workspace already has a pipeline token; revoke it before making another"
-                )
+            for feed in FEED_SCOPES:
+                if (
+                    feed in policy.scopes
+                    and self._conn.execute(
+                        "SELECT 1 FROM connections WHERE workspace_id=? AND revoked_at IS NULL "
+                        "AND (expires_at IS NULL OR expires_at > ?) AND policy LIKE ?",
+                        (ws["id"], _iso(now), f'%"{feed}"%'),
+                    ).fetchone()
+                ):
+                    raise ControlError(
+                        f"this workspace already has a {_FEED_NAMES[feed]} token; "
+                        "revoke it before making another"
+                    )
             if parent is not None and (not isinstance(parent, str) or not parent.strip()):
                 raise ControlError("parent must be a connection name or id")
             if parent == name:
