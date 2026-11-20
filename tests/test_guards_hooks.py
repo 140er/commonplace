@@ -328,3 +328,68 @@ def test_real_push_checks_types_format_and_lint_and_preserves_previous_hook_inpu
     assert restored.returncode == 0, restored.stderr
     assert source.read_bytes() == clean and previous.read_bytes() == original_hook
     assert (clone / ".git/config").read_bytes() == config
+
+
+@pytest.mark.parametrize("original_hook", ["absent", "non_executable"])
+@pytest.mark.parametrize("dirty", ["clean", "worktree", "index"])
+def test_staging_keeps_update_instead_checkout_and_dirty_refusal(
+    clone, tmp_path, original_hook, dirty
+):
+    """A staged hook chain must preserve Git's real receive-side defaults."""
+    previous = hooks.hooks_dir(clone) / "push-to-checkout"
+    if original_hook == "non_executable":
+        previous.write_text("#!/bin/sh\nexit 0\n")
+        previous.chmod(0o644)
+    git(clone, "config", "receive.denyCurrentBranch", "updateInstead")
+    sender = tmp_path / "sender"
+    git(tmp_path, "clone", "-q", str(clone), str(sender))
+    (sender / "f.txt").write_text("incoming\n")
+    git(sender, "commit", "-qam", "incoming")
+    incoming = git(sender, "rev-parse", "HEAD").stdout.strip()
+    accepted = git(clone, "rev-parse", "HEAD").stdout.strip()
+    if dirty != "clean":
+        (clone / "f.txt").write_text("local edit\n")
+        if dirty == "index":
+            git(clone, "add", "f.txt")
+    content = (clone / "f.txt").read_bytes()
+    index = git(clone, "ls-files", "--stage").stdout
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged receive hooks")
+    git(clone, "config", "core.hooksPath", str(staged))
+
+    result = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+
+    if dirty == "clean":
+        assert result.returncode == 0, result.stderr
+        assert (clone / "f.txt").read_text() == "incoming\n"
+        assert git(clone, "rev-parse", "HEAD").stdout.strip() == incoming
+        assert git(clone, "diff", "--quiet", check=False).returncode == 0
+        assert git(clone, "diff", "--cached", "--quiet", check=False).returncode == 0
+    else:
+        assert result.returncode != 0, "a dirty receiver must refuse the push"
+        assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+        assert (clone / "f.txt").read_bytes() == content
+        assert git(clone, "ls-files", "--stage").stdout == index
+
+
+def test_staging_keeps_custom_push_to_checkout_refusal(clone, tmp_path):
+    previous = hooks.hooks_dir(clone) / "push-to-checkout"
+    previous.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >&2\nexit 23\n')
+    previous.chmod(0o755)
+    original = previous.read_bytes()
+    git(clone, "config", "receive.denyCurrentBranch", "updateInstead")
+    sender = tmp_path / "sender"
+    git(tmp_path, "clone", "-q", str(clone), str(sender))
+    (sender / "f.txt").write_text("incoming\n")
+    git(sender, "commit", "-qam", "incoming")
+    incoming = git(sender, "rev-parse", "HEAD").stdout.strip()
+    accepted = git(clone, "rev-parse", "HEAD").stdout.strip()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged receive hooks")
+    git(clone, "config", "core.hooksPath", str(staged))
+
+    result = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+
+    assert result.returncode != 0
+    assert incoming in result.stderr
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+    assert (clone / "f.txt").read_text() == "1\n"
+    assert previous.read_bytes() == original

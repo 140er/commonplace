@@ -15,5 +15,8 @@ are refused instead of checking one checkout on their behalf.
 
 Hook staging writes a new directory and leaves existing hooks and configuration
 untouched. The previous pre-push runs first with identical stdin and arguments;
-other hooks execute through their original paths. Shared activation is a reviewed
-step and rollback restores the prior configuration, retaining all original hooks.
+existing executable hooks execute through their original paths. Absent or disabled
+hooks remain absent so Git retains its default handling, including checkout updates
+and dirty-receiver refusal for `receive.denyCurrentBranch=updateInstead`. Stage again
+when the set of enabled hooks changes. Shared activation is a reviewed step and
+rollback restores the prior configuration, retaining all original hooks.
