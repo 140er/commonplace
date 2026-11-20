@@ -472,6 +472,9 @@ def test_the_rule_is_off_by_default_and_only_the_owner_sets_it(console_hub):
     h = console_hub
     status, body, _ = h.request(h.member, "GET", "/api/previews/rules")
     assert status == 200 and body["stop_days_after_pr"] is None and body["max_age_days"] is None
+    # The list says who may change the rule, so the card shows the form only to the owner.
+    assert h.request(h.owner, "GET", "/api/previews")[1]["can_set_rule"] is True
+    assert h.request(h.member, "GET", "/api/previews")[1]["can_set_rule"] is False
     assert h.request(h.member, "PUT", "/api/previews/rules", {"max_age_days": 30})[0] == 403
     status, body, _ = h.request(h.owner, "PUT", "/api/previews/rules", {"stop_days_after_pr": 7})
     assert status == 200 and body["stop_days_after_pr"] == 7
