@@ -428,7 +428,7 @@ def pending_words(pending):
             "waiting_approval",
             WAITING_LABEL,
             f"It connected and waits for your approval in {ADD_A_MACHINE}. Coworkers do not run on it in this version.",
-            f"Once it has finished its setup, compare its fingerprint with the line 'Machine fingerprint:' in its window, then approve the machine in {ADD_A_MACHINE} or choose This is not my machine.",
+            f"Once it has finished its setup and printed its fingerprint, compare it with the line 'Machine fingerprint:' in its window, then approve the machine in {ADD_A_MACHINE} or choose This is not my machine.",
         )
     what = (
         f"A setup step failed: {pending['cause'].rstrip('.')}."
