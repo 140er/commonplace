@@ -317,7 +317,7 @@ const cases = {
     for (const mode of ['none', 'deny']) {
       const g = fixture(); g.state.clipboard = mode; await g.open(); g.click('add'); await flush(); fill(g); wingBoxes(g); g.state.next.push(created()); g.submit(); await flush();
       g.click('copy'); await flush();
-      assert.deepEqual(g.status.copy, ['Copying is not available here. The command above is selected: press Ctrl+C to copy it.'], mode);
+      assert.deepEqual(g.status.copy, ['Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu.'], mode);
     }
   },
 
@@ -499,7 +499,7 @@ const cases = {
     const f = fixture(); f.state.clipboard = 'deny'; await f.open(); f.click('add'); await flush(); fill(f); wingBoxes(f); f.state.next.push(created()); f.submit(); await flush();
     f.mounted.on = true; f.mounted.rootWrites = f.mounted.topWrites = 0;
     f.click('copy'); await flush();
-    assert.deepEqual(f.status.copy, ['Copying is not available here. The command above is selected: press Ctrl+C to copy it.']);
+    assert.deepEqual(f.status.copy, ['Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu.']);
     assert.equal(f.mounted.rootWrites, 0, 'the note is written in place');
     f.state.pairings = [item('waiting')];
     await f.tick();
@@ -530,6 +530,18 @@ const cases = {
     f.click('close'); await flush();
     assert.match(text(f.section()), /Open build-box|build-box/);
     assert.doesNotMatch(f.html(), /data-pr-action="close"/);
+  },
+
+  async 'stalled-chip'() {
+    // C: a stalled setup is not drawn as a quiet "waiting" chip: the server's label is shown and the tone is the failed one.
+    const stalled = item('connected', { stalled: true, state_label: 'Not finished' });
+    const f = fixture({ pairings: [stalled] }); await f.open();
+    assert.match(f.html(), /data-tone="bad">Not finished</, 'the list row');
+    f.click('open', 'pair_0123456789abcdef'); await flush();
+    assert.match(f.html(), /compute-pr-state" data-tone="bad">Not finished</, 'the detail chip');
+    assert.doesNotMatch(f.html(), /waiting for your approval/i);
+    const waiting = fixture({ pairings: [item('connected')] }); await waiting.open();
+    assert.match(waiting.html(), /data-tone="wait">Machine connected/, 'a live one still waits');
   },
 
   async 'poll-failure-announced'() {

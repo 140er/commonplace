@@ -393,6 +393,10 @@ export function createOverview(ctx) {
       // The shape changed (a first read arrived, or the list emptied): rebuild the fold or the plain headline, once.
       wrap.dataset.foldKey = foldKey();
       wrap.innerHTML = foldHTML();
+      // foldHTML() records what every slot now holds, the state slot (outside the fold) included, so the write below would
+      // skip it: put the state sentence in place here, or "No machine is set up yet" stays beside the first row.
+      const stateNode = slot("state");
+      if (stateNode) stateNode.innerHTML = slots().state;
     }
     const control = host.querySelector?.(".compute-ov :focus");
     const key = control ? focusKey(control) : "";

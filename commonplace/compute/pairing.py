@@ -138,6 +138,7 @@ MEMBER_SENTENCE = {
 }
 # A member reads the same state names with the owner's decision in the third person.
 MEMBER_LABEL = {"connected": "Machine connected, waiting for the owner's approval"}
+STALLED_LABEL = "Not finished"
 STALLED = (
     "This setup has not finished.",
     "Remove this machine and set it up again.",
@@ -147,39 +148,39 @@ STALLED = (
 CAUSES = {
     "run_as_root": (
         "The command was run as root.",
-        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Compute in the app and choose Set up again.",
+        "Open a terminal as the normal account that should own the runner (do not type sudo), then open Cloud workspaces in the app and choose Set up again.",
     ),
     "unsupported_os": (
         "This system is not supported. Ubuntu 24.04 and Debian 12 or later are.",
-        "Use a supported system, then open Compute in the app and choose Set up again.",
+        "Use a supported system, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_python": (
         "A supported Python is not installed.",
-        "Install Python 3.10 or later on the machine, then open Compute in the app and choose Set up again.",
+        "Install Python 3.10 or later on the machine, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_prerequisite": (
         "A required program is missing.",
-        "Install what the machine printed, then open Compute in the app and choose Set up again.",
+        "Install what the machine printed, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_runner_program": (
         "The runner program is not installed on this machine, and this command does not install it yet.",
-        "Ask the person who runs this site for the runner program, then open Compute in the app and choose Set up again.",
+        "Ask the person who runs this site for the runner program, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "missing_privilege": (
-        "The account is not allowed to set up its background service.",
-        "Allow the account to keep a service running when logged out, then open Compute in the app and choose Set up again.",
+        "The administrator confirmation was not given, or the password was wrong.",
+        "Open Cloud workspaces in the app, choose Set up again, run the new command and type your password carefully.",
     ),
     "no_service_manager": (
-        "The machine has no running user service manager.",
-        "Log in on the machine with a normal session, then open Compute in the app and choose Set up again.",
+        "The machine cannot keep a background service for this account right now.",
+        "Log in on the machine with a normal session, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "disk_full": (
         "There is not enough free disk space.",
-        "Free some space, then open Compute in the app and choose Set up again.",
+        "Free some space, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "cannot_reach_hub": (
         "The machine could not reach this site.",
-        "Check the machine's internet connection, then open Compute in the app and choose Set up again.",
+        "Check the machine's internet connection, then open Cloud workspaces in the app and choose Set up again.",
     ),
     "service_failed": (
         "The background service did not start.",
@@ -490,6 +491,7 @@ def view(db, row, now_stamp, *, owner):
     stuck = stalled(state, row, steps, now_stamp)
     if stuck:
         sentence, next_owner, next_member = STALLED
+        label = STALLED_LABEL
     result = {
         "id": row["id"],
         "kind": row["kind"],
@@ -846,6 +848,8 @@ def _fields(body, allowed, required):
         request = body["request_id"]
         if not isinstance(request, str) or not REQUEST_ID.fullmatch(request):
             raise refuse("request_id", "invalid")
+    if "identity_digest" in body and not isinstance(body["identity_digest"], str):
+        raise refuse("identity_digest", "invalid")
 
 
 def accept(db, principal, pairing_id, body):

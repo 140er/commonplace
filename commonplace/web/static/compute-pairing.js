@@ -255,17 +255,17 @@ export function createPairing(ctx) {
     const sheet = item.state === "connected" && owner && !item.stalled ? `${confirm ? "" : "<h4>Approve this machine?</h4>"}${sheetHTML(item)}${confirm ? "" : `<p class="compute-plain" data-pr-grants>${e(GRANTS_NOTE)}</p>`}` : "";
     const provider = owner && ["approved", "ready", "offline"].includes(item.state) ? `<p class="compute-plain">Provider and attestation: ${item.binding_state === "owner_attested" ? "done" : "not done yet"}.</p>` : "";
     return `<article class="compute-ws-detail compute-pr-detail" data-pr-id="${e(item.id)}" data-state="${e(item.state)}" aria-labelledby="compute-pr-heading">`
-      + `<header><h3 id="compute-pr-heading" tabindex="-1">${e(item.label)}</h3><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item.state))}">${e(item.state_label)}</span></header>`
+      + `<header><h3 id="compute-pr-heading" tabindex="-1">${e(item.label)}</h3><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item))}">${e(item.state_label)}</span></header>`
       + `<p class="compute-pr-sentence">${e(item.sentence)}</p><p class="compute-pr-next">${e(item.next)}</p>${causeHTML(item)}`
       // What the person acts on comes first (the command, or the sheet and its buttons); the steps and the clock follow.
       + `${body}${sheet}${actionsHTML(item)}${stepsHTML(item)}${provider}`
       + `<p class="compute-quiet" data-pr-checked>${clock ? e(clockText_(item)) : ""}</p></article>`;
   }
 
-  const toneOf = state => state === "failed" ? "bad" : ["connected", "waiting", "approved", "offline"].includes(state) ? "wait" : state === "ready" ? "ok" : "quiet";
+  const toneOf = item => item.stalled === true || item.state === "failed" ? "bad" : ["connected", "waiting", "approved", "offline"].includes(item.state) ? "wait" : item.state === "ready" ? "ok" : "quiet";
 
   function rowHTML(item) {
-    return `<li class="compute-row compute-pr-row" data-pr-id="${e(item.id)}" data-state="${e(item.state)}"><header><strong class="compute-ws-name">${e(item.label)}</strong><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item.state))}">${e(item.state_label)}</span></header>`
+    return `<li class="compute-row compute-pr-row" data-pr-id="${e(item.id)}" data-state="${e(item.state)}"><header><strong class="compute-ws-name">${e(item.label)}</strong><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item))}">${e(item.state_label)}</span></header>`
       // A settled machine's next step only repeats the note at the top of the section, so its row leaves it out.
       + `<p>${e(item.sentence)}</p>${item.state === "ready" ? (item.binding_state === "owner_attested" ? "" : `<p class="compute-pr-next">${e(CANNOT_RUN_YET)}</p>`) : `<p class="compute-pr-next">${e(item.next)}</p>`}${item.last_report_at ? `<p class="compute-quiet">Last seen at ${e(clockText(item.last_report_at))}.</p>` : ""}`
       + `<div class="compute-actions"><button type="button" class="btn" data-pr-action="open" data-id="${e(item.id)}" aria-label="Open ${e(item.label)}">Open</button></div></li>`;
@@ -544,7 +544,7 @@ export function createPairing(ctx) {
     let note = "Copied. Paste it on the machine.";
     // No clipboard, or a copy that does not return a promise, is a failed copy: never claim "Copied." without proof.
     try { const done = ctx.copy(setup.command); if (typeof done?.then !== "function") throw new Error("no clipboard"); await done; }
-    catch { note = "Copying is not available here. The command above is selected: press Ctrl+C to copy it."; selectCommand(); }
+    catch { note = "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."; selectCommand(); }
     if (!ctx.valid(page)) return;
     copyNote = note;
     // In place: the command keeps its node, focus and selection (the fallback selects it for the person to copy).

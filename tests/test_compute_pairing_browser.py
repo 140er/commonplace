@@ -424,6 +424,12 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         # Back to the list: the machine is one row with its state.
         page.get_by_role("button", name="Back to the list").click()
         expect(section.locator(".compute-pr-row")).to_contain_text("Set up and checked")
+        # The overview reads again when the machine changes state: no "No machine is set up yet" beside a machine row.
+        expect(page.locator("[data-ov-summary]")).to_contain_text("1 runner", timeout=20000)
+        expect(page.locator('[data-ov-slot="state"]')).not_to_contain_text(
+            "No machine is set up yet"
+        )
+        expect(page.locator("[data-ov]")).not_to_contain_text("No machine is set up yet")
         _shot(page, f"{label}-08-list")
 
     _run(fx, ui, size, body)
@@ -770,7 +776,7 @@ def test_a_copy_that_fails_says_so_and_selects_the_command(served, ui):
         page.get_by_role("button", name="Create the command").click()
         page.get_by_role("button", name="Copy the command").click()
         expect(page.locator("[data-pr-copy-note]")).to_have_text(
-            "Copying is not available here. The command above is selected: press Ctrl+C to copy it."
+            "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."
         )
         command = page.locator("[data-pr-command]").inner_text()
         assert page.evaluate("window.getSelection().toString().trim()") == command.strip()
@@ -1159,7 +1165,7 @@ def test_the_copy_fallback_keeps_its_selection_through_a_poll(served, ui):
         page.get_by_role("button", name="Copy the command").click()
         note = page.locator("[data-pr-copy-note]")
         expect(note).to_have_text(
-            "Copying is not available here. The command above is selected: press Ctrl+C to copy it."
+            "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."
         )
         page.evaluate(
             "() => { window.__pre = document.querySelector('#compute-pr-command');"
@@ -1183,7 +1189,7 @@ def test_the_copy_fallback_keeps_its_selection_through_a_poll(served, ui):
             "the status region was not re-inserted"
         )
         expect(note).to_have_text(
-            "Copying is not available here. The command above is selected: press Ctrl+C to copy it."
+            "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."
         )
         _shot(page, f"{label}-copy-fallback-selected")
 

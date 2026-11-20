@@ -231,7 +231,7 @@ def prerequisites(probe):
         raise Failure(
             "run_as_root",
             "This command was run as root (or with sudo).",
-            "Open a terminal as the normal account that should own the runner (do not type sudo), then open Compute in the app and choose Set up again.",
+            "Open a terminal as the normal account that should own the runner (do not type sudo), then open Cloud workspaces in the app and choose Set up again.",
         )
     system, ident, version = probe.system()
     if system != "Linux" or ident not in SUPPORTED or _version(version) < SUPPORTED[ident]:
@@ -239,48 +239,48 @@ def prerequisites(probe):
         raise Failure(
             "unsupported_os",
             "This system is not supported (found " + found + ").",
-            "Use Ubuntu 24.04 or later, or Debian 12 or later, then open Compute in the app and choose Set up again.",
+            "Use Ubuntu 24.04 or later, or Debian 12 or later, then open Cloud workspaces in the app and choose Set up again.",
         )
     if tuple(probe.python()) < MIN_PYTHON:
         raise Failure(
             "missing_python",
             "Python 3.10 or later is required.",
-            "Install it (sudo apt install python3), then open Compute in the app and choose Set up again.",
+            "Install it (sudo apt install python3), then open Cloud workspaces in the app and choose Set up again.",
         )
     if not probe.can_import("cryptography"):
         raise Failure(
             "missing_prerequisite",
             "The Python package 'cryptography' is missing.",
-            "Install it (sudo apt install python3-cryptography), then open Compute in the app and choose Set up again.",
+            "Install it (sudo apt install python3-cryptography), then open Cloud workspaces in the app and choose Set up again.",
         )
     if not probe.can_import("commonplace.runner.installer"):
         raise Failure(
             "missing_runner_program",
             "The runner program is not installed on this machine.",
             "This command does not install it yet. Ask the person who runs this site for the "
-            "runner program, then open Compute in the app and choose Set up again.",
+            "runner program, then open Cloud workspaces in the app and choose Set up again.",
         )
     if not probe.user_manager():
         raise Failure(
             "no_service_manager",
-            "There is no running user service manager.",
-            "Log in on the machine with a normal session (not su or sudo), then open Compute "
+            "This machine has no login session that can run a background service.",
+            "Log in on the machine with a normal session (not su or sudo), then open Cloud workspaces "
             "in the app and choose Set up again.",
         )
     if probe.free_bytes(probe.home()) < MIN_FREE_BYTES:
         raise Failure(
             "disk_full",
             "There is less than 256 MB free in your home folder.",
-            "Free some space, then open Compute in the app and choose Set up again.",
+            "Free some space, then open Cloud workspaces in the app and choose Set up again.",
         )
 
 
-AGAIN = "Open Compute in the app and choose Set up again."
+AGAIN = "Open Cloud workspaces in the app and choose Set up again."
 # The code is spent and this machine holds no credential, so the app cannot be told: it shows the setup as not
 # finished after 15 minutes, and only then offers Set up again.
 SPENT_AGAIN = (
-    "The app cannot be told about this. After 15 minutes Compute shows this setup as not finished;",
-    "then open Compute in the app and choose Set up again.",
+    "The app cannot be told about this. After 15 minutes Cloud workspaces shows this setup as not finished;",
+    "then open Cloud workspaces in the app and choose Set up again.",
 )
 
 
@@ -337,6 +337,12 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
         out(failure.then)
         out("The app shows this too. Nothing was changed on this machine.")
         return 1
+    conflict = _other_site(probe.home(), envelope)
+    if conflict:
+        # Before any question is asked: another site's machine is never touched, nor its credential sent here.
+        for line in conflict:
+            out(line)
+        return 1
     if not probe.linger():
         out(
             "To keep the runner running after you log out, one administrator confirmation is needed."
@@ -344,10 +350,10 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
         if not probe.enable_linger():
             ask({"step": "prerequisites", "state": "failed", "cause": "missing_privilege"})
             out(
-                "The confirmation was not given (or the password was wrong), so nothing was installed."
+                "The administrator confirmation was not given, or the password was wrong, so nothing was installed."
             )
             out(
-                "Open Compute in the app, choose Set up again, run the new command and type your password "
+                "Open Cloud workspaces in the app, choose Set up again, run the new command and type your password "
                 "carefully; or ask an administrator to run: sudo loginctl enable-linger "
                 + probe.account()
             )
@@ -434,14 +440,6 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     try:
         intent, installer = build()
         if _other_installation(home, envelope):
-            other = _manifest_hub(home)
-            if other is not None and other != str(envelope["hub"]).rstrip("/"):
-                # Another site's machine: its credential is never sent here and nothing of it is removed from here.
-                out(f"This machine already has a runner set up for another site ({other}).")
-                out(
-                    "Nothing was changed. Remove that machine under Compute on that site, then run the command again."
-                )
-                return 1
             # Only what Set up again cancelled may be removed: ask the site about the earlier setup first. A healthy
             # approved runner of another pairing is never uninstalled behind its owner's back.
             alive = _earlier_alive(home, envelope, hub)
@@ -456,7 +454,7 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
             if alive:
                 out(f"This account already runs machine {_manifest_label(home)}.")
                 out(
-                    "Remove it under Compute first, then run the command again. Nothing was changed."
+                    "Remove it under Cloud workspaces first, then run the command again. Nothing was changed."
                 )
                 return 1
             out("Removing the earlier unfinished setup on this machine ...")
@@ -489,6 +487,7 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
     printed = [line for line in lines if line.startswith("Machine fingerprint:")]
     for line in printed:
         out(line)
+    untold = False
     for step, ok, _why in results:
         body = (
             {"step": step, "state": "ok"}
@@ -496,6 +495,7 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
             else {"step": step, "state": "failed", "cause": causes[step]}
         )
         if token and not _report(hub, token, body):
+            untold = True
             out("Could not tell the app about the " + step + " step. It will show it as waiting.")
     if not all(ok for _, ok, _ in results):
         out("The machine was installed, but one check failed. The app shows which.")
@@ -504,7 +504,11 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
                 out(why)
         out(AGAIN)
         return 1
-    out("Done on this machine. Go back to Compute in the app: it shows this machine and")
+    if untold:
+        out("This machine is set up, but the app could not be told, so it may not show it yet.")
+        out("Check the internet connection, then run the command again to report it.")
+        return 1
+    out("Done on this machine. Go back to Cloud workspaces in the app: it shows this machine and")
     out(
         "asks you to approve it. Compare the fingerprint above with the one on that screen."
         if printed
@@ -586,6 +590,24 @@ def _other_installation(home, envelope):
     if not path.exists():
         return False
     return not _resumable(home, envelope)
+
+
+def _other_site(home, envelope):
+    """The window's lines when an installation here belongs to another site (or cannot be read), else None."""
+    if not (Path(home) / ".commonplace-runner" / "manifest.json").exists():
+        return None
+    other = _manifest_hub(home)
+    if other == str(envelope["hub"]).rstrip("/"):
+        return None
+    if other is None:
+        return [
+            "This machine already has a runner installation that this setup cannot read.",
+            "Nothing was changed. Remove it on this machine first, then run the command again.",
+        ]
+    return [
+        f"This machine already has a runner set up for another site ({other}).",
+        "Nothing was changed. Remove that machine under Cloud workspaces on that site, then run the command again.",
+    ]
 
 
 def _manifest_hub(home):

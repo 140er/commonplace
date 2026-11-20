@@ -210,7 +210,7 @@ PY=$(command -v python3 2>/dev/null) || PY=
 if [ -z "$PY" ] || ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
   report missing_python
   say "Python 3.10 or later is required." \
-    "Install it (sudo apt install python3), then open Compute in the app and choose Set up again." \
+    "Install it (sudo apt install python3), then open Cloud workspaces in the app and choose Set up again." \
     "The app shows this too. Nothing was changed on this machine."
   exit 1
 fi

@@ -575,6 +575,20 @@ def test_accept_enables_the_machine_but_never_attests_it(flow):
     assert len(row) == 1 and item["id"] in row[0]["target_ids"]
 
 
+def test_a_non_string_identity_digest_is_a_bad_request_not_a_conflict(flow):
+    made = flow.made()
+    credentials = flow.connect(made)
+    flow.finish_steps(credentials)
+    item = flow.get(made)
+    for digest in (7, ["x"], None):
+        got, result = flow.call(
+            "POST",
+            f"/{item['id']}/accept",
+            {"request_id": "r", "expected_version": item["version"], "identity_digest": digest},
+        )
+        assert (got, result["field"], result["reason"]) == (400, "identity_digest", "invalid")
+
+
 def test_a_null_request_id_is_refused_for_accept_and_close(flow):
     made = flow.made()
     credentials = flow.connect(made)
@@ -1185,9 +1199,13 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
         item = flow.get(made)
         assert item["stalled"] is True and item["state"] == state
         assert (item["sentence"], item["next"]) == (pairing.STALLED[0], pairing.STALLED[1])
+        assert item["state_label"] == "Not finished", (
+            "a stalled setup is not still 'waiting for your approval'"
+        )
         assert item["can_accept"] is False
         seen = flow.get(made, who=colleague)
         assert (seen["sentence"], seen["next"]) == (pairing.STALLED[0], pairing.STALLED[2])
+        assert seen["state_label"] == "Not finished"
     # The server refuses an approval of a stalled setup, with its own reason.
     refused = flow.accept(one, finish=False)
     assert (refused[0], refused[1]["reason"]) == (409, "stalled")

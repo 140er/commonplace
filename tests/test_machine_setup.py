@@ -324,6 +324,46 @@ def test_linger_off_asks_for_one_confirmation_and_stops_if_refused(tmp_path):
     assert any("sudo loginctl enable-linger builder" in line for line in lines)
 
 
+def test_a_refused_sudo_says_the_same_on_the_page_and_in_the_window(tmp_path):
+    from commonplace.compute import pairing
+
+    probe = FakeProbe(tmp_path, linger=False, enable_linger=False)
+    _, lines, _, _ = run(tmp_path, probe=probe)
+    text, then = pairing.CAUSES["missing_privilege"]
+    assert text.rstrip(".") in "\n".join(lines).replace(", so nothing was installed", ""), (
+        "the window names the cause in the page's words"
+    )
+    assert then.split(",")[0] in "\n".join(lines) and "type your password carefully" in "\n".join(
+        lines
+    )
+    assert "not allowed" not in text
+
+
+def test_a_command_for_another_site_is_refused_before_the_password_question(tmp_path):
+    probe = FakeProbe(tmp_path, linger=False, enable_linger=True)
+    manifest = Path(probe.home()) / ".commonplace-runner"
+    manifest.mkdir(parents=True)
+    (manifest / "manifest.json").write_text(
+        json.dumps({"intent": {"hub_url": "https://elsewhere.example"}})
+    )
+    status, lines, hub, _ = run(tmp_path, probe=probe)
+    assert status == 1 and probe.confirmations == 0, "no administrator question first"
+    assert any("another site (https://elsewhere.example)" in line for line in lines)
+
+
+def test_a_manifest_that_cannot_be_read_stops_the_command_closed(tmp_path):
+    probe = FakeProbe(tmp_path, linger=False, enable_linger=True)
+    manifest = Path(probe.home()) / ".commonplace-runner"
+    manifest.mkdir(parents=True)
+    (manifest / "manifest.json").write_text(json.dumps({"intent": {}}))
+    status, lines, hub, _ = run(tmp_path, probe=probe)
+    assert status == 1 and probe.confirmations == 0
+    assert any("cannot read" in line for line in lines) and "Nothing was changed." in " ".join(
+        lines
+    )
+    assert not any("Removing the earlier" in line for line in lines)
+
+
 # ---- a fixture machine, end to end ------------------------------------------------------------
 
 
@@ -1105,7 +1145,8 @@ def test_a_healthy_approved_earlier_machine_is_never_uninstalled_by_a_new_comman
     assert status == 1
     assert "This account already runs machine build-box." in lines
     assert (
-        "Remove it under Compute first, then run the command again. Nothing was changed." in lines
+        "Remove it under Cloud workspaces first, then run the command again. Nothing was changed."
+        in lines
     )
     assert not any("Removing the earlier" in line for line in lines)
     assert {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()} == before, (
@@ -1209,7 +1250,7 @@ def test_a_command_for_another_site_never_sends_the_old_token_and_changes_nothin
     assert run_with(m)[0] == 0
     token = (m.home / ".commonplace-runner" / "machine.token").read_text().strip()
     before = {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()}
-    units = list(m.host.__dict__.items())
+    units = {k: (list(v) if isinstance(v, list) else v) for k, v in m.host.__dict__.items()}
     _, new_item, new_setup = pairing.create(
         m.db,
         None,
@@ -1248,5 +1289,7 @@ def test_a_command_for_another_site_never_sends_the_old_token_and_changes_nothin
     assert "Nothing was changed." in " ".join(lines)
     assert not any("Removing the earlier" in line for line in lines)
     assert {str(p): p.read_bytes() for p in m.home.rglob("*") if p.is_file()} == before
-    assert list(m.host.__dict__.items()) == units
+    assert {
+        k: (list(v) if isinstance(v, list) else v) for k, v in m.host.__dict__.items()
+    } == units, "no command reached the user manager"
     assert token not in "\n".join(lines)
