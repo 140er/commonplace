@@ -66,7 +66,7 @@ def test_filtered_trace_live_recap_trace_roundtrip_keeps_one_query(activity_page
     page.locator("[data-ca-model]").select_option("other")
     page.get_by_text("Threads 1–15 of 15 retained", exact=False).wait_for()
     for tab in ("live", "recap", "trace"):
-        page.locator(f"[data-ca-tab={tab}]").click()
+        page.locator(f".ca-tabs [data-ca-tab={tab}]").click()
         page.locator('[data-ca-body][aria-busy="false"]').wait_for()
     assert page.locator("[data-ca-model]").input_value() == "other"
     assert page.locator("[data-ca-body] [data-ca-thread]").count() == 15
@@ -107,8 +107,48 @@ def test_phone_preserves_every_table_column_header(activity_page, width):
     page = activity_page
     page.set_viewport_size({"width": width, "height": 844})
     for tab in ("recap", "sinks", "trace", "live"):
-        page.locator(f"[data-ca-tab={tab}]").click()
+        page.locator(f".ca-tabs [data-ca-tab={tab}]").click()
         page.locator('[data-ca-body][aria-busy="false"]').wait_for()
         count = page.locator(".compute-activity thead th").count()
         assert count
         assert page.locator(".compute-activity").get_by_role("columnheader").count() == count
+        assert page.locator(".compute-activity tbody td:not([colspan])").evaluate_all(
+            "cells => cells.every(cell => { const refs = (cell.getAttribute('headers') || '').split(' ').map(id => document.getElementById(id)); return refs.length === 2 && refs.every(Boolean) && refs.some(el => el.scope === 'col') && refs.some(el => el.scope === 'row'); })"
+        )
+
+
+def test_global_sinks_and_trace_refresh_keep_independent_scopes(activity_page):
+    page = activity_page
+
+    def tab(name):
+        page.locator(f".ca-tabs [data-ca-tab={name}]").click()
+        page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+
+    def leader():
+        return (
+            page.get_by_role("heading", name="Slowest threads and cards", exact=True)
+            .locator("..")
+            .locator("[data-ca-thread]")
+            .first.get_attribute("data-ca-thread")
+        )
+
+    tab("sinks")
+    baseline = leader()
+    assert baseline
+    tab("trace")
+    page.get_by_role("button", name="Next", exact=True).click()
+    page.get_by_text("Threads 26–50 of 130 retained", exact=False).wait_for()
+    tab("sinks")
+    assert leader() == baseline
+    tab("trace")
+    page.locator("[data-ca-model]").select_option("other")
+    page.get_by_text("Threads 1–15 of 15 retained", exact=False).wait_for()
+    tab("sinks")
+    assert leader() == baseline
+    tab("recap")
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    tab("trace")
+    assert page.locator("[data-ca-model]").input_value() == "other"
+    assert page.locator("[data-ca-body] [data-ca-thread]").count() == 15
+    assert "Threads 1–15 of 15 retained" in page.locator(".ca-page").inner_text()

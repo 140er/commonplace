@@ -82,7 +82,7 @@ def test_auxiliary_scans_and_retained_samples_obey_the_budget(tmp_path, monkeypa
                     '{"sourcePoint":{"runId":"r1"}}',
                 ),
             )
-    counts = collections.Counter()
+    counts: collections.Counter[str] = collections.Counter()
     original_rows, original_finish = Collector.rows, Collector.finish
     retained = {}
 
@@ -113,6 +113,8 @@ def test_auxiliary_scans_and_retained_samples_obey_the_budget(tmp_path, monkeypa
     assert max(counts.values()) <= limits.metadata
     assert max(retained.values()) <= limits.metadata
     assert snapshot["coverage"]["partial"]
+    for name in ("asks", "retries", "transfers"):
+        assert snapshot["coverage"]["scans"][name] == {"scanned": 4, "limit": 4, "truncated": True}
 
 
 def test_pr_link_overflow_cannot_be_a_complete_merged_zero(tmp_path):
@@ -137,6 +139,179 @@ def test_pr_link_overflow_cannot_be_a_complete_merged_zero(tmp_path):
     snapshot = collect(path, START, END)
     assert snapshot["coverage"]["partial"]
     assert snapshot["metrics"]["prs_merged"] == {"value": None, "reason": "partial_scan"}
+    assert snapshot["coverage"]["scans"]["pr_links"]["truncated"]
+
+
+def test_auxiliary_budgets_ignore_old_foreign_and_ineligible_rows(tmp_path, monkeypatch):
+    path = source(tmp_path / "source.sqlite")
+    with sqlite3.connect(path) as db:
+        for i in range(40):
+            for tid, at, kind in (
+                ("main", START - 100, "user_input"),
+                ("foreign", AT, "user_input"),
+                ("main", AT, "permission"),
+            ):
+                db.execute(
+                    f"INSERT INTO {PREFIX}runtime_requests VALUES (?,?,?,?,?,?)",
+                    (tid, kind, "resolved", timing.iso(at), timing.iso(at + 1), '{"answers":{}}'),
+                )
+            for label, rid, at, reason in (
+                ("old", "r1", START - 100, "retry"),
+                ("foreign", "foreign", AT, "retry"),
+                ("initial", "r1", AT, "initial"),
+            ):
+                db.execute(
+                    f"INSERT INTO {PREFIX}run_attempts VALUES (?,?,?,?)",
+                    (
+                        f"{label}-{i}",
+                        rid,
+                        "completed",
+                        json.dumps(
+                            {
+                                "reason": reason,
+                                "startedAt": timing.iso(at),
+                                "completedAt": timing.iso(at + 1),
+                            }
+                        ),
+                    ),
+                )
+            for tid, at, status in (
+                ("main", START - 100, "resolved_native"),
+                ("foreign", AT, "resolved_native"),
+                ("main", AT, "failed"),
+            ):
+                db.execute(
+                    f"INSERT INTO {PREFIX}context_transfers VALUES (?,?,?,?,?,?,?)",
+                    (
+                        tid,
+                        "foreign",
+                        "r3",
+                        "provider_handoff",
+                        timing.iso(at),
+                        status,
+                        '{"sourcePoint":{"runId":"r1"}}',
+                    ),
+                )
+        db.execute(
+            f"INSERT INTO {PREFIX}runtime_requests VALUES (?,?,?,?,?,?)",
+            (
+                "main",
+                "user_input",
+                "resolved",
+                timing.iso(AT + 5),
+                timing.iso(AT + 6),
+                '{"answers":{}}',
+            ),
+        )
+        db.execute(
+            f"INSERT INTO {PREFIX}run_attempts VALUES (?,?,?,?)",
+            (
+                "current",
+                "r1",
+                "completed",
+                json.dumps(
+                    {
+                        "reason": "retry",
+                        "startedAt": timing.iso(AT + 5),
+                        "completedAt": timing.iso(AT + 6),
+                    }
+                ),
+            ),
+        )
+        db.execute(
+            f"INSERT INTO {PREFIX}context_transfers VALUES (?,?,?,?,?,?,?)",
+            (
+                "main",
+                "child",
+                "r3",
+                "provider_handoff",
+                timing.iso(AT + 10),
+                "resolved_native",
+                '{"sourcePoint":{"runId":"r1"}}',
+            ),
+        )
+    counts: collections.Counter[str] = collections.Counter()
+    original = Collector.rows
+
+    def rows(self, sql, args=()):
+        table = next(
+            (
+                name
+                for name in ("runtime_requests", "run_attempts", "context_transfers")
+                if PREFIX + name in sql and "provider_turns" not in sql
+            ),
+            None,
+        )
+        for row in original(self, sql, args):
+            if table:
+                counts[table] += 1
+            yield row
+
+    monkeypatch.setattr(Collector, "rows", rows)
+    snapshot = collect(
+        path, START, END, limits=Limits(metadata=4, runs=10, items=10, turns=10, log_lines=10)
+    )
+    assert counts == {"runtime_requests": 3, "run_attempts": 1, "context_transfers": 1}
+    assert snapshot["metrics"]["asks"]["value"] == 3
+    assert snapshot["metrics"]["retries"]["value"] == 1
+    assert snapshot["metrics"]["handoffs"]["value"] == 1
+    assert not snapshot["coverage"]["partial"]
+
+
+def test_metadata_budget_follows_window_and_still_counts_future_starts_requested_now(tmp_path):
+    path = source(tmp_path / "source.sqlite")
+    with sqlite3.connect(path) as db:
+        for i in range(50):
+            db.execute(
+                f"INSERT INTO {PREFIX}runs VALUES (?,?,?,?,?,?,?)",
+                (
+                    f"old-{i}",
+                    "main",
+                    i + 10,
+                    "completed",
+                    timing.iso(START - 300),
+                    timing.iso(START - 200),
+                    json.dumps({"startedAt": timing.iso(START - 250)}),
+                ),
+            )
+        db.execute(
+            f"INSERT INTO {PREFIX}runs VALUES (?,?,?,?,?,?,?)",
+            (
+                "later",
+                "main",
+                100,
+                "completed",
+                timing.iso(AT),
+                timing.iso(END + 120),
+                json.dumps({"startedAt": timing.iso(END + 100)}),
+            ),
+        )
+    snapshot = collect(
+        path, START, END, limits=Limits(metadata=5, runs=10, items=10, turns=10, log_lines=10)
+    )
+    assert snapshot["metrics"]["runs_requested"]["value"] == 5
+    assert snapshot["metrics"]["runs_started"]["value"] == 3
+    assert snapshot["coverage"]["runs_seen"] == 4
+    assert snapshot["coverage"]["scans"]["runs"]["scanned"] == 5
+    assert not snapshot["coverage"]["partial"]
+
+
+def test_missing_linked_pr_state_is_not_a_known_zero(tmp_path):
+    path = source(tmp_path / "source.sqlite")
+    with sqlite3.connect(path) as db:
+        db.execute(
+            f"UPDATE {PREFIX}threads SET payload_json=json_insert(payload_json,'$.pullRequests[#]',json(?)) WHERE thread_id='main'",
+            (
+                json.dumps(
+                    {"host": "github.example.test", "repository": "sample/project", "number": 18}
+                ),
+            ),
+        )
+    snapshot = collect(path, START, END)
+    assert snapshot["coverage"]["pr_states"] == 1
+    assert snapshot["coverage"]["pr_unique"] == 2
+    for name in ("prs_open", "prs_closed", "prs_merged"):
+        assert snapshot["metrics"][name] == {"value": None, "reason": "pr_snapshot_missing"}
 
 
 @pytest.mark.parametrize("change", ["expires_at", "revoked", "owner", "workspace", "kind"])

@@ -93,7 +93,10 @@ failed request is distinct from a real zero-activity interval.
 
 Time sinks ranks the leading retained threads across all models for the selected
 source/window, independently of Trace pagination and model filters. Each tab
-reloads its own scope. Phone rows preserve token, time, percentile and call labels.
+reloads its own scope and corrects an offset beyond a shrinking filtered total.
+Phone rows preserve token, time, percentile and call labels, with programmatic
+column associations. Activity keeps its phone heading and compact named controls.
+Keyboard pagination restores focus and announces the new result range.
 An empty filtered Trace list means no retained traces match; collection/retention
 caps can omit observed work. A missing detail explains that Refresh only rereads
 the stored snapshot and cannot restore omitted detail.

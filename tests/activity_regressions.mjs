@@ -6,9 +6,10 @@ const threads = Array.from({ length: 31 }, (_, n) => ({ id: `thread_${n.toString
 const snapshot = { coverage: {}, threads, models: [], daily: [], metrics: {}, sinks: [], spans: [], handoffs: [], collected_at: 1795089600, window_start: 1795003200, window_end: 1795089600 };
 
 function harness() {
+  let available = threads;
   const nodes = new Map();
   const node = name => {
-    if (!nodes.has(name)) nodes.set(name, { innerHTML: '', value: '', dataset: {}, setAttribute() {}, querySelector() { return null; } });
+    if (!nodes.has(name)) nodes.set(name, { innerHTML: '', value: '', dataset: {}, setAttribute() {}, focus() {}, querySelector() { return null; } });
     return nodes.get(name);
   };
   const listeners = new Map(), requests = [];
@@ -17,12 +18,12 @@ function harness() {
     requests.push(url);
     if (url === '/api/compute/activity') return { hosts: [{ id: 'source', enabled: true }] };
     const query = new URL(url, 'https://example.test').searchParams;
-    const selected = threads.filter(row => !query.get('model') || row.model === query.get('model'));
+    const selected = available.filter(row => !query.get('model') || row.model === query.get('model'));
     const offset = Number(query.get('offset'));
     return { snapshot: { ...snapshot, threads: selected.slice(offset, offset + 25) }, thread_models: ['other', 'gpt-6.1-sol'], page: { total: selected.length, next: offset + 25 < selected.length ? offset + 25 : null } };
   } });
   const settled = () => new Promise(resolve => setImmediate(resolve));
-  return { node, requests, stop: () => controller.stop(), settled,
+  return { node, requests, stop: () => controller.stop(), settled, retain: rows => { available = rows; },
     click: (key, value = '') => listeners.get('click')({ target: { closest: () => ({ dataset: key === 'tab' ? { caTab: value } : {}, hasAttribute: attr => attr === `data-ca-${key}` }) } }),
     model: value => { node('model').value = value; listeners.get('change')({ target: node('model') }); },
   };
@@ -50,6 +51,17 @@ test('Trace scope remains coherent after Recap Refresh', async () => {
     assert.equal(query.get('model'), 'gpt-6.1-sol');
     assert.match(h.node('body').innerHTML, /of 29 retained/);
     assert.equal(h.node('model').value, 'gpt-6.1-sol');
+  } finally { h.stop(); }
+});
+
+test('a shrinking retained result resets an invalid offset and its range together', async () => {
+  const h = harness();
+  try {
+    await h.settled(); h.click('tab', 'trace'); await h.settled();
+    h.click('next'); await h.settled();
+    h.retain(threads.slice(0, 5)); h.click('refresh'); await h.settled();
+    assert.match(h.node('body').innerHTML, /Threads 1–5 of 5 retained/);
+    assert.equal(new URL(h.requests.at(-1), 'https://example.test').searchParams.get('offset'), '0');
   } finally { h.stop(); }
 });
 

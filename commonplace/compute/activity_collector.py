@@ -258,7 +258,7 @@ class Collector:
             json_extract(t.payload_json,'$.createdBy'),t.updated_at
             FROM {PREFIX}runs r LEFT JOIN {PREFIX}threads t ON t.thread_id=r.thread_id
             WHERE {eligible} OR (r.status='queued' AND activity_timestamp(r.requested_at)<{self.window[1]})
-            OR (activity_timestamp({start}) IS NULL AND r.status!='queued' AND {requested_in_window})"""
+            OR ({requested_in_window})"""
         for (
             rid,
             tid,
@@ -705,7 +705,13 @@ class Collector:
                 ("prs_closed", "closed"),
                 ("prs_merged", "merged"),
             ):
-                self.put(key, sum(value == state for value, _ in known))
+                self.put(
+                    key,
+                    sum(value == state for value, _ in known)
+                    if len(known) == len(states)
+                    else None,
+                    "pr_snapshot_missing",
+                )
         if self.scans["pr_links"]["truncated"] or self.scans["runs"]["truncated"]:
             for key in ("prs_open", "prs_closed", "prs_merged"):
                 self.put(key, reason="partial_scan")
@@ -820,6 +826,8 @@ class Collector:
             row["buckets"] = [bucket for _, bucket in sorted(row.pop("bucket_map").items())]
             result.append(row)
         self.coverage["threads_kept"] = len(result)
+        if len(threads) > len(result):
+            self.coverage["partial"] = True
         return result, sorted(sink_rows, key=lambda row: row["seconds"], reverse=True)
 
 

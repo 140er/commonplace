@@ -53,10 +53,17 @@
 .ca-phases { font-size: 12px; color: var(--text-2); margin: 16px 0; }
 .ca-phases i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
 .ca-field-label { display: none; }
+.ca-action-short { display: none; }
 @media(max-width: 900px) { .ca-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width: 640px) {
-  .ca-title { margin: 16px 0; }
-  .ca-title h1 { font-size: 22px; }
+  .ca-title { margin: 8px 0; gap: 6px; flex-wrap: nowrap; align-items: center; }
+  .ca-title h1 { font-size: 20px; }
+  :root[data-ui="deck"] .shell .center .compute-activity .ca-title h1 { display: block; }
+  .ca-title p { display: none; }
+  .ca-actions { gap: 4px; flex-wrap: nowrap; }
+  .ca-action-full { display: none; }
+  .ca-action-short { display: inline; }
+  :root[data-ui="deck"] .shell .center .compute-activity .ca-actions .btn { padding: 8px 6px; min-width: 44px; font-size: 13px; }
   .ca-panel { padding: 14px; }
   .ca-lead { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .ca-metrics { grid-template-columns: minmax(0,1fr); }
@@ -66,7 +73,7 @@
   .compute-activity select { padding: 8px 4px; font-size: 13px; }
   .ca-tabs { gap: 16px; }
   .compute-activity table, .compute-activity tbody { display: block; }
-  .compute-activity thead { display: none; }
+  .compute-activity thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .compute-activity tbody tr { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px 12px; border-bottom: 1px solid var(--line); padding: 12px 0; }
   .compute-activity tbody th, .compute-activity tbody td { padding: 0; min-width: 0; border: 0; text-align: left; }
   .compute-activity tbody th { grid-column: 1 / -1; }
