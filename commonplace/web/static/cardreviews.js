@@ -21,6 +21,7 @@ const SUMMARY_WORDS = { addressed: "fixed", answered: "answered", needs_you: "ne
 const LONG = 400;
 const PAGE = 50;
 const POLL_MS = 5000;
+const LOADING = '<p class="run-empty" data-review-loading>Loading review comments…</p>';
 
 const sentence = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}${/[.!?]$/.test(value) ? "" : "."}` : "";
 const networkError = (error) => !error?.status;
@@ -173,7 +174,13 @@ export async function attachCardReviews(mount, card, { api = request, previous =
   const key = keyOf(card);
   const state = { expanded: new Set(), originals: new Map() };
   let revision = 0, last = null, wanted = null, polling = false, limit = PAGE;
-  const live = (token) => token === revision && slot.isConnected;
+  const live = (token) => {
+    if (!slot.isConnected) {
+      if (body.innerHTML === LOADING) body.innerHTML = "";
+      return false;
+    }
+    return token === revision;
+  };
   const say = (note) => { status.textContent = note || ""; };
   const focus = (selector) => {
     const target = selector && slot.querySelector?.(selector);
@@ -206,7 +213,7 @@ export async function attachCardReviews(mount, card, { api = request, previous =
     slot.hidden = false;
     focus(previous.focus);
   } else {
-    paint('<p class="run-empty" data-review-loading>Loading review comments…</p>');
+    paint(LOADING);
   }
   async function load(note) {
     const token = ++revision;

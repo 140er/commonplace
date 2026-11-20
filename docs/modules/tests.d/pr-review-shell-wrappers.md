@@ -1,0 +1,4 @@
+- **Owns:** Shared-shell wrapper compatibility checked with the card review slice, and navigation in the existing Compute browser journeys.
+- **Promises:** Console, Decide and Deck retain their route checks. A detached card cannot keep its first-read loading placeholder. Compute journeys open the existing Advanced disclosure before inspecting its controls, including after reload; all approval, permission and no-execution assertions remain.
+- **How it fails:** A routing or lifecycle regression fails its existing assertion. Browser setup skips provide no proof; hidden Advanced contents must be opened through the page rather than treated as missing controls.
+- **Tests:** `tests/test_card_reviews_ui.py`, `tests/test_commonplace_deck.py`, `tests/test_card_log_links_ui.py`, `tests/test_commonplace_console_render.py`, `tests/test_commonplace_decide.py`, `tests/test_compute_browser.py` and the complete set of node-harness wrapper files.
