@@ -194,8 +194,26 @@ def card_start(
         if refusal is not None:
             raise refusal
 
+    from commonplace.projects import model_modes
+
+    person = ctx.principal.user_id if ctx.principal.person else None
+    try:
+        account = model_modes.decide(
+            ctx.db, ctx.principal.workspace_id, board["slug"], person=person, machine=machine
+        )
+    except model_modes.ModeUnavailable:
+        raise runner_bridge.StartRefused(
+            "mode_unavailable", "the model mode cannot be read right now; retry shortly"
+        ) from None
+    if account.refusal is not None:
+        if account.refusal.code == "connection_missing" and person:
+            model_modes.note_missing(
+                ctx.db, ctx.principal.workspace_id, person, board["slug"], None
+            )
+        raise runner_bridge.StartRefused(account.refusal.code, account.refusal.message)
     status, row = jobs.create(
         store,
+        account=account.record(),
         machine=machine,
         requested_by=(
             "user:" + ctx.principal.user_id

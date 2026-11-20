@@ -464,6 +464,20 @@
           "name": "memory_search"
         },
         {
+          "description": "Read how models are provided: the workspace's mode (org, personal, hybrid or unset: no choice made yet) and, for one project, which account each role's next run would use for you and why. Never shows another person's accounts or any credential. It only reads: the owner changes a mode in settings.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "description": "A project's board slug, for the account per role.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "model_mode"
+        },
+        {
           "description": "Read the visible decision queue and origin releases. Eligible coordinators receive origin work without decide authority; signed-in owners receive release or configuration recovery only when needed. Ask authority remains separate.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2804,6 +2818,7 @@
       "mempalace_status",
       "mempalace_traverse",
       "mempalace_update_drawer",
+      "model_mode",
       "needs_me",
       "orch_card_start",
       "orch_checkpoint",
@@ -4566,6 +4581,20 @@
             "type": "object"
           },
           "name": "memory_search"
+        },
+        {
+          "description": "Read how models are provided: the workspace's mode (org, personal, hybrid or unset: no choice made yet) and, for one project, which account each role's next run would use for you and why. Never shows another person's accounts or any credential. It only reads: the owner changes a mode in settings.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "description": "A project's board slug, for the account per role.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "model_mode"
         },
         {
           "description": "Read the visible decision queue and origin releases. Eligible coordinators receive origin work without decide authority; signed-in owners receive release or configuration recovery only when needed. Ask authority remains separate.",
@@ -6901,6 +6930,7 @@
       "mempalace_list_wings",
       "mempalace_search",
       "mempalace_traverse",
+      "model_mode",
       "needs_me",
       "orch_card_start",
       "orch_checkpoint",

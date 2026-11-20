@@ -21,13 +21,16 @@ TOPIC = "chat"
 ENDS = ("completed", "errored", "uncertain")
 
 
-def start(conn, job, machine, now):
-    """Open the ledger row of a chat job a machine just leased (idempotent)."""
+def start(conn, job, machine, now, account=None):
+    """Open the ledger row of a chat job a machine just leased (idempotent). ``account`` holds
+    the model mode's run-record fields (``jobs.ACCOUNT_COLUMNS``), pinned when the machine leases."""
     conn.execute(ledger.TABLE)
+    account = account or {}
     conn.execute(
         "INSERT INTO run_ledger(job_id,task_number,board_slug,project,topic,machine_id,agent,"
-        "requested_by,model_provider,model,status,started_at,created_at,updated_at,source) "
-        "VALUES (?,0,?,?,?,?,?,?,?,?,'started',?,?,?,?) ON CONFLICT(job_id) DO NOTHING",
+        "requested_by,model_provider,model,status,started_at,created_at,updated_at,source,"
+        "mode,mode_source,account_kind,account_label,account_person) "
+        "VALUES (?,0,?,?,?,?,?,?,?,?,'started',?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO NOTHING",
         (
             job["id"],
             job["board"],
@@ -42,6 +45,11 @@ def start(conn, job, machine, now):
             now,
             now,
             SOURCE,
+            account.get("mode"),
+            account.get("mode_source"),
+            account.get("account_kind"),
+            account.get("account_label"),
+            account.get("account_person"),
         ),
     )
     budgets.after_run(conn, job["id"], now)

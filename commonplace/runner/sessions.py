@@ -14,7 +14,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 from commonplace.orch import schema, store as configs
-from commonplace.projects import models, orchestration, split
+from commonplace.projects import model_modes, models, orchestration, split
 from commonplace.runner import jobs, predicate, registry
 from commonplace.sessions import person_principal
 
@@ -143,7 +143,20 @@ def _authority(gateway, ws, conn, version, board, row=None):
         return "model_unresolved"
     if row and (row["model_provider"], row["model"]) != (choice.provider, choice.model):
         return "model_changed"
-    return None
+    # Model modes (card #617): a board session belongs to the person who accepted the config and
+    # never runs on another account than the mode gives that person.
+    try:
+        account = model_modes.decide(
+            gateway.db,
+            ws,
+            board["slug"],
+            person=actor.removeprefix("user:") if actor.startswith("user:") else None,
+            provider=choice.provider,
+            machine=machine,
+        )
+    except model_modes.ModeUnavailable:
+        return "mode_unavailable"
+    return account.refusal.code if account.refusal is not None else None
 
 
 def _new(conn, gateway, ws, version, board):

@@ -12,7 +12,21 @@ from tests.runner_harness import (
 )
 from tests.test_runner_start import _accepted, _enroll, _lease, _result, _start, _starting, _status
 
-ROW_KEYS = {"job", "machine_label", "state", "thread_id", "outcome_code", "updated_at", "run"}
+ROW_KEYS = {
+    "job",
+    "machine_label",
+    "state",
+    "thread_id",
+    "outcome_code",
+    "updated_at",
+    "run",
+    "account",
+    "run_id",
+    "cancel_requested_at",
+    "stop_status",
+    "stop_code",
+    "stop_confirmed_at",
+}
 
 
 def _uncertain(hub, owner):

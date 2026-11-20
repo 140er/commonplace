@@ -15,7 +15,7 @@ from commonplace.chat import front, store
 from commonplace.chat.types import MAX_REPLY_CHARS
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
-from commonplace.projects import models
+from commonplace.projects import model_modes, models
 
 from . import budgets, chat_context, chat_ledger, costs, jobs, registry
 from .registry import CHAT_MODEL
@@ -199,7 +199,18 @@ def sweep(db, now: float) -> None:
         )
 
 
-def online(db, workspace_id: str, user_id: str, now: float, cli: str | None = None) -> list[dict]:
+def online(
+    db,
+    workspace_id: str,
+    user_id: str,
+    now: float,
+    cli: str | None = None,
+    allowed: frozenset | None = None,
+    excluded: frozenset = frozenset(),
+) -> list[dict]:
+    """The poster's own machines that polled recently. ``allowed`` (a person's account: only the
+    machines behind their connections) and ``excluded`` (the org account: no private machine)
+    come from the model mode; with neither, today's rule."""
     with db._lock:
         rows = db._conn.execute(
             "SELECT s.machine_id,s.relay_always,s.clis FROM chat_runners_seen s "
@@ -212,7 +223,9 @@ def online(db, workspace_id: str, user_id: str, now: float, cli: str | None = No
     return [
         {"machine_id": row["machine_id"], "relay_always": bool(row["relay_always"])}
         for row in rows
-        if cli is None or cli in json.loads(row["clis"])
+        if (cli is None or cli in json.loads(row["clis"]))
+        and (allowed is None or row["machine_id"] in allowed)
+        and row["machine_id"] not in excluded
     ]
 
 
@@ -230,13 +243,75 @@ def main_active(gateway, principal, board: str, now: float) -> bool:
     )
 
 
-def enqueue(gateway, principal, board: str, message_id: int, now: float) -> bool:
+def decision_for(gateway, principal, board: str):
+    """The model mode's decision for this person's chat message (``None``: it cannot be read)."""
+    choice = models.resolve(gateway.db, principal.workspace_id, board, "main")
+    try:
+        return model_modes.decide(
+            gateway.db,
+            principal.workspace_id,
+            board,
+            person=principal.user_id,
+            provider=choice.provider if choice else None,
+        )
+    except model_modes.ModeUnavailable as exc:
+        log_failure(logger, "chat model mode unreadable", exc)
+        return None
+
+
+def _refuse_account(gateway, workspace_id, board, message_id, user_id, code, text) -> None:
+    """Tell the person in the chat why their message got no answer (never silent)."""
+    try:
+        store.open_replies(gateway, workspace_id).add(
+            board=board,
+            message_id=message_id,
+            for_user=user_id,
+            kind="answer",
+            code=code,
+            text=text,
+            redacted=(),
+            model=None,
+        )
+    except (OSError, sqlite3.Error, TimeoutError) as exc:
+        log_failure(logger, "chat account refusal reply failed", exc)
+
+
+def enqueue(gateway, principal, board: str, message_id: int, now: float, decision=None) -> bool:
     db = gateway.db
     sweep(db, now)
     ws, user = principal.workspace_id, principal.user_id
     choice = models.resolve(db, ws, board, "main")
     cli, model = (choice.provider, choice.model) if choice else (None, None)
-    eligible = online(db, ws, user, now, cli)
+    decision = decision or decision_for(gateway, principal, board)
+    if decision is None:
+        _refuse_account(
+            gateway,
+            ws,
+            board,
+            message_id,
+            user,
+            "mode_unavailable",
+            "The model mode cannot be read right now, so this message was not sent. Try again shortly.",
+        )
+        return False
+    if decision.refusal is not None:
+        if decision.refusal.code == "connection_missing":
+            model_modes.note_missing(db, ws, user, board, cli)
+        _refuse_account(
+            gateway, ws, board, message_id, user, decision.refusal.code, decision.refusal.message
+        )
+        return False
+    eligible = online(
+        db,
+        ws,
+        user,
+        now,
+        cli,
+        allowed=frozenset(decision.machine_ids) if decision.kind == "person" else None,
+        excluded=model_modes.private_machine_ids(db, ws)
+        if decision.exclude_private
+        else frozenset(),
+    )
     if not eligible:
         return False
     if main_active(gateway, principal, board, now) and not any(m["relay_always"] for m in eligible):
@@ -385,6 +460,41 @@ def lease(
             log_failure(logger, "chat relay finish failed", exc)
         return None
     try:
+        account = model_modes.decide(
+            db,
+            claimed["workspace_id"],
+            claimed["board"],
+            person=claimed["user_id"],
+            provider=claimed["cli"],
+            machine=machine,
+        )
+    except model_modes.ModeUnavailable as exc:
+        log_failure(logger, "chat model mode unreadable at lease", exc)
+        account = None
+    if account is None or account.refusal is not None:
+        # The mode or the connection changed since the message was queued: never run it on a
+        # different account, and tell the person.
+        with db._lock:
+            _finish(
+                db._conn,
+                claimed,
+                "skipped",
+                account.refusal.code if account else "mode_unavailable",
+                now,
+            )
+        _refuse_account(
+            gateway,
+            claimed["workspace_id"],
+            claimed["board"],
+            claimed["message_id"],
+            claimed["user_id"],
+            account.refusal.code if account else "mode_unavailable",
+            account.refusal.message
+            if account
+            else "The model mode cannot be read right now; try again shortly.",
+        )
+        return None
+    try:
         with jobs.open_store(gateway, claimed["workspace_id"]).transaction() as rconn:
             _settle(db, rconn, now)
             stop = budgets.stop_reason(
@@ -395,7 +505,7 @@ def lease(
                 task_number=None,
             )
             if stop is None:
-                chat_ledger.start(rconn, claimed, machine, _ts(now))
+                chat_ledger.start(rconn, claimed, machine, _ts(now), account.record())
     except Exception as exc:
         log_failure(logger, "chat lease admission failed", exc)
         with db._lock:
