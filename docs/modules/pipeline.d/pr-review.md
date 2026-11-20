@@ -1,0 +1,1 @@
+- **Owns:** `cards.py` exposes `pick_with_reason`, the one rule for choosing the card of a pull request (and whether the choice was ambiguous), which the review-comment mapping reuses; `_pick` is unchanged.

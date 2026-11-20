@@ -1,0 +1,1 @@
+- **Tests:** `tests/spaces_surfaces.json` pins `pr_review_list` and `pr_review_report` in the standard and full profiles, and the public-surface route inventory lists the `/api/pr-review` routes.

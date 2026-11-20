@@ -1,0 +1,1 @@
+- **Owns:** `pr_review_report` is in the checked-writes list, so a stale rules sequence refuses it like every other Coworker write.
