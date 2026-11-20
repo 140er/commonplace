@@ -30,6 +30,8 @@ from .store import ROUNDS_DEFAULT, open_review
 logger = logging.getLogger(__name__)
 
 RETURN_CHOICE = "Return for more work"
+# One pass looks at this many PRs, longest-waiting first; the rest wait for the next pass.
+MAX_PRS_PER_PASS = 20
 
 
 def _now():
@@ -45,7 +47,7 @@ def run(gateway, workspace_id: str, now: datetime | None = None) -> list[dict]:
     if not boards:
         return []
     results = []
-    for pr_row in store.waiting_prs():
+    for pr_row in store.waiting_prs(MAX_PRS_PER_PASS):
         try:
             outcome = _consider(gateway, workspace_id, store, boards, pr_row, now)
         except Exception as exc:  # one PR's trouble must not hide the others

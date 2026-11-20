@@ -76,6 +76,10 @@ REASONS = {
         "The Coworker named a commit that is not on the PR.",
         "Look at the branch; retry or handle it yourself.",
     ),
+    "files_unknown": (
+        "The files this fix changes were not reported, so the checks rule could not be applied.",
+        "Look at the change yourself, and check that the comment reader sends changed files.",
+    ),
     "touches_checks": (
         "The fix changes the checks or rules that judge the PR.",
         "Read the change; accept it or ask for another.",

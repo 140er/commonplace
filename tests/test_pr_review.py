@@ -12,7 +12,6 @@ import pytest
 
 from commonplace.control_db import ControlError
 from commonplace.pr_review import intake, routes, status as st, store as review_store, trigger
-from commonplace.pr_review.store import Refused
 from tests._console_helpers import console_hub_fixture, successful  # noqa: F401
 from tests.test_commonplace_boards import mcp, service
 
@@ -308,7 +307,7 @@ def test_a_card_that_cannot_be_seen_is_the_same_404_as_one_that_does_not_exist(w
 def test_the_stored_words_are_verbatim_and_everything_else_shows_them_redacted(world, caplog):
     h = world
     number = card(h)
-    secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    secret = "ghp_" + "A1b2" * 9  # built at run time: no token-shaped literal in the source
     text = f"Use token {secret} here and rename x."
     with caplog.at_level(logging.DEBUG):
         post(h, batch(comment(1, text)))
@@ -376,9 +375,7 @@ def test_only_the_holder_can_take_or_report_and_others_see_the_list(world):
     ok, text = take(h, number, token=h.t2)
     assert not ok and "do not hold" in text
     ok, text = mcp(h, h.t2, "pr_review_list", card=number)
-    assert (
-        not ok or "PR #7" in text
-    )  # a reader may look; here the other Coworker cannot see the wing's card
+    assert ok and "PR #7" in text  # a reader of the wing may look at the list
     working = take(h, number)
     assert working[0]
     ok, text = mcp(
@@ -388,14 +385,15 @@ def test_only_the_holder_can_take_or_report_and_others_see_the_list(world):
         card=number,
         reports=[{"comment": 1, "rev": 1, "outcome": "answered", "reply": "no"}],
     )
-    assert not ok and ("do not hold" in text or "not found" in text)
+    assert not ok and "do not hold" in text
 
 
 def test_a_fix_is_addressed_when_the_commit_is_the_head_the_feeder_saw(world):
     h = world
     number = start(h)
     take(h, number)
-    post(h, batch(head=FIX))  # the feeder sees the Coworker's push
+    # the feeder sees the Coworker's push and reports which files it changed
+    post(h, batch(head=FIX, changed_files=["app/main.py"]))
     ok, text = mcp(
         h,
         h.t1,
@@ -439,7 +437,7 @@ def test_a_fix_the_feeder_has_not_seen_waits_and_is_confirmed_or_held_later(worl
         reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}],
     )
     assert rows(h)["1"]["status"] == "working" and rows(h)["1"]["fix_confirmed"] is False
-    post(h, batch(head=FIX))
+    post(h, batch(head=FIX, changed_files=["app/main.py"]))
     h.store.settle(datetime.now(timezone.utc))
     assert rows(h)["1"]["status"] == "addressed"
     # a second comment whose commit never shows up becomes one `needs you` after the grace
@@ -788,8 +786,6 @@ def test_intake_limits_are_fixed_and_validation_is_pure():
     assert intake.is_verdict("Reviewed head: " + HEAD + "\nVerdict: PASS")
     assert not intake.is_verdict("Reviewed head: " + HEAD + "\nVerdict: PASS\nplus words")
     assert review_store.LIMITS["request_comments"] == intake.MAX_COMMENTS == 100
-    with pytest.raises(Refused):
-        raise Refused("comment_changed")
     assert routes.PREFIX == "/api/pr-review"
 
 
@@ -815,3 +811,84 @@ def test_a_workspace_that_never_used_the_loop_gets_no_file_from_the_sweep(world)
     assert h.hub.db is not None and not h.store.path.exists()
     assert h.request(h.owner, "GET", "/api/pr-review/prs")[1] == {"prs": []}
     assert not h.store.path.exists()
+
+
+# ── the checks rule never rests on an earlier head's file list ──
+
+
+def fixed_with_unknown_files(h):
+    """A fix for the PR's current head whose changed files the feeder has not reported."""
+    number = start(h)
+    take(h, number)
+    # head A carried a harmless file list; the Coworker's push B arrives with no list at all
+    post(h, batch(head=HEAD, changed_files=["app/main.py"]))
+    post(h, batch(head=FIX))
+    assert h.store.pr(REPO, 7)["changed_files"] == [] and h.store.pr(REPO, 7)["changed_head"] == ""
+    ok, text = mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}],
+    )
+    assert ok, text
+    return number
+
+
+def test_a_fix_whose_files_are_unknown_is_held_not_addressed(world):
+    h = world
+    fixed_with_unknown_files(h)
+    one = rows(h)["1"]
+    assert (one["status"], one["fix_confirmed"]) == ("working", False)
+    h.store.settle(datetime.now(timezone.utc))
+    assert rows(h)["1"]["status"] == "working"  # waiting for the files, inside the grace
+
+
+def test_the_files_for_the_current_head_decide_when_they_arrive(world):
+    h = world
+    fixed_with_unknown_files(h)
+    post(h, batch(head=FIX, changed_files=["app/main.py", "pyproject.toml"]))
+    h.store.settle(datetime.now(timezone.utc))
+    one = rows(h)["1"]
+    assert (one["status"], one["reason"]) == ("needs_you", "touches_checks")
+
+
+def test_harmless_files_for_the_current_head_confirm_the_fix(world):
+    h = world
+    fixed_with_unknown_files(h)
+    post(h, batch(head=FIX, changed_files=["app/main.py"]))
+    h.store.settle(datetime.now(timezone.utc))
+    assert rows(h)["1"]["status"] == "addressed"
+
+
+def test_files_that_never_come_ask_a_person_after_the_grace(world):
+    h = world
+    fixed_with_unknown_files(h)
+    post(h, batch(head=FIX, fetched_at=when(2)))  # the feeder read again, still no file list
+    h.store.settle(datetime.now(timezone.utc) + timedelta(minutes=11))
+    one = rows(h)["1"]
+    assert (one["status"], one["reason"]) == ("needs_you", "files_unknown") and one["next"]
+
+
+def test_a_repeated_post_of_the_same_head_keeps_its_known_files(world):
+    h = world
+    post(h, batch(head=FIX, changed_files=[".github/workflows/ci.yml"]))
+    post(h, batch(head=FIX))
+    got = h.store.pr(REPO, 7)
+    assert got["changed_files"] == [".github/workflows/ci.yml"] and got["changed_head"] == FIX
+
+
+# ── one pass is bounded ──
+
+
+def test_one_pass_looks_at_a_bounded_number_of_prs_longest_waiting_first(world, monkeypatch):
+    h = world
+    board_on(h)
+    for n in (21, 22, 23):
+        post(h, batch(comment(n), pr=n))
+    assert [p["pr"] for p in h.store.waiting_prs(2)] == [21, 22]
+    seen = []
+    monkeypatch.setattr(trigger, "MAX_PRS_PER_PASS", 2)
+    monkeypatch.setattr(trigger, "_consider", lambda g, w, s, b, row, now: seen.append(row["pr"]))
+    trigger.run(h.gateway, h.workspace)
+    assert seen == [21, 22]

@@ -33,6 +33,8 @@ RUN_COMMENTS = 25
 STALE_AFTER = timedelta(minutes=30)
 COMMIT_GRACE = timedelta(minutes=10)
 MAX_ATTEMPTS = 3
+PENDING = ("pending", "files_pending")
+WAITING_PRS_LIMIT = 20
 MAX_PR_COMMENTS = 2000
 MAX_WORKSPACE_COMMENTS = 200_000
 MAX_REPLY = 4000
@@ -233,9 +235,10 @@ class ReviewStore:
                 "head_repo=CASE WHEN excluded.head_repo != '' THEN excluded.head_repo ELSE head_repo END, "
                 "fetched_at=excluded.fetched_at, "
                 "changed_files=CASE WHEN excluded.changed_head != '' THEN excluded.changed_files "
-                "ELSE changed_files END, "
+                "WHEN excluded.head != head THEN '[]' ELSE changed_files END, "
                 "changed_head=CASE WHEN excluded.changed_head != '' THEN excluded.changed_head "
-                "ELSE changed_head END, updated_at=excluded.updated_at",
+                "WHEN excluded.head != head THEN '' ELSE changed_head END, "
+                "updated_at=excluded.updated_at",
                 (
                     repo,
                     pr,
@@ -475,15 +478,18 @@ class ReviewStore:
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
-    def waiting_prs(self) -> list[dict]:
-        """PRs with at least one comment ``new`` (what the trigger looks at)."""
+    def waiting_prs(self, limit: int = WAITING_PRS_LIMIT) -> list[dict]:
+        """Up to ``limit`` PRs with at least one comment ``new`` (what the trigger looks at),
+        the longest-waiting first."""
         with self._lock:
             conn = self._connection(create=False)
             if conn is None:
                 return []
             rows = conn.execute(
-                "SELECT DISTINCT p.* FROM pr_review_prs p JOIN pr_review_comments c "
-                "ON c.repo=p.repo AND c.pr=p.pr WHERE c.status='new'"
+                "SELECT p.* FROM pr_review_prs p WHERE EXISTS (SELECT 1 FROM pr_review_comments c "
+                "WHERE c.repo=p.repo AND c.pr=p.pr AND c.status='new') "
+                "ORDER BY p.updated_at, p.repo, p.pr LIMIT ?",
+                (limit,),
             ).fetchall()
         return [self._pr_view(r) for r in rows]
 
@@ -664,8 +670,8 @@ class ReviewStore:
                     "SELECT * FROM pr_review_prs WHERE repo=? AND pr=?", (row["repo"], row["pr"])
                 ).fetchone()
                 code = self._commit_problem(pr_row, commit)
-                pending = 1 if code == "pending" else 0
-                if code not in (None, "pending"):
+                pending = 1 if code in PENDING else 0
+                if code not in (None, *PENDING):
                     self._move(
                         conn,
                         row,
@@ -711,14 +717,17 @@ class ReviewStore:
 
     @staticmethod
     def _commit_problem(pr_row, commit):
-        """``None`` when the commit is the PR head the feeder saw (and touches no protected path),
-        ``"pending"`` while the feeder has not seen it, else the reason code."""
+        """``None`` when the commit is the PR head the feeder saw and the feeder reported that
+        head's changed files, none of them protected. ``"pending"`` while the feeder has not seen
+        the commit, ``"files_pending"`` while it has not reported that head's changed files (the
+        list is unknown, never taken from an earlier head), else the reason code."""
         if pr_row is None or pr_row["head"] != commit:
             return "pending"
-        if pr_row["changed_head"] == commit:
-            for path in json.loads(pr_row["changed_files"] or "[]"):
-                if path.startswith(PROTECTED) or path in PROTECTED:
-                    return "touches_checks"
+        if pr_row["changed_head"] != commit:
+            return "files_pending"
+        for path in json.loads(pr_row["changed_files"] or "[]"):
+            if path.startswith(PROTECTED) or path in PROTECTED:
+                return "touches_checks"
         return None
 
     def settle(self, now: datetime) -> dict:
@@ -755,7 +764,7 @@ class ReviewStore:
                         fix_pending=0,
                     )
                     out["confirmed"] += 1
-                elif code != "pending":
+                elif code not in PENDING:
                     self._move(
                         conn, row, st.NEEDS_YOU, code, row["holder"], at, kind="held", fix_pending=0
                     )
@@ -767,7 +776,7 @@ class ReviewStore:
                         conn,
                         row,
                         st.NEEDS_YOU,
-                        "commit_not_found",
+                        "commit_not_found" if code == "pending" else "files_unknown",
                         row["holder"],
                         at,
                         kind="held",
