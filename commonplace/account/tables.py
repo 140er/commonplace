@@ -75,6 +75,8 @@ RULES = {
     "chat_runner_jobs": Rule(user=_U, workspace=_W),
     "chat_runners_seen": Rule(user=_U, workspace=_W),
     "connections": Rule(user=_U, workspace=_W),
+    "compute_activity_consent": Rule(user=("owner_id",), workspace=_W, connection=_C),
+    "compute_activity_snapshots": Rule(user=("owner_id",), workspace=_W, connection=_C),
     "console_settings": Rule(workspace=_W, connection=_C),
     "coworker_model_attempts": Rule(user=_U, workspace=_W),
     "email_challenges": Rule(email=("email",)),
@@ -241,7 +243,7 @@ def unclassified(tables: dict) -> list:
         for name, columns in tables.items()
         if name not in RULES
         or not set(RULES[name].columns()) <= set(columns)
-        or (RULES[name].parent is not None and RULES[name].parent[1] not in tables)
+        or ((parent := RULES[name].parent) is not None and parent[1] not in tables)
     )
 
 

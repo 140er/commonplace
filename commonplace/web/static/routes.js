@@ -34,7 +34,7 @@ export const botPage = (id, coworkerOnly = false) => `#/bots/${encodeURIComponen
 
 /** Nested workspace pages, separate from the existing single-segment bot IDs. */
 export function workspaceRoute(hash = "") {
-  if (hash === "#/compute" || hash === "#/compute/management") return { screen: "compute", management: hash.endsWith("/management") };
+  if (["#/compute", "#/compute/management", "#/compute/activity"].includes(hash)) return { screen: "compute", management: hash.endsWith("/management"), activity: hash.endsWith("/activity") };
   const match = /^#\/bots\/([A-Za-z0-9_-]+)\/coworkers(?:\/(conversations)(?:\/([^/?]+)(?:\?message=([^&#]+))?)?)?$/.exec(hash);
   if (!match || (match[2] && match[1] !== "-")) return null;
   try {
