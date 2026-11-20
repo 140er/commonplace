@@ -26,7 +26,10 @@ def start_case(hub, request):
 
 
 def _decision(world, board):
-    return model_modes.decide(
+    resolver = getattr(model_modes, "resolve_account", None)
+    if resolver is None:
+        resolver = model_modes.decide
+    return resolver(
         world.db,
         world.ws,
         board,
