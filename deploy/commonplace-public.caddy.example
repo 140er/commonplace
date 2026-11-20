@@ -44,7 +44,7 @@ commonplace.run, www.commonplace.run {
 app.cmmn.dev {
 	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
-	@app path /app /app/* /api/* /health /healthz
+	@app path /app /app/* /api/* /health /healthz /p/*
 	handle @app {
 		import commonplace_gateway
 	}

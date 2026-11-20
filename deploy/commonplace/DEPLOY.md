@@ -73,7 +73,13 @@ application updates must not replace host-wide Caddy settings. Validate the
 complete Caddy configuration before reloading the host service.
 
 The private template routes `/app*`, `/api/*`, `/mcp`, `/health`, `/healthz`,
-`/s/*`, `/oauth/*` and `/.well-known/*` to the gateway without stripping paths.
+`/p/*`, `/s/*`, `/oauth/*` and `/.well-known/*` to the gateway without stripping paths.
+Without `/p/*` the proxy falls through to the static fallback and a published preview
+never opens: the card's Open link then lands on the landing page.
+The tailnet-only site needs the same `/p/*` entry as the public app host. The proxy's
+global `X-Frame-Options: DENY` header also applies to `/p/*`; that is fine for opening
+a preview in its own tab, but a preview shown inside an app page would need that header
+relaxed on `/p/*` (previews are served with their own frame policy).
 Its fallback serves `landing/public/`. The public template separates the
 website, app and agent endpoints; see [PUBLIC.md](../PUBLIC.md).
 
