@@ -342,7 +342,7 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
                 if account.refusal is None:
                     accounts[machine["id"]] = _account_snapshot(db, ws, account, machine)
                     agents.append(machine["worker_connection_id"])
-    except model_modes.ModeUnavailable as exc:
+    except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
         log_failure(logger, "chat model mode unreadable at queue", exc)
         _refuse_account(
             gateway,
@@ -515,7 +515,7 @@ def lease(
                 machine=machine,
             )
             current = _account_snapshot(db, claimed["workspace_id"], account, machine)
-    except model_modes.ModeUnavailable as exc:
+    except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
         log_failure(logger, "chat model mode unreadable at lease", exc)
         account = None
     try:
