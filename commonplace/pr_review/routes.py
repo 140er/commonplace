@@ -68,12 +68,41 @@ def _board_view(store, slug):
     }
 
 
-def _card_view(store, facts, limit=COMMENT_PAGE, offset=0):
+def _answers(rounds: int) -> list[dict]:
+    """The three answers to comments that need a person, in the words the card shows."""
+    more = {1: "one more round", 2: "two more rounds", 3: "three more rounds"}.get(
+        rounds, "more rounds"
+    )
+    again, mine, ignore = options(rounds)
+    return [
+        {
+            "choice": "again",
+            "label": again,
+            "explain": f"The Coworker gets {more} on these comments and on any that still wait.",
+        },
+        {
+            "choice": "mine",
+            "label": mine,
+            "explain": "The Coworker stops answering this pull request's comments. The card moves "
+            "to Backlog, so no Coworker picks it up while you work on them.",
+        },
+        {
+            "choice": "dismiss",
+            "label": ignore,
+            "explain": "The waiting comments are set aside and nobody acts on them. The card goes "
+            "back to its Coworker.",
+        },
+    ]
+
+
+def _card_view(store, facts, limit=COMMENT_PAGE, offset=0, *, owner=False):
     repo = mapping.repo_of(facts)
     pr = facts.get("pr_number")
-    base = {"card": facts["number"], "repo": repo, "pr": pr}
+    base = {"card": facts["number"], "board": facts["board"], "repo": repo, "pr": pr}
     setting = store.board(facts["board"])
     base["loop"] = {"enabled": setting["enabled"], "rounds": setting["rounds"]}
+    base["can_decide"] = owner
+    base["answers"] = _answers(setting["rounds"]) if owner else []
     if not repo or not pr:
         return {
             **base,
@@ -205,7 +234,7 @@ def _people_routes(gateway, principal, store, parts, h, send):
         params = http_util.query(h)
         limit = _page(params, "limit", COMMENT_PAGE, 1, COMMENT_PAGE_MAX)
         offset = _page(params, "offset", 0, 0, 10**6)
-        return send(200, _card_view(store, facts, limit, offset))
+        return send(200, _card_view(store, facts, limit, offset, owner=owner))
     if (
         len(parts) == 5
         and parts[2:3] == ["comments"]
@@ -238,9 +267,7 @@ def _decision(gateway, principal, store, facts, owner, h, send):
     if choice not in THEN:
         raise Invalid("choice must be again, mine or dismiss")
     event_id = _answer_question(gateway, principal, store, facts, choice)
-    shown = store.decide(
-        repo, pr, choice, f"user:{principal.user_id}", _now(), event_id=event_id
-    )
+    shown = store.decide(repo, pr, choice, f"user:{principal.user_id}", _now(), event_id=event_id)
     if choice == "again":
         _wake(gateway, principal.workspace_id, _now())
     return send(200, {**shown, "card_answered": bool(event_id)})
