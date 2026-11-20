@@ -154,6 +154,81 @@ class Fleet:
                 "UPDATE runner_machines SET enabled=0 WHERE id=?", (made["machine_id"],)
             )
 
+    def guided(self, made, state, accepted=False):
+        """The machine as the setup guide leaves it before the owner approves it: its code was exchanged (so it is switched
+        off until approved) and the pairing is ``connected``, ``failed`` or ``stalled`` (nothing more came for 15 minutes)."""
+        from datetime import timedelta
+
+        from commonplace.compute import pairing
+        from commonplace.runner import enrollment
+
+        enrollment.ensure(self.env.db)
+        pairing.ensure(self.env.db)
+        now = control_db._now()
+        consumed = now - timedelta(minutes=20 if state == "stalled" else 1)
+        stamp, eid, pid = (
+            control_db._iso(now),
+            "enr_" + made["machine_id"],
+            "pair_" + made["machine_id"],
+        )
+        steps = {
+            "connected": [("prerequisites", "ok", None)],
+            "stalled": [("prerequisites", "ok", None)],
+            "failed": [("prerequisites", "ok", None), ("service", "failed", "service_failed")],
+        }[state]
+        with self.env.db._lock:
+            conn = self.env.db._conn
+            conn.execute(
+                "INSERT INTO runner_enrollments(id, workspace_id, machine_label, expires_at, consumed_at, owner_id, "
+                "request_id, manifest_digest, settings_version, intent, machine_id, created_at) VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    eid,
+                    self.env.workspace,
+                    made["machine_id"],
+                    stamp,
+                    control_db._iso(consumed),
+                    "owner",
+                    "req-" + eid,
+                    "a" * 64,
+                    1,
+                    "{}",
+                    made["machine_id"],
+                    stamp,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO machine_pairings(id, workspace_id, kind, label, owner_id, request_id, request_hash, "
+                "enrollment_id, version, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    pid,
+                    self.env.workspace,
+                    "runner",
+                    made["machine_id"],
+                    "owner",
+                    "req-" + pid,
+                    "h",
+                    eid,
+                    1,
+                    stamp,
+                    stamp,
+                ),
+            )
+            for step, outcome, cause in steps:
+                conn.execute(
+                    "INSERT INTO machine_pairing_steps(pairing_id, step, state, cause, reported_at) VALUES (?,?,?,?,?)",
+                    (pid, step, outcome, cause, control_db._iso(consumed)),
+                )
+            if accepted:
+                conn.execute(
+                    "UPDATE machine_pairings SET accepted_by='owner', accepted_at=? WHERE id=?",
+                    (stamp, pid),
+                )
+            conn.execute(
+                "UPDATE runner_machines SET enabled=? WHERE id=?",
+                (1 if accepted else 0, made["machine_id"]),
+            )
+
     def end(self, job_id, *, minutes_ago=0):
         """The machine reported the run's end: the run ledger learns of it (the job row stays ``started``)."""
         at = iso(self.env.clock.now - minutes_ago * 60)

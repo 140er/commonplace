@@ -45,7 +45,13 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 from commonplace.projects import escalation, limits as project_limits, models
 from commonplace.runner import jobs, registry
-from commonplace.runner.predicate import Refused, grant_values, requester_ok, startable
+from commonplace.runner.predicate import (
+    Refused,
+    grant_values,
+    requester_ok,
+    setup_only_refusal,
+    startable,
+)
 
 from . import durable, schema, start_retry, store as orch_store
 
@@ -225,6 +231,9 @@ def _labels(row) -> list:
 
 def card_refusal(gateway, machine, card_row, board_row, principal, config) -> str | None:
     """Machine, card and grant refusals for a new start, as codes."""
+    guided = None if machine is None else setup_only_refusal(gateway, machine)
+    if guided:
+        return guided
     if (
         machine is None
         or not machine["enabled"]

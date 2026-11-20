@@ -83,7 +83,7 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "This version only checks the machine: Coworkers do not run on it yet. To get ready for later, sign in a provider and confirm this machine, both in Needs me.",
+        "Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version. A later version will let you sign in a provider and confirm the machine in Needs me.",
         "This machine is set up and checked. Coworkers do not run on it in this version.",
     ),
     "offline": (
@@ -111,7 +111,7 @@ STATES = {
         "The owner cancelled this setup.",
     ),
     "declined": (
-        "Not approved",
+        "Refused",
         "You said this is not your machine. Its access was removed.",
         "Choose Set up again if you want to add a machine with the same settings.",
         "The owner did not approve this machine.",
@@ -141,8 +141,8 @@ MEMBER_LABEL = {"connected": "Machine connected, waiting for the owner's approva
 STALLED_LABEL = "Not finished"
 STALLED = (
     "This setup has not finished.",
-    "Remove this machine and set it up again.",
-    "The owner can remove this machine and set it up again.",
+    "Choose Set up again, or Remove this machine.",
+    "The owner can set it up again or remove it.",
 )
 # Fixed causes a machine may report for a failed step: (what happened, what to do).
 CAUSES = {
@@ -404,6 +404,54 @@ def derive(row, steps, now_stamp):
     if row["consumed_at"]:
         return "connected", None
     return "waiting", None
+
+
+def pending_machines(db, workspace_id):
+    """The machines of open setups the owner has not approved yet, by machine id: what a screen other than Add a
+    machine needs to say the same thing (reading never creates the tables, and nothing is written).
+
+    ``{machine_id: {state, stalled, failed, cause, connected_at, last_report_at}}``, ``state`` being the pairing's own
+    (``connected`` or ``failed``) and ``stalled`` the 15-minute rule, from the same ``derive`` and ``stalled`` the page uses."""
+    with db._lock:
+        have = {
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('machine_pairings','machine_pairing_steps','runner_enrollments')"
+            )
+        }
+        if len(have) < 3:
+            return {}
+        now, stamp = _now()
+        rows = db._conn.execute(
+            _SELECT
+            + "WHERE p.workspace_id=? AND p.closed_reason IS NULL AND p.accepted_at IS NULL "
+            "AND e.machine_id IS NOT NULL",
+            (workspace_id,),
+        ).fetchall()
+        result = {}
+        for row in rows:
+            steps = _steps(db, row["id"])
+            state, failed = derive(row, steps, stamp)
+            if state not in ("connected", "failed"):
+                continue
+            cause = _cause(steps, failed)
+            result[row["machine_id"]] = {
+                "state": state,
+                "stalled": stalled(state, row, steps, stamp),
+                "failed": failed,
+                "cause": cause["text"] if cause else None,
+                "connected_at": row["consumed_at"],
+                "last_report_at": row["last_report_at"],
+            }
+        return result
+
+
+def guided_not_running(db, workspace_id):
+    """Machines from the setup guide that cannot run Coworkers in this version: the ones waiting for approval or not
+    finished, and the approved ones that have never sent a heartbeat (the setup-only service sends none)."""
+    if not hasattr(db, "_conn"):  # a stand-in control store (some runner tests) has no pairings
+        return set()
+    return set(pending_machines(db, workspace_id)) | setup_only_ids(db, workspace_id)
 
 
 def machine_ids(db, workspace_id):

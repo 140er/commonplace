@@ -60,9 +60,12 @@ def board_capacity(gateway, ws, conn, board, cap, now):
     if config is None or config.runner is None:
         return None
     machine = registry.get_machine(gateway.db, ws, config.runner.machine)
+    from .predicate import setup_only_refusal
+
     capacity = 0
     if (
         machine
+        and not setup_only_refusal(gateway, machine, ws)
         and machine["enabled"]
         and not machine["revoked_at"]
         and machine["binding_state"] == "owner_attested"

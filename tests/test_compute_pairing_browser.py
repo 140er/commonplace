@@ -427,9 +427,9 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         page.get_by_role("button", name="Approve this machine").click()
         expect(section).to_contain_text("Set up and checked", timeout=20000)
         expect(page.get_by_role("button", name="Approve this machine")).to_have_count(0)
-        expect(section).to_contain_text("Confirm this machine in Needs me: not done yet")
+        expect(section).to_contain_text("Confirming it in Needs me: not available in this version")
         expect(section).to_contain_text(
-            "To get ready for later, sign in a provider and confirm this machine"
+            "Nothing more to do here. This version only checks the machine"
         )
         assert "running" not in section.inner_text().lower().replace("keep services running", "")
         _shot(page, f"{label}-07-ready")
@@ -630,6 +630,69 @@ def test_the_overview_row_of_a_machine_from_the_guide_names_one_step_in_one_plac
 
 @pytest.mark.parametrize("ui", UIS)
 @pytest.mark.parametrize("size", SCREENS)
+def test_the_overview_says_what_add_a_machine_says_for_connected_failed_and_stalled_machines(
+    served, ui, size
+):
+    fx = served
+    _, waiting = fx.add(label="wait-box")
+    credentials = fx.connect(waiting)
+    fx.report(credentials, "prerequisites")
+    _, failing = fx.add(label="fail-box")
+    broken = fx.connect(failing)
+    fx.report(broken, "prerequisites")
+    fx.report(broken, "service", "failed", "service_failed")
+    _, stuck = fx.add(label="stuck-box")
+    fx.connect(stuck)
+    with fx.db._lock:
+        fx.db._conn.execute(
+            "UPDATE runner_enrollments SET consumed_at=? WHERE machine_label=?",
+            (control_db._iso(control_db._now() - timedelta(minutes=16)), "stuck-box"),
+        )
+
+    def body(page, label, context):
+        ov = page.locator("[data-ov]")
+        expect(page.locator("[data-ov-summary]")).to_contain_text("3 runners", timeout=20000)
+        expect(page.locator("[data-ov-summary]")).to_contain_text("3 need attention")
+        if page.locator("[data-ov-fold]").count() and (
+            page.locator("[data-ov-fold]").get_attribute("open") is None
+        ):
+            page.locator("[data-ov-fold-summary]").click()
+        text = ov.inner_text()
+        for claim in ("turned this runner off", "Disabled", "never contacted", "turn it on again"):
+            assert claim not in text, claim
+        rows = {
+            "wait-box": (
+                "Waiting for your approval",
+                "It connected and waits for your approval in Add a machine below.",
+            ),
+            "fail-box": (
+                "Not finished",
+                "A setup step failed: The background service did not start.",
+            ),
+            "stuck-box": ("Not finished", "This setup has not finished."),
+        }
+        for name, (chip, _sentence) in rows.items():
+            row = page.locator(".compute-ov-row", has=page.get_by_role("heading", name=name))
+            expect(row).to_contain_text(chip)
+        _shot(page, f"{label}-12-overview-next-to-add-a-machine")
+        for name, (_chip, sentence) in rows.items():
+            page.get_by_role("button", name=f"Status and activity of {name}").click()
+            expect(ov).to_contain_text(sentence)
+            expect(ov).to_contain_text("Add a machine below")
+            expect(ov).to_contain_text("No: not approved yet")
+            _shot_of(page, "[data-ov]", f"{label}-12-overview-{name}-detail")
+            page.keyboard.press("Escape")
+        # The same words as the card below it for the same machine.
+        _open_pairing(page, "wait-box")
+        expect(_section(page)).to_contain_text("Machine connected, waiting for your approval")
+        _shot_of(page, ".compute-pr", f"{label}-13-add-a-machine-wait-box")
+        _no_sideways_scroll(page)
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
 def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and_member(
     served, ui, size
 ):
@@ -650,7 +713,7 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
         _shot(page, f"{label}-stalled-list")
         _open_pairing(page, "stuck-box")
         expect(section).to_contain_text("This setup has not finished.")
-        expect(section).to_contain_text("Remove this machine and set it up again.")
+        expect(section).to_contain_text("Choose Set up again, or Remove this machine.")
         expect(section.get_by_role("button", name="Approve this machine")).to_have_count(0)
         expect(section.get_by_role("button", name="Set up again")).to_be_visible()
         expect(section.get_by_role("button", name="Remove this machine")).to_be_visible()
@@ -664,7 +727,7 @@ def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and
         section = _section(page)
         _open_pairing(page, "stuck-box")
         expect(section).to_contain_text("This setup has not finished.")
-        expect(section).to_contain_text("The owner can remove this machine and set it up again.")
+        expect(section).to_contain_text("The owner can set it up again or remove it.")
         for name in ("Approve this machine", "Set up again", "Remove this machine"):
             expect(section.get_by_role("button", name=name)).to_have_count(0)
         _shot(page, f"{label}-stalled-member")
@@ -779,7 +842,7 @@ def test_this_is_not_my_machine_asks_first_and_removes_its_access(served, ui, si
         expect(confirm).to_have_count(0)
         page.get_by_role("button", name="This is not my machine").click()
         page.get_by_role("button", name="Yes, this is not my machine").click()
-        expect(section).to_contain_text("Not approved")
+        expect(section).to_contain_text("Refused")
         assert not fx.alive(credentials), "its credentials stop working"
         _shot(page, f"{label}-declined")
 
@@ -1075,11 +1138,8 @@ def test_the_page_says_where_to_run_the_command_and_what_approval_grants(served,
         expect(page.locator(".compute-pr-fingerprint")).to_be_visible(timeout=20000)
         expect(approve).not_to_have_attribute("aria-disabled", "true")
         text = section.locator(".compute-pr-detail").inner_text()
-        assert "Approving lets this machine use the access listed above." in text
-        assert (
-            "does not connect a provider" in text
-            and "confirm the machine later, in Needs me" in text
-        )
+        assert "Approving records the access listed above; nothing uses it in this version." in text
+        assert "does not connect a provider" in text and "It does not connect a provider" in text
         grants = page.evaluate(
             "() => document.querySelector('[data-pr-grants]').getBoundingClientRect().bottom"
             " <= document.querySelector('[data-pr-action=approve]').getBoundingClientRect().top"

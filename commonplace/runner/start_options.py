@@ -11,7 +11,7 @@ from commonplace.orch import runner_bridge
 from commonplace.redact import redact
 
 from . import registry
-from .predicate import Refused, grant_values, requester_ok, startable
+from .predicate import Refused, grant_values, requester_ok, setup_only_refusal, startable
 from .tools import _card, person_owner
 
 # The card cannot be started whatever the setup is: the panel shows no control at all.
@@ -46,15 +46,28 @@ def _configured(ctx, row, board) -> dict:
     ws = ctx.principal.workspace_id
     config = runner_bridge.resolve_version(ctx.gateway, ws, board["slug"]).config()
     machine = registry.get_machine(ctx.gateway.db, ws, config.runner.machine)
+    guided = None if machine is None else setup_only_refusal(ctx.gateway, machine)
     return {
         "configured": True,
         "machine": None if machine is None else _public(machine),
         "project": config.runner.project,
         "topic": config.runner_role.topic,
-        "refusal": runner_bridge.card_refusal(
-            ctx.gateway, machine, row, board, ctx.principal, config
-        ),
+        "refusal": guided
+        or runner_bridge.card_refusal(ctx.gateway, machine, row, board, ctx.principal, config),
     }
+
+
+def _guided_refusal(ctx) -> str | None:
+    """A machine exists but was added through the setup guide and only checks itself in this version: say that, and
+    where its next step is (Needs me when a confirm card is up, else Add a machine)."""
+    found = []
+    for machine in registry.machines(ctx.gateway.db, ctx.principal.workspace_id):
+        if not machine["revoked_at"]:
+            found.append(setup_only_refusal(ctx.gateway, machine))
+    found = [code for code in found if code]
+    if not found:
+        return None
+    return "setup_only_confirm" if "setup_only_confirm" in found else "setup_only"
 
 
 def _free(ctx, row, board) -> dict:
@@ -83,8 +96,10 @@ def _free(ctx, row, board) -> dict:
     refusal = None
     if not offers:
         # A reason about the card (blocked, assigned...) wins over a setup reason.
+        guided = _guided_refusal(ctx)
+        refusals = [(guided or r) if r == "setup_only" else r for r in refusals]
         card_reasons = [r for r in refusals if r in NOT_CLAIMABLE]
-        refusal = (card_reasons or refusals or ["no_machine"])[0]
+        refusal = (card_reasons or refusals or [guided or "no_machine"])[0]
     return {"configured": False, "machines": offers, "refusal": refusal}
 
 
