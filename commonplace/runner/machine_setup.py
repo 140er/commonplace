@@ -260,15 +260,7 @@ def verify_program(prefix, pin, files):
             actual.add(path.relative_to(site_path).as_posix())
     if actual != set(files):
         raise ValueError("unexpected installed program files")
-    if set(os.listdir(Path(prefix) / "bin")) - {
-        "python",
-        "python3",
-        f"python{sys.version_info.major}.{sys.version_info.minor}",
-        "activate",
-        "activate.csh",
-        "activate.fish",
-        "Activate.ps1",
-    }:
+    if set(os.listdir(Path(prefix) / "bin")) != {"python"}:
         raise ValueError("unexpected Python startup files")
     return Path(prefix) / "bin/python"
 
@@ -312,10 +304,17 @@ def install_program(home, raw, pin):
             _private(os.fstat(lock))
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if prefix.exists() or prefix.is_symlink():
+                if _program_file(prefix, "program.zip") != raw:
+                    raise ValueError("cached program archive integrity check failed")
                 return verify_program(prefix, pin, files)
             with tempfile.TemporaryDirectory(prefix=".install-", dir=root) as temporary:
                 staged = Path(temporary) / "program"
                 venv.EnvBuilder(with_pip=False, symlinks=False).create(staged)
+                # Only the checked interpreter is used. Do not publish unused aliases or
+                # activation scripts whose contents would otherwise escape verification.
+                for entry in (staged / "bin").iterdir():
+                    if entry.name != "python":
+                        entry.unlink()
                 site = (
                     staged
                     / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
@@ -326,6 +325,7 @@ def install_program(home, raw, pin):
                     with path.open("xb") as stream:
                         stream.write(data)
                 (staged / "program-install.json").write_text(json.dumps({"pin": pin}))
+                (staged / "program.zip").write_bytes(raw)
                 for path in staged.rglob("*"):
                     if path.is_symlink():
                         # venv may create only this standard library directory alias.
@@ -583,6 +583,67 @@ def _phase(installer):
     return (getattr(installer, "journal", None) or {}).get("phase")
 
 
+def _deliver_program(encoded, envelope, probe, hub, base, ask, out, *, program_only):
+    """Verify program delivery before continuing setup; return a finished status or None."""
+    pin = envelope["program"]
+    prefix = probe.home() / PROGRAM_ROOT / pin["sha256"]
+    running_here = not program_only and Path(sys.prefix) == prefix
+    # No service, linger, enrollment or credential operation happens at this boundary.
+    if not running_here:
+        answer = ask()
+        if answer is None:
+            return 1
+        if not answer.get("usable"):
+            out(str(answer.get("text", "The code cannot be used.")))
+            out(str(answer.get("next", AGAIN)))
+            return 1
+    try:
+        prerequisites(probe, program=False, service=False)
+        if running_here:
+            # Reuse verifies the original pinned archive and every installed file.
+            # Keeping the archive allows interrupted enrollment to resume without
+            # downloading with a code that was already spent.
+            raw = _program_file(prefix, "program.zip")
+        else:
+            conflict = _other_site(probe.home(), envelope)
+            if conflict:
+                for line in conflict:
+                    out(line)
+                return 1
+            out("Downloading and checking the pinned runner program ...")
+            raw = hub.program(base, pin)
+        python = install_program(probe.home(), raw, pin)
+    except Failure as exc:
+        ask({"step": "prerequisites", "state": "failed", "cause": exc.cause})
+        out(exc.message)
+        out(exc.then)
+        return 1
+    except (Unreachable, OSError, ValueError, zipfile.BadZipFile):
+        ask({"step": "files", "state": "failed", "cause": "program_unavailable"})
+        out(
+            "The pinned runner program could not be delivered or verified. No setup service was changed."
+        )
+        out("Ask the site operator to check its program release, then choose Set up again.")
+        return 1
+    out("Runner program and dependencies installed and checked. Execution remains disabled.")
+    if program_only:
+        out(
+            "Program delivery only: the enrollment code was not spent. No machine was bound or run."
+        )
+        return 0
+    if not running_here:
+        # Start the actual delivered program, with the code on its private input pipe.
+        # The fixed environment cannot inherit a provider credential or another installation.
+        result = subprocess.run(
+            [str(python), "-I", "-B", "-m", "commonplace.runner.machine_setup", encoded],
+            input=base["code"].encode(),
+            env={"PATH": "/usr/bin:/bin", "HOME": str(probe.home()), "LANG": "C"},
+        )
+        return result.returncode
+
+    return None
+
+
 def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out=print):
     argv = sys.argv[1:] if argv is None else argv
     program_only = len(argv) == 2 and argv[1] == "--program-only"
@@ -608,57 +669,17 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
             return None
 
     pin = envelope.get("program")
-    prefix = probe.home() / PROGRAM_ROOT / pin["sha256"] if pin else None
     if program_only and pin is None:
         out(
             "This command has no pinned runner program. Ask the site operator to configure a release."
         )
         return 1
-    if pin and (program_only or Path(sys.prefix) != prefix):
-        # No service, linger, enrollment or credential operation happens at this boundary.
-        answer = ask()
-        if answer is None:
-            return 1
-        if not answer.get("usable"):
-            out(str(answer.get("text", "The code cannot be used.")))
-            out(str(answer.get("next", AGAIN)))
-            return 1
-        try:
-            prerequisites(probe, program=False, service=False)
-            conflict = _other_site(probe.home(), envelope)
-            if conflict:
-                for line in conflict:
-                    out(line)
-                return 1
-            out("Downloading and checking the pinned runner program ...")
-            raw = hub.program(base, pin)
-            python = install_program(probe.home(), raw, pin)
-        except Failure as exc:
-            ask({"step": "prerequisites", "state": "failed", "cause": exc.cause})
-            out(exc.message)
-            out(exc.then)
-            return 1
-        except (Unreachable, OSError, ValueError, zipfile.BadZipFile):
-            ask({"step": "files", "state": "failed", "cause": "program_unavailable"})
-            out(
-                "The pinned runner program could not be delivered or verified. No setup service was changed."
-            )
-            out("Ask the site operator to check its program release, then choose Set up again.")
-            return 1
-        out("Runner program and dependencies installed and checked. Execution remains disabled.")
-        if program_only:
-            out(
-                "Program delivery only: the enrollment code was not spent. No machine was bound or run."
-            )
-            return 0
-        # Start the actual delivered program, with the code on its private input pipe.
-        # The fixed environment cannot inherit a provider credential or another installation.
-        result = subprocess.run(
-            [str(python), "-I", "-B", "-m", "commonplace.runner.machine_setup", argv[0]],
-            input=code.encode(),
-            env={"PATH": "/usr/bin:/bin", "HOME": str(probe.home()), "LANG": "C"},
+    if pin:
+        delivery_status = _deliver_program(
+            argv[0], envelope, probe, hub, base, ask, out, program_only=program_only
         )
-        return result.returncode
+        if delivery_status is not None:
+            return delivery_status
 
     out("Checking this machine ...")
     failure = None
