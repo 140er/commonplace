@@ -12,7 +12,7 @@ with a sandbox policy that gives the page an opaque origin: it cannot read the a
 or storage, and its requests carry no session. A person never opens the files as a page of their
 own: ``/p/<id>/~<token>/<path>`` is a small viewer page that shows the preview in a frame
 (``sandbox="allow-scripts"`` and nothing else, and the viewer allows frames of this site only),
-and the files themselves are served from ``/p/<id>/~<token>/files/<path>``. A script in the
+and the files themselves are served from ``/p/<id>/~<token>/~files/<path>``. A script in the
 preview can therefore neither navigate the page the person is looking at nor load another site;
 it can only run inside its frame. Pages that are not ready get a plain page with the reason
 (410 stopped, 503 failed or being published). Nothing here runs under the control-database lock
@@ -30,9 +30,8 @@ from . import bundle, links, service, store
 from .store import NotFound
 
 PREFIX = "/p/"
-FILES = (
-    "files/"  # under the key: the preview's own files; anything else under the key is the viewer
-)
+# Published paths cannot start with "~", so this namespace cannot hide an existing file.
+FILES = "~files/"
 _ID = re.compile(r"pv_[0-9a-f]{16}")
 
 # Every preview file. ``sandbox`` without ``allow-same-origin`` is the isolation, and without

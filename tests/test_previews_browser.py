@@ -159,7 +159,7 @@ def test_links_lead_on_forms_post_nothing_and_the_key_ends_after_thirty_minutes(
             frame.locator("#docs").click()
             frame.locator("h1", has_text="Docs page").wait_for()
             assert page.url == keyed
-            assert page.frames[1].url == keyed + "files/docs/"
+            assert page.frames[1].url == keyed + "~files/docs/"
             # A form in the preview posts nothing anywhere (the frame may not submit forms).
             page.goto(keyed)
             # The browser reports the refusal on the console: wait for that, not for a timer.
@@ -206,7 +206,7 @@ def test_the_viewer_is_never_framed_and_a_file_opened_as_a_page_shows_the_viewer
             page.goto(f"{origin}/p/{identity}/")
             keyed = page.url
             # The file address opened in a tab of its own lands on the viewer, not on the file.
-            page.goto(keyed + "files/docs/")
+            page.goto(keyed + "~files/docs/")
             assert page.url == keyed + "docs/"
             assert page.locator("iframe").get_attribute("sandbox") == "allow-scripts"
             context.close()

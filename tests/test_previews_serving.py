@@ -86,6 +86,26 @@ def published(h, files=None, name="home"):
     return number, shown["id"]
 
 
+@pytest.mark.parametrize("root_report", [False, True])
+def test_existing_files_directory_links_keep_their_original_file(console_hub, root_report):
+    h = console_hub
+    files = [
+        {"path": "index.html", "text": "<p>Start</p>"},
+        {"path": "files/report.html", "text": "<p>The original nested report</p>"},
+    ]
+    if root_report:
+        files.append({"path": "report.html", "text": "<p>A different root report</p>"})
+    _number, identity = published(h, files=files)
+    original = f"/p/{identity}/files/report.html"
+    status, headers, body = fetch(h, h.owner, original)
+    assert status == 303 and headers["Location"].endswith("/files/report.html")
+    status, _headers, viewer_body = fetch(h, h.owner, headers["Location"])
+    assert status == 200 and b"<iframe" in viewer_body
+    status, headers, body = visit(h, h.owner, original)
+    assert status == 200 and body == b"<p>The original nested report</p>"
+    assert headers["Content-Security-Policy"] == serving.FILE_POLICY
+
+
 def folder(h, identity, revision=1):
     return store.revision_dir(h.gateway, h.workspace, identity, revision)
 
@@ -402,7 +422,7 @@ def test_the_page_link_opens_the_files_without_a_session_and_only_for_that_previ
     status, headers, _ = fetch(h, h.owner, f"/p/{other}/~{token}/")
     assert status == 303 and headers["Location"] == f"/p/{other}/"
     # The same for a file address: the plain address it starts again from opens the viewer.
-    status, headers, _ = fetch(h, h.owner, f"/p/{other}/~{token}/files/assets/app.css")
+    status, headers, _ = fetch(h, h.owner, f"/p/{other}/~{token}/~files/assets/app.css")
     assert status == 303 and headers["Location"] == f"/p/{other}/assets/app.css"
     for bad in ("short", "x" * 40, "~" * 30):
         assert fetch(h, None, f"/p/{identity}/~{bad}/")[0] == 401
@@ -469,28 +489,28 @@ def test_a_person_opens_the_viewer_and_the_files_come_from_a_separate_address(co
     assert "Open only previews from people you trust." in text
     assert 'href="/app/#/card/' in text
     src = re.search(r' src="([^"]+)"', text).group(1)
-    assert re.fullmatch(rf"/p/{identity}/~[\w-]+/files/", src)
+    assert re.fullmatch(rf"/p/{identity}/~[\w-]+/~files/", src)
     # The frame loads the files from there, under the file policy.
     status, headers, body = fetch(h, None, src, headers={"Sec-Fetch-Dest": "iframe"})
     assert status == 200 and body.decode() == INDEX
     assert headers["Content-Security-Policy"] == serving.FILE_POLICY
     # A folder or file address shows the viewer for that file.
     status, _headers, body = visit(h, h.owner, f"/p/{identity}/docs/", viewer=True)
-    assert status == 200 and b"/files/docs/" in body
+    assert status == 200 and b"/~files/docs/" in body
     assert visit(h, h.owner, f"/p/{identity}/docs/")[2] == b"<p>Docs</p>"
 
 
 def test_a_file_asked_for_as_a_page_of_its_own_shows_the_viewer(console_hub):
     h = console_hub
     _number, identity = published(h)
-    src = link(h, h.owner, identity) + "files/docs/"
+    src = link(h, h.owner, identity) + "~files/docs/"
     # No fetch metadata (a script, an older browser) and a frame get the file ...
     assert fetch(h, None, src)[0] == 200
     assert fetch(h, None, src, headers={"Sec-Fetch-Dest": "iframe"})[0] == 200
     assert fetch(h, None, src, headers={"Sec-Fetch-Dest": "script"})[0] == 200
     # ... a navigation of a tab is sent to the viewer, which is where a page of its own may not run.
     status, headers, _ = fetch(h, None, src, headers={"Sec-Fetch-Dest": "document"})
-    assert status == 303 and headers["Location"] == src.replace("files/", "", 1)
+    assert status == 303 and headers["Location"] == src.replace("~files/", "", 1)
     assert fetch(h, None, headers["Location"])[0] == 200
 
 
