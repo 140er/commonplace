@@ -9,7 +9,7 @@ const hours = n => Number.isFinite(n) ? `${n.toFixed(2)} h` : 'n/a';
 const seconds = n => Number.isFinite(n) ? n >= 3600 ? hours(n / 3600) : `${n.toFixed(1)} s` : 'n/a';
 const short = id => id ? id.slice(-8) : 'n/a';
 const date = n => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Amsterdam', dateStyle: 'medium', timeStyle: 'short' }).format(n * 1000);
-const reason = code => ({ task_mapping_missing: 'No authoritative card-to-thread mapping.', pr_snapshot_missing: 'No dated pull request state snapshot.', correlation_missing: 'No correlated person response record.', thinking_not_measured: 'Thinking is not measured separately.', usage_missing: 'No complete attributable turn usage.', context_missing: 'No retained context snapshot.', edit_lines_unavailable: 'Some recorded edits have no countable diff.', no_samples: 'No answered asks with recorded timing.', no_timing: 'Source timing is missing.', partial_scan: 'Collection reached its explicit limit.', no_attribution: 'No source attribution.', not_recorded: 'Not recorded by this source.', subagent_usage_unknown: 'Native subagent usage is not separately reported.' })[code] || 'Unavailable in this snapshot.';
+const reason = code => ({ task_mapping_missing: 'No authoritative card-to-thread mapping.', pr_snapshot_missing: 'No dated pull request state snapshot.', correlation_missing: 'No correlated person response record.', thinking_not_measured: 'Thinking is not measured separately.', usage_missing: 'No complete attributable turn usage.', context_missing: 'No retained context snapshot.', edit_lines_unavailable: 'Some recorded edits have no countable diff.', edit_timing_missing: 'Some retained edits lack usable start times, so their lines cannot be assigned to this window.', no_samples: 'No answered asks with recorded timing.', no_timing: 'Source timing is missing.', partial_scan: 'Collection reached its explicit limit.', no_attribution: 'No source attribution.', not_recorded: 'Not recorded by this source.', subagent_usage_unknown: 'Native subagent usage is not separately reported.' })[code] || 'Unavailable in this snapshot.';
 const labels = {
   agent_hours: ['Measured agent hours', 'Clipped run time, unioned per agent; native children counted once.'],
   runs_started: ['Started runs', 'Actual starts in this window; requested runs may never start.'],
@@ -153,6 +153,7 @@ export function mount(context) {
   const schedule = () => { clearTimeout(timer); if (!stopped && !paused && !doc?.hidden) timer = setTimeout(() => { void load(false); }, 30000); };
   async function load(manual = true) {
     if (stopped || (!manual && (paused || doc?.hidden || pending || detail))) { schedule(); return; }
+    if (manual) detail = null;
     pending?.abort(); const controller = new AbortController(); pending = controller; const mine = ++epoch;
     problem = ''; find('body').setAttribute('aria-busy', 'true');
     if (!data?.snapshot) paint();

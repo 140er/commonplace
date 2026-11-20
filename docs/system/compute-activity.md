@@ -67,7 +67,10 @@ Only explicitly attributable per-turn token deltas are additive. Context totals
 are snapshots, not deltas; cached input overlaps input. Scope, subagent inclusion
 and incomplete usage coverage are retained. Recorded high-context snapshots do
 not prove every pre-compaction peak. Recorded edit lines are distinct from net
-repository changes. Trace phases are time-bucket aggregates, never raw tool
+repository changes. Retained edits without usable start times make both window
+line totals unavailable with `edit_timing_missing`; their lines cannot be
+assigned to the window. These edits still consume the bounded item scan budget.
+Trace phases are time-bucket aggregates, never raw tool
 events. Rotated server spans have a separate retained coverage window and are
 not added to agent hours without attribution.
 
@@ -78,6 +81,9 @@ source discovery, credential discovery or execution grant is installed.
 
 Collection filters selected identities and eligible time windows before applying
 row budgets, including input requests, retries, provider turns and handoffs.
+Model attribution sweeps ordered run boundaries with the highest-ordinal active
+run owning each segment; ties retain the first source run and gaps use the
+thread fallback. It does not rescan all runs for each boundary.
 Intervals and percentile samples cannot exceed their source's row budget. Each
 source reports rows inspected, its budget and an overflow signal; the budget is
 not a total count. PR links have a global metadata budget and a 512-link limit per
@@ -96,7 +102,9 @@ source/window, independently of Trace pagination and model filters. Each tab
 reloads its own scope and corrects an offset beyond a shrinking filtered total.
 Phone rows preserve token, time, percentile and call labels, with programmatic
 column associations. Activity keeps its phone heading and compact named controls.
-Keyboard pagination restores focus and announces the new result range.
+Keyboard pagination restores focus and announces the new result range. Manual
+Refresh returns open trace detail to the refreshed list, so older durations and
+buckets never appear under a newer snapshot's collection timestamp.
 An empty filtered Trace list means no retained traces match; collection/retention
 caps can omit observed work. A missing detail explains that Refresh only rereads
 the stored snapshot and cannot restore omitted detail.

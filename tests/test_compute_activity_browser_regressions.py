@@ -152,3 +152,48 @@ def test_global_sinks_and_trace_refresh_keep_independent_scopes(activity_page):
     assert page.locator("[data-ca-model]").input_value() == "other"
     assert page.locator("[data-ca-body] [data-ca-thread]").count() == 15
     assert "Threads 1–15 of 15 retained" in page.locator(".ca-page").inner_text()
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+def test_refresh_open_trace_after_report_replacement_keeps_one_snapshot(
+    activity_page,
+    enrolled,  # noqa: F811
+    width,
+):
+    page = activity_page
+    page.set_viewport_size({"width": width, "height": 844})
+    hub, machine, path, snapshot = enrolled
+    page.locator("[data-ca-tab=trace]").click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    first = page.locator("[data-ca-body] [data-ca-thread]").first
+    thread_id = first.get_attribute("data-ca-thread")
+    first.click()
+    page.locator("[data-ca-detail-title]").wait_for()
+    assert "0.28 h agent time" in page.locator("[data-ca-body]").inner_text()
+    previous_provenance = page.locator("[data-ca-fresh]").inner_text()
+
+    newer = copy.deepcopy(snapshot)
+    newer["collected_at"] += 60
+    updated = next(row for row in newer["threads"] if row["id"] == thread_id)
+    updated["seconds"] = 3600
+    updated["phases"] = {"unknown": 3600, "tool": 0, "wait": 0, "compaction": 0}
+    updated["buckets"] = []
+    assert (
+        request(
+            hub,
+            "POST",
+            "/api/runner/activity",
+            newer,
+            cookie=False,
+            token=machine["machine_token"],
+        )[0]
+        == 200
+    )
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert page.locator("[data-ca-fresh]").inner_text() != previous_provenance
+    assert page.locator("[data-ca-detail-title]").count() == 0
+    assert "0.28 h agent time" not in page.locator("[data-ca-body]").inner_text()
+    page.locator(f'[data-ca-thread="{thread_id}"]').click()
+    page.locator("[data-ca-detail-title]").wait_for()
+    assert "1.00 h agent time" in page.locator("[data-ca-body]").inner_text()

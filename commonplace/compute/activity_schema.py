@@ -24,7 +24,7 @@ STATUSES = frozenset(
 )
 REASONS = frozenset(
     "task_mapping_missing pr_snapshot_missing correlation_missing thinking_not_measured "
-    "usage_missing context_missing edit_lines_unavailable no_samples no_timing "
+    "usage_missing context_missing edit_lines_unavailable edit_timing_missing no_samples no_timing "
     "partial_scan no_attribution not_recorded subagent_usage_unknown".split()
 )
 METRICS = tuple(

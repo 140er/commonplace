@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -111,19 +112,32 @@ def phases(base, recorded):
 
 
 def model_parts(segments, runs, fallback):
-    """Split phase segments at model boundaries, with the latest run winning overlaps."""
+    """Sweep ordered phases and run boundaries, with the latest run winning overlaps."""
+    starts = []
+    edges = set()
+    for index, run in enumerate(runs):
+        interval = run["interval"]
+        if interval:
+            starts.append((interval[0], -run["ordinal"], index, interval[1], run["model"]))
+            edges.update(interval)
+    starts.sort()
+    boundaries = sorted(edges)
+    active = []
+    next_start = next_edge = 0
     for start, end, phase in segments:
-        edges = {start, end}
-        for run in runs:
-            if run["interval"]:
-                edges.update(at for at in run["interval"] if start < at < end)
-        points = sorted(edges)
-        for a, b in zip(points, points[1:]):
-            candidates = [
-                r for r in runs if r["interval"] and r["interval"][0] <= a < r["interval"][1]
-            ]
-            name = max(candidates, key=lambda r: r["ordinal"])["model"] if candidates else fallback
-            yield a, b, phase, name
+        at = start
+        while at < end:
+            while next_start < len(starts) and starts[next_start][0] <= at:
+                _, ordinal, index, stop, name = starts[next_start]
+                heapq.heappush(active, (ordinal, index, stop, name))
+                next_start += 1
+            while active and active[0][2] <= at:
+                heapq.heappop(active)
+            while next_edge < len(boundaries) and boundaries[next_edge] <= at:
+                next_edge += 1
+            stop = min(end, boundaries[next_edge]) if next_edge < len(boundaries) else end
+            yield at, stop, phase, active[0][3] if active else fallback
+            at = stop
 
 
 def iso(value):

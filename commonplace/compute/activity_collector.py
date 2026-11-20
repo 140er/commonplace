@@ -423,7 +423,7 @@ class Collector:
         self.put("failed_commands", 0)
         self.put("compactions", 0)
         lines = [0, 0]
-        edit_known = True
+        edit_reason = None
         start = "json_extract(payload_json,'$.startedAt')"
         end = "json_extract(payload_json,'$.completedAt')"
         eligible = self.during(
@@ -441,7 +441,8 @@ class Collector:
                      THEN activity_command(json_extract(payload_json,'$.input')) ELSE NULL END,
                 CASE WHEN type='file_change' AND length(json_extract(payload_json,'$.diffStr'))<=2097152
                      THEN activity_diff(json_extract(payload_json,'$.diffStr')) ELSE NULL END
-                FROM {PREFIX}turn_items WHERE run_id=? AND {eligible}
+                FROM {PREFIX}turn_items WHERE run_id=?
+                AND ({eligible} OR (type='file_change' AND activity_timestamp({start}) IS NULL))
                 ORDER BY ordinal,turn_item_id"""
             for kind, status, start_at, end_at, tool, exit_code, command, diff in self.bounded_rows(
                 "items", sql, (rid,)
@@ -450,7 +451,7 @@ class Collector:
                 if kind == "file_change":
                     at = timing.timestamp(start_at)
                     if at is None:
-                        edit_known = False
+                        edit_reason = "edit_timing_missing"
                         continue
                     if not self.window[0] <= at < self.window[1]:
                         continue
@@ -458,7 +459,7 @@ class Collector:
                         additions = json.loads(diff)
                         lines = [a + b for a, b in zip(lines, additions)]
                     else:
-                        edit_known = False
+                        edit_reason = edit_reason or "edit_lines_unavailable"
                     continue
                 if kind not in {"dynamic_tool", "command_execution", "compaction"}:
                     continue
@@ -496,13 +497,13 @@ class Collector:
         incomplete = self.scans["items"]["truncated"] or self.scans["run_details"]["truncated"]
         self.put(
             "lines_added",
-            lines[0] if edit_known and not incomplete else None,
-            "partial_scan" if incomplete else "edit_lines_unavailable",
+            lines[0] if not edit_reason and not incomplete else None,
+            "partial_scan" if incomplete else edit_reason,
         )
         self.put(
             "lines_deleted",
-            lines[1] if edit_known and not incomplete else None,
-            "partial_scan" if incomplete else "edit_lines_unavailable",
+            lines[1] if not edit_reason and not incomplete else None,
+            "partial_scan" if incomplete else edit_reason,
         )
 
     def asks_and_retries(self):
