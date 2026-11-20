@@ -27,7 +27,7 @@ const NARROW = "(max-width: 699px)";
 // One short name per blocker code, so a row names what blocks new work instead of only counting it.
 const BLOCK_SHORT = {
   no_machine: "machine not chosen yet", machine_not_verified: "its machine is not verified", private_image: "private image", not_available: "starting is not available yet",
-  revoked: "removed", disabled: "turned off", not_approved: "not approved", draining: "draining", never_connected: "never connected", offline: "offline", full: "full",
+  revoked: "removed", disabled: "turned off", not_approved: "not approved", waiting_approval: "waiting for your approval", not_finished: "not finished", setup_only: "only checks the machine", draining: "draining", never_connected: "never connected", offline: "offline", full: "full",
   hourly_cap: "hourly limit reached", not_verified: "not verified", verification_expired: "verification expired", unknown: "not known until the next report",
 };
 
