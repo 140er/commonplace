@@ -40,6 +40,8 @@
 
 - **How it fails:**
 
+  - An original-word read returns the stored revision alongside the verbatim body from the same row. Card visibility and the uniform refusal boundary apply before either is returned.
+
   - A refused batch is a plain 400 with nothing stored, a full PR or workspace is a 429 `intake_limit` that drops nothing, a stale revision or a comment someone else holds is refused (`comment_changed`, `not_working`), and every `needs you` reason has fixed text and a next step in `status.py`. The trigger's own failures are logged by type and never fail an intake.
 
 - **Tests:**

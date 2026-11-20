@@ -244,7 +244,7 @@ def _people_routes(gateway, principal, store, parts, h, send):
         original = store.original(int(parts[3])) if parts[3].isdigit() else None
         if original is None or (original["repo"], original["pr"]) != (repo, pr):
             return send(404, NOT_FOUND)
-        return send(200, {"id": int(parts[3]), "text": original["body"]})
+        return send(200, {"id": int(parts[3]), "rev": original["rev"], "text": original["body"]})
     if parts[2:] == ["decision"] and method == "POST":
         return _decision(gateway, principal, store, facts, owner, h, send)
     return send(404, {"error": "Not found", "reason": "not_found"})

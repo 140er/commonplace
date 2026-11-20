@@ -264,12 +264,102 @@ const cases = {
   async original() {
     const { body, status, handlers, mount } = fakeSlot();
     const calls = [];
-    await attachCardReviews(mount, card, { api: async (url) => { calls.push(url); return url.endsWith('/original') ? { id: 1, text: 'The real words.' } : view([comment({ text: '[redacted]', text_redacted: true })]); }, schedule: () => {} });
+    await attachCardReviews(mount, card, { api: async (url) => { calls.push(url); return url.endsWith('/original') ? { id: 1, rev: 1, text: 'The real words.' } : view([comment({ text: '[redacted]', text_redacted: true })]); }, schedule: () => {} });
     handlers.click(clickOn('reviewOriginal', '1'));
     await wait(); await wait();
     assert.ok(calls.includes('/api/pr-review/cards/7/comments/1/original'));
     assert.ok(body.innerHTML.includes('The real words.'));
     assert.equal(status.textContent, 'Showing the original words.');
+  },
+  async originalrevision() {
+    const f = fakeSlot();
+    let current = comment({ status: 'working', text: 'First [redacted].', text_redacted: true });
+    let poll;
+    await attachCardReviews(f.mount, card, { api: async (url) => url.endsWith('/original')
+      ? { id: 1, rev: current.rev, text: current.rev === 1 ? 'First original words.' : 'Revised original words.' }
+      : view([current]), schedule: (fn) => { poll = fn; } });
+    f.handlers.click(clickOn('reviewOriginal', '1'));
+    await wait(); await wait();
+    assert.ok(f.body.innerHTML.includes('First original words.'));
+    poll(); await wait(); await wait();
+    assert.ok(f.body.innerHTML.includes('First original words.'), 'a poll of the same revision keeps its reveal');
+    current = { ...current, rev: 2, text: 'Revised [redacted].' };
+    poll(); await wait(); await wait();
+    assert.ok(!f.body.innerHTML.includes('First original words.'), 'edited comments must not display the old original');
+    assert.ok(f.body.innerHTML.includes('Revised [redacted].'));
+    assert.ok(f.body.innerHTML.includes('data-review-original="1"'));
+    f.handlers.click(clickOn('reviewOriginal', '1'));
+    await wait(); await wait();
+    assert.ok(f.body.innerHTML.includes('Revised original words.'));
+  },
+  async originalpendingrevision() {
+    const f = fakeSlot();
+    let current = comment({ status: 'working', text: 'First [redacted].', text_redacted: true });
+    let poll, release;
+    await attachCardReviews(f.mount, card, { api: (url) => url.endsWith('/original')
+      ? new Promise((done) => { release = done; }) : Promise.resolve(view([current])),
+      schedule: (fn) => { poll = fn; } });
+    f.handlers.click(clickOn('reviewOriginal', '1'));
+    current = { ...current, rev: 2, text: 'Revised [redacted].' };
+    poll(); await wait(); await wait();
+    release({ id: 1, rev: 1, text: 'First original words.' });
+    await wait(); await wait();
+    assert.ok(!f.body.innerHTML.includes('First original words.'), 'a delayed response belongs to its requested revision');
+    assert.ok(f.body.innerHTML.includes('Revised [redacted].'));
+    assert.ok(!f.status.log.includes('Showing the original words.'), 'a discarded response must not announce a reveal');
+  },
+  async originalfuturerevision() {
+    const f = fakeSlot();
+    let current = comment({ text: 'First [redacted].', text_redacted: true });
+    await attachCardReviews(f.mount, card, { api: async (url) => {
+      if (!url.endsWith('/original')) return view([current]);
+      current = { ...current, rev: 2, text: 'Revised [redacted].' };
+      return { id: 1, rev: 2, text: 'Revised original words.' };
+    }, schedule: () => {} });
+    f.handlers.click(clickOn('reviewOriginal', '1'));
+    await wait(); await wait();
+    assert.ok(!f.body.innerHTML.includes('Revised original words.'), 'a newer response cannot be paired with the older displayed comment');
+    assert.ok(f.body.innerHTML.includes('Revised [redacted].'), 'refresh the edited comment before offering its original again');
+    assert.ok(f.body.innerHTML.includes('data-review-original="1"'));
+    f.handlers.click(clickOn('reviewOriginal', '1'));
+    await wait(); await wait();
+    assert.ok(f.body.innerHTML.includes('Revised original words.'));
+  },
+  async originaldisconnected() {
+    for (const refused of [false, true]) {
+      const f = fakeSlot();
+      let release, reject;
+      await attachCardReviews(f.mount, card, { api: (url) => url.endsWith('/original')
+        ? new Promise((done, fail) => { release = done; reject = fail; })
+        : Promise.resolve(view([comment({ text: '[redacted]', text_redacted: true })])), schedule: () => {} });
+      f.handlers.click(clickOn('reviewOriginal', '1'));
+      f.slot.isConnected = false;
+      const before = f.body.innerHTML, announcements = f.status.log.length;
+      if (refused) reject(Object.assign(new Error('denied'), { status: 403 }));
+      else release({ id: 1, rev: 1, text: 'Abandoned original words.' });
+      await wait(); await wait();
+      assert.equal(f.body.innerHTML, before, 'an abandoned card must not be repainted');
+      assert.equal(f.status.log.length, announcements, 'an abandoned request must not announce success or refusal');
+    }
+  },
+  async originalhidden() {
+    const f = fakeSlot();
+    let poll, release, allowed = true;
+    await attachCardReviews(f.mount, card, { api: (url) => {
+      if (url.endsWith('/original')) return new Promise((done) => { release = done; });
+      if (!allowed) return Promise.reject(Object.assign(new Error('denied'), { status: 403 }));
+      return Promise.resolve(view([comment({ status: 'working', text: '[redacted]', text_redacted: true })]));
+    }, schedule: (fn) => { poll = fn; } });
+    f.handlers.click(clickOn('reviewOriginal', '1'));
+    allowed = false;
+    poll(); await wait(); await wait();
+    assert.equal(f.slot.hidden, true);
+    const announcements = f.status.log.length;
+    release({ id: 1, rev: 1, text: 'Now unavailable original words.' });
+    await wait(); await wait();
+    assert.equal(f.slot.hidden, true);
+    assert.equal(f.body.innerHTML, '');
+    assert.equal(f.status.log.length, announcements, 'a hidden card must not announce a delayed reveal');
   },
   async more() {
     const { handlers, mount } = fakeSlot();

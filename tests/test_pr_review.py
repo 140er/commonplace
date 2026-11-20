@@ -332,6 +332,46 @@ def test_the_stored_words_are_verbatim_and_everything_else_shows_them_redacted(w
     assert secret not in caplog.text and "rename x" not in caplog.text
 
 
+def test_original_words_carry_the_revision_read_with_them(world):
+    h = world
+    number = card(h)
+    assert post(h, batch(comment(1, "First exact words.")))[0] == 200
+    cid = rows(h)["1"]["id"]
+    path = f"/api/pr-review/cards/{number}/comments/{cid}/original"
+    for auth in (h.owner, h.member):
+        status, original, _ = h.request(auth, "GET", path)
+        assert status == 200 and original["text"] == "First exact words."
+        assert original.get("rev") == 1, original
+    assert post(h, batch(comment(1, "Revised exact words.", updated_at=when(-1))))[0] == 200
+    status, original, _ = h.request(h.owner, "GET", path)
+    assert status == 200 and original["text"] == "Revised exact words."
+    assert original.get("rev") == 2, original
+
+
+def test_original_revision_reads_keep_the_card_visibility_boundary(world):
+    h = world
+    number = card(h)
+    assert post(h, batch(comment(1, "Visible original words.")))[0] == 200
+    cid = rows(h)["1"]["id"]
+    path = f"/api/pr-review/cards/{number}/comments/{cid}/original"
+    missing = f"/api/pr-review/cards/999999/comments/{cid}/original"
+    assert h.request(h.other, "GET", path)[2] == h.request(h.other, "GET", missing)[2]
+    assert h.request(h.other, "GET", path)[0] == 404
+    assert h.request(h.t1, "GET", path)[0] == 403
+    assert h.request(h.feeder, "GET", path)[0] == 403
+    hidden = hidden_pr(h)
+    private_id = h.store.comments("acme/secret", 9)[0]["id"]
+    private = f"/api/pr-review/cards/{hidden}/comments/{private_id}/original"
+    assert h.request(h.member, "GET", private)[0] == 404
+    assert h.request(h.owner, "GET", private)[0] == 200
+    assert (
+        h.request(h.owner, "GET", f"/api/pr-review/cards/{number}/comments/{private_id}/original")[
+            0
+        ]
+        == 404
+    )
+
+
 def test_intake_failures_log_no_comment_text(world, caplog, monkeypatch):
     h = world
 

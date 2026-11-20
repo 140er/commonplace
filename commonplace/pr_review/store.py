@@ -455,7 +455,7 @@ class ReviewStore:
                 None
                 if conn is None
                 else conn.execute(
-                    "SELECT repo, pr, body FROM pr_review_comments WHERE id=?", (comment_id,)
+                    "SELECT repo, pr, body, rev FROM pr_review_comments WHERE id=?", (comment_id,)
                 ).fetchone()
             )
         return dict(row) if row else None

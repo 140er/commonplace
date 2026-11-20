@@ -115,6 +115,8 @@ function offHTML(view) {
   return `<p class="run-empty" data-review-off>${text} A workspace owner can switch it on.</p>`;
 }
 
+const originalKey = (comment) => `${comment.id}/${comment.rev}`;
+
 // The list part of the section for a loaded answer (the status line is separate).
 export function cardReviewsHTML(view, state = {}) {
   const comments = Array.isArray(view?.comments) ? view.comments : [];
@@ -123,7 +125,7 @@ export function cardReviewsHTML(view, state = {}) {
   const facts = lines.length ? `<p class="run-reason" data-review-summary>${lines.map(e).join(" ")}</p>` : "";
   const off = view?.loop && !view.loop.enabled ? offHTML(view) : "";
   const list = comments.length
-    ? `<ul class="run-list">${comments.map((comment) => commentHTML(comment, view.repo, { expanded: state.expanded?.has(String(comment.id)), original: state.originals?.get(String(comment.id)) })).join("")}</ul>`
+    ? `<ul class="run-list">${comments.map((comment) => commentHTML(comment, view.repo, { expanded: state.expanded?.has(String(comment.id)), original: state.originals?.get(originalKey(comment)) })).join("")}</ul>`
     : `<p class="run-empty" data-review-empty>No review comments yet. When someone comments on pull request #${e(view?.pr)}, the comments and what the Coworker did with each appear here.</p>`;
   const more = view?.has_more ? `<button class="btn sm" type="button" data-review-more="more">Show more comments (${e(comments.length)} of ${e(view.comments_total)} shown)</button>` : "";
   return `${off}${facts}${decisionHTML(view)}${list}${more}`;
@@ -216,9 +218,16 @@ export async function attachCardReviews(mount, card, { api = request, previous =
     if (target && !focus(target)) focus('[data-review-heading="reviews"]');
   };
   const show = (view, note) => {
+    const changedPR = last && (last.repo !== view.repo || last.pr !== view.pr);
+    const current = new Set((view.comments || []).map(originalKey));
+    let discarded = false;
+    for (const cached of state.originals.keys()) {
+      if (changedPR || !current.has(cached)) { state.originals.delete(cached); discarded = true; }
+    }
     last = view;
     paint(cardReviewsHTML(view, state));
     if (note !== undefined) say(note);
+    else if (discarded) say("The comments changed. Choose Show the original words again to read the current comment.");
     // While the Coworker works on comments, or a fix waits for GitHub, the card follows by itself.
     const busy = (view?.comments || []).some((c) => c.status === "working");
     if (busy && !polling) {
@@ -266,14 +275,26 @@ export async function attachCardReviews(mount, card, { api = request, previous =
     await load(note);
   }
   async function original(trigger, id) {
+    const comment = last?.comments?.find((item) => String(item.id) === String(id));
+    if (!comment || !slot.isConnected) return;
+    const cached = originalKey(comment), expectedRev = comment.rev, repo = last.repo, pr = last.pr;
+    const current = () => slot.isConnected && last?.repo === repo && last.pr === pr
+      && last.comments?.some((item) => originalKey(item) === cached);
     trigger.disabled = true;
     try {
       const found = await api(`/api/pr-review/cards/${encodeURIComponent(card.number)}/comments/${encodeURIComponent(id)}/original`);
-      state.originals.set(String(id), String(found?.text ?? ""));
+      if (!current()) return;
+      if (String(found?.id) !== String(id) || found?.rev !== expectedRev) {
+        trigger.disabled = false;
+        await load("This comment changed. Choose Show the original words again to read its current revision.");
+        return;
+      }
+      state.originals.set(cached, String(found?.text ?? ""));
       wanted = `[data-review-expand="${id}"]`;
       if (last) show(last, "Showing the original words.");
       if (!focus(wanted)) focus(`[data-review-comment="${id}"] [data-review-text]`) || focus('[data-review-heading="reviews"]');
     } catch (error) {
+      if (!current()) return;
       trigger.disabled = false;
       say(refusalWords(error));
     }
