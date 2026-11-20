@@ -196,7 +196,8 @@ SETUP_ONLY_BLOCKER = (
 
 
 ADD_A_MACHINE = pairing.ADD_A_MACHINE
-NO_WORK_CODES = ("waiting_approval", "not_finished", "set_up", "not_approved")
+GUIDED_SETUP_CODES = ("waiting_approval", "not_finished", "set_up")
+HIDDEN_LIMIT_CODES = (*GUIDED_SETUP_CODES, "not_approved")
 NO_CAPACITY = "Not used in this version: no Coworker runs on this machine"
 
 
@@ -1222,7 +1223,7 @@ def _runner_usage(machine, facts, now, *, silent="", takes_no_work=False):
             spend_line += f" (and {_runs(spend['unknown_runs'])} of unknown cost)"
     usage["summary"] = f"{in_progress} · {resources} · {spend_line}"
     if takes_no_work:
-        # A machine that takes no work here has no run capacity or resources to show: say so instead of "0 of 1 in use".
+        # Guided setup only checks the machine; developer runners retain their recorded usage.
         usage["runs"]["text"] = NO_CAPACITY
         usage["resources"] = {"known": False, "reason": "not_used", "text": NO_CAPACITY}
         usage["summary"] = f"{NO_CAPACITY} · {spend_line}"
@@ -1297,7 +1298,7 @@ def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, 
             facts,
             now,
             silent={"offline": "offline", "slow": "slow to report"}.get(status["code"], ""),
-            takes_no_work=status["code"] in NO_WORK_CODES,
+            takes_no_work=status["code"] in GUIDED_SETUP_CODES,
         ),
         "placement": {"approved": machine["binding_state"] == "owner_attested"},
         "draining": facts["drain"]["draining"],
@@ -1696,10 +1697,10 @@ def detail(store, principal, kind, item_id, *, session_hash):
         raise not_found()
     item["activity"] = _runner_activity(store, item_id, now)
     machine = _machine_row(store, item_id)
-    # A machine that takes no work here has no limits to show beside "Allowed: No".
+    # Omit unused capacity settings while setup or approval still blocks new work.
     limits = (
         []
-        if item["status"]["code"] in NO_WORK_CODES
+        if item["status"]["code"] in HIDDEN_LIMIT_CODES
         else [
             {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
             {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},

@@ -489,6 +489,27 @@ def test_not_approved_detail_hides_unused_capacity_figures(api, fleet):
     assert not {"Runs at once", "Starts per hour"} & facts.keys()
 
 
+def test_not_approved_developer_runner_keeps_recorded_usage(api, fleet):
+    made = fleet.enroll("runner-recorded-usage")
+    fleet.seen(made, 10)
+    card = fleet.work(made)
+    fleet.job(made, "started", task=card)
+    fleet.resources(made, seconds_ago=120, memory_mb=6144, cpu_free=3.5)
+    registry.patch(api.env.db, api.env.principal, made["machine_id"], {"topics": ["review"]})
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    for item in (by_name(read(api))["runner-recorded-usage"], result["item"]):
+        assert item["status"]["code"] == "not_approved"
+        usage = item["usage"]
+        assert usage["runs"]["running"] == 1
+        assert usage["runs"]["text"].startswith("1 of ")
+        assert usage["resources"]["known"] is True
+        assert usage["resources"]["memory_available_mb"] == 6144
+        assert "6.0 GiB memory free" in usage["summary"]
+        assert "Not used in this version" not in usage["summary"]
+    assert result["item"]["activity"][0]["text"].startswith(f"Started: demo card {card}")
+
+
 def test_unknown_ids_kinds_and_paths_are_refused_with_a_reason(api):
     assert api.request(path=f"{BASE}/workspace/nothing") == (
         404,
