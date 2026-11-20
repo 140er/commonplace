@@ -924,7 +924,7 @@ def test_refusing_a_connected_machine_revokes_its_credentials(flow):
     credentials = flow.connect(made)
     status, result = flow.close(made)
     assert status == 200 and result["pairing"]["state"] == "declined"
-    assert result["pairing"]["state_label"] == "Not approved"
+    assert result["pairing"]["state_label"] == "Refused"
     assert flow.hub.db.authenticate_token(credentials["machine_token"]) is None
     assert flow.hub.db.authenticate_token(credentials["worker_token"]) is None
     with flow.hub.db._lock:
@@ -1324,7 +1324,7 @@ def test_removing_a_failed_or_stalled_setup_is_never_called_a_decline(flow, monk
     flow.connect(stuck)
     at(seconds=pairing.OFFLINE_SECONDS + 1)
     assert flow.close(stuck)[1]["pairing"]["state"] == "abandoned"
-    # The words "Not approved" are only for the owner's own refusal of a healthy connected machine.
+    # The word "Refused" is only for the owner's own refusal of a healthy connected machine.
     fine = flow.made(label="fine-box")
     flow.finish_steps(flow.connect(fine))
     refused = flow.close(fine)[1]["pairing"]

@@ -189,16 +189,54 @@ def _cap_text(machine, facts):
 # disagree. Each reason has a ``kind``: "no" (nothing starts), "not_now" (nothing starts until time passes), "slot" (waits
 # for a run to finish) or "report" (the hub would hand it work once it reports).
 REASON_KINDS = ("no", "not_now", "slot", "report")
-CONFIRM_STEP = (
-    "Confirm this machine in Needs me; its card appears there once the provider sign-in is done."
-)
-ATTEST_STEP = "Attest it in Admin, Runner machines."
+CONFIRM_STEP = "Confirm this machine in Needs me; its card appears there once the machine has acknowledged its machine-access grant."
+ATTEST_STEP = "Attest it in Admin, Runner machines (the Attest form asks for the machine's provider instance id)."
 SETUP_ONLY_BLOCKER = (
     "This setup only checks the machine. Coworkers do not run on it in this version."
 )
 
 
-def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False, guided=False):
+ADD_A_MACHINE = "Add a machine below"
+
+
+def pending_reason(pending):
+    """The one reason a machine from the setup guide that the owner has not approved yet cannot take work, in the
+    words Add a machine uses for the same pairing: waiting for approval, or not finished (a step failed, or nothing
+    more came for 15 minutes)."""
+    if pending["state"] == "connected" and not pending["stalled"]:
+        return {
+            "code": "waiting_approval",
+            "kind": "no",
+            "allowed": "No: not approved yet",
+            "blocker": f"Not approved: it connected and waits for your approval in {ADD_A_MACHINE}.",
+            "label": "Waiting for your approval",
+            "tone": "wait",
+            "detail": f"It connected and waits for your approval in {ADD_A_MACHINE}.",
+            "next": f"Open it in {ADD_A_MACHINE}, compare its fingerprint with the one the machine printed, then approve it.",
+        }
+    if pending["state"] == "failed":
+        what = (
+            f"A setup step failed: {pending['cause'].rstrip('.')}."
+            if pending["cause"]
+            else "A setup step failed."
+        )
+    else:
+        what = "This setup has not finished."
+    return {
+        "code": "not_finished",
+        "kind": "no",
+        "allowed": "No: not approved yet",
+        "blocker": f"Not finished: {what[0].lower()}{what[1:]} Set up again or remove it in {ADD_A_MACHINE}.",
+        "label": "Not finished",
+        "tone": "bad",
+        "detail": f"{what} Set up again or remove it in {ADD_A_MACHINE}.",
+        "next": f"Open it in {ADD_A_MACHINE} and choose Set up again, or remove it.",
+    }
+
+
+def can_take_new_work(
+    machine, record, facts, red_after_s=900, setup_only=False, guided=False, pending=None
+):
     """The ordered reasons this runner cannot take new work right now: ``[{code, kind, allowed, blocker}]``, in blocker
     order. An empty list means it can. A removed runner has the one reason. A machine added through the setup guide
     sends no heartbeat, so what it reports says nothing about whether it is on and is not listed as quiet."""
@@ -212,6 +250,10 @@ def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False,
                 "blocker": "Removed: the owner removed this runner. It can't be used again.",
             }
         ]
+    if pending:
+        # A machine from the setup guide that connected and is not approved is switched off until it is approved: that is
+        # what Add a machine says, so it is said first and the generic "turned off" is not (the owner did not do that).
+        return [pending_reason(pending)]
     reasons = []
     if reason == "disabled":
         reasons.append(
@@ -951,6 +993,21 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "Revoked",
             "The owner removed this runner and its access is cancelled.",
         )
+    if "waiting_approval" in codes or "not_finished" in codes:
+        waiting = next(
+            item
+            for item in (
+                reasons if reasons is not None else can_take_new_work(machine, record, facts)
+            )
+            if item["code"] in ("waiting_approval", "not_finished")
+        )
+        return _status(
+            waiting["code"],
+            waiting["tone"],
+            waiting["label"],
+            waiting["detail"],
+            next_text=waiting["next"],
+        )
     if reason == "disabled":
         return _status(
             "disabled",
@@ -984,7 +1041,7 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "quiet",
             "Set up and checked",
             "The machine passed its setup checks. This page cannot see whether it is switched on right now, "
-            "and this version only checks the machine: Coworkers do not run on it.",
+            "and this version only checks the machine: Coworkers do not run on it in this version.",
         )
     if reason == "no_heartbeat":
         return _status(
@@ -1169,8 +1226,18 @@ def _runner_usage(machine, facts, now, *, silent=""):
     return usage
 
 
-def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, guided=False):
-    reasons = can_take_new_work(machine, record, facts, red_after_s, setup_only, guided)
+def runner_item(
+    machine, record, facts, now, red_after_s=900, setup_only=False, guided=False, pending=None
+):
+    if pending and not record["last_signal_at"] and pending["connected_at"]:
+        # It did connect (that is how it got here): the row says when, not "never contacted".
+        record = {
+            **record,
+            "last_signal_at": pending["connected_at"],
+            "last_signal_source": "setup",
+            "age_s": max(0, int(now - _iso_to_epoch(pending["connected_at"]))),
+        }
+    reasons = can_take_new_work(machine, record, facts, red_after_s, setup_only, guided, pending)
     status = runner_status(machine, record, facts, now, reasons, setup_only)
     blockers = runner_blockers(machine, record, facts, red_after_s, reasons)
     issues = []
@@ -1199,7 +1266,8 @@ def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, 
     # removed runner is informational.
     # A finished run whose card is still in Doing is something a person can fix (move the card), so it counts too.
     attention = (
-        status["code"] in ("offline", "disabled", "not_approved")
+        status["code"]
+        in ("offline", "disabled", "not_approved", "waiting_approval", "not_finished")
         or bool(issues)
         or bool(facts["finished_holding"])
     )
@@ -1368,6 +1436,7 @@ def _runner_items(store, now, only=None):
     items = []
     setup_only = pairing.setup_only_ids(gateway.db, ws)
     guided = pairing.machine_ids(gateway.db, ws)
+    pending = pairing.pending_machines(gateway.db, ws)
     for machine in machines:
         sig = signals.get(machine["id"]) or topo.MachineSignals(
             machine_id=machine["id"],
@@ -1384,6 +1453,7 @@ def _runner_items(store, now, only=None):
                 config.red_after_s,
                 setup_only=machine["id"] in setup_only,
                 guided=machine["id"] in guided,
+                pending=pending.get(machine["id"]),
             )
         )
     return items, total

@@ -9,6 +9,8 @@ same ``NotFound``.
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 import shutil
 from datetime import timedelta
 
@@ -26,8 +28,20 @@ log = logging.getLogger("commonplace.previews")
 
 
 def _remove_tree(path) -> None:
-    """The one place files are removed; callers look at the result instead of trusting it."""
-    shutil.rmtree(path, ignore_errors=True)
+    """The one place files are removed; callers look at the result instead of trusting it, so
+    no failure to remove escapes from here."""
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception as exc:
+        log_failure(log, "preview files could not be removed", exc)
+
+
+def _exists(path) -> bool:
+    """Whether a path is still there; a path that cannot be looked at counts as there."""
+    try:
+        return path.exists()
+    except OSError:
+        return True
 
 
 def _service(gateway, principal):
@@ -202,13 +216,20 @@ def _same_or_refused(conn, principal, workspace, info, row, digest, now) -> tupl
         return Refused("person_stopped"), None
     held = (
         conn.execute(
-            "SELECT digest FROM preview_revisions WHERE preview_id=? AND revision=?",
+            "SELECT digest,deleted_at FROM preview_revisions WHERE preview_id=? AND revision=?",
             (row["id"], row["current_revision"]),
         ).fetchone()
         if row is not None and row["current_revision"]
         else None
     )
-    if held is None or held["digest"] != digest or row["state"] not in ("ready", "stopped"):
+    # Files a person deleted are not "kept": the same files are a new revision, never a preview
+    # served again over a folder that is gone.
+    if (
+        held is None
+        or held["deleted_at"] is not None
+        or held["digest"] != digest
+        or row["state"] not in ("ready", "stopped")
+    ):
         return None, None
     if row["state"] == "ready":
         return None, store.view(conn, row)
@@ -311,12 +332,15 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                     ("failed", "publish_interrupted") if before[0] == "building" else before[:2]
                 )
                 conn.execute(
-                    "UPDATE previews SET state=?,reason=?,updated_at=? WHERE id=?",
+                    "UPDATE previews SET state=?,reason=?,updated_at=?,failure_file='',"
+                    "failure_kind='' WHERE id=?",
                     (state, why, now, identity),
                 )
             else:
+                # A storage or room failure is not about one file: no stale file or kind stays.
                 conn.execute(
-                    "UPDATE previews SET state='failed',reason=?,updated_at=? WHERE id=?",
+                    "UPDATE previews SET state='failed',reason=?,updated_at=?,failure_file='',"
+                    "failure_kind='' WHERE id=?",
                     (exc.reason, now, identity),
                 )
             store.event(
@@ -379,7 +403,8 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
                 )
                 conn.execute(
                     "UPDATE previews SET state='ready',reason='published',current_revision=?,"
-                    "pr_url=?,pr_head=?,actor=?,published_by=?,by_person=?,updated_at=? WHERE id=?",
+                    "pr_url=?,pr_head=?,actor=?,published_by=?,by_person=?,updated_at=?,"
+                    "failure_file='',failure_kind='' WHERE id=?",
                     (
                         revision,
                         info["pr_url"],
@@ -414,10 +439,32 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
         gateway,
         principal,
         info["number"],
-        f"Published preview {name} (revision {shown['revision']}). Open it from this card, "
+        f"Published preview {name} (version {shown['revision']}). Open it from this card, "
         "under Previews.",
     )
     return shown, True
+
+
+def _leftovers(gateway, workspace, preview_id) -> list:
+    """Folders a delete renamed aside and could not remove yet (read with no lock held)."""
+    return sorted(store.root(gateway, workspace).glob(f".deleting-{preview_id}-*"))
+
+
+def _leftover_ids(gateway, workspace) -> set:
+    """The previews with such folders, from one look at the folder (``.deleting-<id>-<random>``)."""
+    found = set()
+    for path in store.root(gateway, workspace).glob(".deleting-*"):
+        parts = path.name.split("-")
+        if len(parts) == 3:
+            found.add(parts[1])
+    return found
+
+
+def _mark_leftovers(shown, leftover_ids) -> dict:
+    """A deleted preview whose removal left files says so, so the owner can delete again."""
+    if shown["reason"] == "files_deleted":
+        shown["files_remaining"] = shown["id"] in leftover_ids
+    return shown
 
 
 def _authorize(gateway, principal, preview_id) -> None:
@@ -520,6 +567,10 @@ def open_preview(gateway, principal, preview_id, *, revisions=False) -> tuple:
         current, history = store.snapshot(db._conn, row, revisions=revisions)
     stops_at, _why = stop_due(row, card, rule)
     shown = store.shape(row, current, history, stops_at)
+    if shown["reason"] == "files_deleted":
+        shown = _mark_leftovers(
+            shown, {row["id"]} if _leftovers(gateway, workspace, row["id"]) else set()
+        )
     folder = (
         store.revision_dir(gateway, workspace, row["id"], row["current_revision"])
         if current is not None
@@ -561,10 +612,17 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
             )
         }
         held = store.usage(db._conn, workspace)
-    shown = [
+    shapes = [
         store.shape(r, current.get(r["id"]), None, stop_due(r, cards.get(r["card"]), rule)[0])
         for r in rows
     ]
+    # One look at the folder for the whole list, and only when a deleted preview is in it.
+    leftover_ids = (
+        _leftover_ids(gateway, workspace)
+        if any(p["reason"] == "files_deleted" for p in shapes)
+        else set()
+    )
+    shown = [_mark_leftovers(p, leftover_ids) for p in shapes]
     return {
         "previews": shown,
         "usage": held,
@@ -572,6 +630,8 @@ def listing(gateway, principal, *, card=None, pr=None) -> dict:
         "rule": rule,
         # Whether this caller may change the rule; the PUT route checks it again.
         "can_set_rule": bool(principal.person and principal.role == "owner"),
+        # Whether this caller may delete files; the DELETE route checks it again.
+        "can_delete": bool(principal.person and principal.role == "owner"),
     }
 
 
@@ -584,6 +644,9 @@ def _change(gateway, principal, preview_id, *, kind, to_state, reason_for, allow
             raise Forbidden("not the publisher")
         if row["state"] not in allowed_from:
             return store.view(conn, row)
+        if kind == "reopened" and not principal.person and row["reason"] == "stopped_by_person":
+            # A person took it down: only a person serves it again, whatever the caller's routes.
+            raise Refused("person_stopped")
         reason = reason_for(row, principal)
         if to_state == "ready":
             held = store.usage(conn, workspace)
@@ -615,7 +678,13 @@ def stop(gateway, principal, preview_id) -> dict:
 
 
 def reopen(gateway, principal, preview_id) -> dict:
-    """Serve a stopped preview again from its kept files."""
+    """Serve a stopped preview again from its kept files; ``Refused`` when they were deleted."""
+    _authorize(gateway, principal, preview_id)
+    db = gateway.db
+    with db._lock:
+        row = _held(db._conn, principal, preview_id)
+    if row["state"] == "stopped" and row["reason"] == "files_deleted":
+        raise Refused("files_deleted")
     return _change(
         gateway,
         principal,
@@ -625,6 +694,103 @@ def reopen(gateway, principal, preview_id) -> dict:
         reason_for=lambda row, p: "published",
         allowed_from=("stopped",),
     )
+
+
+def _mark_deleted(conn, workspace, row, actor) -> None:
+    """The rows of a delete: every revision's files gone, the preview stopped, one event."""
+    now = store.stamp(store.clock())
+    conn.execute(
+        "UPDATE preview_revisions SET deleted_at=? WHERE preview_id=? AND deleted_at IS NULL",
+        (now, row["id"]),
+    )
+    conn.execute(
+        "UPDATE previews SET state='stopped',reason='files_deleted',updated_at=? WHERE id=?",
+        (now, row["id"]),
+    )
+    store.event(conn, workspace, row["id"], row["card"], "files_deleted", actor)
+
+
+def _finish_unrestorable(db, workspace, row, actor) -> None:
+    """The folder could not be renamed back after a failed delete, so the rows must not read
+    ready over a folder that is no longer there. Record the delete instead: the preview reads
+    deleted with files remaining, and the owner's Finish deleting removes the aside folder."""
+    try:
+        with db._lock, db._tx() as conn:
+            _mark_deleted(conn, workspace, row, actor)
+            store.event(conn, workspace, row["id"], row["card"], "delete_incomplete", actor)
+    except Exception as exc:
+        log_failure(log, "preview delete could not be recorded after a failed restore", exc)
+
+
+def delete_files(gateway, principal, preview_id, confirm) -> dict:
+    """Delete every revision's files of a preview. A signed-in workspace owner only, with the
+    preview's own id repeated as confirmation; never called by a timer or a Coworker.
+
+    The order (see docs/system/previews.md, "Deleting files"): under the control-database lock
+    the rows are marked deleted and the preview's folder is renamed aside in one step, which is
+    cheap and atomic; the lock is then released and the renamed folder is removed. A publish
+    racing the delete finds its preview stopped in its final transaction and refuses itself
+    (``changed_meanwhile``), and its half-written files went aside with the folder, so a deleted
+    preview never reads ready. A removal that leaves files behind is recorded in a short
+    follow-up transaction and said in the answer; asking again removes what is left."""
+    if not principal.person or principal.role != "owner":
+        raise Forbidden("owner")
+    _authorize(gateway, principal, preview_id)
+    db, workspace = gateway.db, principal.workspace_id
+    base = store.root(gateway, workspace)
+    aside = folder = None
+    with db._lock:
+        try:
+            with db._tx() as conn:
+                row = _held(conn, principal, preview_id)
+                if confirm != row["id"]:
+                    raise ValueError("confirm must repeat the preview id")
+                state, _reason = store.effective(row)
+                if state == "building":
+                    raise Refused("validating")
+                _mark_deleted(conn, workspace, row, principal.actor)
+                folder = base / row["id"]
+                if folder.exists():
+                    target = base / f".deleting-{row['id']}-{secrets.token_hex(4)}"
+                    # A rename only: if the disk refuses it, the transaction rolls back.
+                    try:
+                        os.replace(folder, target)
+                    except OSError:
+                        raise Refused("storage_unavailable") from None
+                    aside = target
+                shown = store.view(
+                    conn, store.row_by_id(conn, workspace, row["id"]), revisions=True
+                )
+        except BaseException:
+            # The rows rolled back (a refused or failed commit included), so the files must be
+            # where the rows say they are: rename the folder back, still under the lock, so no
+            # publish can make a new folder in between.
+            if aside is not None:
+                try:
+                    os.replace(aside, folder)
+                except OSError as exc:
+                    log_failure(
+                        log, "preview folder could not be put back after a failed delete", exc
+                    )
+                    _finish_unrestorable(db, workspace, row, principal.actor)
+            raise
+    # The lock is released: the removal itself may take as long as the files need.
+    leftovers = _leftovers(gateway, workspace, row["id"])
+    for path in leftovers:
+        _remove_tree(path)
+    if any(_exists(path) for path in leftovers):
+        log.warning("preview files could not be fully removed for %s", row["id"])
+        try:
+            with db._lock, db._tx() as conn:
+                store.event(
+                    conn, workspace, row["id"], row["card"], "delete_incomplete", principal.actor
+                )
+        except Exception as exc:
+            log_failure(log, "a delete_incomplete event could not be recorded", exc)
+        shown["files_remaining"] = True
+    else:
+        shown["files_remaining"] = False
+    return shown
 
 
 RULE_BOUNDS = {"stop_days_after_pr": (1, 365), "max_age_days": (1, 3650)}
@@ -653,7 +819,8 @@ def rule_text(held) -> str:
         parts.append(f"{held['max_age_days']} days after it was last made live")
     if not parts:
         return "Previews are served until a person or the Coworker that published them stops them."
-    return "A preview stops being served " + " or ".join(parts) + ". Its files are kept."
+    when = " and ".join(parts) + (", whichever comes first" if len(parts) == 2 else "")
+    return f"A preview stops being served {when}. Its files are kept."
 
 
 def get_rules(gateway, principal) -> dict:
@@ -705,8 +872,10 @@ REFUSAL_STATUS = {
     "too_many_previews": 409,
     "changed_meanwhile": 409,
     "workspace_quota_full": 409,
+    "workspace_space_full": 409,
     "validating": 409,
     "storage_unavailable": 503,
+    "files_deleted": 409,
     "person_stopped": 409,
 }
 

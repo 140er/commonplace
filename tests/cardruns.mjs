@@ -228,6 +228,14 @@ const cases = {
     // Nothing can be started: a plain reason and no button.
     const refused = cardRunsHTML([], '', { configured: false, refusal: 'no_machine', machines: [] });
     assert.ok(refused.includes('No machine is ready') && refused.includes('Runner machines') && !refused.includes('Start agent'));
+    // A machine from the setup guide only checks itself: the refusal says so and links the one working next step.
+    const guided = cardRunsHTML([], '', { configured: false, refusal: 'setup_only', machines: [] });
+    assert.ok(guided.includes('only checks itself in this version, so no Coworker runs on it yet') && guided.includes('href="#/compute"') && guided.includes('Open Add a machine'));
+    assert.ok(!/Workspace settings|Runner machines|attest/i.test(guided), 'no dead end for a guided machine');
+    const confirm = cardRunsHTML([], '', { configured: true, refusal: 'setup_only_confirm' });
+    assert.ok(confirm.includes('href="#/needs"') && confirm.includes('Open Needs me') && confirm.includes('waiting for you in Needs me') && !confirm.includes('Start agent'));
+    // An Admin-enrolled machine keeps Attest and the text names the field the form asks for.
+    assert.ok(refused.includes('provider instance id'));
     // A card nobody may take shows neither the control nor a complaint.
     for (const refusal of ['not_todo', 'assigned', 'blocked_by', 'waiting_on_person', 'proposal_open']) {
       const html = cardRunsHTML([], '', { configured: true, refusal });
