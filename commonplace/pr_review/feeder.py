@@ -24,10 +24,12 @@ import http.client
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
@@ -51,6 +53,15 @@ _ENDPOINTS = {
     "review": "pulls/{n}/reviews",
     "conversation": "issues/{n}/comments",
 }
+
+
+class _PassSummary(TypedDict):
+    prs: int
+    requests: int
+    comments: int
+    skipped: int
+    rate_limited: bool
+    errors: list[str]
 
 
 class FeederError(Exception):
@@ -186,6 +197,7 @@ def _removed(kind: str, ident: str, seen: dict) -> dict:
 def batches(base: dict, comments: list, files: list | None) -> list[dict]:
     """The requests for one read: at most 100 comments and about 900 kB each; the first one
     carries the changed files of the head. A read with no comments is one request."""
+    chunk: list[dict]
     out, chunk, size = [], [], 0
     for comment in comments:
         cost = len(json.dumps(comment))
@@ -239,11 +251,18 @@ class Feeder:
 
     def _save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(self.state, handle)
-        os.replace(tmp, self.state_path)
+        fd, name = tempfile.mkstemp(
+            prefix=self.state_path.name + ".", suffix=".tmp", dir=self.state_path.parent
+        )
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(self.state, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.state_path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     # -- the two sides -----------------------------------------------------------------
 
@@ -419,9 +438,9 @@ class Feeder:
                 recent = False
         mine["next_due"] = self.clock() + (FAST_S if recent else SLOW_S)
 
-    def once(self, *, respect_schedule: bool = False) -> dict:
+    def once(self, *, respect_schedule: bool = False) -> _PassSummary:
         """One pass. ``{prs, requests, comments, skipped, rate_limited, errors}``; counts only."""
-        summary = {
+        summary: _PassSummary = {
             "prs": 0,
             "requests": 0,
             "comments": 0,
