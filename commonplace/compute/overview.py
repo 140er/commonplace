@@ -189,14 +189,14 @@ def _cap_text(machine, facts):
 # disagree. Each reason has a ``kind``: "no" (nothing starts), "not_now" (nothing starts until time passes), "slot" (waits
 # for a run to finish) or "report" (the hub would hand it work once it reports).
 REASON_KINDS = ("no", "not_now", "slot", "report")
-CONFIRM_STEP = "Confirm this machine in Needs me; its card appears there once the machine has acknowledged its machine-access grant."
-ATTEST_STEP = "Attest it in Admin, Runner machines (the Attest form asks for the machine's provider instance id)."
+ATTEST_STEP = "Attest it in Admin > Runner machines."
 SETUP_ONLY_BLOCKER = (
     "This setup only checks the machine. Coworkers do not run on it in this version."
 )
 
 
 ADD_A_MACHINE = "Add a machine below"
+NO_CAPACITY = "Not used in this version: no Coworker runs on this machine"
 
 
 def pending_reason(pending):
@@ -212,7 +212,7 @@ def pending_reason(pending):
             "label": "Waiting for your approval",
             "tone": "wait",
             "detail": f"It connected and waits for your approval in {ADD_A_MACHINE}.",
-            "next": f"Open it in {ADD_A_MACHINE}, compare its fingerprint with the one the machine printed, then approve it.",
+            "next": f"Once it has finished its setup and printed its fingerprint, compare it and approve the machine in {ADD_A_MACHINE}.",
         }
     if pending["state"] == "failed":
         what = (
@@ -220,13 +220,16 @@ def pending_reason(pending):
             if pending["cause"]
             else "A setup step failed."
         )
+        fact = f"{pending['cause'].rstrip('.')}." if pending["cause"] else "A setup step failed."
     else:
         what = "This setup has not finished."
+        fact = "Nothing more came from the machine for 15 minutes."
     return {
         "code": "not_finished",
         "kind": "no",
-        "allowed": "No: not approved yet",
-        "blocker": f"Not finished: {what[0].lower()}{what[1:]} Set up again or remove it in {ADD_A_MACHINE}.",
+        "allowed": "No: setup not finished",
+        # The chip says "Not finished" and the sentence says what happened: the blocker adds the fact once and the step.
+        "blocker": f"{fact} Set up again or remove it in {ADD_A_MACHINE}.",
         "label": "Not finished",
         "tone": "bad",
         "detail": f"{what} Set up again or remove it in {ADD_A_MACHINE}.",
@@ -234,9 +237,7 @@ def pending_reason(pending):
     }
 
 
-def can_take_new_work(
-    machine, record, facts, red_after_s=900, setup_only=False, guided=False, pending=None
-):
+def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False, pending=None):
     """The ordered reasons this runner cannot take new work right now: ``[{code, kind, allowed, blocker}]``, in blocker
     order. An empty list means it can. A removed runner has the one reason. A machine added through the setup guide
     sends no heartbeat, so what it reports says nothing about whether it is on and is not listed as quiet."""
@@ -277,9 +278,9 @@ def can_take_new_work(
         )
         return reasons
     if machine["binding_state"] != "owner_attested":
-        # One name and one place for this step. A machine added through the setup guide is confirmed in Needs me (its
-        # card appears there after the provider sign-in); Admin's Attest needs a provider id that machine has not got.
-        step = CONFIRM_STEP if guided else ATTEST_STEP
+        # One name and one place for this step: Attest, in Admin > Runner machines. (A machine added through the setup
+        # guide never gets here: it is waiting, not finished, or setup-only, each its own reason.)
+        step = ATTEST_STEP
         reasons.append(
             {
                 "code": "not_approved",
@@ -1114,7 +1115,7 @@ def runner_blockers(machine, record, facts, red_after_s=900, reasons=None):
     return [{"code": item["code"], "text": item["blocker"]} for item in reasons]
 
 
-def _runner_usage(machine, facts, now, *, silent=""):
+def _runner_usage(machine, facts, now, *, silent="", takes_no_work=False):
     """``silent``: why the machine's report is stale ("offline", "slow to report"), so a count of runs in progress is only
     what was recorded."""
     running = facts["running"]
@@ -1223,12 +1224,15 @@ def _runner_usage(machine, facts, now, *, silent=""):
         if spend["unknown_runs"]:
             spend_line += f" (and {_runs(spend['unknown_runs'])} of unknown cost)"
     usage["summary"] = f"{in_progress} · {resources} · {spend_line}"
+    if takes_no_work:
+        # A machine that takes no work here has no run capacity or resources to show: say so instead of "0 of 1 in use".
+        usage["runs"]["text"] = NO_CAPACITY
+        usage["resources"] = {"known": False, "reason": "not_used", "text": NO_CAPACITY}
+        usage["summary"] = f"{NO_CAPACITY} · {spend_line}"
     return usage
 
 
-def runner_item(
-    machine, record, facts, now, red_after_s=900, setup_only=False, guided=False, pending=None
-):
+def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False, pending=None):
     if pending and not record["last_signal_at"] and pending["connected_at"]:
         # It did connect (that is how it got here): the row says when, not "never contacted".
         record = {
@@ -1237,7 +1241,7 @@ def runner_item(
             "last_signal_source": "setup",
             "age_s": max(0, int(now - _iso_to_epoch(pending["connected_at"]))),
         }
-    reasons = can_take_new_work(machine, record, facts, red_after_s, setup_only, guided, pending)
+    reasons = can_take_new_work(machine, record, facts, red_after_s, setup_only, pending)
     status = runner_status(machine, record, facts, now, reasons, setup_only)
     blockers = runner_blockers(machine, record, facts, red_after_s, reasons)
     issues = []
@@ -1296,6 +1300,7 @@ def runner_item(
             facts,
             now,
             silent={"offline": "offline", "slow": "slow to report"}.get(status["code"], ""),
+            takes_no_work=status["code"] in ("waiting_approval", "not_finished", "set_up"),
         ),
         "placement": {"approved": machine["binding_state"] == "owner_attested"},
         "draining": facts["drain"]["draining"],
@@ -1435,7 +1440,6 @@ def _runner_items(store, now, only=None):
     facts = _runner_facts(runs, now, machines)
     items = []
     setup_only = pairing.setup_only_ids(gateway.db, ws)
-    guided = pairing.machine_ids(gateway.db, ws)
     pending = pairing.pending_machines(gateway.db, ws)
     for machine in machines:
         sig = signals.get(machine["id"]) or topo.MachineSignals(
@@ -1452,7 +1456,6 @@ def _runner_items(store, now, only=None):
                 now,
                 config.red_after_s,
                 setup_only=machine["id"] in setup_only,
-                guided=machine["id"] in guided,
                 pending=pending.get(machine["id"]),
             )
         )

@@ -48,7 +48,7 @@ const sentences = {
   waiting: ['Waiting for the machine', 'The code is ready. Nothing has connected yet.', 'Run the command on the machine. The code stops working after 15 minutes.'],
   connected: ['Machine connected, waiting for your approval', 'The machine used the code and connected. It cannot do anything until you approve it.', "Compare the machine's name and fingerprint, then approve or choose This is not my machine."],
   approved: ['Approved', 'You approved this machine. It is finishing its setup.', 'Nothing to do here. This page updates when the machine reports that its checks passed.'],
-  ready: ['Set up and checked', 'The machine passed its setup checks. This page cannot see whether it is switched on right now.', 'Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version. A later version will let you sign in a provider and confirm the machine in Needs me.'],
+  ready: ['Set up and checked', 'The machine passed its setup checks. This page cannot see whether it is switched on right now.', 'Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version.'],
   failed: ['A step failed', 'A setup step failed on the machine.', 'Open it to see the cause, then choose Set up again.'],
   expired: ['Code expired', 'The code was not used within 15 minutes and no longer works.', 'Choose Set up again for a new command.'],
   cancelled: ['Cancelled', 'This setup was cancelled before the machine connected. The code no longer works.', 'Choose Set up again for a new command.'],
@@ -409,7 +409,7 @@ const cases = {
     const f = fixture({ pairings: [item('connected')] }); await f.open(); f.click('open', 'pair_0123456789abcdef'); await flush();
     html = f.section(); t = text(html);
     assert.doesNotMatch(html, /data-pr-action="approve" aria-disabled/);
-    assert.match(t, /Approving records the access listed above; nothing uses it in this version\. It does not connect a provider\./);
+    assert.match(t, /Approving records the access listed above; nothing uses it in this version\./);
     assert.ok(html.indexOf('data-pr-grants') < html.indexOf('data-pr-action="approve"'), 'the sentence is above the buttons');
     assert.match(t, /Who can start work on it 1 trusted agent/);
     for (const old of ['May start work on it', 'Cards at once', 'What it may do alone', 'No agent yet']) assert.ok(!t.includes(old), old);
@@ -489,8 +489,8 @@ const cases = {
     const f = fixture({ pairings: [item('ready'), item('ready', { id: 'pair_4444444444444444', label: 'attested-box', binding_state: 'owner_attested' })] }); await f.open();
     const t = text(f.section());
     assert.equal((t.match(/Coworkers do not run on it in this version\./g) || []).length, 2, 'the section note says it once and only the machine that is not attested says it again');
-    assert.equal((t.match(/confirm the machine/g) || []).length, 1, 'and the section note (which says what is confirmed, and where) is not repeated per row');
-    assert.equal((t.match(/A later version will let you/g) || []).length, 1, 'the ready next step is not repeated in a row (the section note says it once)');
+    assert.equal((t.match(/It only checks a machine/g) || []).length, 1, 'and the section note (which says what is confirmed, and where) is not repeated per row');
+    assert.doesNotMatch(t, /Needs me/, 'no row promises a card in Needs me');
   },
 
   async 'copy-in-place'() {
@@ -569,7 +569,7 @@ const cases = {
     // Going back to the list clears what was said about the pairing just left, and a settled row does not repeat the section's note.
     const f = fixture({ pairings: [item('ready'), item('failed', { id: 'pair_3333333333333333', label: 'other-box' })] }); await f.open();
     const list = text(f.section());
-    assert.equal((list.match(/confirm the machine/g) || []).length, 1, 'the ready machine\'s next step is not repeated beside the section note');
+    assert.equal((list.match(/It only checks a machine/g) || []).length, 1, 'the ready machine\'s next step is not repeated beside the section note');
     assert.match(list, /Open it to see the cause, then choose Set up again/, "a failed row keeps its next step");
     f.click('open', 'pair_0123456789abcdef'); await flush();
     assert.match(text(f.section()), /Nothing more to do here\. This version only checks the machine/);
@@ -591,8 +591,8 @@ const cases = {
     assert.equal(f.timers.size, 1, 'an approved machine is still being watched until its checks pass');
     f.state.pairings = [item('ready', { version: 2 })]; await f.tick();
     t = text(f.section());
-    assert.match(t, /Set up and checked/); assert.match(t, /Confirming it in Needs me: not available in this version/);
-    assert.match(t, /Nothing more to do here\. This version only checks the machine: Coworkers do not run on it in this version\. A later version will let you sign in a provider and confirm the machine in Needs me\./);
+    assert.match(t, /Set up and checked/); assert.doesNotMatch(t, /Needs me/);
+    assert.match(t, /Nothing more to do here\. This version only checks the machine: Coworkers do not run on it in this version\./);
     assert.doesNotMatch(t, /\b(running|runs now|is running|ready to run)\b/i, 'nothing says that anything runs');
     assert.equal(f.timers.size, 0);
   },

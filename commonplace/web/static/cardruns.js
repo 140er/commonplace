@@ -49,16 +49,17 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent. An owner can add one in Cloud workspaces, then attest it in Workspace settings, under Runner machines (the Attest form asks for the machine's provider instance id).",
-  machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Workspace settings, under Runner machines; attesting it asks for the machine's provider instance id.",
-  binding_not_attested: "The machine is not attested by an owner yet. Attest it in Workspace settings, under Runner machines (the Attest form asks for the machine's provider instance id).",
+  no_machine: "No machine is ready to run an agent yet. Add one under Add a machine in Cloud workspaces. In this version a machine only checks itself, so no Coworker runs on it yet.",
+  machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
+  binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
+  setup_waiting: "The machine you added connected and waits for your approval. In this version it only checks itself, so no Coworker runs on it yet.",
+  setup_unfinished: "The machine you added did not finish its setup. In this version it only checks itself, so no Coworker runs on it yet.",
   setup_only: "The machine you added only checks itself in this version, so no Coworker runs on it yet.",
-  setup_only_confirm: "The machine you added only checks itself in this version, so no Coworker runs on it yet. Confirming it is waiting for you in Needs me.",
   origin_not_released: "This card came from outside the workspace and has not been released for agents. Release it first, then start an agent.",
-  not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
-  outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
+  not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
+  outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
   task_type_not_allowed: "The machine's worker may not take this type of card.",
-  worker_unavailable: "The machine's worker connection is not available. Check the machine in Workspace settings, under Runner machines.",
+  worker_unavailable: "The machine's worker connection is not available. Check the machine in Admin > Runner machines.",
   project_not_allowed: "The machine is not set up for the project this project's config names. Change the config or the machine's projects.",
   topic_not_allowed: "The machine is not allowed to work on the topic this project's config names. Change the config or the machine's topics.",
   mode_not_allowed: "The machine does not allow the permission mode this project's config names.",
@@ -74,7 +75,8 @@ const START_REFUSALS = {
   not_configured: "This project has no Coworker config. Choose a machine, project and topic.",
 };
 // Where the person goes for the one working next step of a refusal.
-const START_LINKS = { setup_only: ["#/compute", "Open Add a machine"], setup_only_confirm: ["#/needs", "Open Needs me"] };
+const ADD_LINK = ["#/compute", "Open Add a machine"], ADMIN_LINK = ["#/admin", "Open Admin > Runner machines"];
+const START_LINKS = { no_machine: ["#/compute", "Open Cloud workspaces"], setup_waiting: ADD_LINK, setup_unfinished: ADD_LINK, setup_only: ADD_LINK, machine_unavailable: ADMIN_LINK, binding_not_attested: ADMIN_LINK, not_writable: ADMIN_LINK, outside_worker_wing: ADMIN_LINK, worker_unavailable: ADMIN_LINK };
 // The card cannot be started whatever the setup: show no Start control and no complaint.
 export const NOT_CLAIMABLE = ["not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by"];
 const TEXT_CODES = { "card already has an active start": "active_start", "card was started recently": "started_recently" };

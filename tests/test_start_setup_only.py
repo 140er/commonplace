@@ -5,7 +5,7 @@ import pytest
 
 from commonplace import control_db
 from commonplace.compute import pairing
-from commonplace.runner import enrollment, predicate, setup_approvals
+from commonplace.runner import enrollment, predicate
 from tests import test_card_start_defaults as base
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_orch_runner import BOARD, PLAIN
@@ -93,16 +93,24 @@ def test_the_same_machine_with_a_heartbeat_is_an_ordinary_runner(world, owner):
     assert [m["id"] for m in body["machines"]] == [world.machine_id]
 
 
-def test_a_machine_waiting_for_approval_and_one_with_its_confirm_card_up_say_where_to_go(
-    world,
-    owner,
-    monkeypatch,
-):
+def test_the_refusal_says_which_step_the_guided_machine_is_at(world, owner):
     card = world.card(board=PLAIN)
     guide(world, accepted=False)
-    assert options(owner, card)[1]["refusal"] == "setup_only"
-    monkeypatch.setattr(setup_approvals, "confirm_pending", lambda db, machine: True)
-    assert options(owner, card)[1]["refusal"] == "setup_only_confirm"
+    assert options(owner, card)[1]["refusal"] == "setup_waiting"
+    with world.db._lock:
+        world.db._conn.execute(
+            "INSERT INTO machine_pairing_steps(pairing_id, step, state, cause, reported_at) VALUES (?,?,?,?,?)",
+            (
+                "pair_" + world.machine_id,
+                "service",
+                "failed",
+                "service_failed",
+                "2026-11-20T00:00:00Z",
+            ),
+        )
+    assert options(owner, card)[1]["refusal"] == "setup_unfinished"
+    status, refused = owner.call("POST", "/api/card-starts", {"task": card})
+    assert status >= 400 and world.all_jobs() == [], (status, refused)
 
 
 def test_a_legacy_runner_row_without_a_machine_id_was_never_added_through_the_guide(world):

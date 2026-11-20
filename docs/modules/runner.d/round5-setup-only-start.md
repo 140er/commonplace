@@ -1,4 +1,4 @@
-- **Owns:** `predicate.setup_only_refusal` is the one answer for a machine the setup guide added that cannot run Coworkers in this version (waiting, not finished, or approved and never heard from); `startable`, `jobs.lease`, `capacity.board_capacity`, `start_options` and `runner_bridge.card_refusal` read it, and `setup_approvals.confirm_pending` says whether its Needs me card is up (read-only).
-- **Promises:** Start is never offered, accepted or leased for such a machine; the refusal code is `setup_only` (or `setup_only_confirm`).
+- **Owns:** `predicate.setup_only_refusal` is the one answer for a machine the setup guide added that cannot run Coworkers in this version (waiting, not finished, or approved and never heard from); `startable`, `jobs.lease`, `capacity.board_capacity`, `start_options` and `runner_bridge.card_refusal` read it.
+- **Promises:** Start is never offered, accepted or leased for such a machine; the refusal code is `setup_waiting`, `setup_unfinished` or `setup_only`.
 - **How it fails:** A hub without the pairing tables has no such machines.
 - **Tests:** `tests/test_start_setup_only.py`, `tests/test_compute_overview.py`.

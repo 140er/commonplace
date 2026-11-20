@@ -41,12 +41,19 @@ export function grantBody(values) {
   return { projects: parseList(values.projects), max_runtime_mode: values.max_runtime_mode };
 }
 
-export function attestBody(values) {
-  return {
+// What the hub already knows of the machine's provider instance id: the attested one, else the one the machine reported.
+export const providerGuess = machine => machine?.binding_provider_instance_id || machine?.scope?.record?.provider_instance_id || '';
+export const PROVIDER_HINT = 'The name of the coding tool on the machine: the one entry under providerInstances in its T3 settings (~/.t3/userdata/settings.json). It is filled in when the machine has reported it.';
+
+export function attestBody(values, machine = null) {
+  const body = {
     topics: parseList(values.topics),
     provider_instance_id: String(values.provider_instance_id || '').trim(),
     worker_connection_id: String(values.worker_connection_id || '').trim(),
   };
+  // A machine that reported its grant scope is confirmed against that report (the server refuses a bare confirm).
+  if (machine?.scope?.sha256) Object.assign(body, { grant_scope_sha256: machine.scope.sha256, expected_scope_epoch: machine.scope_epoch });
+  return body;
 }
 
 export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.clipboard.writeText(text) }) {
@@ -85,7 +92,8 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
     const forms = live ? `<form class="agent-form" data-runner-form="attest" data-runner-id="${id}"><h4>Attest</h4>
       <p>Records your statement that this worker is set up for these topics. It is not verified.</p>
       <label>Topics (comma separated)<input name="topics" required value="${e(m.topics.join(', '))}" autocomplete="off"></label>
-      <label>Provider instance id<input name="provider_instance_id" required value="${e(m.binding_provider_instance_id || '')}" autocomplete="off"></label>
+      <label>Provider instance id<input name="provider_instance_id" required value="${e(providerGuess(m))}" aria-describedby="provider-hint-${id}" autocomplete="off"></label>
+      <small id="provider-hint-${id}">${e(PROVIDER_HINT)}</small>
       <label>Worker connection id<input name="worker_connection_id" required value="${e(m.worker_connection_id)}" autocomplete="off"></label>
       <button type="submit" class="btn">Attest</button></form>
       <form class="agent-form" data-runner-form="grant" data-runner-id="${id}"><h4>Edit projects and runtime</h4>
@@ -143,7 +151,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
         reveal(result);
         status('Runner added. Copy the tokens below; they are not shown again.');
       } else if (kind === 'attest') {
-        await api(`/api/runners/${encodeURIComponent(id)}/attest`, { method: 'POST', body: attestBody(values) });
+        await api(`/api/runners/${encodeURIComponent(id)}/attest`, { method: 'POST', body: attestBody(values, machines.find(m => m.machine_id === id)) });
         if (mine !== epoch) return;
         status('Attested. This is your statement; Commonplace does not verify it.');
       } else if (kind === 'grant') {
