@@ -146,6 +146,7 @@ const styles = `
 :root[data-ui="deck"] .priority-info,:root[data-ui="deck"] .priority-toast,:root[data-ui="deck"] .priority-filter select { background:var(--s1-solid); color:var(--ink); border-color:var(--line2); }
 :root[data-ui="deck"] .card-menu { background:var(--s1-solid); color:var(--ink); }
 :root[data-ui="deck"] .deck-board-heading .board-tools { flex-wrap:wrap; justify-content:flex-end; }
+:root[data-ui="deck"] .deck-board-filters { display:flex; align-items:center; gap:8px; }
 @media(max-width:699px) {
   .priority-filter select,.priority-label,.priority-toast button { min-height:44px; }
   .priority-label { display:inline-flex; align-items:center; }
