@@ -216,13 +216,20 @@ def _same_or_refused(conn, principal, workspace, info, row, digest, now) -> tupl
         return Refused("person_stopped"), None
     held = (
         conn.execute(
-            "SELECT digest FROM preview_revisions WHERE preview_id=? AND revision=?",
+            "SELECT digest,deleted_at FROM preview_revisions WHERE preview_id=? AND revision=?",
             (row["id"], row["current_revision"]),
         ).fetchone()
         if row is not None and row["current_revision"]
         else None
     )
-    if held is None or held["digest"] != digest or row["state"] not in ("ready", "stopped"):
+    # Files a person deleted are not "kept": the same files are a new revision, never a preview
+    # served again over a folder that is gone.
+    if (
+        held is None
+        or held["deleted_at"] is not None
+        or held["digest"] != digest
+        or row["state"] not in ("ready", "stopped")
+    ):
         return None, None
     if row["state"] == "ready":
         return None, store.view(conn, row)
