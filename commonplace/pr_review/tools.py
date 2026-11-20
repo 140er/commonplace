@@ -178,7 +178,7 @@ def pr_review_report(ctx, args):
         try:
             BoardService(ToolContext(principal=ctx.principal, gateway=ctx.gateway)).ask(
                 needs_me.question(pr, counts),
-                needs_me.OPTIONS,
+                needs_me.options(store.board(facts["board"])["rounds"]),
                 task=facts["number"],
                 context="Open the card to see each comment, its status and the reason.",
                 person_reason="Review comments need a person's decision.",

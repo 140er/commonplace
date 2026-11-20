@@ -137,3 +137,21 @@ def pr_problem(pr_row, facts) -> str | None:
     if pr_row["branch"] and facts["branch"] and pr_row["branch"] != facts["branch"]:
         return "branch_not_owned"
     return None
+
+
+def last_answer(gateway, workspace_id: str, number: int, choices: list) -> dict | None:
+    """The newest answer on the card whose choice is one of ``choices`` (the loop's labels),
+    as ``{id, choice, stamp_user}``, or ``None``."""
+    store = _open(gateway, workspace_id)
+    if store is None or not choices:
+        return None
+    with store.connection() as conn:
+        rows = conn.execute(
+            "SELECT id, choice, stamp_user FROM task_events WHERE task_id=? AND kind='decide' "
+            "ORDER BY id DESC LIMIT 20",
+            (number,),
+        ).fetchall()
+    for row in rows:
+        if row["choice"] in choices:
+            return {"id": row["id"], "choice": row["choice"], "stamp_user": row["stamp_user"]}
+    return None

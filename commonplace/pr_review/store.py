@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS pr_review_prs (
     changed_head TEXT NOT NULL DEFAULT '',
     rounds_used INTEGER NOT NULL DEFAULT 0,
     last_round_at TEXT NOT NULL DEFAULT '', loop_stopped INTEGER NOT NULL DEFAULT 0,
-    public INTEGER,
+    public INTEGER, decided_event INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     PRIMARY KEY (repo, pr)
 );
@@ -514,6 +514,29 @@ class ReviewStore:
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def prs_waiting_on_person(self, limit: int = WAITING_PRS_LIMIT) -> list[dict]:
+        """Up to ``limit`` PRs with a comment that needs a person (their answer may be given)."""
+        with self._lock:
+            conn = self._connection(create=False)
+            if conn is None:
+                return []
+            rows = conn.execute(
+                "SELECT p.* FROM pr_review_prs p WHERE EXISTS (SELECT 1 FROM pr_review_comments c "
+                "WHERE c.repo=p.repo AND c.pr=p.pr AND c.status='needs_you') "
+                "ORDER BY p.updated_at, p.repo, p.pr LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self._pr_view(r) for r in rows]
+
+    def last_read(self) -> str | None:
+        """When the comment reader last posted a read for any PR of the workspace."""
+        with self._lock:
+            conn = self._connection(create=False)
+            if conn is None:
+                return None
+            row = conn.execute("SELECT max(fetched_at) AS at FROM pr_review_prs").fetchone()
+        return row["at"] if row and row["at"] else None
+
     def waiting_prs(self, limit: int = WAITING_PRS_LIMIT) -> list[dict]:
         """Up to ``limit`` PRs with at least one comment ``new`` (what the trigger looks at),
         the longest-waiting first."""
@@ -937,7 +960,9 @@ class ReviewStore:
                 n += 1
         return n
 
-    def decide(self, repo: str, pr: int, choice: str, by: str, now: datetime) -> dict:
+    def decide(
+        self, repo: str, pr: int, choice: str, by: str, now: datetime, *, event_id: int = 0
+    ) -> dict:
         """A person's answer to the one Needs me item of a PR: ``again`` (two more rounds and the
         held comments return to ``new``), ``mine`` (the loop stops for this PR) or ``dismiss``
         (the comments that wait become ``skipped``)."""
@@ -950,6 +975,13 @@ class ReviewStore:
             ).fetchone()
             if pr_row is None:
                 raise Refused("not_found")
+            if event_id:
+                # The board event that carried the answer: it is applied once, never again.
+                conn.execute(
+                    "UPDATE pr_review_prs SET decided_event=? WHERE repo=? AND pr=? "
+                    "AND decided_event < ?",
+                    (event_id, repo, pr, event_id),
+                )
             held = conn.execute(
                 "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? AND status='needs_you'",
                 (repo, pr),
@@ -990,6 +1022,10 @@ def _migrate(conn) -> None:
     prs = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_prs)")}
     if "public" not in prs:
         conn.execute("ALTER TABLE pr_review_prs ADD COLUMN public INTEGER")
+    if "decided_event" not in prs:
+        conn.execute(
+            "ALTER TABLE pr_review_prs ADD COLUMN decided_event INTEGER NOT NULL DEFAULT 0"
+        )
     comments = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_comments)")}
     if "reply_posted" not in comments:
         conn.execute(

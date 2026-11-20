@@ -43,6 +43,10 @@ def run(gateway, workspace_id: str, now: datetime | None = None) -> list[dict]:
     store = open_review(gateway, workspace_id)
     now = now or _now()
     store.settle(now)
+    try:
+        needs_me.apply_answers(gateway, workspace_id, store, now)
+    except Exception as exc:  # an unreadable answer never stops the pass
+        log_failure(logger, "review loop could not apply an answer", exc)
     boards = store.enabled_boards()
     if not boards:
         return []
