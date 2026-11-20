@@ -1,4 +1,4 @@
-# Account authority follows the final model
+### Account authority follows the final model
 
 A config-driven card start selects its final model before it resolves the account and machine.
 An accepted escalation to another provider therefore uses the requesting person's connection for
