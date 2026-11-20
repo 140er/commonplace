@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { renderCardMenu, createCardMenu } from '../commonplace/web/static/cardmenu.js';
 import { boardView as renderBoard } from '../commonplace/web/static/board.js';
 import { renderDetails } from '../commonplace/web/static/details.js';
+import { PRIORITIES, priorityInfo } from '../commonplace/web/static/card-priority.js';
 
 const board = { slug:'studio', name:'Studio', coordinator:'conn:studio' }, me = 'user:maya';
 const card = { number:21, title:'Check the invitation wording', body:'Keep the decision clear.', board:'studio', status:'todo', version:4, priority:'normal', priority_source:'default', can_prioritize:true, events:[] };
@@ -159,6 +160,43 @@ const cases = {
     assert.ok(!html.includes('<img src=x'));
     assert.ok(decode(html).includes('<img src=x'));
   },
+};
+for (const action of ['rename','move']) for (const priority of PRIORITIES) {
+  cases[`creation_${action}_${priority}`] = () => {
+    const created = { ...card, priority, priority_source:'person', events:[{ kind:'add', actor:me, text:null }] };
+    const changed = { ...created, title:action === 'rename' ? 'New wording' : created.title,
+      status:action === 'move' ? 'review' : created.status,
+      events:[...created.events, { kind:action === 'rename' ? 'edit' : 'move', actor:'user:noah', text:null }] };
+    for (const viewer of [me,'user:member']) {
+      const options = { board, me:viewer, people:{ [me]:'Maya Chen' } };
+      const before = priorityInfo(created, options);
+      assert.ok(before.includes(`Set by ${viewer === me ? 'You' : 'Maya Chen'}.`), 'Creation actor is real, with the viewer-specific name');
+      assert.equal(priorityInfo(changed, options), before, `An unrelated ${action} must retain the creation-time ${priority} setter`);
+    }
+  };
+}
+cases.creation_later_priority = () => {
+  for (const kind of ['edit','move']) {
+    const changed = { ...card, priority:'high', priority_source:'person', events:[
+      { kind:'add', actor:me, text:null },
+      { kind:'edit', actor:me, text:'Priority set to high' },
+      { kind:'edit', actor:me, text:'Priority set to low' },
+      { kind, actor:'user:noah', text:'Priority set to high' },
+      { kind:'edit', actor:me, text:null },
+      { kind:'move', actor:me, text:null },
+    ] };
+    assert.match(priorityInfo(changed, { board, me, people:{ 'user:noah':'Noah Li' } }), /Set by Noah Li\./, 'The latest actual priority change takes precedence over creation and unrelated events');
+  }
+};
+cases.creation_default = () => {
+  const changed = { ...card, events:[{ kind:'add', actor:me }, { kind:'edit', actor:me }, { kind:'move', actor:me }] };
+  assert.equal(priorityInfo(changed, { board, me }), priorityInfo(card, { board, me }));
+  assert.match(priorityInfo(changed, { board, me }), /Unranked · Normal by default/);
+};
+cases.creation_coworker = () => {
+  const changed = { ...ranked, events:[{ kind:'add', actor:me }, ...ranked.events, { kind:'edit', actor:me }, { kind:'move', actor:me }] };
+  assert.equal(priorityInfo(changed, { board, me }), priorityInfo(ranked, { board, me }));
+  assert.match(priorityInfo(changed, { board, me }), /Studio Coworker\. Blocks the invitation/);
 };
 assert.ok(Object.hasOwn(cases, process.argv[2]), 'Unknown priority behavior');
 await cases[process.argv[2]]();

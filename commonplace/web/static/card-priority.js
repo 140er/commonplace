@@ -12,7 +12,7 @@ export function priorityInfo(card, { board = {}, me, people = {} } = {}) {
   const events = card.events || [];
   const event = events.findLast(ev => ['edit','move'].includes(ev.kind) &&
     (source(card) === 'coworker' ? ev.text?.startsWith(`${prefix} by the Coworker: `) : ev.text === prefix))
-    || (source(card) === 'person' && !events.some(ev => ['edit','move'].includes(ev.kind)) ? events.find(ev => ev.kind === 'add') : null);
+    || (source(card) === 'person' ? events.find(ev => ev.kind === 'add') : null);
   const who = source(card) === 'coworker' ? `${board.name || board.slug || 'Project'} Coworker`
     : event?.actor === me ? 'You' : people[event?.actor] || (event?.actor ? actor(event.actor) : 'Person');
   const reason = source(card) === 'coworker' ? event?.text.slice(`${prefix} by the Coworker: `.length) : '';

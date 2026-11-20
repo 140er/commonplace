@@ -19,6 +19,14 @@ CASES = [
     "stale",
     "race",
     "escaping",
+    *(
+        f"creation_{action}_{priority}"
+        for action in ("rename", "move")
+        for priority in ("urgent", "high", "normal", "low")
+    ),
+    "creation_later_priority",
+    "creation_default",
+    "creation_coworker",
 ]
 
 

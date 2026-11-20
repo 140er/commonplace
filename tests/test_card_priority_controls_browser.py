@@ -378,3 +378,71 @@ def test_invited_member_reads_attribution_but_cannot_set_priority(product):
             expected=403,
         )
         assert request(page, product.origin, f"/api/cards/{card['number']}")["priority"] == "normal"
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+@pytest.mark.parametrize("action", ["rename", "move"])
+def test_creation_priority_attribution_survives_unrelated_card_change(product, width, action):
+    priority = "high" if action == "rename" else "normal"
+    card = create_card(
+        product, f"Keep creation priority after {action} at {width}", priority=priority
+    )
+    page = open_board(product, width)
+    expect = importlib.import_module("playwright.sync_api").expect
+    path = f"/api/cards/{card['number']}"
+    row(page, card).locator(".priority-label").hover()
+    expect(row(page, card).get_by_role("tooltip")).to_contain_text("Set by You")
+    row(page, card).locator(".card-more").click()
+    with page.expect_response(
+        lambda response: (
+            response.url == product.origin + path and response.request.method == "PATCH"
+        )
+    ) as changed:
+        if action == "rename":
+            page.get_by_role("button", name="Edit title", exact=True).click()
+            page.get_by_role("textbox", name="Title", exact=True).fill(f"Renamed at {width}")
+            page.get_by_role("button", name="Save title", exact=True).click()
+        else:
+            page.locator('[data-menu-move="review"]').click()
+    assert changed.value.status == 200
+    expect(page.locator(".card-menu")).to_have_count(0)
+    if action == "rename":
+        expect(row(page, card).locator("h3 a")).to_have_text(f"Renamed at {width}")
+    elif width < 700:
+        page.locator('[data-board-column="review"]:visible').click()
+    saved = request(page, product.origin, path)
+    assert saved["version"] > card["version"]
+    assert saved["priority"] == priority and saved["priority_source"] == "person"
+    assert (
+        next(event for event in saved["events"] if event["kind"] == "add")["actor"]
+        == product.me["actor"]
+    )
+    assert any(
+        event["kind"] == ("edit" if action == "rename" else "move") for event in saved["events"]
+    )
+    assert not any(
+        (event.get("text") or "").startswith("Priority set to ") for event in saved["events"]
+    )
+    badge = row(page, card).locator(".priority-label")
+    badge.hover()
+    info = row(page, card).get_by_role("tooltip")
+    expect(info).to_be_visible()
+    expect(info).to_contain_text("Set by You")
+    page.mouse.move(0, 0)
+    row(page, card).locator(".card-more").focus()
+    page.keyboard.press("Tab")
+    expect(badge).to_be_focused()
+    expect(info).to_be_visible()
+    expect(info).to_contain_text("Set by You")
+    bounds = info.bounding_box()
+    assert bounds["x"] >= 0 and bounds["y"] >= 0
+    assert bounds["x"] + bounds["width"] <= width
+    assert bounds["y"] + bounds["height"] <= page.viewport_size["height"] - (
+        80 if width < 700 else 0
+    )
+    capture(page, f"creation-{action}-{width}-focus")
+    assert_layout(page)
+    row(page, card).locator("h3 a").click()
+    expect(page.locator("#card-panel [data-priority-info]").first).to_contain_text("Set by You")
+    capture(page, f"creation-{action}-{width}-drawer")
+    assert_layout(page)
