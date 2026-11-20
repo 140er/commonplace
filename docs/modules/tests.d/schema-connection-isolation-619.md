@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_619_schema_connection_isolation.py` runs the original plan-schema checks while a background transaction owns the hub connection. Real SQL tracing checks that both invalid inserts acquire the database lock, and the background write survives.

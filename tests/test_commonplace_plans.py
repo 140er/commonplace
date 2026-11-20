@@ -113,11 +113,11 @@ def test_signup_assigns_once_and_never_overwrites(hub, monkeypatch):
 
 
 def test_plan_schema_rejects_unknown_plans_and_users(hub):
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(sqlite3.IntegrityError), hub.db._tx():
         hub.db._conn.execute(
             "INSERT INTO account_plans VALUES (?, 'other', 'admin', 'now')", (hub.admin,)
         )
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(sqlite3.IntegrityError), hub.db._tx():
         hub.db._conn.execute("INSERT INTO account_plans VALUES ('missing', 'free', 'admin', 'now')")
     with pytest.raises(ControlError):
         assign(hub, "other")
