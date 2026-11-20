@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/previews/`, `tests/test_previews.py`, `tests/test_previews_account.py`, `tests/test_previews_serving.py`, `tests/test_previews_browser.py`, `commonplace/web/static/cardpreviews.js`, `tests/cardpreviews.mjs`, `tests/test_card_previews_ui.py`, `tests/test_card_previews_browser.py`, `tests/test_previews_round2.py`, `tests/test_previews_delete.py`
 - **Owns:**
 
+  - Review round 3 keeps published code inside a script-only sandboxed frame on a small viewer page. Credential shapes are checked before unsafe names can be echoed; quota refusals name Delete files, rows show size, and partial deletion explicitly names the retry. The same card retains its preview section during redraws so a pending action keeps its status and focus.
+
   - Persistent previews, slice 1 (card #612, design in `docs/system/previews.md`): a Coworker publishes a bundle of files for a card and people who can open that card list, stop and reopen it later. Rows live in the control database (`previews`, `preview_revisions`, append-only `preview_events`, `preview_rules`); each revision's files live under `<workspace dir>/previews/<id>/r<n>/` and are written once.
 
   - `bundle.py` checks a bundle before anything is stored (size, file count, paths, entry page, credential-shaped text); `store.py` holds the tables, the limits and the fixed reason texts; `service.py` is publish, stop, reopen and the stop rule; `routes.py` is `/api/previews` for signed-in people; `tools.py` is `preview_publish`, `preview_list` and `preview_stop` for Coworkers; `serving.py` is `GET /p/<id>/<path>`, the files of a ready preview with the isolation headers and the state pages; `links.py` is the short-lived page link (`preview_links`) that stands in for the session for the sandboxed page's own requests.
@@ -32,6 +34,8 @@
   - A preview that is not ready answers with a page in words: 410 stopped, 503 failed, being published or files missing on the server, 404 for an address not in it. An expired or unknown page link sends a signed-in browser back to the plain address and asks anyone else to sign in.
 
 - **Tests:**
+
+  - `tests/test_previews_round3.py` reproduces the round-3 gaps on the pinned base and checks viewer isolation, safe filename refusals, credential settings and token shapes, quota recovery, row size and deletion confirmation. Card browser cases cover pending deletion through a real redraw and field-specific rule errors, with the final state captures including Delete files, confirmation and Finish deleting.
 
   - `tests/test_previews.py` covers publish and persistence, revisions and idempotence, the card note, uniform refusal across workspaces and hidden cards, every refusal reason, stop and reopen, the stop racing a republish, the cap, pruning of refused attempts, no recursive file work under the lock, quotas and the rate limit with a moved clock, stale `building`, storage failure, leak checks, append-only events, the stop rule, pull request listing and the pure path and credential checks.
 

@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_previews_round3.py` covers the viewer boundary, credential shapes and unsafe filenames, ordinary build content, quota recovery, row size, containment copy and deletion confirmation.
+- **Promises:** the same regression selection fails on the pinned base and passes on the corrected branch; browser cases use synthetic pages and accounts.
+- **How it fails:** a credential may be accepted or echoed, preview code may escape its viewer, or a person may receive misleading quota or deletion advice.
+- **Tests:** the preview server, serving, deletion and card harness cases run with the route and documentation guards; browser cases pin the shared-domain navigation refusal, owner controls, pending deletion across a real redraw, invalid rule fields, 320 px reflow and coarse-pointer targets.

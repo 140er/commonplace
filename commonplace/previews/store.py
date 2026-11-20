@@ -89,8 +89,8 @@ REASONS = {
     ),
     "workspace_space_full": (
         "This workspace has used its 500 MiB of preview space.",
-        "Stopping a preview does not free space. Freeing space needs deleting previews, "
-        "which is not available yet. Tell the workspace owner.",
+        "Stopping a preview does not free space. The workspace owner can use Delete files "
+        "on its card to free space.",
     ),
     "storage_unavailable": (
         "The files could not be saved on the server.",
@@ -102,7 +102,7 @@ REASONS = {
     ),
     "too_many_previews": (
         "This workspace keeps at most 200 previews, and it holds that many.",
-        "Ask the workspace owner. Deleting previews is not available yet.",
+        "The workspace owner can use Delete files on its card to free a place.",
     ),
     "changed_meanwhile": (
         "A person stopped this preview while it was being published, so nothing was changed.",
@@ -184,12 +184,12 @@ PERSON_WORDS = {
     ),
     "workspace_space_full": (
         "Nothing was published: the workspace has used its 500 MiB of preview space.",
-        "Stopping a preview does not free space. Freeing space needs deleting previews, "
-        "which is not available yet. Tell the workspace owner.",
+        "Stopping a preview does not free space. The workspace owner can use Delete files "
+        "on its card to free space.",
     ),
     "too_many_previews": (
         "Nothing was published: the workspace keeps at most 200 previews.",
-        "Tell the workspace owner. Deleting previews is not available yet.",
+        "The workspace owner can use Delete files on its card to free a place.",
     ),
     "storage_unavailable": (
         "Nothing was published: the server could not save the files.",

@@ -85,7 +85,7 @@ const cases = {
       preview({ id: 'pv_0000000000000002', name: 'old', state: 'stopped', reason: 'stopped_by_person', reason_text: 'Stopped by a person. The files are kept.', next: 'Use Open again on this card to serve it.', url: '/p/pv_0000000000000002/' }),
       attempt({ id: 'pv_0000000000000003', name: 'bad', state: 'failed', reason: 'no_index_html', reason_text: 'Nothing was published: the files had no index.html at the top.', next: 'Ask the Coworker that published it to publish again with an index.html at the top of the files. Reply on this card.' }),
     ]));
-    for (const text of ['Ready', 'Being published', 'Stopped', 'Could not be published', 'The files are being saved.', 'the card updates by itself', 'Use Open again on this card', 'Nothing was published', 'Reply on this card.', 'version 2', 'key for 30 minutes', 'share the preview, not the address', 'reload it from the card', 'static page', 'relative', '1 of 25 previews served', '3 MiB of 500 MiB used (stopped previews still count)']) {
+    for (const text of ['Ready', 'Being published', 'Stopped', 'Could not be published', 'The files are being saved.', 'the card updates by itself', 'Use Open again on this card', 'Nothing was published', 'Reply on this card.', 'version 2', '2 KiB', 'key for 30 minutes', 'share the preview, not the address', 'reload it from the card', 'saved page', 'inside a viewer', 'cannot move the viewer', 'Open only previews from people you trust', 'Stopping never deletes the files', '1 of 25 previews served', '3 MiB of 500 MiB used (stopped previews still count)']) {
       assert.ok(html.includes(text), `missing: ${text}`);
     }
     assert.deepEqual(Object.keys(STATE_WORDS), ['ready', 'building', 'stopped', 'failed']);
@@ -285,11 +285,13 @@ const cases = {
     // Network failure: says so with a real Try again. A server error says "Try again" only.
     const net = fakeSlot();
     await attachCardPreviews(net.mount, { ...card, number: 20 }, { api: async () => { throw new TypeError('Failed to fetch'); } });
-    assert.ok(net.body.innerHTML.includes('Check the connection and try again.') && net.body.innerHTML.includes('data-preview-retry'));
+    assert.ok(net.body.innerHTML.includes('data-preview-retry'));
+    assert.ok(!net.body.innerHTML.includes('Could not load the previews'));
     assert.equal(net.status.textContent, 'Could not load the previews. Check the connection and try again.');
     const server = fakeSlot();
     await attachCardPreviews(server.mount, { ...card, number: 21 }, { api: async () => { throw Object.assign(new Error('x'), { status: 502 }); } });
-    assert.ok(server.body.innerHTML.includes('Could not load the previews. Try again.') && !server.body.innerHTML.includes('connection'));
+    assert.equal(server.status.textContent, 'Could not load the previews. Try again.');
+    assert.ok(!server.body.innerHTML.includes('Could not load the previews'));
     assert.equal(server.body.innerHTML, offlineHTML({ status: 502 }));
   },
   async offlinepainted() {
@@ -297,7 +299,8 @@ const cases = {
     const { body, status, mount } = fakeSlot();
     const previous = { key: 'atlas/22', html: offlineHTML(new TypeError('x')) };
     await attachCardPreviews(mount, { ...card, number: 22 }, { api: async () => { throw new TypeError('x'); }, previous });
-    assert.ok(body.innerHTML.includes('Could not load the previews'));
+    assert.ok(body.innerHTML.includes('data-preview-retry'));
+    assert.equal(status.textContent, 'Could not load the previews. Check the connection and try again.');
     assert.ok(!status.textContent.includes('Showing the last list'));
     // With a real list repainted, the note is true and the list stays.
     const second = fakeSlot();
@@ -378,20 +381,20 @@ const cases = {
     assert.equal(focused(), 'data-preview-rule-summary=rule');
   },
   async redraw() {
-    // A redraw of the same card repaints the list (not an old result) and keeps focus on the
+    // A redraw of the same card keeps the list and result and keeps focus on the
     // same control; another card's list is never shown.
     const { slot, body, mount } = fakeSlot();
     await attachCardPreviews(mount, card, { api: async () => found([preview()]) });
     globalThis.document.activeElement = slot.querySelector('[data-preview-stop="pv_0123456789abcdef"]');
     slot.status.textContent = 'An old result.';
     const kept = previousPreviews(mount);
-    assert.deepEqual({ ...kept, rule: null }, { key: 'atlas/7', html: body.innerHTML, rule: null, focus: '[data-preview-stop="pv_0123456789abcdef"]' });
+    assert.deepEqual({ ...kept, rule: null, element: null }, { key: 'atlas/7', html: body.innerHTML, rule: null, focus: '[data-preview-stop="pv_0123456789abcdef"]', status: 'An old result.', element: null });
     assert.ok(kept.rule.html.includes('served until a person') && kept.rule.open === false);
     const next = fakeSlot();
     globalThis.document.activeElement = null;
     let release;
     const pending = attachCardPreviews(next.mount, card, { api: () => new Promise((done) => { release = done; }), previous: kept });
-    assert.ok(next.body.innerHTML.includes('Ready') && next.status.textContent === '');
+    assert.ok(next.body.innerHTML.includes('Ready') && next.status.textContent === 'An old result.');
     assert.equal(focused(), 'data-preview-stop=pv_0123456789abcdef');
     release(found([preview()]));
     await pending;
@@ -436,7 +439,8 @@ const cases = {
     // Confirming names the preview, its size and that it cannot be undone.
     const asking = cardPreviewsHTML(found(list, { can_delete: true }), 'pv_0123456789abcdef');
     assert.ok(asking.includes('data-preview-delete-confirm="pv_0123456789abcdef"') && asking.includes('data-preview-delete-cancel="pv_0123456789abcdef"'));
-    assert.ok(asking.includes('Delete the files of <b>home</b> (2 KiB, this card)?') && asking.includes('cannot be undone'));
+    assert.ok(asking.includes('Delete the files of home (2 KiB)?') && asking.includes('cannot be undone'));
+    assert.ok(asking.includes('aria-describedby="preview-delete-question-pv_0123456789abcdef"'));
     assert.ok(!asking.includes('data-preview-delete="pv_0123456789abcdef"'));
   },
   async deleteflow() {

@@ -284,6 +284,8 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 .card-previews .run-line { max-width: 100%; }
 .card-previews .run-note { font-size: 12.5px; color: var(--text-2); margin: 0; }
 .card-previews h3[data-preview-heading]:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+section.card-previews summary { min-height: 24px; }
+section.card-previews [aria-invalid="true"] { outline: 2px solid var(--block); outline-offset: 1px; }
 /* Touch screens and narrow windows: every control at least 44 px, inputs large enough not to zoom. */
 /* "section." outweighs the Deck look's 36 px buttons, which load later. */
 @media (pointer: coarse), (max-width: 999px) {
@@ -294,7 +296,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 }
 /* Phones and touch screens: the small print is 14 px, not 12.5 px. */
 @media (pointer: coarse), (max-width: 699px) {
-  section.card-previews .run-reason, section.card-previews .run-start-field, section.card-previews .run-note, section.card-previews .run-start > p { font-size: 14px; line-height: 21px; }
+  :root .workbench-details section.card-previews :is(h3, summary, .run-line, .run-state, .btn.sm, .run-empty, .run-reason, .run-start-field, .run-note, .run-start > p) { font-size: 14px; line-height: 21px; }
 }
 .card-runs .run-empty { font-size: 13px; color: var(--text-2); }
 .card-runs .run-note { font-size: 12.5px; color: var(--text-2); }

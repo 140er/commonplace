@@ -54,11 +54,14 @@ def test_the_space_limit_says_stopping_does_not_free_space(console_hub, monkeypa
     assert not ok and "[workspace_space_full]" in text
     assert "used its 500 MiB of preview space" in text
     assert "Stopping a preview does not free space" in text
-    assert "Tell the workspace owner" in text and "Stop a preview that is no longer" not in text
+    assert (
+        "workspace owner can use Delete files" in text
+        and "Stop a preview that is no longer" not in text
+    )
     shown = one(h, number, "b")
     assert shown["reason"] == "workspace_space_full"
     assert "Stopping a preview does not free space" in shown["next"]
-    assert "Tell the workspace owner" in shown["next"]
+    assert "workspace owner can use Delete files" in shown["next"]
     assert "ask the Coworker to publish again" not in shown["next"]
     # The same refusal through the people's route is a 409 with the same words.
     ids = [

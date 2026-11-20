@@ -30,6 +30,7 @@ const KIND_WORDS = {
   slack_token: "a Slack token", stripe_key: "a Stripe key", google_api_key: "a Google API key",
   npm_token: "an npm token", url_credentials: "a password in an address",
   cmmn_token: "a Commonplace token", cmmn_oauth: "a Commonplace token", session_cookie: "a session cookie",
+  assignment: "a credential in a setting", json_secret: "a credential in a setting", jwt: "a signed token", bearer: "a bearer token",
 };
 // Controls that keep their identity across a redraw, so focus can return to the same one.
 export const FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-rule-save", "data-preview-heading"];
@@ -68,10 +69,14 @@ const byWords = (preview) => {
   return named === String(preview.published_by || "") ? plainName(named) : named;
 };
 
+const deleteQuestion = (preview) => preview.files_remaining
+  ? `Remove the files of ${preview.name} that were left behind last time?`
+  : `Delete the files of ${preview.name} (${mib(preview.size_bytes)})? People can no longer open it, and this cannot be undone.`;
+
 function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
   const state = STATE_WORDS[preview.state] ? preview.state : "failed";
   const url = URL_SHAPE.test(preview.url || "") ? preview.url : null;
-  const revision = preview.revision ? ` · version ${e(preview.revision)}` : "";
+  const revision = preview.revision ? ` · version ${e(preview.revision)} · ${e(mib(preview.size_bytes))}` : "";
   // Only a published revision has a publish time; an attempt says when it started.
   const time = preview.published_at
     ? ` · published ${when(preview.published_at)} by ${e(byWords(preview))}`
@@ -91,10 +96,10 @@ function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
     state === "ready" && url ? `<a class="btn sm primary" href="${e(url)}" target="_blank" rel="noopener noreferrer" data-preview-open="${e(preview.id)}" aria-label="Open in new tab: preview ${e(name)}">Open in new tab</a>` : "",
     state === "ready" ? `<button class="btn sm" type="button" data-preview-stop="${e(preview.id)}" aria-label="Stop preview ${e(name)}">Stop</button>` : "",
     state === "stopped" && url ? `<button class="btn sm" type="button" data-preview-reopen="${e(preview.id)}" aria-label="Open again: serve preview ${e(name)}">Open again</button>` : "",
-    canDelete && deletable && confirming !== preview.id ? `<button class="btn sm danger" type="button" data-preview-delete="${id}" aria-label="${retry ? "Finish deleting the files of" : "Delete the files of"} preview ${e(name)}">${retry ? "Finish deleting" : "Delete files"}</button>` : "",
+    canDelete && deletable && confirming !== preview.id ? `<button class="btn sm danger" type="button" data-preview-delete="${id}" aria-label="${retry ? "Finish deleting files for" : "Delete files for"} preview ${e(name)}">${retry ? "Finish deleting" : "Delete files"}</button>` : "",
   ].join("");
   const confirm = canDelete && deletable && confirming === preview.id
-    ? `<div class="preview-confirm" role="group" aria-label="Delete the files of preview ${e(name)}"><p class="run-reason">${retry ? `Remove the files of <b>${e(name)}</b> that were left behind last time?` : `Delete the files of <b>${e(name)}</b> (${e(mib(preview.size_bytes))}, this card)? People can no longer open it, and this cannot be undone.`}</p><div class="preview-acts"><button class="btn sm danger" type="button" data-preview-delete-confirm="${id}">${retry ? "Finish deleting" : "Delete files"}</button><button class="btn sm" type="button" data-preview-delete-cancel="${id}">Cancel</button></div></div>`
+    ? `<div class="preview-confirm" role="group" aria-label="Delete the files of preview ${e(name)}"><p class="run-reason" id="preview-delete-question-${id}">${e(deleteQuestion(preview))}</p><div class="preview-acts"><button class="btn sm danger" type="button" data-preview-delete-confirm="${id}" aria-describedby="preview-delete-question-${id}">${retry ? "Finish deleting" : "Delete files"}</button><button class="btn sm" type="button" data-preview-delete-cancel="${id}">Cancel</button></div></div>`
     : "";
   return `<li data-preview="${e(preview.id)}" data-state="${e(state)}"><p class="run-line"><span class="tag run-state">${e(STATE_WORDS[state])}</span><b class="preview-name">${e(name)}</b>${revision}${time}</p><p class="run-reason" data-preview-reason>${e(preview.reason_text || "")}</p>${failure}${preview.next ? `<p class="run-reason" data-preview-next>${e(preview.next)}</p>` : ""}${stops}${acts ? `<div class="preview-acts">${acts}</div>` : ""}${confirm}</li>`;
 }
@@ -106,11 +111,11 @@ function usageHTML(found) {
 }
 
 // What a person needs to know about the address and the kind of page, once, under the list.
-const NOTE = "Open gives this address a key for 30 minutes: anyone with the exact address can open the preview until then, so share the preview, not the address. If parts stop loading, reload it from the card. A preview is a static page: no server code, no network requests, and links between its files must be relative.";
-const noteHTML = (found) => Array.isArray(found?.previews) && found.previews.length ? `<p class="run-reason" data-preview-note>${e(NOTE)}</p>` : "";
+const NOTE = "Open gives this address a key for 30 minutes: anyone with the exact address can open the preview until then, so share the preview, not the address. If parts stop loading, reload it from the card. This is a saved page with no server code, inside a viewer. It cannot load other websites, cannot move the viewer or open popups. Open only previews from people you trust.";
+const noteHTML = (found) => Array.isArray(found?.previews) && found.previews.some((preview) => preview.state === "ready" && URL_SHAPE.test(preview.url || "")) ? `<p class="run-reason" data-preview-note>${e(NOTE)} Stopping never deletes the files.</p>` : "";
 
 const RULE_HINT = "preview-rule-hint";
-const ruleField = (name, words, max, value) => `<label class="run-start-field">${words}<input type="number" inputmode="numeric" name="${name}" data-preview-field="${name}" min="1" max="${max}" step="1" value="${value == null ? "" : e(value)}" placeholder="Never" aria-describedby="${RULE_HINT}"></label>`;
+const ruleField = (name, words, max, value) => `<label class="run-start-field">${words}<input type="number" inputmode="numeric" name="${name}" data-preview-field="${name}" min="1" max="${max}" step="1" value="${value == null ? "" : e(value)}" placeholder="Never" aria-describedby="${RULE_HINT}"><span id="preview-rule-error-${name}" data-preview-field-error="${name}" hidden></span></label>`;
 
 // The owner's rule: its sentence for everyone, and for the owner the form. It is drawn into its
 // own element (`paintRule` below), never into the redrawn list.
@@ -119,7 +124,7 @@ export function ruleHTML(found) {
   if (!rule) return "";
   const text = `<p class="run-reason" data-preview-rule-text>${e(rule.text || "")}</p>`;
   if (!found.can_set_rule) return text;
-  return `${text}<details class="preview-rule" data-preview-rule><summary data-preview-rule-summary="rule">Change when previews stop</summary><form class="run-start" data-preview-rule-form><p id="${RULE_HINT}">Leave a field empty to keep previews served until someone stops them. Stopping never deletes the files.</p><div class="run-start-row">${ruleField("stop_days_after_pr", "Days after the card records the pull request as merged or closed", 365, rule.stop_days_after_pr)}${ruleField("max_age_days", "Days after it was last made live", 3650, rule.max_age_days)}</div><button class="btn sm" type="submit" data-preview-rule-save="rule">Save rule</button></form></details>`;
+  return `${text}<details class="preview-rule" data-preview-rule><summary data-preview-rule-summary="rule">Change when previews stop</summary><form class="run-start" data-preview-rule-form novalidate><p id="${RULE_HINT}">Leave a field empty to keep previews served until someone stops them. Stopping never deletes the files.</p><div class="run-start-row">${ruleField("stop_days_after_pr", "Days after the card records the pull request as merged or closed", 365, rule.stop_days_after_pr)}${ruleField("max_age_days", "Days after it was last made live", 3650, rule.max_age_days)}</div><button class="btn sm" type="submit" data-preview-rule-save="rule">Save rule</button></form></details>`;
 }
 
 // The list part of the section for a loaded answer (the status line and the rule are separate);
@@ -135,7 +140,7 @@ export function cardPreviewsHTML(found, confirming = "") {
 
 // What the section says when there is no list to show; the retry button is real.
 export const offlineWords = (error) => networkError(error) ? "Could not load the previews. Check the connection and try again." : "Could not load the previews. Try again.";
-export const offlineHTML = (error) => `<p class="run-empty" data-preview-offline>${e(offlineWords(error))}</p><button class="btn sm" type="button" data-preview-retry="load">Try again</button>`;
+export const offlineHTML = () => `<button class="btn sm" type="button" data-preview-offline data-preview-retry="load">Try again</button>`;
 
 const HEAD = `<div class="sec-h"><h3 tabindex="-1" data-preview-heading="previews">Previews</h3></div>`;
 const keyOf = (card) => `${card.board}/${card.number}`;
@@ -158,7 +163,7 @@ export function focusedKey(scope, doc = globalThis.document) {
 }
 
 // What the panel showed before a redraw, so the same card's list does not blink away and back.
-// Only the list is kept: an old result in the status line is not repeated.
+// Keep the actual section when possible: a request in flight still owns its status line.
 export function previousPreviews(mount) {
   const slot = mount?.querySelector?.("[data-card-previews]");
   const body = slot?.querySelector?.("[data-preview-body]");
@@ -169,19 +174,25 @@ export function previousPreviews(mount) {
   const rule = holder?.innerHTML
     ? { html: holder.innerHTML, open: Boolean(holder.querySelector?.("[data-preview-rule]")?.open), values: Object.fromEntries(fields.map((input) => [input.getAttribute("data-preview-field"), input.value])) }
     : null;
-  return { key: slot.dataset?.cardKey, html: body.innerHTML, rule, focus: focusedKey(slot) };
+  return { key: slot.dataset?.cardKey, html: body.innerHTML, rule, focus: focusedKey(slot), element: slot, status: slot.querySelector?.("[data-preview-status]")?.textContent || "" };
 }
 
 // Load the card's previews into the slot inside `mount` and wire Stop, Open again, Delete files and the rule.
 export async function attachCardPreviews(mount, card, { api = request, previous = null, schedule = (fn, ms) => setTimeout(fn, ms) } = {}) {
   const slot = mount.querySelector?.("[data-card-previews]");
   if (!slot || card?.number == null) return;
+  if (previous?.key === keyOf(card) && previous.element?.previewController && slot.replaceWith) {
+    slot.replaceWith(previous.element);
+    previous.element.previewController.focus(previous.focus);
+    await previous.element.previewController.refresh();
+    return;
+  }
   const body = slot.querySelector?.("[data-preview-body]");
   const holder = slot.querySelector?.("[data-preview-rule-slot]");
   const status = slot.querySelector?.("[data-preview-status]");
   if (!body || !status || !holder) return;
   const key = keyOf(card);
-  let revision = 0, last = null, wanted = null, polling = false, confirming = "";
+  let revision = 0, last = null, wanted = null, polling = false, confirming = "", acting = 0;
   const live = (token) => token === revision && slot.isConnected;
   const say = (note) => { status.textContent = note || ""; };
   // True only when the control really has focus: a control inside a closed <details> accepts the
@@ -192,7 +203,6 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     target.focus({ preventScroll: true });
     return globalThis.document?.activeElement === target;
   };
-  const control = (selector) => slot.querySelector?.(selector);
   // The rule is built once per kind of viewer. Afterwards only its sentence follows the server,
   // and a field follows it only while it still holds what the server last sent.
   const paintRule = (found) => {
@@ -243,6 +253,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
       }
     }
     slot.hidden = false;
+    say(previous.status);
     focus(previous.focus);
   }
   async function load(note) {
@@ -261,6 +272,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     }
   }
   async function act(trigger, path, method, payload, done, next, { progress = "", failure = '[data-preview-heading="previews"]' } = {}) {
+    acting += 1;
     const items = [...(trigger.closest?.("li, form")?.querySelectorAll?.("button, input") || [])];
     items.forEach((item) => { item.disabled = true; });
     // Said before the request, so a screen reader hears that something is happening.
@@ -278,7 +290,9 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     if (trigger.closest?.("[data-preview-rule-form]")) items.forEach((item) => { item.disabled = false; });
     // A refusal usually means the preview moved on: reload so the list shows what is true now.
     await load(note);
+    acting -= 1;
   }
+  slot.previewController = { focus, refresh: () => acting ? Promise.resolve() : load() };
   slot.addEventListener("click", (event) => {
     const stop = event.target.closest?.("[data-preview-stop]");
     if (stop) {
@@ -300,7 +314,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     if (remove) {
       confirming = remove.dataset.previewDelete;
       wanted = `[data-preview-delete-cancel="${confirming}"]`;
-      if (last) show(last);
+      if (last) show(last, deleteQuestion(last.previews.find((preview) => preview.id === confirming)));
       return;
     }
     const cancel = event.target.closest?.("[data-preview-delete-cancel]");
@@ -308,7 +322,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
       const id = cancel.dataset.previewDeleteCancel;
       confirming = "";
       wanted = `[data-preview-delete="${id}"]`;
-      if (last) show(last);
+      if (last) show(last, "Deletion cancelled.");
       return;
     }
     const sure = event.target.closest?.("[data-preview-delete-confirm]");
@@ -330,8 +344,17 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     event.preventDefault();
     const days = (value) => { const text = String(value ?? "").trim(); return text === "" ? null : Number(text); };
     const payload = { stop_days_after_pr: days(form.elements.stop_days_after_pr.value), max_age_days: days(form.elements.max_age_days.value) };
-    const bad = Object.values(payload).some((value) => value !== null && !(Number.isInteger(value) && value >= 1));
-    if (bad) { say("Use whole days of 1 or more, or leave the field empty."); return; }
+    let firstBad = null;
+    for (const [name, max] of [["stop_days_after_pr", 365], ["max_age_days", 3650]]) {
+      const input = form.elements[name], value = payload[name];
+      const bad = input.validity?.badInput || (value !== null && !(Number.isInteger(value) && value >= 1 && value <= max));
+      input.setAttribute?.("aria-invalid", String(Boolean(bad)));
+      input.setAttribute?.("aria-describedby", bad ? `${RULE_HINT} preview-rule-error-${name}` : RULE_HINT);
+      const error = form.querySelector?.(`[data-preview-field-error="${name}"]`);
+      if (error) { error.hidden = !bad; error.textContent = bad ? `Use whole days from 1 to ${max}, or leave this field empty.` : ""; }
+      if (bad && !firstBad) firstBad = input;
+    }
+    if (firstBad) { firstBad.focus?.(); say("Check the day fields. Use whole days in the range shown, or leave a field empty."); return; }
     // A refused save keeps the form open with what was typed, and puts focus back on Save.
     void act(form, "/api/previews/rules", "PUT", payload, "Saved the stop rule.", '[data-preview-rule-summary="rule"]', { progress: "Saving the rule…", failure: '[data-preview-rule-save="rule"]' });
   });

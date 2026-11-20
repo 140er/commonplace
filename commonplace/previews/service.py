@@ -463,6 +463,9 @@ def _mark_leftovers(shown, leftover_ids) -> dict:
     """A deleted preview whose removal left files says so, so the owner can delete again."""
     if shown["reason"] == "files_deleted":
         shown["files_remaining"] = shown["id"] in leftover_ids
+        if shown["files_remaining"]:
+            shown["reason_text"] = "The preview is stopped, but some files could not be removed."
+            shown["next"] = "The workspace owner can use Finish deleting on this card to try again."
     return shown
 
 
@@ -789,7 +792,7 @@ def delete_files(gateway, principal, preview_id, confirm) -> dict:
         shown["files_remaining"] = True
     else:
         shown["files_remaining"] = False
-    return shown
+    return _mark_leftovers(shown, {shown["id"]} if shown["files_remaining"] else set())
 
 
 RULE_BOUNDS = {"stop_days_after_pr": (1, 365), "max_age_days": (1, 3650)}

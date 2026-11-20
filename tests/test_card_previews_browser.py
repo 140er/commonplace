@@ -95,6 +95,36 @@ STATES = {
         "long-name",
         [{**PREVIEW, "id": "pv_0000000000000013", "name": "a-very-long-preview-name-" * 5}],
     ),
+    16: (
+        "finish-deleting",
+        [
+            {
+                **PREVIEW,
+                "id": "pv_0000000000000016",
+                "state": "stopped",
+                "reason": "files_deleted",
+                "reason_text": "The preview is stopped, but some files could not be removed.",
+                "next": "The workspace owner can use Finish deleting on this card to try again.",
+                "url": None,
+                "files_remaining": True,
+            }
+        ],
+    ),
+    17: (
+        "deleted",
+        [
+            {
+                **PREVIEW,
+                "id": "pv_0000000000000017",
+                "state": "stopped",
+                "reason": "files_deleted",
+                "reason_text": "A workspace owner deleted the files of this preview.",
+                "next": "Ask the Coworker to publish again if it is still wanted.",
+                "url": None,
+                "files_remaining": False,
+            }
+        ],
+    ),
 }
 SIZES = {
     "desktop": {"viewport": {"width": 1280, "height": 800}},
@@ -117,6 +147,7 @@ def listing(previews):
         "limits": {"max_ready": 25, "max_workspace_bytes": 500 * 1024 * 1024},
         "rule": RULE,
         "can_set_rule": True,
+        "can_delete": True,
     }
 
 
@@ -194,6 +225,8 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, look
                 "failed": "Nothing was published: a file looked like it holds a credential.",
                 "offline": "Could not load the previews.",
                 "long-name": "Published and open to people who can open this card.",
+                "finish-deleting": "The preview is stopped, but some files could not be removed.",
+                "deleted": "A workspace owner deleted the files of this preview.",
             }[label]
             section.get_by_text(words).first.wait_for()
             section.scroll_into_view_if_needed()
@@ -202,6 +235,15 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, look
                 assert box and box["width"] > 0
                 if look != "desktop":
                     assert box["height"] >= 44, (look, label, control.inner_text(), box)
+            if look != "desktop":
+                for text in section.locator("h3, p, .run-state, button").all():
+                    if text.is_visible() and text.inner_text():
+                        assert (
+                            float(text.evaluate("e => parseFloat(getComputedStyle(e).fontSize)"))
+                            >= 14
+                        ), (look, label, text.inner_text())
+            if label == "offline":
+                assert section.inner_text().count("Could not load the previews.") == 1
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
         panel.screenshot(path=str(evidence / f"previews-{look}-{label}.png"))
 
@@ -215,6 +257,18 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, look
     tab = opened.value
     tab.wait_for_load_state()
     assert tab.url.endswith("/p/pv_0123456789abcdef/") and tab.title() == "Preview page"
+    # Delete has a real question, named for assistive technology, before anything is sent.
+    panel.locator("[data-preview-delete]").click()
+    question = panel.locator(".preview-confirm p")
+    confirm = panel.locator("[data-preview-delete-confirm]")
+    assert confirm.get_attribute("aria-describedby") == question.get_attribute("id")
+    assert "this cannot be undone" in question.inner_text()
+    assert panel.locator("[data-preview-status]").inner_text() == question.inner_text()
+    assert panel.locator("[data-preview-delete-cancel]").evaluate(
+        "e => e === document.activeElement"
+    )
+    panel.screenshot(path=str(evidence / f"previews-{look}-delete-confirmation.png"))
+    panel.locator("[data-preview-delete-cancel]").click()
     # The owner's rule form, open.
     rule = panel.locator("[data-preview-rule]")
     rule.locator("summary").click()
@@ -343,10 +397,77 @@ def test_the_stop_rule_form_keeps_its_state_through_a_panel_redraw(browser):  # 
     # Open but unused (focus elsewhere, nothing typed): a real redraw still keeps it open.
     field.fill("")
     panel.locator("[data-preview-open]").focus()
+    panel.locator(".workbench-details").evaluate("e => {e.dataset.draw = 'before-refresh'}")
     delivered["count"] = 0
     with page.expect_request(lambda r: "/api/cards/15" in r.url):
         pass
+    # The card redraws, while the actual preview section (and its status node) is retained.
     page.wait_for_function(
-        "!document.querySelector('[data-card-previews]')?.dataset.mark",
+        "document.querySelector('.workbench-details')?.dataset.draw !== 'before-refresh'"
     )
+    assert section.evaluate("e => e.dataset.mark") == "same-element"
     assert page.evaluate("document.querySelector('[data-preview-rule]')?.open") is True
+
+
+def test_a_pending_delete_keeps_its_result_through_a_real_card_redraw(browser):  # noqa: F811
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    shell.open_board(page)
+    page.evaluate(
+        """async ({card, found}) => {
+      const {createDetails} = await import('/app/details.js');
+      const mount = document.createElement('div');
+      mount.id = 'preview-redraw-fixture'; document.body.append(mount);
+      let deleted = false;
+      const api = async (url, options) => {
+        if (options?.method === 'DELETE') return await new Promise(resolve => {
+          window.finishPreviewDelete = () => {deleted = true; resolve({files_remaining:true});};
+        });
+        if (url.startsWith('/api/previews?')) return {...found, previews: found.previews.map(p => deleted
+          ? {...p, state:'stopped', reason:'files_deleted', url:null, files_remaining:true}
+          : p)};
+        return {};
+      };
+      const details = createDetails({mount, api});
+      await details.show(card);
+      window.redrawPreviewCard = () => details.show(card);
+    }""",
+        {"card": {**shell.CARD, "number": 25, "board": "work"}, "found": listing([PREVIEW])},
+    )
+    section = page.locator("#preview-redraw-fixture [data-card-previews]")
+    section.locator("[data-preview-delete]").click()
+    section.locator("[data-preview-delete-confirm]").click()
+    section.locator("[data-preview-status]", has_text="Deleting the files…").wait_for()
+    section.evaluate("e => {window.keptPreviewStatus = e.querySelector('[data-preview-status]')}")
+    page.evaluate("redrawPreviewCard()")
+    assert section.locator("[data-preview-status]").evaluate("e => e === window.keptPreviewStatus")
+    page.evaluate("finishPreviewDelete()")
+    section.locator("[data-preview-status]", has_text="Some files could not be removed").wait_for()
+    section.get_by_role("button", name="Finish deleting files for preview home").wait_for()
+    assert section.locator("[data-preview-delete]").evaluate("e => e === document.activeElement")
+    page.close()
+
+
+def test_invalid_rule_days_name_the_field_and_keep_the_value(browser):  # noqa: F811
+    page = browser.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
+    shell.open_board(page)
+    writes = []
+
+    def previews_api(route):
+        if route.request.method != "GET":
+            writes.append(route.request.method)
+        route.fulfill(json=listing([PREVIEW]))
+
+    page.route("**/api/previews**", previews_api)
+    page.evaluate("location.hash='#/card/1'")
+    section = page.locator("[data-card-previews]")
+    section.locator("summary").click()
+    field = section.locator('input[name="stop_days_after_pr"]')
+    field.fill("366")
+    section.get_by_role("button", name="Save rule").click()
+    assert field.input_value() == "366" and field.get_attribute("aria-invalid") == "true"
+    error = section.locator('[data-preview-field-error="stop_days_after_pr"]')
+    assert error.is_visible() and "1 to 365" in error.inner_text()
+    assert error.get_attribute("id") in field.get_attribute("aria-describedby").split()
+    assert field.evaluate("e => e === document.activeElement")
+    assert writes == []
+    page.close()
