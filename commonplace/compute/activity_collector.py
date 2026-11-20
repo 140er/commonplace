@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import resource
 import shlex
 import sqlite3
@@ -105,10 +106,26 @@ def tool_category(value):
 def _diff_counts(value):
     if not isinstance(value, str):
         return None
-    added = deleted = 0
+    added = deleted = old_left = new_left = 0
     for line in value.splitlines():
-        added += line.startswith("+") and not line.startswith("+++")
-        deleted += line.startswith("-") and not line.startswith("---")
+        hunk = re.match(r"^@@ -[0-9]+(?:,([0-9]+))? \+[0-9]+(?:,([0-9]+))? @@", line)
+        if hunk:
+            try:
+                old_left, new_left = (
+                    int(count) if count is not None else 1 for count in hunk.groups()
+                )
+            except ValueError:
+                return None
+            continue
+        in_hunk = old_left > 0 or new_left > 0
+        if line.startswith("+"):
+            added += in_hunk or not line.startswith("+++")
+            new_left = max(0, new_left - 1)
+        elif line.startswith("-"):
+            deleted += in_hunk or not line.startswith("---")
+            old_left = max(0, old_left - 1)
+        elif line.startswith(" ") and in_hunk:
+            old_left, new_left = max(0, old_left - 1), max(0, new_left - 1)
     return json.dumps([added, deleted])
 
 

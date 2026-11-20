@@ -197,3 +197,61 @@ def test_refresh_open_trace_after_report_replacement_keeps_one_snapshot(
     page.locator(f'[data-ca-thread="{thread_id}"]').click()
     page.locator("[data-ca-detail-title]").wait_for()
     assert "1.00 h agent time" in page.locator("[data-ca-body]").inner_text()
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+def test_replacement_before_trace_open_uses_detail_provenance(
+    activity_page,
+    enrolled,  # noqa: F811
+    width,
+):
+    page = activity_page
+    page.set_viewport_size({"width": width, "height": 844})
+    hub, machine, _, snapshot = enrolled
+    page.locator("[data-ca-tab=trace]").click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    original_provenance = page.locator("[data-ca-fresh]").inner_text()
+    thread_id = page.locator("[data-ca-body] [data-ca-thread]").first.get_attribute(
+        "data-ca-thread"
+    )
+
+    newer = copy.deepcopy(snapshot)
+    for key in ("collected_at", "window_start", "window_end"):
+        newer[key] += 60
+    newer["coverage"]["partial"] = True
+    for thread in newer["threads"]:
+        for bucket in thread["buckets"]:
+            bucket["at"] += 60
+    updated = next(row for row in newer["threads"] if row["id"] == thread_id)
+    updated["seconds"] = 7200
+    updated["phases"] = {"unknown": 7200, "tool": 0, "wait": 0, "compaction": 0}
+    updated["buckets"] = []
+    assert (
+        request(
+            hub, "POST", "/api/runner/activity", newer, cookie=False, token=machine["machine_token"]
+        )[0]
+        == 200
+    )
+
+    page.locator(f'[data-ca-thread="{thread_id}"]').click()
+    page.locator("[data-ca-detail-title]").wait_for()
+    assert "2.00 h agent time" in page.locator("[data-ca-body]").inner_text()
+    expected = page.evaluate(
+        "values => values.map(n => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Amsterdam', dateStyle: 'medium', timeStyle: 'short' }).format(n * 1000))",
+        [newer[key] for key in ("collected_at", "window_start", "window_end")],
+    )
+    detail_provenance = page.locator("[data-ca-fresh]").inner_text()
+    assert all(value in detail_provenance for value in expected)
+    assert "Coverage for this trace snapshot is unavailable" in detail_provenance
+    page.get_by_role("button", name="Back to threads", exact=True).click()
+    assert page.locator("[data-ca-fresh]").inner_text() == original_provenance
+    assert page.locator(f'[data-ca-thread="{thread_id}"]').evaluate(
+        "el => document.activeElement === el"
+    )
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    page.locator('[data-ca-body][aria-busy="false"]').wait_for()
+    assert "PARTIAL" in page.locator("[data-ca-fresh]").inner_text()
+    page.locator(f'[data-ca-thread="{thread_id}"]').click()
+    page.locator("[data-ca-detail-title]").wait_for()
+    assert all(value in page.locator("[data-ca-fresh]").inner_text() for value in expected)
+    assert "PARTIAL" in page.locator("[data-ca-fresh]").inner_text()
