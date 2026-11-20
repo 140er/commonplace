@@ -28,7 +28,17 @@ _ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _LOGIN = re.compile(r"[A-Za-z0-9_.\[\]-]{1,100}")
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _ASSOC = re.compile(r"[A-Z_]{1,30}")
-_BODY_KEYS = {"repo", "pr", "head", "pr_state", "branch", "head_repo", "fetched_at", "changed_files", "comments"}
+_BODY_KEYS = {
+    "repo",
+    "pr",
+    "head",
+    "pr_state",
+    "branch",
+    "head_repo",
+    "fetched_at",
+    "changed_files",
+    "comments",
+}
 _COMMENT_KEYS = {
     "kind",
     "id",
@@ -82,7 +92,11 @@ def _time(value, where, now, *, required=True):
 def _id(value, where, *, required=True):
     if value is None and not required:
         return None
-    if isinstance(value, bool) or not isinstance(value, (str, int)) or not _ID.fullmatch(str(value)):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, int))
+        or not _ID.fullmatch(str(value))
+    ):
         raise Invalid(f"{where} must be 1 to 64 plain characters")
     return str(value)
 
@@ -129,7 +143,9 @@ def _comment(raw, position, now):
     if state is not None and state not in REVIEW_STATES:
         raise Invalid(f"{where}: review_state is not known")
     line = raw.get("line")
-    if line is not None and (isinstance(line, bool) or not isinstance(line, int) or not 0 <= line <= 10**7):
+    if line is not None and (
+        isinstance(line, bool) or not isinstance(line, int) or not 0 <= line <= 10**7
+    ):
         raise Invalid(f"{where}: line must be a whole number")
     path = raw.get("path")
     body = _plain(raw.get("body", ""), f"{where}: body", MAX_BODY, lines=True)

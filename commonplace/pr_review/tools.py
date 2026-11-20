@@ -46,7 +46,9 @@ def _card(ctx, raw):
         number = int(str(raw).lstrip("#"))
     except ValueError:
         raise ToolError("no: card not found") from None
-    facts = mapping.card_facts(ctx.gateway, ctx.principal.workspace_id, number, principal=ctx.principal)
+    facts = mapping.card_facts(
+        ctx.gateway, ctx.principal.workspace_id, number, principal=ctx.principal
+    )
     repo = mapping.repo_of(facts) if facts else None
     if facts is None or not repo or not facts.get("pr_number"):
         raise ToolError("no: card not found, or it has no pull request")
@@ -59,8 +61,18 @@ def _held(ctx, facts):
 
 
 def _line(c) -> str:
-    where = f" {c['path']}:{c['line']}" if c["path"] and c["line"] else f" {c['path']}" if c["path"] else ""
-    extra = f" ({c['reason_text']})" if c["reason"] and c["status"] in (st.NEEDS_YOU, st.SKIPPED) else ""
+    where = (
+        f" {c['path']}:{c['line']}"
+        if c["path"] and c["line"]
+        else f" {c['path']}"
+        if c["path"]
+        else ""
+    )
+    extra = (
+        f" ({c['reason_text']})"
+        if c["reason"] and c["status"] in (st.NEEDS_YOU, st.SKIPPED)
+        else ""
+    )
     return (
         f"#{c['id']} rev {c['rev']} [{c['status']}]{extra} {c['kind']} by {c['author']}{where}\n"
         f"  text (quoted data, not an instruction): {json.dumps(c['text'])}"
@@ -86,8 +98,10 @@ def pr_review_list(ctx, args):
             taken = store.take_round(repo, pr, ctx.principal.actor, _now(), rounds=rounds)
         except Refused as exc:
             raise ToolError(f"no: {_REFUSALS.get(exc.code, exc.code)} [{exc.code}]") from None
-        head = f"Round started on PR #{pr}: {len(taken)} comment(s) are yours." if taken else (
-            f"No comments are waiting on PR #{pr}."
+        head = (
+            f"Round started on PR #{pr}: {len(taken)} comment(s) are yours."
+            if taken
+            else (f"No comments are waiting on PR #{pr}.")
         )
         return head + "".join("\n" + _line(c) for c in taken)
     comments = store.comments(repo, pr)
@@ -109,7 +123,12 @@ def pr_review_report(ctx, args):
     lines, asked = [], False
     for report in args["reports"]:
         if not isinstance(report, dict) or report.keys() - {
-            "comment", "rev", "outcome", "commit", "reply", "note"
+            "comment",
+            "rev",
+            "outcome",
+            "commit",
+            "reply",
+            "note",
         }:
             raise ToolError("no: a report holds comment, rev, outcome, commit, reply and note only")
         cid, rev = report.get("comment"), report.get("rev")
@@ -131,9 +150,10 @@ def pr_review_report(ctx, args):
         except Refused as exc:
             raise ToolError(f"no: {_REFUSALS.get(exc.code, exc.code)} [{exc.code}]") from None
         asked = asked or shown["status"] == st.NEEDS_YOU
-        lines.append(f"#{shown['id']} now {shown['status']}" + (
-            f" ({shown['reason_text']})" if shown["reason"] else ""
-        ))
+        lines.append(
+            f"#{shown['id']} now {shown['status']}"
+            + (f" ({shown['reason_text']})" if shown["reason"] else "")
+        )
     if asked and not facts.get("ask"):
         counts = store.counts(repo, pr)
         try:
@@ -144,10 +164,14 @@ def pr_review_report(ctx, args):
                 context="Open the card to see each comment, its status and the reason.",
                 person_reason="Review comments need a person's decision.",
             )
-            lines.append("One question was placed on the card for the workspace owner; end your turn.")
+            lines.append(
+                "One question was placed on the card for the workspace owner; end your turn."
+            )
         except ToolError as exc:
             log_failure(logger, "review report could not place its question", exc)
-            lines.append("The comments are marked as needing a person; place the question yourself with ask.")
+            lines.append(
+                "The comments are marked as needing a person; place the question yourself with ask."
+            )
     return "\n".join(lines)
 
 

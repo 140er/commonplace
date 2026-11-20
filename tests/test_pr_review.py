@@ -58,9 +58,7 @@ def batch(*comments, pr=7, head=HEAD, **kw):
 @pytest.fixture
 def world(console_hub, monkeypatch):
     h = console_hub
-    h.feeder = h.token(
-        "review-feed", profile="slim", scopes=["pr_review:write"], trust="untrusted"
-    )
+    h.feeder = h.token("review-feed", profile="slim", scopes=["pr_review:write"], trust="untrusted")
     h.store = review_store.open_review(h.gateway, h.workspace)
     return h
 
@@ -93,7 +91,9 @@ def rows(h, pr=7):
 
 def test_a_comment_is_stored_once_and_a_repeated_request_changes_nothing(world):
     h = world
-    status, body, _ = post(h, batch(comment(1), comment(2, kind="conversation", path=None, line=None)))
+    status, body, _ = post(
+        h, batch(comment(1), comment(2, kind="conversation", path=None, line=None))
+    )
     assert status == 200, body
     assert body["accepted"] == 2 and body["duplicates"] == 0 and body["unmapped"] == 2
     again = post(h, batch(comment(1), comment(2, kind="conversation", path=None, line=None)))
@@ -144,11 +144,22 @@ def test_a_removed_comment_is_skipped_unless_a_fix_is_linked(world):
         (lambda b: b.update(pr_state="draft"), "pr_state"),
         (lambda b: b.update(fetched_at="yesterday"), "ISO 8601"),
         (lambda b: b["comments"].__setitem__(0, {**b["comments"][0], "kind": "wild"}), "kind"),
-        (lambda b: b["comments"].__setitem__(0, {**b["comments"][0], "body": "x" * 65_537}), "longer"),
-        (lambda b: b["comments"].__setitem__(0, {**b["comments"][0], "body": "bad\x00text"}), "plain text"),
+        (
+            lambda b: b["comments"].__setitem__(0, {**b["comments"][0], "body": "x" * 65_537}),
+            "longer",
+        ),
+        (
+            lambda b: b["comments"].__setitem__(0, {**b["comments"][0], "body": "bad\x00text"}),
+            "plain text",
+        ),
         (lambda b: b["comments"].append(b["comments"][0]), "twice"),
         (lambda b: b.update(comments=[comment(i) for i in range(101)]), "at most 100"),
-        (lambda b: b["comments"].__setitem__(0, {**b["comments"][0], "created_at": "2999-01-01T00:00:00Z"}), "future"),
+        (
+            lambda b: b["comments"].__setitem__(
+                0, {**b["comments"][0], "created_at": "2999-01-01T00:00:00Z"}
+            ),
+            "future",
+        ),
     ],
 )
 def test_a_bad_request_is_a_plain_400_and_stores_nothing(world, mutate, fragment):
@@ -195,12 +206,17 @@ def test_who_may_post_comments(world):
 def test_a_feeder_token_is_alone_owned_by_an_owner_and_one_per_workspace(world):
     h = world
     with pytest.raises(ControlError, match="only the pr_review:write scope"):
-        h.token("mixed", profile="slim", scopes=["pr_review:write", "memory:read"], trust="untrusted")
+        h.token(
+            "mixed", profile="slim", scopes=["pr_review:write", "memory:read"], trust="untrusted"
+        )
     with pytest.raises(ControlError, match="already has a review-comment token"):
         h.token("second", profile="slim", scopes=["pr_review:write"], trust="untrusted")
     with pytest.raises(ControlError, match="only the pr_review:write scope"):
         h.token(
-            "member-feed", user=h.member_user, profile="slim", scopes=["pr_review:write"],
+            "member-feed",
+            user=h.member_user,
+            profile="slim",
+            scopes=["pr_review:write"],
             trust="untrusted",
         )
 
@@ -221,7 +237,12 @@ def test_only_trusted_authors_are_work_and_the_rest_is_shown_with_a_reason(world
         line=None,
         review_state="COMMENTED",
     )
-    post(h, batch(comment(1), comment(2, author=stranger), comment(3, author=robot), owner_reply, verdict))
+    post(
+        h,
+        batch(
+            comment(1), comment(2, author=stranger), comment(3, author=robot), owner_reply, verdict
+        ),
+    )
     got = rows(h)
     assert got["1"]["status"] == "new"
     assert (got["2"]["status"], got["2"]["reason"]) == ("skipped", "author_not_trusted")
@@ -236,10 +257,15 @@ def test_an_owner_can_trust_a_login_and_its_waiting_comments_become_work(world):
     stranger = {"login": "Helper", "type": "User", "association": "CONTRIBUTOR"}
     post(h, batch(comment(1, author=stranger)))
     assert rows(h)["1"]["status"] == "skipped"
-    status, body, _ = h.request(h.owner, "PUT", "/api/pr-review/people", {"login": "helper", "role": "trusted"})
+    status, body, _ = h.request(
+        h.owner, "PUT", "/api/pr-review/people", {"login": "helper", "role": "trusted"}
+    )
     assert status == 200, body
     assert rows(h)["1"]["status"] == "new"
-    assert h.request(h.member, "PUT", "/api/pr-review/people", {"login": "x", "role": "trusted"})[0] == 403
+    assert (
+        h.request(h.member, "PUT", "/api/pr-review/people", {"login": "x", "role": "trusted"})[0]
+        == 403
+    )
 
 
 # ── mapping and who may read ──
@@ -290,7 +316,9 @@ def test_the_stored_words_are_verbatim_and_everything_else_shows_them_redacted(w
         h.request(h.owner, "GET", "/api/pr-review/watch")
     assert secret not in json.dumps(shown) and shown["comments"][0]["text_redacted"] is True
     cid = shown["comments"][0]["id"]
-    status, original, _ = h.request(h.owner, "GET", f"/api/pr-review/cards/{number}/comments/{cid}/original")
+    status, original, _ = h.request(
+        h.owner, "GET", f"/api/pr-review/cards/{number}/comments/{cid}/original"
+    )
     assert status == 200 and original["text"] == text
     assert secret not in caplog.text and "rename x" not in caplog.text
 
@@ -314,7 +342,14 @@ def test_intake_failures_log_no_comment_text(world, caplog, monkeypatch):
 def start(h, **kw):
     """A card the Coworker (a1) holds, with its PR comments posted."""
     number = card(h, hold=True, **kw)
-    post(h, batch(comment(1), comment(2, "Why this approach?", thread="t2"), comment(3, kind="conversation", path=None, line=None)))
+    post(
+        h,
+        batch(
+            comment(1),
+            comment(2, "Why this approach?", thread="t2"),
+            comment(3, kind="conversation", path=None, line=None),
+        ),
+    )
     return number
 
 
@@ -341,10 +376,18 @@ def test_only_the_holder_can_take_or_report_and_others_see_the_list(world):
     ok, text = take(h, number, token=h.t2)
     assert not ok and "do not hold" in text
     ok, text = mcp(h, h.t2, "pr_review_list", card=number)
-    assert not ok or "PR #7" in text  # a reader may look; here the other Coworker cannot see the wing's card
+    assert (
+        not ok or "PR #7" in text
+    )  # a reader may look; here the other Coworker cannot see the wing's card
     working = take(h, number)
     assert working[0]
-    ok, text = mcp(h, h.t2, "pr_review_report", card=number, reports=[{"comment": 1, "rev": 1, "outcome": "answered", "reply": "no"}])
+    ok, text = mcp(
+        h,
+        h.t2,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 1, "rev": 1, "outcome": "answered", "reply": "no"}],
+    )
     assert not ok and ("do not hold" in text or "not found" in text)
 
 
@@ -354,21 +397,33 @@ def test_a_fix_is_addressed_when_the_commit_is_the_head_the_feeder_saw(world):
     take(h, number)
     post(h, batch(head=FIX))  # the feeder sees the Coworker's push
     ok, text = mcp(
-        h, h.t1, "pr_review_report", card=number,
-        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX, "reply": "Renamed."}],
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[
+            {"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX, "reply": "Renamed."}
+        ],
     )
     assert ok, text
     one = rows(h)["1"]
-    assert one["status"] == "addressed" and one["fix_commit"] == FIX and one["fix_confirmed"] is True
+    assert (
+        one["status"] == "addressed" and one["fix_commit"] == FIX and one["fix_confirmed"] is True
+    )
     assert one["reply"] == "Renamed."
     # a repeated report is a no-op that returns the stored state
     ok, text = mcp(
-        h, h.t1, "pr_review_report", card=number,
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
         reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}],
     )
     assert ok and "now addressed" in text
     assert [e["kind"] for e in h.store.history(REPO, 7) if e["comment_id"] == one["id"]] == [
-        "arrived", "taken", "reported",
+        "arrived",
+        "taken",
+        "reported",
     ]
 
 
@@ -376,15 +431,25 @@ def test_a_fix_the_feeder_has_not_seen_waits_and_is_confirmed_or_held_later(worl
     h = world
     number = start(h)
     take(h, number)
-    mcp(h, h.t1, "pr_review_report", card=number,
-        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}])
+    mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}],
+    )
     assert rows(h)["1"]["status"] == "working" and rows(h)["1"]["fix_confirmed"] is False
     post(h, batch(head=FIX))
     h.store.settle(datetime.now(timezone.utc))
     assert rows(h)["1"]["status"] == "addressed"
     # a second comment whose commit never shows up becomes one `needs you` after the grace
-    mcp(h, h.t1, "pr_review_report", card=number,
-        reports=[{"comment": 2, "rev": 1, "outcome": "addressed", "commit": "c" * 40}])
+    mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 2, "rev": 1, "outcome": "addressed", "commit": "c" * 40}],
+    )
     post(h, batch(head=FIX, fetched_at=when(2)))  # the feeder read again, still no such commit
     late = datetime.now(timezone.utc) + timedelta(minutes=11)
     h.store.settle(late)
@@ -397,8 +462,13 @@ def test_a_fix_that_changes_the_checks_is_held_for_a_person(world):
     number = start(h)
     take(h, number)
     post(h, batch(head=FIX, changed_files=["app/main.py", ".github/workflows/ci.yml"]))
-    mcp(h, h.t1, "pr_review_report", card=number,
-        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}])
+    mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 1, "rev": 1, "outcome": "addressed", "commit": FIX}],
+    )
     one = rows(h)["1"]
     assert (one["status"], one["reason"]) == ("needs_you", "touches_checks")
 
@@ -408,9 +478,17 @@ def test_answered_and_needs_you_outcomes_and_the_one_question_on_the_card(world)
     number = start(h)
     take(h, number)
     ok, text = mcp(
-        h, h.t1, "pr_review_report", card=number,
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
         reports=[
-            {"comment": 1, "rev": 1, "outcome": "answered", "reply": "Kept on purpose: it matches the API."},
+            {
+                "comment": 1,
+                "rev": 1,
+                "outcome": "answered",
+                "reply": "Kept on purpose: it matches the API.",
+            },
             {"comment": 2, "rev": 1, "outcome": "needs_you", "note": "Needs a product decision."},
             {"comment": 3, "rev": 1, "outcome": "needs_you", "note": "Also needs a person."},
         ],
@@ -429,8 +507,13 @@ def test_a_report_is_refused_for_a_stale_revision_a_foreign_comment_and_bad_inpu
     number = start(h)
     take(h, number)
     post(h, batch(comment(1, "Changed my mind entirely.", updated_at=when(-1))))
-    ok, text = mcp(h, h.t1, "pr_review_report", card=number,
-                   reports=[{"comment": 1, "rev": 1, "outcome": "answered", "reply": "ok"}])
+    ok, text = mcp(
+        h,
+        h.t1,
+        "pr_review_report",
+        card=number,
+        reports=[{"comment": 1, "rev": 1, "outcome": "answered", "reply": "ok"}],
+    )
     assert not ok and "comment_changed" in text
     assert rows(h)["1"]["status"] == "new" and rows(h)["1"]["rev"] == 2
     for report, fragment in (
@@ -448,8 +531,14 @@ def test_the_tools_offer_nothing_that_merges_resolves_or_dismisses(world):
     h = world
     names = h.tool_names(h.t1)
     assert {"pr_review_list", "pr_review_report"} <= names
-    assert not {n for n in names if n.startswith("pr_review") and any(w in n for w in ("merge", "resolve", "dismiss"))}
-    schema = next(t for t in h.rpc(h.t1, "tools/list")["result"]["tools"] if t["name"] == "pr_review_report")
+    assert not {
+        n
+        for n in names
+        if n.startswith("pr_review") and any(w in n for w in ("merge", "resolve", "dismiss"))
+    }
+    schema = next(
+        t for t in h.rpc(h.t1, "tools/list")["result"]["tools"] if t["name"] == "pr_review_report"
+    )
     item = schema["inputSchema"]["properties"]["reports"]["items"]
     assert set(item["properties"]) == {"comment", "rev", "outcome", "commit", "reply", "note"}
     assert item["properties"]["outcome"]["enum"] == ["addressed", "answered", "needs_you"]
@@ -464,29 +553,48 @@ def test_rounds_run_out_after_two_and_a_person_can_allow_two_more(world):
         post(h, batch(head=chr(ord("b") + n) * 40))
         reports = [
             {"comment": c["id"], "rev": c["rev"], "outcome": "answered", "reply": "Because."}
-            for c in h.store.comments(REPO, 7) if c["status"] == "working"
+            for c in h.store.comments(REPO, 7)
+            if c["status"] == "working"
         ]
         assert mcp(h, h.t1, "pr_review_report", card=number, reports=reports)[0]
         post(h, batch(comment(10 + n, "One more thing."), head=chr(ord("b") + n) * 40))
     ok, text = take(h, number)
     assert not ok and "rounds_exhausted" in text
-    status, body, _ = h.request(h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "again"})
+    status, body, _ = h.request(
+        h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "again"}
+    )
     assert status == 200, body
     assert h.store.pr(REPO, 7)["rounds_used"] == 0
-    assert h.request(h.member, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "again"})[0] == 403
+    assert (
+        h.request(h.member, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "again"})[
+            0
+        ]
+        == 403
+    )
 
 
 def test_the_owners_other_two_answers(world):
     h = world
     number = start(h)
     h.store.hold(REPO, 7, "rounds_exhausted", "system", datetime.now(timezone.utc))
-    status, body, _ = h.request(h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "dismiss"})
+    status, body, _ = h.request(
+        h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "dismiss"}
+    )
     assert status == 200 and body["counts"]["skipped"] == 3
     assert {c["reason"] for c in rows(h).values()} == {"dismissed_by_person"}
-    assert h.request(h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "nope"})[0] == 400
+    assert (
+        h.request(h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "nope"})[0]
+        == 400
+    )
     post(h, batch(comment(20, "Later comment.")))
-    assert h.request(h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "mine"})[0] == 200
-    assert rows(h)["20"]["reason"] == "handled_by_person" and h.store.pr(REPO, 7)["loop_stopped"] is True
+    assert (
+        h.request(h.owner, "POST", f"/api/pr-review/cards/{number}/decision", {"choice": "mine"})[0]
+        == 200
+    )
+    assert (
+        rows(h)["20"]["reason"] == "handled_by_person"
+        and h.store.pr(REPO, 7)["loop_stopped"] is True
+    )
 
 
 def test_a_comment_nobody_reports_comes_back_once_then_asks_a_person(world):
@@ -497,7 +605,9 @@ def test_a_comment_nobody_reports_comes_back_once_then_asks_a_person(world):
     h.store.settle(now + timedelta(minutes=31))
     assert {c["status"] for c in rows(h).values()} == {"new"}
     assert {c["reason"] for c in rows(h).values()} == {"run_failed"}
-    take_again = h.store.take_round(REPO, 7, h.principal(h.t1).actor, now + timedelta(minutes=32), rounds=3)
+    take_again = h.store.take_round(
+        REPO, 7, h.principal(h.t1).actor, now + timedelta(minutes=32), rounds=3
+    )
     assert len(take_again) == 3
     h.store.settle(now + timedelta(minutes=70))
     h.store.take_round(REPO, 7, h.principal(h.t1).actor, now + timedelta(minutes=71), rounds=3)
@@ -509,7 +619,9 @@ def test_a_comment_nobody_reports_comes_back_once_then_asks_a_person(world):
 
 
 def board_on(h, rounds=2, auth=None):
-    status, body, _ = h.request(auth or h.owner, "PUT", "/api/pr-review/boards/work", {"enabled": True, "rounds": rounds})
+    status, body, _ = h.request(
+        auth or h.owner, "PUT", "/api/pr-review/boards/work", {"enabled": True, "rounds": rounds}
+    )
     assert status == 200, body
 
 
@@ -526,7 +638,11 @@ def finished_card(h):
         conn.execute("UPDATE boards SET done_needs_review=1 WHERE slug='work'")
     number = card(h, hold=True)
     ok, text = mcp(
-        h, h.t1, "task_update", task=number, status="done",
+        h,
+        h.t1,
+        "task_update",
+        task=number,
+        status="done",
         context="The change is made, its tests pass and the pull request is open.",
     )
     assert ok, text
@@ -561,7 +677,9 @@ def test_waiting_comments_hand_a_finished_card_back_to_its_coworker_once(world, 
     assert status == 200, body
     assert status_of(h, number) == "todo"
     again = trigger.run(h.gateway, h.workspace)
-    assert [r["outcome"] for r in again] == ["waiting"]  # a card in todo is left to the todo trigger
+    assert [r["outcome"] for r in again] == [
+        "waiting"
+    ]  # a card in todo is left to the todo trigger
     ok, shown = mcp(h, h.t1, "task_show", task=number)
     assert shown.count("Review comments arrived on PR #7") == 1
 
@@ -582,7 +700,9 @@ def test_a_board_without_a_coworker_setup_asks_the_owner_once(world):
     board_on(h)
     post(h, batch(comment(1), comment(2)))
     got = rows(h)
-    assert {(c["status"], c["reason"]) for c in got.values()} == {("needs_you", "no_coworker_config")}
+    assert {(c["status"], c["reason"]) for c in got.values()} == {
+        ("needs_you", "no_coworker_config")
+    }
     assert status_of(h, number) == "review"
     ok, shown = mcp(h, h.t1, "task_show", task=number)
     assert shown.count("need a decision") <= 1
@@ -592,7 +712,9 @@ def test_a_board_without_a_coworker_setup_asks_the_owner_once(world):
     "extra, reason",
     [({"head_repo": "someone/fork"}, "fork_pr"), ({"branch": "other-branch"}, "branch_not_owned")],
 )
-def test_a_fork_or_a_branch_that_is_not_the_cards_is_never_worked(world, monkeypatch, extra, reason):
+def test_a_fork_or_a_branch_that_is_not_the_cards_is_never_worked(
+    world, monkeypatch, extra, reason
+):
     h = world
     configured(monkeypatch)
     number = finished_card(h)
@@ -605,7 +727,7 @@ def test_a_fork_or_a_branch_that_is_not_the_cards_is_never_worked(world, monkeyp
 def test_used_up_rounds_hold_the_next_comments_for_a_person(world, monkeypatch):
     h = world
     configured(monkeypatch)
-    number = finished_card(h)
+    finished_card(h)
     board_on(h, rounds=1)
     h.store.set_board("work", True, h.principal(h.t1).user_id, 1, datetime.now(timezone.utc))
     post(h, batch(comment(1)))  # the first comment returns the card
@@ -639,10 +761,26 @@ def test_the_status_words_and_reasons_are_complete():
     assert set(st.WORDS) == set(st.STATUSES)
     for code, (text, step) in st.REASONS.items():
         assert text and step, code
-    produced = {"no_coworker_config", "rounds_exhausted", "fork_pr", "branch_not_owned", "touches_checks",
-                "commit_not_found", "run_failed", "run_lost", "own_reply", "verdict_line",
-                "author_not_trusted", "removed_by_reviewer", "dismissed_by_person", "handled_by_person",
-                "coworker_asks", "card_done", "card_not_startable", "loop_owner_unavailable"}
+    produced = {
+        "no_coworker_config",
+        "rounds_exhausted",
+        "fork_pr",
+        "branch_not_owned",
+        "touches_checks",
+        "commit_not_found",
+        "run_failed",
+        "run_lost",
+        "own_reply",
+        "verdict_line",
+        "author_not_trusted",
+        "removed_by_reviewer",
+        "dismissed_by_person",
+        "handled_by_person",
+        "coworker_asks",
+        "card_done",
+        "card_not_startable",
+        "loop_owner_unavailable",
+    }
     assert produced <= set(st.REASONS)
 
 
@@ -662,7 +800,18 @@ def test_a_card_without_a_question_gets_exactly_one_for_the_owner(world):
     post(h, batch(comment(1), comment(2, "Second thing.")))
     assert {c["reason"] for c in rows(h).values()} == {"no_coworker_config"}
     ok, shown = mcp(h, h.t1, "task_show", task=number)
-    assert shown.count('asks owner@example.com: "Review comments on PR #7 need a decision: 2 of 2"') == 1
+    assert (
+        shown.count('asks owner@example.com: "Review comments on PR #7 need a decision: 2 of 2"')
+        == 1
+    )
     post(h, batch(comment(3, "Third thing.")))  # more comments later: still one question
     ok, shown = mcp(h, h.t1, "task_show", task=number)
     assert shown.count(" handoff: ") == 1
+
+
+def test_a_workspace_that_never_used_the_loop_gets_no_file_from_the_sweep(world):
+    h = world
+    assert trigger.run(h.gateway, h.workspace) == []
+    assert h.hub.db is not None and not h.store.path.exists()
+    assert h.request(h.owner, "GET", "/api/pr-review/prs")[1] == {"prs": []}
+    assert not h.store.path.exists()

@@ -31,8 +31,18 @@ _ONE = (
 
 def _facts(row) -> dict:
     keys = (
-        "status", "assignee", "branch", "pr_state", "pr_head", "checks", "ask", "review_kind",
-        "board", "wing", "pr_url", "created_by",
+        "status",
+        "assignee",
+        "branch",
+        "pr_state",
+        "pr_head",
+        "checks",
+        "ask",
+        "review_kind",
+        "board",
+        "wing",
+        "pr_url",
+        "created_by",
     )
     return {"number": row["id"], **{k: row[k] for k in keys}}
 
@@ -57,7 +67,9 @@ def match(gateway, workspace_id: str, repo: str, pr: int, *, principal=None) -> 
                 if principal is None or principal.policy.can_read_wing(row["wing"])
             ]
             row, ambiguous = cards.pick_with_reason(conn, rows, family)
-            near = [r["id"] for r in rows if cards._normal(r["pr_repo"]) in family or not r["pr_repo"]]
+            near = [
+                r["id"] for r in rows if cards._normal(r["pr_repo"]) in family or not r["pr_repo"]
+            ]
     except Exception as exc:  # the board is not the review loop's to break
         log_failure(logger, "review comment card lookup failed", exc)
         return {"card": None, "reason": "no_card", "candidates": [], "facts": None}
@@ -118,7 +130,9 @@ def watched(gateway, workspace_id: str, boards: dict) -> list[dict]:
 def pr_problem(pr_row, facts) -> str | None:
     """Why the loop may not work this PR for this card, as a reason code: a fork, or a branch
     that is not the card's. ``None`` when the PR is the card's own."""
-    if pr_row["head_repo"] and cards._normal(pr_row["head_repo"]) not in cards.aliases(pr_row["repo"]):
+    if pr_row["head_repo"] and cards._normal(pr_row["head_repo"]) not in cards.aliases(
+        pr_row["repo"]
+    ):
         return "fork_pr"
     if pr_row["branch"] and facts["branch"] and pr_row["branch"] != facts["branch"]:
         return "branch_not_owned"

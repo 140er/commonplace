@@ -315,7 +315,8 @@ class ReviewStore:
             return False
         if item["digest"] == row["body_digest"]:
             conn.execute(
-                "UPDATE pr_review_comments SET edited_at=? WHERE id=?", (item["edited_at"], row["id"])
+                "UPDATE pr_review_comments SET edited_at=? WHERE id=?",
+                (item["edited_at"], row["id"]),
             )
             return False
         status, reason = self._classify(item, people)
@@ -494,7 +495,9 @@ class ReviewStore:
             row = (
                 None
                 if conn is None
-                else conn.execute("SELECT * FROM pr_review_boards WHERE board=?", (slug,)).fetchone()
+                else conn.execute(
+                    "SELECT * FROM pr_review_boards WHERE board=?", (slug,)
+                ).fetchone()
             )
         if row is None:
             return {"board": slug, "enabled": False, "enabled_by": "", "rounds": ROUNDS_DEFAULT}
@@ -559,7 +562,9 @@ class ReviewStore:
 
     # -- the round: take, report, settle -------------------------------------------------------
 
-    def take_round(self, repo: str, pr: int, holder: str, now: datetime, *, rounds: int) -> list[dict]:
+    def take_round(
+        self, repo: str, pr: int, holder: str, now: datetime, *, rounds: int
+    ) -> list[dict]:
         """Start a round for ``holder``: the ``new`` comments (up to 25, thread order) become
         ``working``. ``rounds_exhausted`` when the PR has used its rounds; ``[]`` when nothing waits.
         A holder that already has comments working gets them again (the run was resumed)."""
@@ -662,8 +667,17 @@ class ReviewStore:
                 pending = 1 if code == "pending" else 0
                 if code not in (None, "pending"):
                     self._move(
-                        conn, row, st.NEEDS_YOU, code, holder, at, kind="reported",
-                        fix_commit=commit, fix_pending=0, reply=reply, note=note,
+                        conn,
+                        row,
+                        st.NEEDS_YOU,
+                        code,
+                        holder,
+                        at,
+                        kind="reported",
+                        fix_commit=commit,
+                        fix_pending=0,
+                        reply=reply,
+                        note=note,
                     )
                     return self._shown_id(conn, comment_id)
                 if pending:
@@ -676,8 +690,17 @@ class ReviewStore:
                     )
                     return self._shown_id(conn, comment_id)
             self._move(
-                conn, row, outcome, "coworker_asks" if outcome == st.NEEDS_YOU else None,
-                holder, at, kind="reported", fix_commit=commit, fix_pending=0, reply=reply, note=note,
+                conn,
+                row,
+                outcome,
+                "coworker_asks" if outcome == st.NEEDS_YOU else None,
+                holder,
+                at,
+                kind="reported",
+                fix_commit=commit,
+                fix_pending=0,
+                reply=reply,
+                note=note,
             )
             return self._shown_id(conn, comment_id)
 
@@ -703,6 +726,15 @@ class ReviewStore:
         comments return to ``new``. ``{confirmed, held, requeued, asked}`` counts."""
         at = stamp(now)
         out = {"confirmed": 0, "held": 0, "requeued": 0, "asked": 0}
+        with self._lock:  # a workspace that never used this has no file, and a quiet one no write
+            conn = self._connection(create=False)
+            if (
+                conn is None
+                or not conn.execute(
+                    "SELECT 1 FROM pr_review_comments WHERE status='working' LIMIT 1"
+                ).fetchone()
+            ):
+                return out
         with self._tx() as conn:
             for row in conn.execute(
                 "SELECT * FROM pr_review_comments WHERE status='working' AND fix_pending=1"
@@ -712,18 +744,35 @@ class ReviewStore:
                 ).fetchone()
                 code = self._commit_problem(pr_row, row["fix_commit"])
                 if code is None:
-                    self._move(conn, row, st.ADDRESSED, None, row["holder"], at, kind="confirmed",
-                               fix_pending=0)
+                    self._move(
+                        conn,
+                        row,
+                        st.ADDRESSED,
+                        None,
+                        row["holder"],
+                        at,
+                        kind="confirmed",
+                        fix_pending=0,
+                    )
                     out["confirmed"] += 1
                 elif code != "pending":
-                    self._move(conn, row, st.NEEDS_YOU, code, row["holder"], at, kind="held",
-                               fix_pending=0)
+                    self._move(
+                        conn, row, st.NEEDS_YOU, code, row["holder"], at, kind="held", fix_pending=0
+                    )
                     out["held"] += 1
                 elif stamp(now - COMMIT_GRACE) > row["touched_at"] and (
                     pr_row is not None and pr_row["fetched_at"] > row["touched_at"]
                 ):
-                    self._move(conn, row, st.NEEDS_YOU, "commit_not_found", row["holder"], at,
-                               kind="held", fix_pending=0)
+                    self._move(
+                        conn,
+                        row,
+                        st.NEEDS_YOU,
+                        "commit_not_found",
+                        row["holder"],
+                        at,
+                        kind="held",
+                        fix_pending=0,
+                    )
                     out["held"] += 1
             old = stamp(now - STALE_AFTER)
             for row in conn.execute(
@@ -761,7 +810,8 @@ class ReviewStore:
         n = 0
         with self._tx() as conn:
             for row in conn.execute(
-                "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? AND status='new'", (repo, pr)
+                "SELECT * FROM pr_review_comments WHERE repo=? AND pr=? AND status='new'",
+                (repo, pr),
             ).fetchall():
                 self._move(conn, row, st.NEEDS_YOU, reason, actor, at, kind="held", note=note)
                 n += 1
@@ -809,7 +859,9 @@ class ReviewStore:
                     "AND status IN ('new', 'needs_you')",
                     (repo, pr),
                 ).fetchall():
-                    self._move(conn, row, st.SKIPPED, "dismissed_by_person", by, at, kind="dismissed")
+                    self._move(
+                        conn, row, st.SKIPPED, "dismissed_by_person", by, at, kind="dismissed"
+                    )
         return {"choice": choice, "counts": self.counts(repo, pr)}
 
 
