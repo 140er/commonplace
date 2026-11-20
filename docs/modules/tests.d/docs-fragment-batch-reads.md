@@ -1,0 +1,8 @@
+- **Owns:**
+  - Real disposable Git histories exercise batched documentation reads.
+- **Promises:**
+  - Adding fragments cannot add one Git content process per file. Existing documentation obligations still run against complete committed trees.
+- **How it fails:**
+  - Incorrect byte framing, stale ref content, lost deleted-path ownership or accepted Git errors fail the regressions.
+- **Tests:**
+  - `tests/test_docs_check_batch.py` covers bounded process growth, sorted filenames containing newlines, invalid UTF-8, embedded NULs, empty and duplicate blobs, ref movement and malformed or failed batch replies.
