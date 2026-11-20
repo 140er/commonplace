@@ -6,7 +6,6 @@ hub.example.com {
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
-		X-Frame-Options DENY
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=31536000"
 		-Server
@@ -14,12 +13,18 @@ hub.example.com {
 
 	@backend path /app* /api/* /mcp /health /healthz /p/* /s/* /oauth/* /.well-known/*
 	handle @backend {
+		# No page of the app may be framed, except that /p/* sets its own frame policy in the
+		# gateway's answers (the viewer is never framed; a preview's files may be framed by the
+		# viewer only). A proxy-wide DENY would be sent twice there and break the viewer.
+		@notpreview not path /p/*
+		header @notpreview X-Frame-Options DENY
 		reverse_proxy 127.0.0.1:8765 {
 			flush_interval -1
 		}
 	}
 
 	handle {
+		header X-Frame-Options DENY
 		root * /path/to/commonplace/app/landing/public
 		header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
 		file_server
@@ -62,8 +67,9 @@ http://192.0.2.10 {
 # app.cmmn.dev {
 # 	header X-Content-Type-Options nosniff
 # 	header Referrer-Policy no-referrer
-# 	header X-Frame-Options DENY
 # 	header Strict-Transport-Security "max-age=31536000"
+# 	@notpreview not path /p/*
+# 	header @notpreview X-Frame-Options DENY  # /p/* sets its own frame policy in the gateway
 # 	reverse_proxy 127.0.0.1:8765 {
 # 		flush_interval -1
 # 	}

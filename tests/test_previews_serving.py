@@ -6,8 +6,10 @@ tests move. Nothing sleeps.
 """
 
 import base64
+import html
 import http.client
 import json
+import re
 import shutil
 import threading
 from datetime import timedelta
@@ -48,16 +50,28 @@ def fetch(h, auth, path, method="GET", body=None, headers=None, port=None):
         conn.close()
 
 
-def visit(h, auth, path, port=None):
+def visit(h, auth, path, port=None, viewer=False):
     """Open ``path`` the way a browser tab does: follow the server's redirects, signed in on
-    every hop. Returns the final ``(status, headers, bytes)``."""
+    every hop. The tab then shows the viewer page; unless ``viewer`` asks for that page, this
+    goes on to what its frame loads. Returns the final ``(status, headers, bytes)``."""
     for _hop in range(4):
         status, headers, body = fetch(h, auth, path, port=port)
         if status not in (303, 308):
-            return status, headers, body
+            break
         assert "Set-Cookie" not in headers
         path = headers["Location"]
-    raise AssertionError("too many redirects")
+    else:
+        raise AssertionError("too many redirects")
+    match = re.search(rb'<iframe sandbox="allow-scripts"[^>]* src="([^"]+)"', body)
+    if viewer or status != 200 or not match:
+        return status, headers, body
+    return fetch(
+        h,
+        auth,
+        html.unescape(match.group(1).decode()),
+        port=port,
+        headers={"Sec-Fetch-Dest": "iframe"},
+    )
 
 
 def card(h, title="Build the page"):
@@ -87,8 +101,10 @@ def test_a_ready_preview_serves_its_files_with_the_isolation_headers(console_hub
     assert headers["Content-Type"] == "text/html; charset=utf-8"
     policy = headers["Content-Security-Policy"]
     assert policy == serving.FILE_POLICY
-    assert policy.startswith("sandbox allow-scripts allow-forms allow-popups;")
-    assert "allow-same-origin" not in policy and "allow-top-navigation" not in policy
+    assert policy.startswith("sandbox allow-scripts;")
+    for flag in ("same-origin", "top-navigation", "popups", "forms"):
+        assert f"allow-{flag}" not in policy
+    assert headers["X-Frame-Options"] == "SAMEORIGIN"
     assert "connect-src 'none'" in policy and "frame-ancestors 'self'" in policy
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["Cache-Control"] == "private, no-store"
@@ -374,8 +390,9 @@ def test_the_page_link_opens_the_files_without_a_session_and_only_for_that_previ
     _other_number, other = published(h, name="second")
     location = link(h, h.owner, identity)
     # The page's own requests carry no cookie: the link stands in for the session.
-    assert fetch(h, None, location)[2].decode() == INDEX
-    assert fetch(h, None, location + "assets/app.css")[0] == 200
+    assert fetch(h, None, location + serving.FILES)[2].decode() == INDEX
+    assert fetch(h, None, location + serving.FILES + "assets/app.css")[0] == 200
+    assert b"<iframe" in fetch(h, None, location)[2]
     token = location.split("/~", 1)[1].rstrip("/")
     with h.db._lock:
         stored = [dict(r) for r in h.db._conn.execute("SELECT * FROM preview_links")]
@@ -384,6 +401,9 @@ def test_the_page_link_opens_the_files_without_a_session_and_only_for_that_previ
     assert fetch(h, None, f"/p/{other}/~{token}/")[0] == 401
     status, headers, _ = fetch(h, h.owner, f"/p/{other}/~{token}/")
     assert status == 303 and headers["Location"] == f"/p/{other}/"
+    # The same for a file address: the plain address it starts again from opens the viewer.
+    status, headers, _ = fetch(h, h.owner, f"/p/{other}/~{token}/files/assets/app.css")
+    assert status == 303 and headers["Location"] == f"/p/{other}/assets/app.css"
     for bad in ("short", "x" * 40, "~" * 30):
         assert fetch(h, None, f"/p/{identity}/~{bad}/")[0] == 401
 
@@ -421,3 +441,72 @@ def test_the_page_link_is_checked_again_on_every_request(console_hub, monkeypatc
 
 def json_text(value):
     return json.dumps(value)
+
+
+# ── the viewer page ──
+
+
+def test_a_person_opens_the_viewer_and_the_files_come_from_a_separate_address(console_hub):
+    h = console_hub
+    _number, identity = published(h)
+    status, headers, body = visit(h, h.owner, f"/p/{identity}/", viewer=True)
+    assert status == 200 and headers["Content-Type"] == "text/html; charset=utf-8"
+    # The viewer is never framed, runs no script and allows frames of this site only.
+    assert headers["Content-Security-Policy"] == serving.VIEWER_POLICY
+    assert headers["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in serving.VIEWER_POLICY
+    assert "frame-src 'self'" in serving.VIEWER_POLICY
+    assert (
+        not serving.VIEWER_POLICY.startswith("sandbox")
+        and "script-src" not in serving.VIEWER_POLICY
+    )
+    assert b"<script" not in body and INDEX.encode() not in body
+    text = body.decode()
+    # The frame may run scripts and nothing else: no popups, forms, top navigation or origin.
+    assert text.count('sandbox="allow-scripts"') == 1 and text.count("sandbox=") == 1
+    for flag in ("allow-popups", "allow-forms", "allow-top-navigation", "allow-same-origin"):
+        assert flag not in text
+    assert "Open only previews from people you trust." in text
+    assert 'href="/app/#/card/' in text
+    src = re.search(r' src="([^"]+)"', text).group(1)
+    assert re.fullmatch(rf"/p/{identity}/~[\w-]+/files/", src)
+    # The frame loads the files from there, under the file policy.
+    status, headers, body = fetch(h, None, src, headers={"Sec-Fetch-Dest": "iframe"})
+    assert status == 200 and body.decode() == INDEX
+    assert headers["Content-Security-Policy"] == serving.FILE_POLICY
+    # A folder or file address shows the viewer for that file.
+    status, _headers, body = visit(h, h.owner, f"/p/{identity}/docs/", viewer=True)
+    assert status == 200 and b"/files/docs/" in body
+    assert visit(h, h.owner, f"/p/{identity}/docs/")[2] == b"<p>Docs</p>"
+
+
+def test_a_file_asked_for_as_a_page_of_its_own_shows_the_viewer(console_hub):
+    h = console_hub
+    _number, identity = published(h)
+    src = link(h, h.owner, identity) + "files/docs/"
+    # No fetch metadata (a script, an older browser) and a frame get the file ...
+    assert fetch(h, None, src)[0] == 200
+    assert fetch(h, None, src, headers={"Sec-Fetch-Dest": "iframe"})[0] == 200
+    assert fetch(h, None, src, headers={"Sec-Fetch-Dest": "script"})[0] == 200
+    # ... a navigation of a tab is sent to the viewer, which is where a page of its own may not run.
+    status, headers, _ = fetch(h, None, src, headers={"Sec-Fetch-Dest": "document"})
+    assert status == 303 and headers["Location"] == src.replace("files/", "", 1)
+    assert fetch(h, None, headers["Location"])[0] == 200
+
+
+def test_the_viewer_keeps_every_access_check_and_the_state_pages(console_hub):
+    h = console_hub
+    _number, identity = published(h)
+    location = link(h, h.member, identity)
+    assert (
+        fetch(h, None, location + "nothing.html")[0] == 404
+    )  # no frame for a file that is not there
+    assert b"<iframe" not in fetch(h, None, location + "nothing.html")[2]
+    assert fetch(h, None, f"/p/{identity}/~x/")[0] == 401  # an unknown key
+    assert fetch(h, h.other, f"/p/{identity}/")[0] == 404
+    assert fetch(h, None, f"/p/{identity}/")[0] == 401
+    assert fetch(h, h.t1, f"/p/{identity}/")[0] == 403
+    assert h.request(h.owner, "POST", f"/api/previews/{identity}/stop", {})[0] == 200
+    status, _headers, body = fetch(h, None, location)
+    assert status == 410 and b"<iframe" not in body
+    assert fetch(h, None, location + serving.FILES)[0] == 410
