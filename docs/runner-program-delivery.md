@@ -82,6 +82,14 @@ The program prefix holds code only, not provider credentials or machine tokens.
 It is distinct from the existing installer's private enrollment state and service
 journal. There is no automatic deletion of older program versions.
 
+An interrupted enrollment may reuse its exact verified program from the original
+copied command, even after the code was spent. Reuse checks the archive, installed
+files and Python configuration before starting that interpreter; Python's
+case-insensitive configuration keys cannot override isolation through duplicates.
+The existing enrollment journal, saved key and signed recovery proof still have
+to match. A spent code cannot download a missing program, and delivery-only mode
+still requires a live unused code.
+
 A clean venv proves dependency delivery and program startup on the tested host.
 It shares that host's account, kernel and base Python standard library; it is not
 a new VM, an isolated OS principal, sandbox enforcement, native issuer custody,

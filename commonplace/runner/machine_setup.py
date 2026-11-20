@@ -238,7 +238,7 @@ def verify_program(prefix, pin, files):
     ]
     if any(len(row) != 2 for row in rows):
         raise ValueError("invalid Python environment")
-    config = {key.strip(): value.strip() for key, value in rows}
+    config = {key.strip().lower(): value.strip() for key, value in rows}
     if (
         len(config) != len(rows)
         or config.get("include-system-site-packages") != "false"
@@ -587,9 +587,10 @@ def _deliver_program(encoded, envelope, probe, hub, base, ask, out, *, program_o
     """Verify program delivery before continuing setup; return a finished status or None."""
     pin = envelope["program"]
     prefix = probe.home() / PROGRAM_ROOT / pin["sha256"]
+    cached = prefix.exists() or prefix.is_symlink()
     running_here = not program_only and Path(sys.prefix) == prefix
     # No service, linger, enrollment or credential operation happens at this boundary.
-    if not running_here:
+    if program_only or not cached:
         answer = ask()
         if answer is None:
             return 1
@@ -599,17 +600,18 @@ def _deliver_program(encoded, envelope, probe, hub, base, ask, out, *, program_o
             return 1
     try:
         prerequisites(probe, program=False, service=False)
-        if running_here:
+        conflict = _other_site(probe.home(), envelope)
+        if conflict:
+            for line in conflict:
+                out(line)
+            return 1
+        if cached:
             # Reuse verifies the original pinned archive and every installed file.
             # Keeping the archive allows interrupted enrollment to resume without
-            # downloading with a code that was already spent.
+            # downloading with a code that was already spent, including when the
+            # original launcher starts outside this environment.
             raw = _program_file(prefix, "program.zip")
         else:
-            conflict = _other_site(probe.home(), envelope)
-            if conflict:
-                for line in conflict:
-                    out(line)
-                return 1
             out("Downloading and checking the pinned runner program ...")
             raw = hub.program(base, pin)
         python = install_program(probe.home(), raw, pin)

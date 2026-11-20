@@ -3,10 +3,14 @@
 The existing guided pairing route may distribute an explicitly configured local
 program release. The owner's copied command pins both launcher and package bytes;
 the enrollment intent and pairing record freeze the package. Live code authority
-is checked before delivery. Requests cannot select a URL, key or runtime purpose.
+is checked before a fresh download or delivery-only operation. Exact verified
+local programs may resume the existing signed enrollment recovery without a new
+download, including from the original interpreter. Requests cannot select a URL,
+key or runtime purpose.
 An offline builder verifies exact installed dependency versions and wheel RECORD
 hashes; the stdlib bootstrap verifies the complete package before publishing a
-private, complete venv. Existing prefixes must still match their delivered files.
+private, complete venv. Existing prefixes must still match their delivered files
+and Python's normalized configuration keys; duplicate keys refuse reuse.
 
 This is program delivery only. It retains all account, owner, enrollment,
 attestation, job, session, snapshot and admission fences. No readiness flag or
