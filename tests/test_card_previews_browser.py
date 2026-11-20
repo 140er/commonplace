@@ -48,9 +48,11 @@ STATES = {
                 "state": "building",
                 "reason": "storing",
                 "reason_text": "The files are being saved.",
-                "next": "Wait a moment.",
+                "next": "This takes a few seconds; the card updates by itself.",
                 "revision": 0,
                 "url": None,
+                "published_at": None,
+                "started_at": "2026-01-01T11:00:00Z",
             }
         ],
     ),
@@ -75,16 +77,30 @@ STATES = {
                 **PREVIEW,
                 "id": "pv_0000000000000010",
                 "state": "failed",
-                "reason": "no_index_html",
-                "reason_text": "The bundle has no index.html at its top level.",
-                "next": "Publish again with an index.html.",
+                "reason": "contains_secret_like_text",
+                "reason_text": "Nothing was published: a file looked like it holds a credential.",
+                "next": "Ask the Coworker that published it to publish again without the "
+                "credential in that file. Reply on this card.",
                 "revision": 0,
                 "url": None,
+                "published_at": None,
+                "started_at": "2026-01-01T11:00:00Z",
+                "failure": {"file": "config/env.js", "kind": "github_token"},
             }
         ],
     ),
     11: ("offline", None),
     12: ("refused", None),
+    13: (
+        "long-name",
+        [{**PREVIEW, "id": "pv_0000000000000013", "name": "a-very-long-preview-name-" * 5}],
+    ),
+}
+SIZES = {
+    "desktop": {"viewport": {"width": 1280, "height": 800}},
+    "phone": {"viewport": {"width": 390, "height": 844}, "has_touch": True, "is_mobile": True},
+    "narrow-320": {"viewport": {"width": 320, "height": 700}, "has_touch": True, "is_mobile": True},
+    "tablet-768-touch": {"viewport": {"width": 768, "height": 1024}, "has_touch": True},
 }
 RULE = {
     "stop_days_after_pr": None,
@@ -104,12 +120,11 @@ def listing(previews):
     }
 
 
-@pytest.mark.parametrize("size", [(1280, 800), (390, 844)], ids=["desktop", "phone"])
-def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size, tmp_path):  # noqa: F811
+@pytest.mark.parametrize("look", list(SIZES))
+def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, look, tmp_path):  # noqa: F811
     evidence = Path(os.environ.get("CARD_PREVIEWS_SHOTS") or tmp_path)
     evidence.mkdir(parents=True, exist_ok=True)
-    width, height = size
-    page = browser.new_page(viewport={"width": width, "height": height}, reduced_motion="reduce")
+    page = browser.new_page(reduced_motion="reduce", **SIZES[look])
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     cards = [dict(card) for card in shell.CARDS] + [
@@ -135,6 +150,8 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
                     reason_text="Stopped by a person. The files are kept.",
                     next="Use Open again to serve it.",
                 )
+                route.fulfill(json=ready)
+                return
             route.fulfill(json={})
             return
         number = int(parse_qs(url.query)["card"][0])
@@ -158,7 +175,6 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
         ),
     )
     panel = page.locator("#card-panel")
-    look = "desktop" if width > 700 else "phone"
     for number, (label, _previews) in STATES.items():
         page.evaluate(f"location.hash='#/card/{number}'")
         page.wait_for_selector(
@@ -175,16 +191,17 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
                 "none": "No preview yet.",
                 "building": "The files are being saved.",
                 "stopped": "Use Open again to serve it.",
-                "failed": "The bundle has no index.html at its top level.",
+                "failed": "Nothing was published: a file looked like it holds a credential.",
                 "offline": "Could not load the previews.",
+                "long-name": "Published and open to people who can open this card.",
             }[label]
             section.get_by_text(words).wait_for()
             section.scroll_into_view_if_needed()
             for control in section.locator("button:visible, a.btn:visible").all():
                 box = control.bounding_box()
                 assert box and box["width"] > 0
-                if look == "phone":
-                    assert box["height"] >= 44, (label, control.inner_text(), box)
+                if look != "desktop":
+                    assert box["height"] >= 44, (look, label, control.inner_text(), box)
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
         panel.screenshot(path=str(evidence / f"previews-{look}-{label}.png"))
 
@@ -198,6 +215,15 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
     tab = opened.value
     tab.wait_for_load_state()
     assert tab.url.endswith("/p/pv_0123456789abcdef/") and tab.title() == "Preview page"
+    # The owner's rule form, open.
+    rule = panel.locator("[data-preview-rule]")
+    rule.locator("summary").click()
+    rule.locator("input").first.wait_for()
+    if look != "desktop":
+        for control in rule.locator("summary, input, button").all():
+            assert control.bounding_box()["height"] >= 44, control.evaluate("e => e.outerHTML")
+    panel.screenshot(path=str(evidence / f"previews-{look}-rule-open.png"))
+    rule.locator("summary").click()
     tab.close()
     # The keyboard reaches Stop and uses it.
     stop = panel.locator("[data-preview-stop]")
@@ -207,8 +233,68 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, size
     assert sent.value.method == "POST"
     # The list reloads and shows what is true now, with the result in words.
     section = panel.locator("[data-card-previews]")
-    section.get_by_text("Stopped. The files are kept; Open again serves them again.").wait_for()
+    section.get_by_text("Stopped. The files are kept; use Open again to serve it.").wait_for()
     section.locator("[data-preview-reopen]").wait_for()
+    # Focus moved to the control that replaced Stop, so the keyboard can go on from there.
+    page.wait_for_function(
+        "document.activeElement?.dataset?.previewReopen === 'pv_0123456789abcdef'"
+    )
     assert section.locator('[data-state="stopped"] .run-state').inner_text() == "Stopped"
     assert ("/api/previews/pv_0123456789abcdef/stop", "POST") in writes
     assert errors == [], json.dumps(errors)
+
+
+def test_focus_stays_on_the_same_control_when_the_section_follows_a_publish(browser):  # noqa: F811
+    """While a preview is being published the section asks again by itself; the control a
+    person is on keeps focus through that redraw."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800}, reduced_motion="reduce")
+    cards = [dict(card) for card in shell.CARDS] + [
+        {
+            **shell.CARD,
+            "number": 14,
+            "title": "Preview being published",
+            "ask": None,
+            "need": "idle",
+        }
+    ]
+    shell.open_board(page, cards=cards)
+    building = {
+        **PREVIEW,
+        "id": "pv_0000000000000014",
+        "name": "docs",
+        "state": "building",
+        "reason": "storing",
+        "reason_text": "The files are being saved.",
+        "next": "This takes a few seconds; the card updates by itself.",
+        "revision": 0,
+        "url": None,
+        "published_at": None,
+        "started_at": "2026-01-01T11:00:00Z",
+    }
+    calls = []
+
+    def previews_api(route):
+        calls.append(route.request.url)
+        later = {
+            **building,
+            "state": "ready",
+            "reason": "published",
+            "revision": 1,
+            "reason_text": PREVIEW["reason_text"],
+            "next": "",
+            "url": "/p/pv_0000000000000014/",
+            "published_at": "2026-01-01T11:01:00Z",
+        }
+        route.fulfill(json=listing([PREVIEW, building if len(calls) == 1 else later]))
+
+    page.route("**/api/previews**", previews_api)
+    page.evaluate("location.hash='#/card/14'")
+    panel = page.locator("#card-panel")
+    opener = panel.locator('[data-preview-open="pv_0123456789abcdef"]')
+    opener.wait_for()
+    opener.focus()
+    # The section asks again by itself and redraws with the second preview ready.
+    panel.locator('[data-preview="pv_0000000000000014"][data-state="ready"]').wait_for(
+        timeout=15000
+    )
+    assert page.evaluate("document.activeElement?.dataset?.previewOpen") == "pv_0123456789abcdef"

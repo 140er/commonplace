@@ -28,11 +28,11 @@ const AUTO_WARNING = "In this setting the agents on this machine run without ask
 const MEMBER_INTRO = "This is a read-only view of the machines being added. Only the workspace owner adds a machine and approves it.";
 const OWNER_INTRO = "A machine here is a computer that runs Coworkers (a runner). To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added, its settings are under Runner machines in Admin; cloud workspaces are below.";
 const NO_OFF_SWITCH = "There is no switch here to turn machine setup off.";
-const GRANTS_NOTE = "Approving lets this machine use the access listed above. It does not connect a provider: Coworkers cannot run on it until a provider is connected and an owner attests it (explained above).";
+const GRANTS_NOTE = "Approving lets this machine use the access listed above. It does not connect a provider: Coworkers cannot run on it yet. You sign in a provider and confirm the machine later, in Needs me.";
 const RUN_STEPS = ["Open a terminal on that machine. On Ubuntu: press the Super key, type Terminal and press Enter.", "Paste the command below (Ctrl+Shift+V) and press Enter. Do not type sudo in front of it.", "Wait for the steps below to turn to Done. This page updates by itself."];
 const WAIT_FINGERPRINT = "Waiting for the machine to print its fingerprint.";
 const CANNOT_RUN_YET = "Coworkers cannot run on it yet.";
-export const LIMITS_NOTE = "This version does not install the runner program itself (the command checks that it is there), and Coworkers can run on a machine only after a provider is connected (sign in from Needs me) and an owner attests the machine, which means confirming its provider and topics under Runner machines in Admin.";
+export const LIMITS_NOTE = "This version does not install the runner program itself (the command checks that it is there). It only checks a machine: Coworkers do not run on it yet. Later, you sign in a provider and confirm the machine, both in Needs me.";
 const LOAD_ERROR = "Machines being added could not be loaded. Reload to try again.";
 const NO_ANSWER = "No answer from the server, so nothing is confirmed. Reload to check what happened before trying again.";
 const MEMBER_NOTE = "Only the workspace owner can add a machine.";
@@ -127,7 +127,7 @@ export function causeHTML(item) {
 export function createPairing(ctx) {
   let list = null, total = 0, options = null, setupEnabled = false, loadError = "", loading = false, serverTime = "", pollError = false;
   let mode = "", selected = null, setup = null, values = {}, errors = {}, formError = "", busy = false, confirm = "", copyNote = "", notice = "", requestId = "";
-  let timer = null, lastSaid = "";
+  let timer = null, lastSaid = "", machinesKnown = null;
   // The state each open pairing was last seen in, so a change is said once whichever read found it (a check or a reload).
   const observed = new Map();
   const find = id => list?.find(item => item.id === id);
@@ -218,7 +218,8 @@ export function createPairing(ctx) {
   }
 
   function actionsHTML(item) {
-    if (!manage()) return "";
+    // A member has no control over a machine, but is never stranded in a detail: the way back to the list is theirs too.
+    if (!manage()) return '<div class="compute-actions compute-pr-actions"><button type="button" class="btn" data-pr-action="close">Back to the list</button></div>';
     if (confirm) {
       const decline = confirm === "decline";
       // The safe answer comes first and takes focus: a second Enter must never remove access.
@@ -243,28 +244,28 @@ export function createPairing(ctx) {
 
   // The clock line changes on every check; it is written in place and never decides whether the section repaints.
   function clockText_(item) {
-    const checked = serverTime ? `Checked at ${clockText(serverTime)}.` : "";
-    const stale = pollError ? ` Could not check just now. Showing what was true at ${clockText(serverTime)}; trying again.` : "";
+    // While checks fail the status line says so once, in words; this line only says how old what is shown is.
+    const checked = serverTime ? `${pollError ? "Last checked" : "Checked"} at ${clockText(serverTime)}.` : "";
     const heard = item.last_report_at ? ` Last seen at ${clockText(item.last_report_at)}.` : "";
-    return checked + heard + stale;
+    return checked + heard;
   }
   function detailHTML(item, clock = true) {
     const owner = manage();
     const body = item.state === "waiting" && owner ? commandHTML(item, clock) : "";
     const sheet = item.state === "connected" && owner && !item.stalled ? `${confirm ? "" : "<h4>Approve this machine?</h4>"}${sheetHTML(item)}${confirm ? "" : `<p class="compute-plain" data-pr-grants>${e(GRANTS_NOTE)}</p>`}` : "";
-    const provider = owner && ["approved", "ready", "offline"].includes(item.state) ? `<p class="compute-plain">Provider and attestation: ${item.binding_state === "owner_attested" ? "done" : "not done yet"}.</p>` : "";
+    const provider = owner && ["approved", "ready", "offline"].includes(item.state) ? `<p class="compute-plain">Confirm this machine in Needs me: ${item.binding_state === "owner_attested" ? "done" : "not done yet"}.</p>` : "";
     return `<article class="compute-ws-detail compute-pr-detail" data-pr-id="${e(item.id)}" data-state="${e(item.state)}" aria-labelledby="compute-pr-heading">`
-      + `<header><h3 id="compute-pr-heading" tabindex="-1">${e(item.label)}</h3><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item.state))}">${e(item.state_label)}</span></header>`
+      + `<header><h3 id="compute-pr-heading" tabindex="-1">${e(item.label)}</h3><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item))}">${e(item.state_label)}</span></header>`
       + `<p class="compute-pr-sentence">${e(item.sentence)}</p><p class="compute-pr-next">${e(item.next)}</p>${causeHTML(item)}`
       // What the person acts on comes first (the command, or the sheet and its buttons); the steps and the clock follow.
       + `${body}${sheet}${actionsHTML(item)}${stepsHTML(item)}${provider}`
       + `<p class="compute-quiet" data-pr-checked>${clock ? e(clockText_(item)) : ""}</p></article>`;
   }
 
-  const toneOf = state => state === "failed" ? "bad" : ["connected", "waiting", "approved", "offline"].includes(state) ? "wait" : state === "ready" ? "ok" : "quiet";
+  const toneOf = item => item.stalled === true || item.state === "failed" ? "bad" : ["connected", "waiting", "approved", "offline"].includes(item.state) ? "wait" : item.state === "ready" ? "ok" : "quiet";
 
   function rowHTML(item) {
-    return `<li class="compute-row compute-pr-row" data-pr-id="${e(item.id)}" data-state="${e(item.state)}"><header><strong class="compute-ws-name">${e(item.label)}</strong><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item.state))}">${e(item.state_label)}</span></header>`
+    return `<li class="compute-row compute-pr-row" data-pr-id="${e(item.id)}" data-state="${e(item.state)}"><header><strong class="compute-ws-name">${e(item.label)}</strong><span class="compute-state compute-pr-state" data-tone="${e(toneOf(item))}">${e(item.state_label)}</span></header>`
       // A settled machine's next step only repeats the note at the top of the section, so its row leaves it out.
       + `<p>${e(item.sentence)}</p>${item.state === "ready" ? (item.binding_state === "owner_attested" ? "" : `<p class="compute-pr-next">${e(CANNOT_RUN_YET)}</p>`) : `<p class="compute-pr-next">${e(item.next)}</p>`}${item.last_report_at ? `<p class="compute-quiet">Last seen at ${e(clockText(item.last_report_at))}.</p>` : ""}`
       + `<div class="compute-actions"><button type="button" class="btn" data-pr-action="open" data-id="${e(item.id)}" aria-label="Open ${e(item.label)}">Open</button></div></li>`;
@@ -362,6 +363,10 @@ export function createPairing(ctx) {
   }
   function paint(focus = "") {
     const host = ctx.host(), root = host?.querySelector?.("[data-pr-root]");
+    // A machine appearing, being approved or removed changes the overview's rows and sentences: it reads again now
+    // instead of showing "Nothing here yet" beside a machine until its own next poll.
+    const known = list === null ? null : list.map(item => `${item.id}:${item.state}`).join();
+    if (known !== null && known !== machinesKnown) { const first = machinesKnown === null; machinesKnown = known; if (!first) ctx.changed?.(); }
     const signature = inner(false);
     if (root && !focus && signature === shownRoot) { writeClock(); writeProblem(); return; }
     const restore = focus ? null : holdFocus();
@@ -539,7 +544,7 @@ export function createPairing(ctx) {
     let note = "Copied. Paste it on the machine.";
     // No clipboard, or a copy that does not return a promise, is a failed copy: never claim "Copied." without proof.
     try { const done = ctx.copy(setup.command); if (typeof done?.then !== "function") throw new Error("no clipboard"); await done; }
-    catch { note = "Copying is not available here. Select the command above and copy it yourself."; selectCommand(); }
+    catch { note = "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."; selectCommand(); }
     if (!ctx.valid(page)) return;
     copyNote = note;
     // In place: the command keeps its node, focus and selection (the fallback selects it for the person to copy).
@@ -621,7 +626,7 @@ export function createPairing(ctx) {
 
   function reset() {
     if (timer !== null) { ctx.cancel(timer); timer = null; }
-    list = null; total = 0; options = null; setupEnabled = false; loadError = ""; loading = false; serverTime = ""; pollError = false;
+    list = null; total = 0; options = null; setupEnabled = false; loadError = ""; loading = false; serverTime = ""; pollError = false; machinesKnown = null;
     observed.clear();
     mode = ""; selected = null; setup = null; values = {}; errors = {}; formError = ""; busy = false; confirm = ""; copyNote = ""; notice = ""; lastSaid = ""; requestId = "";
   }

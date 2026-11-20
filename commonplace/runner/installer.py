@@ -98,14 +98,12 @@ class Transport:
             if exc.code >= 500:
                 # The site failed to answer about this code: it did not say no.
                 raise InstallError(
-                    "enrollment delivery unavailable; retry with the saved identity"
+                    "enrollment delivery unavailable; run the command again"
                 ) from None
             # The site answered: the answer is a refusal, not a connection problem.
             raise EnrollmentRefused("enrollment refused by the site") from None
         except Exception:
-            raise InstallError(
-                "enrollment delivery unavailable; retry with the saved identity"
-            ) from None
+            raise InstallError("enrollment delivery unavailable; run the command again") from None
 
     def runtime_status(self, token, body):
         from .runtime_status import PATH

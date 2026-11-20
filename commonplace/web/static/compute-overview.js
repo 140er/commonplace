@@ -20,6 +20,7 @@ const DETAIL_ERROR = "The details could not be loaded.";
 const FIRST_RUN = "No machine is set up yet. You can still create a cloud workspace below; it waits for a machine.";
 const MORE_THAN = 5; // above this many items the overview starts folded to its summary, so what follows it is within reach
 const DEFAULT_REFRESH = 30;
+const MANUAL_READ = "Refresh"; // the one label for reading again by hand: the page's button and the banner's say the same
 const STALE_AFTER_S = 90; // a read older than this (or three refresh intervals) with nothing newer is marked as old
 const CLOCK_SECONDS = 10;
 const NARROW = "(max-width: 699px)";
@@ -273,6 +274,8 @@ export function createOverview(ctx) {
     return paused ? `${age}Automatic updates are paused; statuses and ages stay as of that read. Use Refresh above to read again.` : `${age}It refreshes every ${interval()} seconds while this tab is visible, or use Refresh above.`;
   }
 
+  // Red only when a read failed; a paused or stalled tab is a plain note.
+  const staleClass = () => `${refreshFailed ? "compute-error" : "compute-quiet"} compute-ov-stale`;
   const staleText = () => {
     const at = staleAt();
     if (!at) return "";
@@ -346,8 +349,8 @@ export function createOverview(ctx) {
     return `<section class="compute-inventory compute-wide compute-ov" aria-labelledby="compute-overview" data-ov><div data-ov-top>${topHTML()}</div>`
       // The refresh state sits above the fold, so a closed fold (a phone) cannot hide a failed refresh.
       + `<p class="compute-quiet compute-ov-meta" data-ov-meta>${e(metaText())}</p>`
-      + `<p class="compute-error compute-ov-stale" role="${refreshFailed ? "alert" : "status"}" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
-      + `<button type="button" class="btn compute-ov-stale-retry" data-ov-action="refresh" data-ov-stale-retry${staleText() ? "" : " hidden"}>${refreshFailed ? "Try again" : "Refresh now"}</button>`
+      + `<p class="${staleClass()}" role="${refreshFailed ? "alert" : "status"}" data-ov-stale${staleText() ? "" : " hidden"}>${e(staleText())}</p>`
+      + `<button type="button" class="btn compute-ov-stale-retry" data-ov-action="refresh" data-ov-stale-retry${staleText() ? "" : " hidden"}>${MANUAL_READ}</button>`
       + `<p class="compute-sr" role="status" aria-live="polite" data-ov-announce>${e(announced)}</p>`
       + `<div data-ov-fold-wrap data-fold-key="${foldKey()}">${foldHTML()}</div><div data-ov-slot="state">${slots().state}</div></section>`;
   }
@@ -390,6 +393,10 @@ export function createOverview(ctx) {
       // The shape changed (a first read arrived, or the list emptied): rebuild the fold or the plain headline, once.
       wrap.dataset.foldKey = foldKey();
       wrap.innerHTML = foldHTML();
+      // foldHTML() records what every slot now holds, the state slot (outside the fold) included, so the write below would
+      // skip it: put the state sentence in place here, or "No machine is set up yet" stays beside the first row.
+      const stateNode = slot("state");
+      if (stateNode) stateNode.innerHTML = slots().state;
     }
     const control = host.querySelector?.(".compute-ov :focus");
     const key = control ? focusKey(control) : "";
@@ -401,9 +408,9 @@ export function createOverview(ctx) {
     const top = host.querySelector("[data-ov-top]");
     if (top && painted.top !== topHTML()) { painted.top = topHTML(); top.innerHTML = topHTML(); }
     const banner = host.querySelector("[data-ov-stale]");
-    if (banner) { setText(banner, values.stale); banner.hidden = !values.stale; banner.setAttribute?.("role", refreshFailed ? "alert" : "status"); }
+    if (banner) { setText(banner, values.stale); banner.hidden = !values.stale; banner.className = staleClass(); banner.setAttribute?.("role", refreshFailed ? "alert" : "status"); }
     const retryButton = host.querySelector("[data-ov-stale-retry]");
-    if (retryButton) { setText(retryButton, refreshFailed ? "Try again" : "Refresh now"); retryButton.hidden = !values.stale; }
+    if (retryButton) retryButton.hidden = !values.stale;
     painted.stale = values.stale;
     paintedStale = staleAt();
     setText(host.querySelector("[data-ov-tries]"), loadError && tries > 1 ? `Tried ${tries} times.` : "");

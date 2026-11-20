@@ -201,7 +201,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   const workspaces = createWorkspaces({ request, epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, machines: () => inventory?.nodes || [], requestId, outage: () => Boolean(overview.state.loadError) || overview.state.refreshFailed });
   // Adding a machine repaints only its own section, even while it checks on the machine.
   // Its own requests: a refusal elsewhere on this screen (a member is refused the inventory) aborts the shared ones, and a check on the machine must not read that as its own failure.
-  const pairing = createPairing({ request: async (path, options = {}) => api(path, { ...options, timeoutMs: 10000 }), epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, requestId, copy, schedule, cancel });
+  const pairing = createPairing({ request: async (path, options = {}) => api(path, { ...options, timeoutMs: 10000 }), epoch: () => epoch, valid, denied, rerender: () => render(), host: () => host, doc, requestId, copy, schedule, cancel, changed: () => { void overview.load({ quiet: Boolean(overview.state.data) }); } });
   // The overview repaints only its own section when it polls, so a half-typed form elsewhere is never disturbed.
   // The workspaces list is the record of cloud workspaces: the overview compares against it, so a workspace created, renamed or discarded below shows up above.
   const workspaceSignature = () => (workspaces.state.rows || []).map(row => `${row.id}:${row.version}`).join(",");

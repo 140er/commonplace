@@ -457,7 +457,7 @@ const cases = {
     assert.match(f.html(), /data-ov-chip>Last known: Running</); assert.match(f.html(), /data-ov-chip>Last known: Online</);
     assert.match(f.html(), /Last seen 40 seconds before \d{1,2}:\d\d:\d\d/); assert.doesNotMatch(f.html(), /data-ov-health>[^<]* ago/, 'no health line says "ago" while the read is old');
     assert.match(f.nodes.stale.textContent, /^Showing the data from \d{1,2}:\d\d:\d\d.*; it may be out of date\.$/);
-    assert.equal(f.nodes.stale.hidden, false); assert.equal(f.nodes.retry.hidden, false); assert.equal(f.nodes.retry.textContent, 'Refresh now');
+    assert.equal(f.nodes.stale.hidden, false); assert.equal(f.nodes.retry.hidden, false); assert.equal(f.nodes.stale.className, 'compute-quiet compute-ov-stale', 'a paused or stalled tab is a plain note, not an error'); 
     assert.match(f.nodes.summary.textContent, /Not refreshed: data from \d{1,2}:\d\d:\d\d/);
     assert.match(f.nodes.summary.textContent, /2 need attention: edge-runner, Old box\./, 'attention follows the server snapshot only');
     assert.doesNotMatch(f.nodes.summary.textContent, /Build box|build-runner/);
@@ -719,12 +719,12 @@ const cases = {
     const view = ov.viewOf(gone, { staleAt: '10:42:07' });
     assert.equal(view.status.code, 'offline'); assert.equal(view.status.label, 'Last known: Offline'); assert.equal(view.status.next, 'Check that the machine is on.');
     assert.equal(view.seen, 'Last seen 25 minutes before 10:42:07');
-    const body = text(ov.detailBody({ ...online, activity: [{ text: 'Started: demo card', age_s: 90 }, { text: 'Finished: demo card', age_s: 2 }], facts: [{ label: 'Allowed to start runs', value: 'Yes' }] }, { clock: { staleAt: '10:42:07' } }));
+    const body = text(ov.detailBody({ ...online, activity: [{ text: 'Started: demo card', age_s: 90 }, { text: 'Finished: demo card', age_s: 2 }], facts: [{ label: 'Allowed to start card runs', value: 'Yes' }] }, { clock: { staleAt: '10:42:07' } }));
     assert.match(body, /As of 10:42:07: Waiting for work\./);
     assert.match(body, /Everything here is as of 10:42:07: an age such as "3 minutes ago" counts back from then, not from now\./);
     assert.match(body, /Last seen 40 seconds before 10:42:07/);
     assert.match(body, /Started: demo card \(1 minute before 10:42:07\)/); assert.match(body, /Finished: demo card \(at 10:42:07\)/);
-    assert.match(body, /Allowed to start runs Yes/);
+    assert.match(body, /Allowed to start card runs Yes/);
     // A fresh detail has none of it.
     const fresh = text(ov.detailBody({ ...online, activity: [{ text: 'Started: demo card', age_s: 90 }], facts: [] }, { clock: {} }));
     assert.doesNotMatch(fresh, /As of|before|counts back/); assert.match(fresh, /Started: demo card \(1 minute ago\)/);
@@ -737,7 +737,7 @@ const cases = {
     f.state.answers.set('/api/compute/overview', failure(503, { error: 'authority_unavailable' }));
     await f.ui.load({ quiet: true }); await flush();
     assert.match(f.chip.html, /Last known: Offline/); assert.match(f.body.html, /data-ov-asof/); assert.match(f.body.html, /Next step: Check that the machine is on\./);
-    assert.equal(f.nodes.retry.textContent, 'Try again'); assert.equal(f.nodes.retry.hidden, false);
+    assert.equal(f.nodes.stale.className, 'compute-error compute-ov-stale'); assert.equal(f.nodes.retry.hidden, false);
     f.state.answers.delete('/api/compute/overview');
     f.click('refresh'); await flush();
     assert.doesNotMatch(f.chip.html, /Last known/); assert.doesNotMatch(f.body.html, /data-ov-asof/); assert.equal(f.nodes.retry.hidden, true);

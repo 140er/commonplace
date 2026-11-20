@@ -1496,7 +1496,7 @@
           "name": "preview_list"
         },
         {
-          "description": "Publish a built web bundle as a preview of a card, so people who can open the card reopen it from the card after your session ends. Send card, a name and files (each {path, text} or {path, base64}); index.html is required. Up to 5 MiB and 500 files. Publishing the same name again adds a revision. Only signed-in people who can open the card can open it; it is never public. Files holding credentials are refused.",
+          "description": "Publish a built static web page as a preview of a card, so people who can open the card reopen it from the card after your session ends. Send card, a name and files (each {path, text} or {path, base64}); index.html is required at the top, and links between the files must be relative. Up to 5 MiB and 500 files. The page runs isolated: no network requests, cookies or storage. Publishing the same name again adds a revision. People who can open the card open it while signed in; the address they open holds a key for 30 minutes, so it is never public but can be passed on within that time. Files holding credentials are refused.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -5572,7 +5572,7 @@
           "name": "preview_list"
         },
         {
-          "description": "Publish a built web bundle as a preview of a card, so people who can open the card reopen it from the card after your session ends. Send card, a name and files (each {path, text} or {path, base64}); index.html is required. Up to 5 MiB and 500 files. Publishing the same name again adds a revision. Only signed-in people who can open the card can open it; it is never public. Files holding credentials are refused.",
+          "description": "Publish a built static web page as a preview of a card, so people who can open the card reopen it from the card after your session ends. Send card, a name and files (each {path, text} or {path, base64}); index.html is required at the top, and links between the files must be relative. Up to 5 MiB and 500 files. The page runs isolated: no network requests, cookies or storage. Publishing the same name again adds a revision. People who can open the card open it while signed in; the address they open holds a key for 30 minutes, so it is never public but can be passed on within that time. Files holding credentials are refused.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {

@@ -65,10 +65,30 @@ def _shot(page, name):
         page.screenshot(path=str(Path(target) / f"{name}.png"))
 
 
+def _shot_of(page, selector, name):
+    """A capture of one section (the overview above the guide), for the evidence folder only."""
+    target = os.environ.get("COMPUTE_PAIRING_SHOTS")
+    if target:
+        Path(target).mkdir(parents=True, exist_ok=True)
+        page.locator(selector).first.screenshot(path=str(Path(target) / f"{name}.png"))
+
+
 def _no_sideways_scroll(page):
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), (
         "page scrolls sideways"
     )
+
+
+def _nothing_past_the_edge(page):
+    """Reflow (WCAG 1.4.10): no control or line of text reaches past the screen, even where the page does not scroll."""
+    wide = page.evaluate(
+        """() => [...document.querySelectorAll('.compute-pr button, .compute-pr a, .compute-pr input, .compute-pr select, .compute-pr label, .compute-pr p')]
+            .filter(el => el.getClientRects().length)
+            .map(el => [el.textContent.trim().slice(0, 40) || el.name || el.id, el.getBoundingClientRect()])
+            .filter(([, r]) => r.right > window.innerWidth + 0.5 || r.left < -0.5)
+            .map(([name, r]) => name + ' ' + Math.round(r.left) + '-' + Math.round(r.right))"""
+    )
+    assert not wide, f"past the edge of the screen: {wide}"
 
 
 @pytest.fixture(scope="module")
@@ -392,6 +412,9 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         # The machine has not finished and printed its fingerprint: the sheet waits, and Approve says why it waits.
         expect(sheet).to_contain_text("Waiting for the machine to print its fingerprint.")
         _shot(page, f"{label}-05-connected-waiting")
+        # The first machine arrived while the page was open: the overview already shows it (0 -> 1).
+        expect(page.locator("[data-ov-summary]")).to_contain_text("1 runner", timeout=20000)
+        _shot_of(page, "[data-ov]", f"{label}-05c-overview-first-machine")
         fx.steps(credentials)
         expect(page.locator(".compute-pr-fingerprint")).to_be_visible(timeout=20000)
         groups = page.locator(".compute-pr-fingerprint").inner_text().split()
@@ -404,15 +427,24 @@ def test_owner_goes_from_add_machine_to_ready_with_one_command_and_one_approval(
         page.get_by_role("button", name="Approve this machine").click()
         expect(section).to_contain_text("Set up and checked", timeout=20000)
         expect(page.get_by_role("button", name="Approve this machine")).to_have_count(0)
-        expect(section).to_contain_text("Provider and attestation: not done yet")
-        expect(section).to_contain_text("only after a provider is connected")
+        expect(section).to_contain_text("Confirm this machine in Needs me: not done yet")
+        expect(section).to_contain_text(
+            "To get ready for later, sign in a provider and confirm this machine"
+        )
         assert "running" not in section.inner_text().lower().replace("keep services running", "")
         _shot(page, f"{label}-07-ready")
         _no_sideways_scroll(page)
         # Back to the list: the machine is one row with its state.
         page.get_by_role("button", name="Back to the list").click()
         expect(section.locator(".compute-pr-row")).to_contain_text("Set up and checked")
+        # The overview reads again when the machine changes state: no "No machine is set up yet" beside a machine row.
+        expect(page.locator("[data-ov-summary]")).to_contain_text("1 runner", timeout=20000)
+        expect(page.locator('[data-ov-slot="state"]')).not_to_contain_text(
+            "No machine is set up yet"
+        )
+        expect(page.locator("[data-ov]")).not_to_contain_text("No machine is set up yet")
         _shot(page, f"{label}-08-list")
+        _shot_of(page, "[data-ov]", f"{label}-09-overview-setup-only-row")
 
     _run(fx, ui, size, body)
 
@@ -562,6 +594,129 @@ def test_a_failed_step_shows_its_cause_and_next_step_and_recovers(served, ui, si
 
 @pytest.mark.parametrize("ui", UIS)
 @pytest.mark.parametrize("size", SCREENS)
+def test_the_overview_row_of_a_machine_from_the_guide_names_one_step_in_one_place(served, ui, size):
+    fx = served
+    _, credentials = fx.ready(label="guided-box")
+
+    def body(page, label, context):
+        ov = page.locator("[data-ov]")
+        expect(page.locator("[data-ov-summary]")).to_contain_text("1 runner", timeout=20000)
+        if page.locator("[data-ov-fold]").count():
+            fold = page.locator("[data-ov-fold-summary]")
+            if page.locator("[data-ov-fold]").get_attribute("open") is None:
+                fold.click()
+        row = page.locator(".compute-ov-row", has=page.get_by_role("heading", name="guided-box"))
+        # Only its own setup reports so far: Set up and checked, one reason, nothing about offline or approval.
+        expect(row).to_contain_text("Set up and checked")
+        page.get_by_role("button", name="Status and activity of guided-box").click()
+        expect(ov).to_contain_text(
+            "This setup only checks the machine. Coworkers do not run on it in this version."
+        )
+        for claim in ("Offline", "Not approved", "Online"):
+            assert claim not in ov.inner_text(), claim
+        _shot_of(page, "[data-ov]", f"{label}-10-overview-set-up-and-checked-detail")
+        # After a heartbeat it is an ordinary runner: not approved, with its one step in its one place, needing attention.
+        fx.report(credentials, "heartbeat")
+        page.get_by_role("button", name="Refresh").first.click()
+        expect(ov).to_contain_text("Not approved", timeout=20000)
+        expect(ov).to_contain_text("Confirm this machine in Needs me")
+        assert "Admin, Runner machines" not in ov.inner_text().split("Not approved")[1][:400]
+        expect(page.locator("[data-ov-summary]")).to_contain_text("needs attention")
+        _shot_of(page, "[data-ov]", f"{label}-11-overview-not-approved-detail")
+        _no_sideways_scroll(page)
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_machine_that_connected_and_never_finished_reads_stalled_for_owner_and_member(
+    served, ui, size
+):
+    fx = served
+    _, setup = fx.add(label="stuck-box")
+    credentials = fx.connect(setup)
+    fx.report(credentials, "prerequisites")
+    # The code was spent a quarter of an hour ago and three of the four steps never came.
+    with fx.db._lock:
+        fx.db._conn.execute(
+            "UPDATE runner_enrollments SET consumed_at=?",
+            (control_db._iso(control_db._now() - timedelta(minutes=16)),),
+        )
+
+    def owner(page, label, context):
+        section = _section(page)
+        expect(section.locator(".compute-pr-row")).to_contain_text("This setup has not finished.")
+        _shot(page, f"{label}-stalled-list")
+        _open_pairing(page, "stuck-box")
+        expect(section).to_contain_text("This setup has not finished.")
+        expect(section).to_contain_text("Remove this machine and set it up again.")
+        expect(section.get_by_role("button", name="Approve this machine")).to_have_count(0)
+        expect(section.get_by_role("button", name="Set up again")).to_be_visible()
+        expect(section.get_by_role("button", name="Remove this machine")).to_be_visible()
+        _shot(page, f"{label}-stalled-owner")
+        _no_sideways_scroll(page)
+        _nothing_past_the_edge(page)
+        if size == "phone":
+            _assert_touch_targets(page)
+
+    def member(page, label, context):
+        section = _section(page)
+        _open_pairing(page, "stuck-box")
+        expect(section).to_contain_text("This setup has not finished.")
+        expect(section).to_contain_text("The owner can remove this machine and set it up again.")
+        for name in ("Approve this machine", "Set up again", "Remove this machine"):
+            expect(section.get_by_role("button", name=name)).to_have_count(0)
+        _shot(page, f"{label}-stalled-member")
+        _no_sideways_scroll(page)
+        _nothing_past_the_edge(page)
+
+    _run(fx, ui, size, owner)
+    _run(fx, ui, size, member, cookie=fx.member_cookie)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_machine_without_the_runner_program_says_so_before_its_code_is_spent(served, ui, size):
+    fx = served
+    item, setup = fx.add(label="bare-box")
+    values = json.loads(
+        base64.urlsafe_b64decode(setup["envelope"] + "=" * (-len(setup["envelope"]) % 4))
+    )
+    status, result = fx.call(
+        "POST",
+        "/api/runner-pairing/check",
+        {
+            "workspace_id": values["workspace_id"],
+            "pairing_id": values["pairing_id"],
+            "code": setup["code"],
+            "report": {
+                "step": "prerequisites",
+                "state": "failed",
+                "cause": "missing_runner_program",
+            },
+        },
+    )
+    assert status == 200, result
+
+    def body(page, label, context):
+        section = _section(page)
+        _open_pairing(page, "bare-box")
+        expect(section).to_contain_text("A step failed")
+        expect(section).to_contain_text(pairing.CAUSES["missing_runner_program"][0])
+        expect(section).to_contain_text(pairing.CAUSES["missing_runner_program"][1])
+        expect(section.get_by_role("button", name="Approve this machine")).to_have_count(0)
+        _shot(page, f"{label}-missing-runner-program")
+        _no_sideways_scroll(page)
+        _nothing_past_the_edge(page)
+        if size == "phone":
+            _assert_touch_targets(page)
+
+    _run(fx, ui, size, body)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
 def test_an_expired_code_is_explained_and_set_up_again_keeps_the_values(served, ui, size):
     fx = served
     item, setup = fx.add(label="late-box", projects=["alpha", "beta"])
@@ -671,7 +826,7 @@ def test_a_copy_that_fails_says_so_and_selects_the_command(served, ui):
         page.get_by_role("button", name="Create the command").click()
         page.get_by_role("button", name="Copy the command").click()
         expect(page.locator("[data-pr-copy-note]")).to_have_text(
-            "Copying is not available here. Select the command above and copy it yourself."
+            "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."
         )
         command = page.locator("[data-pr-command]").inner_text()
         assert page.evaluate("window.getSelection().toString().trim()") == command.strip()
@@ -743,16 +898,34 @@ def test_every_state_fits_every_real_width_with_44px_targets_on_touch(
     _, failing_setup = fx.add(label="broken-box")
     failing_credentials = fx.connect(failing_setup)
     fx.report(failing_credentials, "check", "failed", "check_failed")
+    fx.add(label="waiting-box")
 
     def body(page, label, context):
         label = f"{ui}-{name}"
         _shot(page, f"{label}-list")
-        for pair in ("wide-box", "done-box", "broken-box"):
+        for pair in ("wide-box", "done-box", "broken-box", "waiting-box"):
             _open_pairing(page, pair)
             _no_sideways_scroll(page)
+            _nothing_past_the_edge(page)
             if touch:
                 _assert_touch_targets(page)
             _shot(page, f"{label}-{pair}")
+            # The two confirmations a machine can reach from here.
+            confirming = {
+                "wide-box": ("This is not my machine", "decline"),
+                "done-box": ("Remove this machine", "remove"),
+                "broken-box": ("Remove this machine", "remove"),
+                "waiting-box": None,
+            }[pair]
+            if confirming:
+                page.get_by_role("button", name=confirming[0]).click()
+                expect(page.get_by_role("button", name="Go back")).to_be_focused()
+                _no_sideways_scroll(page)
+                _nothing_past_the_edge(page)
+                if touch:
+                    _assert_touch_targets(page)
+                _shot(page, f"{label}-{pair}-{confirming[1]}-confirm")
+                page.get_by_role("button", name="Go back").click()
             page.get_by_role("button", name="Back to the list").click()
         page.get_by_role("button", name="Add a machine").click()
         expect(page.locator("#compute-pr-heading")).to_be_focused()
@@ -776,6 +949,30 @@ def test_every_state_fits_every_real_width_with_44px_targets_on_touch(
         _shot(page, f"{label}-form-errors")
 
     _run(fx, ui, "desktop", body, viewport=viewport, touch=touch)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("name,viewport,touch", VIEWPORTS)
+def test_a_members_states_fit_every_real_width(served, ui, name, viewport, touch):
+    fx = served
+    _, setup = fx.add(label="wide-box")
+    fx.connect(setup)
+    fx.ready(label="done-box")
+    fx.add(label="waiting-box")
+
+    def body(page, label, context):
+        label = f"{ui}-{name}"
+        _shot(page, f"{label}-member-list")
+        for pair in ("wide-box", "done-box", "waiting-box"):
+            _open_pairing(page, pair)
+            _no_sideways_scroll(page)
+            _nothing_past_the_edge(page)
+            if touch:
+                _assert_touch_targets(page)
+            _shot(page, f"{label}-member-{pair}")
+            page.get_by_role("button", name="Back to the list").click()
+
+    _run(fx, ui, "desktop", body, viewport=viewport, touch=touch, cookie=fx.member_cookie)
 
 
 def _swipe(context, page, x, start, end, steps=14):
@@ -879,7 +1076,10 @@ def test_the_page_says_where_to_run_the_command_and_what_approval_grants(served,
         expect(approve).not_to_have_attribute("aria-disabled", "true")
         text = section.locator(".compute-pr-detail").inner_text()
         assert "Approving lets this machine use the access listed above." in text
-        assert "does not connect a provider" in text and "an owner attests it" in text
+        assert (
+            "does not connect a provider" in text
+            and "confirm the machine later, in Needs me" in text
+        )
         grants = page.evaluate(
             "() => document.querySelector('[data-pr-grants]').getBoundingClientRect().bottom"
             " <= document.querySelector('[data-pr-action=approve]').getBoundingClientRect().top"
@@ -1018,7 +1218,7 @@ def test_the_copy_fallback_keeps_its_selection_through_a_poll(served, ui):
         page.get_by_role("button", name="Copy the command").click()
         note = page.locator("[data-pr-copy-note]")
         expect(note).to_have_text(
-            "Copying is not available here. Select the command above and copy it yourself."
+            "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."
         )
         page.evaluate(
             "() => { window.__pre = document.querySelector('#compute-pr-command');"
@@ -1042,7 +1242,7 @@ def test_the_copy_fallback_keeps_its_selection_through_a_poll(served, ui):
             "the status region was not re-inserted"
         )
         expect(note).to_have_text(
-            "Copying is not available here. Select the command above and copy it yourself."
+            "Copying is not available here. The command above is selected: copy it with your keyboard or the long-press menu."
         )
         _shot(page, f"{label}-copy-fallback-selected")
 
@@ -1122,7 +1322,8 @@ def test_a_check_that_cannot_reach_the_server_is_said_once_and_cleared_when_it_r
         page.route("**/api/compute/pairings/pair_*", lambda route: route.abort())
         expect(notice).to_contain_text("Could not check just now", timeout=20000)
         said = notice.inner_text()
-        expect(page.locator("[data-pr-checked]")).to_contain_text("Could not check just now")
+        expect(page.locator("[data-pr-checked]")).to_contain_text("Last checked at")
+        assert _section(page).inner_text().count("Could not check just now") == 1
         page.unroute("**/api/compute/pairings/pair_*")
         expect(notice).to_have_text("", timeout=20000)
         assert said.startswith("Could not check just now")

@@ -625,7 +625,7 @@ def test_a_workspace_created_below_shows_up_in_the_overview_without_a_reload(ser
         fx.make(
             name="Late arrival"
         )  # saved behind the page's back, as another tab or a person would
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         expect(_row(page, "Late arrival")).to_be_visible()
         expect(page.locator("[data-ov-summary]")).not_to_contain_text("Nothing here yet.")
 
@@ -657,7 +657,7 @@ def test_on_a_phone_the_overview_is_folded_and_the_create_button_is_within_reach
         _shot(page, f"{label}-63-unfolded")
         _assert_ov_phone(page)
         # A person's choice survives the screen's own re-render.
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         expect(fold).to_have_attribute("open", "")
 
     _run(fx, ui, "phone", body)
@@ -803,7 +803,7 @@ def test_a_folded_phone_overview_still_shows_a_failed_refresh_and_opens_for_a_fa
             expect(page.locator("[data-ov-summary]")).to_contain_text("7 runners")
             assert fold.get_attribute("open") is None, "the fold is closed, as a phone starts"
             _refuse_overview(page)
-            page.get_by_role("button", **REFRESH).click()
+            page.get_by_role("button", **REFRESH).first.click()
             # With the fold closed the person still reads that the data is old, three ways, none inside the fold.
             banner = page.locator("[data-ov-stale]")
             expect(banner).to_be_visible()
@@ -995,7 +995,7 @@ def test_one_outage_has_one_alert_on_the_page(served):
             ),
         )
         _refuse_overview(page)
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         expect(page.locator("[data-ov-stale]")).to_be_visible()
         assert page.locator(".compute [role=alert]:visible").count() == 1, (
             "one alert: the overview's own"
@@ -1041,7 +1041,7 @@ def test_fleet_rows_paused_no_match_and_a_whole_runner_detail_are_captured(serve
                 body=_without_attention(route.fetch().json()),
             ),
         )
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         # Nothing needs attention any more: the filter goes back to all statuses, so the person is not left with an empty list.
         expect(page.get_by_label("Filter by status")).to_have_value("all")
         expect(_rows(page)).to_have_count(15)
@@ -1065,6 +1065,46 @@ def _without_attention(payload):
         item["health"]["state"] = "ok"
     payload["counts"]["attention"] = 0
     return json.dumps(payload)
+
+
+@pytest.mark.parametrize("ui", UIS)
+@pytest.mark.parametrize("size", SCREENS)
+def test_a_runner_at_its_hourly_limit_says_so_everywhere_and_never_says_yes(served, ui, size):
+    fx = served
+    fleet = _fleet(fx)
+    wings = {"wings": ["fixture"]}
+    idle = fleet.enroll("limit-idle-runner", max_starts_per_hour=2, **wings)
+    fleet.seen(idle, 5)
+    for start in range(2):  # two starts in the last hour, both finished, their cards long gone
+        job = fleet.job(idle, "started", minutes_ago=30, task=7000 + start)
+        fleet.end(job, minutes_ago=25)
+    full = fleet.enroll("limit-full-runner", max_in_flight=1, max_starts_per_hour=2, **wings)
+    fleet.seen(full, 5)
+    fleet.end(fleet.job(full, "started", minutes_ago=30, task=7100), minutes_ago=25)
+    fleet.job(full, "started", minutes_ago=1, task=fleet.work(full))
+
+    def body(page, label, context):
+        _go(page, fx, ui)
+        limit = "It has started 2 runs in the last hour, its limit. New runs wait until an earlier start is more than an hour old."
+        for name, number in (("limit-idle-runner", 110), ("limit-full-runner", 111)):
+            row = _row(page, name)
+            expect(row.locator("[data-ov-chip]")).to_have_text("Online · Limit reached")
+            expect(row).to_contain_text(limit)
+            assert "Waiting for work" not in row.inner_text()
+            row.scroll_into_view_if_needed()
+            _shot_of(row, f"{label}-{number}-row-{name}")
+            page.get_by_role("button", name=f"Status and activity of {name}").click()
+            panel = page.locator(".compute-ov-panel")
+            expect(panel).not_to_have_attribute("aria-busy", "true")
+            expect(panel.locator("[data-ov-chip]")).to_have_text("Online · Limit reached")
+            expect(panel).to_contain_text("Allowed to start card runs")
+            expect(panel).to_contain_text("Not right now: hourly limit reached")
+            expect(panel).to_contain_text("Hourly limit: " + limit)
+            assert "Yes, once a run finishes" not in panel.inner_text()
+            _shot_of(panel, f"{label}-{number}-detail-{name}")
+            page.get_by_role("button", name="Close").click()
+
+    _run(fx, ui, size, body, populate=False)
 
 
 @pytest.mark.parametrize("ui", UIS)
@@ -1097,7 +1137,7 @@ def test_a_turned_off_removed_offline_and_never_connected_runner_says_what_it_ma
             panel = page.locator(".compute-ov-panel")
             expect(panel).not_to_have_attribute("aria-busy", "true")
             expect(panel.locator("[data-ov-chip]")).to_have_text(chip)
-            expect(panel).to_contain_text("Allowed to start runs")
+            expect(panel).to_contain_text("Allowed to start card runs")
             expect(panel).to_contain_text(allowed)
             _shot_of(panel, f"{label}-{number}-detail-{name}")
             page.get_by_role("button", name="Close").click()
@@ -1139,7 +1179,8 @@ def test_a_quarter_of_an_hour_old_read_changes_no_status_and_every_age_is_as_of_
             assert "Next step: Check that the machine is on" not in row.inner_text()
             # The banner keeps its own button.
             expect(page.locator("[data-ov-stale]")).to_be_visible()
-            expect(page.get_by_role("button", name="Try again")).to_be_visible()
+            expect(page.locator("[data-ov-stale-retry]")).to_have_text("Refresh")
+            expect(page.locator("[data-ov-stale-retry]")).to_be_visible()
             row.scroll_into_view_if_needed()
             _shot_of(row, f"{ui}-{size}-104-row-quarter-hour-old-read")
             page.get_by_role("button", name="Status and activity of build-runner").click()
@@ -1194,12 +1235,14 @@ def test_a_paused_tab_marks_every_row_as_of_its_last_read_and_offers_refresh(ser
             assert " Offline" not in row.inner_text()
             page.locator("[data-ov-top]").scroll_into_view_if_needed()
             _shot(page, f"{ui}-{size}-106-paused-quarter-hour")
-            # Refresh now reads again, drops every mark and takes the button away.
+            # Not an error: a paused tab is a plain note (red is for a failed read), and its Refresh reads again, drops
+            # every mark and takes the button away.
+            expect(page.locator("[data-ov-stale]")).not_to_have_class(re.compile("compute-error"))
             with page.expect_request(lambda r: r.url.endswith(OVERVIEW)):
-                page.get_by_role("button", name="Refresh now").click()
+                page.locator("[data-ov-stale-retry]").click()
             expect(row.locator("[data-ov-chip]")).to_have_text(status_before)
             expect(page.locator("[data-ov-stale]")).to_be_hidden()
-            expect(page.get_by_role("button", name="Refresh now")).to_be_hidden()
+            expect(page.locator("[data-ov-stale-retry]")).to_be_hidden()
             context.close()
         finally:
             browser.close()
@@ -1328,7 +1371,7 @@ def test_a_refresh_that_fails_keeps_the_old_data_and_marks_every_row_as_old(serv
         before = _shown(page)
         _refuse_overview(page)
         # The page's one Refresh button reads the overview too.
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         banner = page.locator("[data-ov-stale]")
         expect(banner).to_contain_text("Could not refresh. Showing the data from")
         expect(banner).to_contain_text("it may be out of date")
@@ -1348,7 +1391,7 @@ def test_a_refresh_that_fails_keeps_the_old_data_and_marks_every_row_as_old(serv
         ).to_have_count(0)
         _shot(page, f"{label}-44-stale")
         page.unroute(f"**{OVERVIEW}")
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         expect(banner).to_be_hidden()
         expect(_row(page, "build-runner").locator("[data-ov-chip]")).to_have_text("Online · Busy")
 
@@ -1498,8 +1541,8 @@ def test_a_refresh_never_rebuilds_an_open_detail_or_the_status_list(served, ui):
             assert same == [True, True, True, True], same
             expect(page.locator("#compute-ov-heading")).to_be_focused()
             # The page's own Refresh rebuilds the screen around the overview: the open detail is carried across it.
-            page.get_by_role("button", **REFRESH).click()
-            expect(page.get_by_role("button", **REFRESH)).to_be_focused()
+            page.get_by_role("button", **REFRESH).first.click()
+            expect(page.get_by_role("button", **REFRESH).first).to_be_focused()
             still = page.evaluate(
                 "[document.querySelector('.compute-ov-panel'), document.querySelector('#compute-ov-heading')]"
                 ".map((n, i) => n === window.__nodes[i])"
@@ -1525,7 +1568,7 @@ def test_a_status_that_changes_while_the_page_is_open_is_announced_once(served, 
                 "UPDATE connections SET last_used_at='2026-01-01T00:00:00Z' WHERE id IN "
                 "(SELECT machine_connection_id FROM runner_machines WHERE label='review-runner')"
             )
-        page.get_by_role("button", **REFRESH).click()
+        page.get_by_role("button", **REFRESH).first.click()
         expect(page.locator("[data-ov-announce]")).to_have_text("review-runner is now Offline.")
         expect(_row(page, "review-runner")).to_contain_text("Offline")
 
