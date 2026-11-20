@@ -68,7 +68,7 @@ def test_existing_session_rejects_another_currently_valid_account(session_world,
         _mode(w, "org")
     else:
         _replace(w, original_connection)
-    decision = model_modes.decide(
+    decision = model_modes.resolve_account(
         w.db, w.ws, "acme", person=w.owner.user_id, provider=PROVIDER, machine=w.machine()
     )
     assert decision.refusal is None, "the changed account must itself be valid"

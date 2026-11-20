@@ -198,7 +198,7 @@ def card_start(
 
     person = ctx.principal.user_id if ctx.principal.person else None
     try:
-        account = model_modes.decide(
+        account = model_modes.resolve_account(
             ctx.db, ctx.principal.workspace_id, board["slug"], person=person, machine=machine
         )
     except model_modes.ModeUnavailable:
