@@ -13,7 +13,7 @@ from commonplace.boards.service import BoardService
 from commonplace.chat.coworkers import routes, runtime, store as coworker_store
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.orch import runner_bridge, store as orch_store
-from commonplace.projects import models, orchestration, seats
+from commonplace.projects import model_modes, models, orchestration, seats
 from commonplace.runner import jobs, registry
 from tests._orch_helpers import config_toml
 from tests.test_coworker_api import Request
@@ -29,6 +29,7 @@ def dispatch(env):
     boards.board_add(slug="work", wing="shared")
     boards.board_add(slug="plain", wing="shared")
     registry.ensure(env.db)
+    model_modes.ensure_schema(env.db)
     enrolled = registry.enroll(
         env.db,
         env.principal,

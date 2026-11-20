@@ -5098,6 +5098,18 @@ class BoardService(lifecycle.LifecycleMixin):
                 ):  # absent until a budget is set and crossed: a clean workspace is unchanged
                     groups["budget_warnings"] = spent
                     groups["count"] += len(spent)
+        if self.principal.person and getattr(self.ctx.gateway, "runner_installed", False):
+            from commonplace.projects import model_modes
+
+            # Model modes (card #617): the person's own missing connections; absent when none, and
+            # never shown to the owner for anyone else.
+            try:
+                lacking = model_modes.needs(self.ctx.db, self.principal)
+            except (sqlite3.Error, model_modes.ModeUnavailable):
+                lacking = []
+            if lacking:
+                groups["model_connections"] = lacking
+                groups["count"] += len(lacking)
         return groups
 
     def _budget_warnings(self):

@@ -68,6 +68,10 @@ RULES = {
     # Read marks name their reader as an actor ref (``user:<id>``), like card history.
     "chat_live_reads": Rule(workspace=_W),
     "chat_model_settings": Rule(workspace=_W),
+    "model_mode_settings": Rule(workspace=_W),
+    "model_connections": Rule(user=_U, workspace=_W),
+    "model_person_prefs": Rule(user=_U, workspace=_W),
+    "model_connection_needs": Rule(user=_U, workspace=_W),
     "chat_runner_jobs": Rule(user=_U, workspace=_W),
     "chat_runners_seen": Rule(user=_U, workspace=_W),
     "connections": Rule(user=_U, workspace=_W),

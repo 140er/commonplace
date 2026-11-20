@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -73,6 +74,15 @@ CONFIG_COLUMNS = {
     "model": "TEXT",
 }
 SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER", "launch_output": "TEXT"}
+# Model modes (card #617): the mode and account a start was admitted under, pinned like the model.
+ACCOUNT_COLUMNS = {
+    "mode": "TEXT",
+    "mode_source": "TEXT",
+    "account_kind": "TEXT",
+    "account_label": "TEXT",
+    "account_person": "TEXT",
+    "account_connection_id": "TEXT",
+}
 STOP_COLUMNS = {
     "run_id": "TEXT",
     "stop_request_id": "TEXT",
@@ -154,7 +164,7 @@ class JobStore:
 def _migrate(conn):
     """Add the config run-record columns to a runner_jobs table that lacks them."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS
+    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS | ACCOUNT_COLUMNS
     missing = [name for name in additions if name not in columns]
     if not missing:
         return
@@ -325,6 +335,7 @@ def create(
     request_key=None,
     person=False,
     guard=None,
+    account=None,
 ):
     """Return (HTTP status, stored row); machine is the resolved registry row.
 
@@ -367,6 +378,7 @@ def create(
             request_key=request_key,
             person=person,
             admission_check=admission_check if on or guard is not None else None,
+            account=account,
         )
 
 
@@ -385,6 +397,7 @@ def create_in(
     person=False,
     config=None,
     admission_check=None,
+    account=None,
 ):
     """``create`` on the caller's open ``BEGIN IMMEDIATE`` connection.
 
@@ -462,6 +475,20 @@ def create_in(
             + ",".join(f"{key}=?" for key in CONFIG_COLUMNS)
             + " WHERE id=?",
             (*(config.get(key) for key in CONFIG_COLUMNS), job),
+        )
+    if account is not None:
+        conn.execute(
+            "UPDATE runner_jobs SET mode=?, mode_source=?, account_kind=?, account_label=?, "
+            "account_person=?, account_connection_id=? WHERE id=?",
+            (
+                account["mode"],
+                account["mode_source"],
+                account["account_kind"],
+                account["account_label"],
+                account["account_person"],
+                account.get("account_connection_id"),
+                job,
+            ),
         )
     row = dict(_row(conn, job))
     ledger.sync(conn, row, agent=machine["worker_connection_id"])
@@ -579,7 +606,7 @@ def lease(store, machine):
                 continue
             authority.enter_context(store.gateway.db._lock)
             current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
-            refusal = binding_problem(current, row)
+            refusal = binding_problem(current, row) or account_problem(store, current, row)
             if refusal:
                 _update(conn, row, dict(state="cancelled", outcome_code=refusal, updated_at=now))
                 authority.pop_all().close()
@@ -630,6 +657,37 @@ def binding_problem(machine, row, *, starting=False):
     return None
 
 
+def account_problem(store, machine, row):
+    """Recheck the admitted connection under the caller's runner/control fences.
+
+    Mode changes affect new admissions only. Old shared jobs remain usable on shared
+    machines; an old personal job without a pin cannot establish its original identity.
+    Never reconstruct that pin from the account's label or its current connection.
+    """
+    from commonplace.projects import model_modes
+
+    saved = dict(row)
+    if saved.get("account_kind") == "person" and not saved.get("account_connection_id"):
+        return "account_changed"
+    try:
+        connection = model_modes.connection_of_machine(
+            store.gateway.db._conn, store.workspace_id, machine["id"]
+        )
+    except sqlite3.Error:
+        return "mode_unavailable"
+    if saved.get("account_kind") != "person":
+        return "account_changed" if connection is not None else None
+    if (
+        connection is None
+        or connection["id"] != saved["account_connection_id"]
+        or connection["user_id"] != saved.get("account_person")
+        or connection["label"] != saved.get("account_label")
+        or (saved.get("model_provider") and connection["provider"] != saved["model_provider"])
+    ):
+        return "account_changed"
+    return None
+
+
 def starting(store, machine, lease_token, *, validate):
     """Serialize fresh control validation through the guarded write and commit."""
     _sweep(store)
@@ -644,7 +702,11 @@ def starting(store, machine, lease_token, *, validate):
             raise Conflict("start is not leased")
         authority.enter_context(store.gateway.db._lock)
         current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
-        refusal = validate(row) or binding_problem(current, row, starting=True)
+        refusal = (
+            validate(row)
+            or binding_problem(current, row, starting=True)
+            or account_problem(store, current, row)
+        )
         if retry:
             if refusal:
                 raise Conflict(refusal)
@@ -881,8 +943,11 @@ def resolve(store, job, principal, outcome, thread_id=None, *, conn=None):
 
 
 def status(store, task, principal):
+    from commonplace.projects import model_modes
+
     _sweep(store)
     machines = {m["id"]: m for m in registry.machines(store.gateway.db, store.workspace_id)}
+    viewer = principal.user_id if principal.person else None
     with store.connection() as conn:
         rows = conn.execute(
             "SELECT * FROM runner_jobs WHERE task_number=? ORDER BY created_at,rowid", (task,)
@@ -892,6 +957,7 @@ def status(store, task, principal):
         dict(
             job=row["id"],
             run=runs.get(row["id"]),
+            account=model_modes.run_view(row, viewer),
             machine_label=machines[row["machine_id"]]["label"]
             if row["machine_id"] in machines
             else None,

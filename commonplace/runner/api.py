@@ -1,5 +1,7 @@
 """Install the machine runner's routes once per gateway."""
 
+from commonplace.projects import model_modes
+
 from . import (
     budgets_api,
     chat_relay,
@@ -8,6 +10,7 @@ from . import (
     enrollment_api,
     install_receipts,
     ledger_api,
+    model_modes_api,
     owner_api,
     registry,
     requester_api,
@@ -28,11 +31,13 @@ def install(gateway):
     pairing_routes.install(gateway)
     install_receipts.ensure(gateway.db)
     chat_relay.ensure_schema(gateway.db)
+    model_modes.ensure_schema(gateway.db)
     owner_api.register(gateway)
     runner_api.register(gateway)
     ledger_api.register(gateway)
     costs_api.install(gateway)
     budgets_api.install(gateway)
+    model_modes_api.install(gateway)
     requester_api.register(gateway)
     chat_routes.register(gateway)
     gateway.runner_installed = True

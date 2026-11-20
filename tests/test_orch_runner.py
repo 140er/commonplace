@@ -1086,7 +1086,11 @@ def test_r12_pin_runner_store_gains_columns_and_keeps_digest_and_payload(world):
     with store.connection() as conn:
         after = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
     assert after == (
-        before | set(jobs.CONFIG_COLUMNS) | set(jobs.SNAPSHOT_COLUMNS) | set(jobs.STOP_COLUMNS)
+        before
+        | set(jobs.CONFIG_COLUMNS)
+        | set(jobs.SNAPSHOT_COLUMNS)
+        | set(jobs.STOP_COLUMNS)
+        | set(jobs.ACCOUNT_COLUMNS)
     )
     card = world.card(board=PLAIN)
     status, job = world.person_start(card)

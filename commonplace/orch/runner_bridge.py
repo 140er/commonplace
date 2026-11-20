@@ -43,7 +43,7 @@ from commonplace.boards.service import BoardService
 from commonplace.boards.store import BoardStore, task_row
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
-from commonplace.projects import escalation, limits as project_limits, models
+from commonplace.projects import escalation, limits as project_limits, model_modes, models
 from commonplace.runner import jobs, registry
 from commonplace.runner.predicate import (
     Refused,
@@ -84,6 +84,8 @@ _STATUS = {
     "board_not_found": 404,
     "card_not_found": 404,
     "unknown_role": 404,
+    "mode_unavailable": 503,
+    "machine_not_found": 404,
 }
 
 
@@ -125,6 +127,7 @@ class Plan:
     labels: tuple = ()  # the card's labels
     model_reason: str | None = None  # why ``model`` is the escalation model
     model_source: str | None = None  # project, workspace, default or escalation
+    account: model_modes.Decision | None = None  # the mode and account (card #617)
 
     @property
     def role(self) -> schema.Role:
@@ -140,6 +143,10 @@ class Plan:
             "model_provider": self.model.provider if self.model else None,
             "model": self.model.model if self.model else None,
         }
+
+    def account_record(self) -> dict | None:
+        """``jobs.ACCOUNT_COLUMNS`` of the job this plan inserts."""
+        return self.account.record() if self.account is not None else None
 
 
 @dataclass(frozen=True)
@@ -298,6 +305,11 @@ def prepare(
     except ValueError:  # a role with no model_role has no slot
         picked = models.Effective(None, "none")
     model = picked.choice
+    account = _account(
+        gateway, workspace_id, board_row["slug"], requested_by, version, model, machine
+    )
+    if account.machine_id is not None and (machine is None or account.machine_id != machine["id"]):
+        machine = registry.get_machine(gateway.db, workspace_id, account.machine_id)
     with BoardStore(gateway.workspace_dir(workspace_id)).connection() as conn:
         limit = project_limits.get(conn, board_row["id"])["max_agents"]
         doing = frozenset(
@@ -337,6 +349,7 @@ def prepare(
         machine=dict(machine) if machine is not None else None,
         model=model,
         model_source=picked.source,
+        account=account,
         cap=cap,
         doing=doing,
         plan_label="plan" in _labels(card_row),
@@ -353,6 +366,42 @@ def prepare(
         escalation=escalation.get(gateway.db, workspace_id, board_row["slug"]),
         labels=tuple(str(x) for x in _labels(card_row)),
     )
+
+
+def _account(gateway, workspace_id, board, requested_by, version, model, machine):
+    """The mode and account of this start. The requesting person is the one who started it; a
+    start with no person (a trigger, a config step) belongs to the person who accepted the config
+    version. A person with no connection is told once, in their own Needs me."""
+    person = next(
+        (
+            ref[len("user:") :]
+            for ref in (requested_by, version.decided_by)
+            if isinstance(ref, str) and ref.startswith("user:")
+        ),
+        None,
+    )
+    try:
+        decision = model_modes.resolve_account(
+            gateway.db,
+            workspace_id,
+            board,
+            person=person,
+            provider=model.provider if model else None,
+            machine=machine,
+            substitute=True,
+        )
+    except model_modes.ModeUnavailable:
+        raise StartRefused(
+            "mode_unavailable", "the model mode cannot be read right now; retry shortly"
+        ) from None
+    if decision.refusal is not None and decision.refusal.code == "connection_missing" and person:
+        try:
+            model_modes.note_missing(
+                gateway.db, workspace_id, person, board, model.provider if model else None
+            )
+        except (OSError, sqlite3.Error, TimeoutError) as exc:
+            log_failure(logger, "card start missing connection note failed", exc)
+    return decision
 
 
 def _escalated(conn, plan: Plan) -> Plan:
@@ -676,6 +725,8 @@ def _fenced(
             )
     if plan.refusal is not None:
         raise StartRefused(plan.refusal, f"card is not startable: {plan.refusal}")
+    if plan.account is not None and plan.account.refusal is not None:
+        raise StartRefused(plan.account.refusal.code, plan.account.refusal.message)
     # 3. path contracts: no two running cards own the same files.
     overlap = contract_refusal(
         conn,
@@ -725,6 +776,7 @@ def _fenced(
             request_key=request_key,
             person=plan.person and path == "person",
             config=record,
+            account=plan.account_record(),
         )
     except jobs.Conflict as exc:
         raise StartRefused(jobs.conflict_code(exc), str(exc)) from None
@@ -1037,6 +1089,10 @@ def launch_reply(plan: Plan, outcome: Outcome) -> dict:
         },
         "model_reason": job.get("model_reason", plan.model_reason),
         "model_source": job.get("model_source", plan.model_source),
+        # The launch reply goes to a Coworker, never the label of a person's own account.
+        "account": model_modes.run_view(
+            job if job.get("mode") is not None else plan.account_record() or {"mode": None}, None
+        ),
     }
 
 
