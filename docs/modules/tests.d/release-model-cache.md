@@ -1,0 +1,2 @@
+- **Promises:** Release-helper cases retain separate mutable databases and real workers; only downloaded embedding weights use the parent cache.
+- **Tests:** `tests/test_commonplace_release_gate.py` checks cache lifetime and distinct empty control/thread stores, retains all five grant-import fault cases, and requires each case to finish one real mirror write and close its workers.

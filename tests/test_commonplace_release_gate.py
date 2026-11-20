@@ -37,6 +37,24 @@ def signup(client, origin, email):
     return response.json()
 
 
+def test_throwaway_instances_keep_only_model_weights_in_a_shared_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    cache = tmp_path / ".cache" / "chroma"
+    paths = []
+    for _ in range(2):
+        with throwaway_instance() as instance:
+            assert cache.is_dir(), "Workers need an existing parent cache to share weights"
+            store = instance.gateway.handoff.store_for("ws_12345678")
+            control = Path(instance.gateway.db.path)
+            threads = Path(store._conn.execute("PRAGMA database_list").fetchone()[2])
+            assert control.is_file() and threads.is_file()
+            assert cache not in control.parents and cache not in threads.parents
+            assert store._conn.execute("SELECT COUNT(*) FROM threads").fetchone()[0] == 0
+            paths.append((control, threads))
+    assert paths[0][0] != paths[1][0] and paths[0][1] != paths[1][1]
+    assert cache.is_dir(), "Disposable database cleanup must retain the model cache"
+
+
 def test_empty_instance_two_new_nonadmin_users_have_isolated_workspace_routes():
     with (
         throwaway_instance() as instance,
@@ -321,7 +339,7 @@ def test_grant_import_check_uses_public_routes_and_detects_regressions(monkeypat
         throwaway_instance() as instance,
         httpx.Client(trust_env=False, follow_redirects=True, timeout=5) as owner,
     ):
-        signup(owner, instance.origin, "import-release@example.test")
+        identity = signup(owner, instance.origin, "import-release@example.test")
         reads = []
 
         async def fetch(url, *, method, data, headers, timeout):
@@ -374,6 +392,11 @@ def test_grant_import_check_uses_public_routes_and_detects_regressions(monkeypat
             assert "accepted=1" in detail and "404" in detail
             assert len(reads) == 2
             assert reads[0] == reads[1]
+    # Every fault case still performs its real mirror write before cleanup ends.
+    state = instance.gateway.handoff.service._index_states[identity["workspace"]]
+    assert state.units_written == 1
+    assert not state.active_threads
+    assert instance.gateway.supervisor._closed and not instance.gateway.supervisor._workers
 
 
 def test_throwaway_instance_closes_supervisor_and_handoff_on_exit():

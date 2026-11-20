@@ -121,6 +121,9 @@ def throwaway_instance(*, storage_limit=None, voice_limit=None):
     from commonplace.social import SignIn
     from commonplace.workers import WorkerSupervisor
 
+    # The launcher shares this weights-only cache if it already exists. Keep it
+    # outside the disposable instance so each new worker need not download again.
+    (Path.home() / ".cache" / "chroma").mkdir(parents=True, exist_ok=True)
     mailbox, provider = Mailbox(), SyntheticProvider()
     # Never inherit real social credentials or send email/voice to a provider.
     env = {
