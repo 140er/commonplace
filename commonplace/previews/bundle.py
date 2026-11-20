@@ -12,6 +12,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 
 from commonplace import redact
 
@@ -22,7 +23,8 @@ MAX_DEPTH = 10
 ENTRY = "index.html"
 
 # Only credential-shaped values that are unmistakable: the broad kinds (``assignment``,
-# ``random_token``, ``bearer``) match ordinary build output and would refuse real bundles.
+# ``random_token``, ``bearer``) match ordinary build output and would refuse real bundles, so
+# those are checked below with a narrower rule (``secret_kind``).
 SECRET_KINDS = (
     "private_key",
     "cmmn_oauth",
@@ -37,8 +39,50 @@ SECRET_KINDS = (
     "stripe_key",
     "google_api_key",
     "npm_token",
+    "jwt",
     "url_credentials",
 )
+
+# A setting whose name ends in a credential word (``API_KEY``, ``apiKey``, ``client_secret``,
+# ``password``; not ``tokenizer`` or ``tokens``), holding a quoted value of at least 12 characters
+# without spaces that mixes letters and digits. The same shape written as a bare value is taken
+# only on a line of its own (an ``.env`` file). A ``Bearer`` value is held to the same value
+# shape. Ordinary words, identifiers and short values are never refused.
+_WORD = r"(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)"
+_NAMED = re.compile(
+    rf"""(?i)(?<![A-Za-z0-9_.-])(?P<quote>["']?)[A-Za-z0-9_.-]{{0,32}}{_WORD}(?P=quote)"""
+    r"""\s{0,4}[:=](?![=>])\s{0,4}(?P<open>["'`])(?P<value>[^"'`\s]{12,512})(?P=open)"""
+)
+_ENV_LINE = re.compile(
+    rf"""(?im)^[ \t]*(?:export[ \t]+)?[A-Za-z0-9_.-]{{0,32}}{_WORD}[ \t]{{0,4}}=[ \t]{{0,4}}"""
+    r"""(?P<value>[^"'`\s]{12,512})[ \t]*$"""
+)
+_BEARER = re.compile(r"(?i)\bBearer\s{1,4}(?P<value>[A-Za-z0-9._~+/=-]{16,512})")
+
+
+def _random_looking(value) -> bool:
+    return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
+
+
+def secret_kind(text) -> str | None:
+    """The kind of credential ``text`` looks like it holds, or ``None``; never the value.
+
+    The unmistakable shapes (``SECRET_KINDS``) first, then a ``Bearer`` value, a credential-named
+    setting in JSON (``json_secret``) and in other source or ``.env`` text (``assignment``). A
+    safety net that favours not refusing real pages: a short or ordinary-looking secret passes."""
+    if not isinstance(text, str):
+        return None
+    found = redact.find_kinds(text, SECRET_KINDS)
+    if found:
+        return found[0]
+    if any(_random_looking(m["value"]) for m in _BEARER.finditer(text)):
+        return "bearer"
+    for match in _NAMED.finditer(text):
+        if _random_looking(match["value"]):
+            return "json_secret" if match["quote"] else "assignment"
+    if any(_random_looking(m["value"]) for m in _ENV_LINE.finditer(text)):
+        return "assignment"
+    return None
 
 
 class Refused(Exception):
@@ -57,6 +101,11 @@ def clean_path(raw) -> str:
     at most ``MAX_DEPTH`` segments and ``MAX_PATH_BYTES`` bytes."""
     if not isinstance(raw, str) or not raw:
         raise Refused("bad_path", file=_shown(raw))
+    kind = secret_kind(raw)
+    if kind:
+        # Before any other check, so a refusal never echoes a name that holds a credential. The
+        # path is shown to everyone who can open the card: name the kind, never the path.
+        raise Refused("contains_secret_like_text", kind=kind)
     try:
         size = len(raw.encode("utf-8"))
     except UnicodeEncodeError:
@@ -75,10 +124,6 @@ def clean_path(raw) -> str:
     )
     if bad:
         raise Refused("bad_path", file=_shown(raw))
-    kinds = redact.find_kinds(raw, SECRET_KINDS)
-    if kinds:
-        # The path is shown to everyone who can open the card: name the kind, never the path.
-        raise Refused("contains_secret_like_text", kind=kinds[0])
     return raw
 
 
@@ -149,9 +194,9 @@ def parse(files) -> list:
         except UnicodeDecodeError:
             # Not text, but a credential can sit in any file: scan the bytes as Latin-1.
             text = data.decode("latin-1")
-        found = redact.find_kinds(text, SECRET_KINDS)
-        if found:
-            raise Refused("contains_secret_like_text", file=_shown(path), kind=found[0])
+        kind = secret_kind(text)
+        if kind:
+            raise Refused("contains_secret_like_text", file=_shown(path), kind=kind)
     return sorted(out)
 
 

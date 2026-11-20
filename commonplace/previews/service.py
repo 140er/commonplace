@@ -14,7 +14,6 @@ import secrets
 import shutil
 from datetime import timedelta
 
-from commonplace import redact
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import require_visible, task_row
 from commonplace.extensions import ToolContext, ToolError
@@ -111,7 +110,7 @@ def _name(raw) -> str:
     if not 1 <= len(name) <= store.MAX_NAME or any(ord(c) < 32 or ord(c) == 127 for c in name):
         raise ValueError("name must be text of 1 to 80 characters")
     # The name is shown to everyone who can open the card: it must not carry a credential.
-    if redact.find_kinds(name, bundle.SECRET_KINDS):
+    if bundle.secret_kind(name):
         raise ValueError("name looks like it holds a credential; choose a plain name")
     return name
 
