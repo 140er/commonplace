@@ -122,7 +122,7 @@ def model_parts(segments, runs, fallback):
             edges.update(interval)
     starts.sort()
     boundaries = sorted(edges)
-    active = []
+    active: list[tuple[int, int, float, str]] = []
     next_start = next_edge = 0
     for start, end, phase in segments:
         at = start
