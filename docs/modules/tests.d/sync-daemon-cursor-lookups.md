@@ -1,4 +1,4 @@
 - **Owns:** `tests/test_commonplace_sync_daemon_unit.py` models durable sync cursors in a private SQLite database per test.
-- **Promises:** Cursor lookups use the production table's composite key; the existing backfill, restart and write-budget assertions remain intact.
-- **How it fails:** A cursor table scan makes repeated backfill cycles unnecessarily expensive; a SQLite instruction-count check detects that regression without a wall-clock limit.
-- **Tests:** `tests/test_commonplace_sync_daemon_unit.py`, including the bounded-work cursor lookup and existing backfill write-budget cases.
+- **Promises:** Cursor lookups use the production table's composite key and WAL journal with full synchronization; the existing backfill, restart and write-budget assertions remain intact.
+- **How it fails:** A cursor table scan makes repeated backfill cycles unnecessarily expensive; a SQLite instruction-count check detects that regression without a wall-clock limit. A rollback journal blocks commits behind a concurrent reader; the snapshot regression requires both reader stability and independently visible committed bytes.
+- **Tests:** `tests/test_commonplace_sync_daemon_unit.py`, including bounded-work lookups, concurrent-reader snapshot and committed-cursor visibility, and the existing backfill write-budget cases.
