@@ -1,0 +1,1 @@
+- **Tests:** `tests/spaces_surfaces.json` pins the `posted` field of `pr_review_report` and the reply wording of `pr_review_take`.

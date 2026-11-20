@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from commonplace.admission import GATE
+from commonplace.db_busy import BUSY_TIMEOUT_S, begin_immediate
 from commonplace.pipeline.compute import stamp
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS pr_review_prs (
     changed_head TEXT NOT NULL DEFAULT '',
     rounds_used INTEGER NOT NULL DEFAULT 0,
     last_round_at TEXT NOT NULL DEFAULT '', loop_stopped INTEGER NOT NULL DEFAULT 0,
+    public INTEGER,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     PRIMARY KEY (repo, pr)
 );
@@ -82,7 +84,8 @@ CREATE TABLE IF NOT EXISTS pr_review_comments (
     holder TEXT NOT NULL DEFAULT '', round INTEGER NOT NULL DEFAULT 0,
     attempts INTEGER NOT NULL DEFAULT 0, touched_at TEXT NOT NULL DEFAULT '',
     fix_commit TEXT NOT NULL DEFAULT '', fix_pending INTEGER NOT NULL DEFAULT 0,
-    reply TEXT NOT NULL DEFAULT '', received_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    reply TEXT NOT NULL DEFAULT '', reply_posted INTEGER NOT NULL DEFAULT 0,
+    received_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE (repo, pr, kind, gh_id)
 );
 CREATE INDEX IF NOT EXISTS pr_review_comments_pr ON pr_review_comments(repo, pr, status);
@@ -96,7 +99,7 @@ CREATE INDEX IF NOT EXISTS pr_review_events_pr ON pr_review_events(repo, pr, seq
 CREATE TABLE IF NOT EXISTS pr_review_boards (
     board TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
     enabled_by TEXT NOT NULL DEFAULT '', rounds INTEGER NOT NULL DEFAULT 2,
-    updated_at TEXT NOT NULL
+    post_replies INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pr_review_people (
     login TEXT PRIMARY KEY COLLATE NOCASE,
@@ -171,12 +174,18 @@ class ReviewStore:
                 return None
             with GATE.creating(path):
                 path.parent.mkdir(parents=True, exist_ok=True)
-                conn = connect(str(path), timeout=5, check_same_thread=False, isolation_level=None)
+                conn = connect(
+                    str(path),
+                    timeout=BUSY_TIMEOUT_S,
+                    check_same_thread=False,
+                    isolation_level=None,
+                )
             try:
                 conn.row_factory = row_factory
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.executescript(_SCHEMA)
+                _migrate(conn)
             except Exception:
                 conn.close()
                 raise
@@ -242,8 +251,10 @@ class ReviewStore:
                     duplicates += 1
             conn.execute(
                 "INSERT INTO pr_review_prs(repo, pr, head, pr_state, branch, head_repo, fetched_at, "
-                "changed_files, changed_head, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "changed_files, changed_head, public, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(repo, pr) DO UPDATE SET head=excluded.head, "
+                "public=COALESCE(excluded.public, public), "
                 "pr_state=CASE WHEN excluded.pr_state != '' THEN excluded.pr_state ELSE pr_state END, "
                 "branch=CASE WHEN excluded.branch != '' THEN excluded.branch ELSE branch END, "
                 "head_repo=CASE WHEN excluded.head_repo != '' THEN excluded.head_repo ELSE head_repo END, "
@@ -252,7 +263,10 @@ class ReviewStore:
                 "WHEN excluded.head != head THEN '[]' ELSE changed_files END, "
                 "changed_head=CASE WHEN excluded.changed_head != '' THEN excluded.changed_head "
                 "WHEN excluded.head != head THEN '' ELSE changed_head END, "
-                "updated_at=excluded.updated_at",
+                "updated_at=excluded.updated_at "
+                # An older read arriving late never rolls the PR back; one read posted in
+                # several requests shares its time, so an equal time still applies.
+                "WHERE excluded.fetched_at >= pr_review_prs.fetched_at",
                 (
                     repo,
                     pr,
@@ -263,6 +277,7 @@ class ReviewStore:
                     request["fetched_at"],
                     json.dumps(request["changed_files"]),
                     request["head"] if request["changed_files"] else "",
+                    None if request.get("public") is None else int(request["public"]),
                     at,
                     at,
                 ),
@@ -409,6 +424,7 @@ class ReviewStore:
             "fix_commit": row["fix_commit"] or None,
             "fix_confirmed": bool(row["fix_commit"]) and not row["fix_pending"],
             "reply": row["reply"] or None,
+            "reply_posted": bool(row["reply_posted"]),
             "note": row["note"] or None,
             "updated_at": row["updated_at"],
         }
@@ -456,6 +472,7 @@ class ReviewStore:
         out = dict(row)
         out["changed_files"] = json.loads(out["changed_files"] or "[]")
         out["loop_stopped"] = bool(out["loop_stopped"])
+        out["public"] = None if out["public"] is None else bool(out["public"])
         return out
 
     def prs(self, limit: int = 200) -> list[dict]:
@@ -525,21 +542,46 @@ class ReviewStore:
                 ).fetchone()
             )
         if row is None:
-            return {"board": slug, "enabled": False, "enabled_by": "", "rounds": ROUNDS_DEFAULT}
-        return {**dict(row), "enabled": bool(row["enabled"])}
+            return {
+                "board": slug,
+                "enabled": False,
+                "enabled_by": "",
+                "rounds": ROUNDS_DEFAULT,
+                "post_replies": False,
+            }
+        return {
+            **dict(row),
+            "enabled": bool(row["enabled"]),
+            "post_replies": bool(row["post_replies"]),
+        }
 
-    def set_board(self, slug: str, enabled: bool, by: str, rounds, now: datetime) -> dict:
+    def set_board(
+        self, slug: str, enabled: bool, by: str, rounds, now: datetime, post_replies=None
+    ) -> dict:
+        """The loop's setting for a board. ``post_replies`` lets the Coworker post its replies
+        on a public repository (off: they are shown on the card only); ``None`` keeps it."""
         if rounds is None:
             rounds = ROUNDS_DEFAULT
+        if post_replies is not None and not isinstance(post_replies, bool):
+            raise Invalid("post_replies must be true or false")
+        if post_replies is None:
+            post_replies = self.board(slug)["post_replies"]
         if isinstance(rounds, bool) or not isinstance(rounds, int) or not 1 <= rounds <= ROUNDS_MAX:
             raise Invalid(f"rounds must be a whole number from 1 to {ROUNDS_MAX}")
         with self._tx() as conn:
             conn.execute(
-                "INSERT INTO pr_review_boards(board, enabled, enabled_by, rounds, updated_at) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(board) DO UPDATE SET enabled=excluded.enabled, "
-                "enabled_by=excluded.enabled_by, rounds=excluded.rounds, "
-                "updated_at=excluded.updated_at",
-                (slug, int(bool(enabled)), by if enabled else "", rounds, stamp(now)),
+                "INSERT INTO pr_review_boards(board, enabled, enabled_by, rounds, post_replies, "
+                "updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(board) DO UPDATE SET "
+                "enabled=excluded.enabled, enabled_by=excluded.enabled_by, rounds=excluded.rounds, "
+                "post_replies=excluded.post_replies, updated_at=excluded.updated_at",
+                (
+                    slug,
+                    int(bool(enabled)),
+                    by if enabled else "",
+                    rounds,
+                    int(post_replies),
+                    stamp(now),
+                ),
             )
         return self.board(slug)
 
@@ -729,6 +771,14 @@ class ReviewStore:
             )
             return self._shown_id(conn, comment_id)
 
+    def mark_posted(self, comment_id: int, posted: bool) -> None:
+        """Record whether the Coworker posted its reply on the PR (it posts with its own access)."""
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE pr_review_comments SET reply_posted=? WHERE id=?",
+                (int(bool(posted)), comment_id),
+            )
+
     def _shown_id(self, conn, comment_id):
         return self.shown(
             conn.execute("SELECT * FROM pr_review_comments WHERE id=?", (comment_id,)).fetchone()
@@ -893,6 +943,23 @@ class ReviewStore:
         return {"choice": choice, "counts": self.counts(repo, pr)}
 
 
+def _migrate(conn) -> None:
+    """Columns added after slice 1 (card #613), added once to a file made before them."""
+    prs = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_prs)")}
+    if "public" not in prs:
+        conn.execute("ALTER TABLE pr_review_prs ADD COLUMN public INTEGER")
+    comments = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_comments)")}
+    if "reply_posted" not in comments:
+        conn.execute(
+            "ALTER TABLE pr_review_comments ADD COLUMN reply_posted INTEGER NOT NULL DEFAULT 0"
+        )
+    boards = {row[1] for row in conn.execute("PRAGMA table_info(pr_review_boards)")}
+    if "post_replies" not in boards:
+        conn.execute(
+            "ALTER TABLE pr_review_boards ADD COLUMN post_replies INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 class _Transaction:
     """One ``BEGIN IMMEDIATE`` on the store's connection, held under its lock."""
 
@@ -903,7 +970,7 @@ class _Transaction:
         self.store._lock.acquire()
         try:
             self.conn = self.store._connection(create=True)
-            self.conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(self.conn)
         except BaseException:
             self.store._lock.release()
             raise
@@ -918,6 +985,22 @@ class _Transaction:
 
 
 _STORES_LOCK = threading.Lock()
+
+
+def reply_mode(pr_row, board) -> str:
+    """``post`` when the Coworker may post its replies on the PR, ``show`` when they are only
+    shown on the card: a public (or unknown) repository needs the owner's switch for the board."""
+    if pr_row is not None and pr_row.get("public") is False:
+        return "post"
+    return "post" if board.get("post_replies") else "show"
+
+
+def close_all(gateway) -> None:
+    """Close every workspace store of the gateway (its connections), before the hub stops."""
+    with _STORES_LOCK:
+        stores = gateway.__dict__.pop("_pr_review_stores", {})
+    for store in list(stores.values()):
+        store.close()
 
 
 def open_review(gateway, workspace_id: str) -> ReviewStore:

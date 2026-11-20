@@ -1141,6 +1141,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     add_webhook_commands(sub)
     _client_parsers(sub)
+    from .pr_review.feeder import add_parser as add_pr_review_parser
+
+    add_pr_review_parser(sub)
 
     runner = sub.add_parser("runner").add_subparsers(dest="action", required=True)
     from .runner.install_cli import add_parsers as add_runner_install_parsers
@@ -1415,8 +1418,9 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _check_backup_args(parser, args)
-    if args.command == "runner" or orch_cli.repo_only(args):
-        # Repository checks and the runner client never open the data directory.
+    if args.command in ("runner", "pr-review") or orch_cli.repo_only(args):
+        # Repository checks, the runner client and the review-comment feeder never open the
+        # data directory: they run on other machines than the hub.
         return args.func(args)
     if args.command in {"onboard", "remember", "rule", "check", "sync", "review-rules"}:
         from .client import ClientError

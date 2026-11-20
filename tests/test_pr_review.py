@@ -548,7 +548,15 @@ def test_the_tools_offer_nothing_that_merges_resolves_or_dismisses(world):
         t for t in h.rpc(h.t1, "tools/list")["result"]["tools"] if t["name"] == "pr_review_report"
     )
     item = schema["inputSchema"]["properties"]["reports"]["items"]
-    assert set(item["properties"]) == {"comment", "rev", "outcome", "commit", "reply", "note"}
+    assert set(item["properties"]) == {
+        "comment",
+        "rev",
+        "outcome",
+        "commit",
+        "reply",
+        "note",
+        "posted",
+    }
     assert item["properties"]["outcome"]["enum"] == ["addressed", "answered", "needs_you"]
 
 
@@ -1167,3 +1175,134 @@ def test_concurrent_first_opens_of_a_workspace_share_one_store(monkeypatch, tmp_
         worker.join()
     assert len(built) == 1
     assert len(got) == threads_n and all(store is got[0] for store in got)
+
+
+# ── slice 2: reads arriving out of order, the transaction helper, closing, reply modes ──
+
+
+def test_an_older_read_arriving_late_never_rolls_the_pr_back(world):
+    h = world
+    post(h, batch(head=FIX, fetched_at=when(-1), changed_files=["app/main.py"]))
+    status, body, _ = post(h, batch(comment(1), head=HEAD, fetched_at=when(-10), pr_state="closed"))
+    assert status == 200 and body["accepted"] == 1  # its comments still count
+    got = h.store.pr(REPO, 7)
+    assert (got["head"], got["pr_state"], got["changed_head"]) == (FIX, "open", FIX)
+    assert got["fetched_at"] > when(-2)[:16]
+
+
+def test_store_writes_use_the_shared_bounded_begin(world, monkeypatch):
+    h = world
+    calls = []
+    real = review_store.begin_immediate
+    monkeypatch.setattr(review_store, "begin_immediate", lambda conn: calls.append(1) or real(conn))
+    post(h, batch(comment(1)))
+    assert calls
+
+
+def test_closing_the_hub_closes_every_review_store(world):
+    h = world
+    post(h, batch(comment(1)))
+    first = review_store.open_review(h.gateway, h.workspace)
+    assert first._conn is not None
+    review_store.close_all(h.gateway)
+    assert first._conn is None
+    second = review_store.open_review(h.gateway, h.workspace)
+    assert second is not first and len(second.comments(REPO, 7)) == 1
+
+
+def test_a_file_from_slice_one_gets_the_new_columns_once(tmp_path):
+    from mempalace.sqlite_crypto import connect
+
+    conn = connect(str(tmp_path / review_store.FILENAME))
+    conn.executescript(
+        "CREATE TABLE pr_review_prs (repo TEXT NOT NULL, pr INTEGER NOT NULL, "
+        "created_at TEXT, updated_at TEXT, PRIMARY KEY (repo, pr));"
+        "CREATE TABLE pr_review_comments (id INTEGER PRIMARY KEY, repo TEXT, pr INTEGER, "
+        "status TEXT);"
+        "CREATE TABLE pr_review_boards (board TEXT PRIMARY KEY, updated_at TEXT);"
+    )
+    conn.close()
+    store = review_store.ReviewStore(tmp_path)
+    assert store.pr(REPO, 7) is None
+    columns = {
+        table: {row[1] for row in store._conn.execute(f"PRAGMA table_info({table})")}
+        for table in ("pr_review_prs", "pr_review_comments", "pr_review_boards")
+    }
+    assert "public" in columns["pr_review_prs"]
+    assert "reply_posted" in columns["pr_review_comments"]
+    assert "post_replies" in columns["pr_review_boards"]
+    store.close()
+    again = review_store.ReviewStore(tmp_path)
+    assert again.pr(REPO, 7) is None  # a second open adds nothing and fails nothing
+    again.close()
+
+
+@pytest.mark.parametrize(
+    "public, post_replies, mode",
+    [(None, False, "show"), (True, False, "show"), (False, False, "post"), (True, True, "post")],
+)
+def test_replies_are_shown_on_the_card_unless_the_repository_is_private_or_the_owner_allows(
+    public, post_replies, mode
+):
+    pr_row = None if public is None else {"public": public}
+    assert review_store.reply_mode(pr_row, {"post_replies": post_replies}) == mode
+
+
+def test_only_the_owner_switches_reply_posting_on_and_it_is_kept(world):
+    h = world
+    path = "/api/pr-review/boards/work"
+    assert h.request(h.owner, "PUT", path, {"enabled": True, "post_replies": "yes"})[0] == 400
+    status, body, _ = h.request(h.owner, "PUT", path, {"enabled": True, "post_replies": True})
+    assert status == 200 and body["post_replies"] is True
+    h.request(h.owner, "PUT", path, {"enabled": True, "rounds": 3})
+    assert h.request(h.owner, "GET", path)[1]["post_replies"] is True
+
+
+def test_a_dry_run_refuses_a_posted_reply_and_records_the_reply_on_the_card(world):
+    h = world
+    number = start(h)
+    take(h, number)
+    report = {"comment": 1, "rev": 1, "outcome": "answered", "reply": "On purpose."}
+    ok, text = mcp(h, h.t1, "pr_review_report", card=number, reports=[{**report, "posted": True}])
+    assert not ok and "dry_run" in text
+    ok, text = mcp(h, h.t1, "pr_review_report", card=number, reports=[report])
+    assert ok, text
+    shown = view(h, number)[1]
+    assert shown["pr_info"]["reply_mode"] == "show"
+    one = next(c for c in shown["comments"] if c["gh_id"] == "1")
+    assert one["reply"] == "On purpose." and one["reply_posted"] is False
+
+
+def test_the_start_context_shows_waiting_comments_with_the_rules(world):
+    h = world
+    from commonplace.extensions import ToolContext
+    from commonplace.runner import start_context
+
+    number = start(h)
+    ctx = ToolContext(principal=h.principal(h.t1), gateway=h.gateway)
+    text = start_context.assemble(start_context.load(ctx, number))
+    assert "Review comments on PR #7 (acme/widgets), waiting for you:" in text
+    assert "pr_review_take(card=" in text and "never merge" in text.lower()
+    assert json.dumps("Why this approach?") in text
+    assert "Rounds: 0 of 2 used on this PR." in text
+    other = card(h, title="Nothing waiting", pr_url="https://github.com/acme/widgets/pull/8")
+    assert "Review comments" not in start_context.assemble(start_context.load(ctx, other))
+
+
+def test_a_broken_review_read_never_stops_a_start_and_logs_no_words(world, monkeypatch, caplog):
+    h = world
+    from commonplace.extensions import ToolContext
+    from commonplace.pr_review import context
+    from commonplace.runner import start_context
+
+    number = start(h)
+
+    def boom(ctx, n):
+        raise RuntimeError("store exploded: Why this approach?")
+
+    monkeypatch.setattr(context, "for_card", boom)
+    ctx = ToolContext(principal=h.principal(h.t1), gateway=h.gateway)
+    with caplog.at_level(logging.DEBUG):
+        text = start_context.assemble(start_context.load(ctx, number))
+    assert "Card: #" in text and "Review comments on PR" not in text
+    assert "Why this approach?" not in caplog.text
