@@ -65,7 +65,11 @@ def setup_only_refusal(gateway, machine, workspace_id=None) -> str | None:
     from commonplace.compute import pairing
 
     db = gateway.db
-    if machine["id"] not in pairing.guided_not_running(db, workspace_id or machine["workspace_id"]):
+    try:
+        machine_id, workspace = machine["id"], workspace_id or machine["workspace_id"]
+    except (KeyError, IndexError):
+        return None  # a legacy runner row has no machine id: it was never added through the setup guide
+    if machine_id not in pairing.guided_not_running(db, workspace):
         return None
     from . import setup_approvals
 

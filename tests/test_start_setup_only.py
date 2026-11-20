@@ -103,3 +103,9 @@ def test_a_machine_waiting_for_approval_and_one_with_its_confirm_card_up_say_whe
     assert options(owner, card)[1]["refusal"] == "setup_only"
     monkeypatch.setattr(setup_approvals, "confirm_pending", lambda db, machine: True)
     assert options(owner, card)[1]["refusal"] == "setup_only_confirm"
+
+
+def test_a_legacy_runner_row_without_a_machine_id_was_never_added_through_the_guide(world):
+    legacy = {"workspace_id": world.ws, "worker_connection_id": "conn_x", "wings": ["shared"]}
+    assert predicate.setup_only_refusal(world.gw, legacy) is None
+    assert predicate.setup_only_refusal(world.gw, {"id": "mach_x"}, world.ws) is None
