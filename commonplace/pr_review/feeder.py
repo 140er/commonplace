@@ -455,6 +455,8 @@ class Feeder:
                         len(requests),
                     )
                 except RateLimited:
+                    # Before the generic handlers below: a near rate limit ends the whole pass
+                    # (the outer handler marks it), it is never one PR's error.
                     raise
                 except FeederError as exc:
                     if exc.code in ("hub_refused", "github_token_refused"):

@@ -531,3 +531,16 @@ def test_the_loop_outlives_a_bad_pass(loop, monkeypatch):
     monkeypatch.setattr(f, "once", once)
     f.run(stop, interval_s=0)
     assert len(calls) == 2
+
+
+def test_a_rate_limit_mid_pass_ends_the_pass_and_is_never_one_prs_error(loop):
+    h = loop
+    finished_card(h)
+    loop_on(h)
+    h.gh.add("inline", "One.")
+    h.gh.rate_remaining = 10
+    f = feeder(h)
+    f.watch = lambda: [{"repo": REPO, "pr": 7}, {"repo": REPO, "pr": 7}, {"repo": REPO, "pr": 7}]
+    summary = f.once()
+    assert summary["rate_limited"] is True and summary["errors"] == [] and summary["prs"] == 0
+    assert len(h.gh.requests) == 1  # the first answer said stop; no other PR was read
