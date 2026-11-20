@@ -52,6 +52,7 @@
 .ca-phase-unknown { background: var(--line-strong); fill: var(--line-strong); }
 .ca-phases { font-size: 12px; color: var(--text-2); margin: 16px 0; }
 .ca-phases i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
+.ca-field-label { display: none; }
 @media(max-width: 900px) { .ca-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width: 640px) {
   .ca-title { margin: 16px 0; }
@@ -61,6 +62,7 @@
   .ca-metrics { grid-template-columns: minmax(0,1fr); }
   .ca-controls { gap: 8px; }
   .ca-controls label { flex-basis: 30%; min-width: 0; }
+  .ca-controls label[data-ca-model-label] { flex-basis: 100%; max-width: none; }
   .compute-activity select { padding: 8px 4px; font-size: 13px; }
   .ca-tabs { gap: 16px; }
   .compute-activity table, .compute-activity tbody { display: block; }
@@ -68,6 +70,10 @@
   .compute-activity tbody tr { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px 12px; border-bottom: 1px solid var(--line); padding: 12px 0; }
   .compute-activity tbody th, .compute-activity tbody td { padding: 0; min-width: 0; border: 0; text-align: left; }
   .compute-activity tbody th { grid-column: 1 / -1; }
+  .compute-activity td.ca-tokens, .compute-activity td.ca-empty { grid-column: 1 / -1; }
+  .ca-field-label { display: block; color: var(--text-2); font-size: 12px; }
+  .ca-token { display: flex; justify-content: space-between; gap: 12px; }
+  .ca-separator { display: none; }
   .ca-table-wrap { overflow: visible; }
   .ca-bucket { min-width: 0; }
 }

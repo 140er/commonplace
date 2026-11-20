@@ -72,8 +72,6 @@ def command_category(value):
     # Only executable positions are classified; echo arguments are not programs.
     if not words:
         return "shell"
-    if Path(words[0]).name in {"heavy", "compile-run"} and "--" in words:
-        words = words[words.index("--") + 1 :]
     if words[:2] == ["uv", "run"]:
         words = words[2:]
     if not words:
@@ -81,9 +79,9 @@ def command_category(value):
     executable = Path(words[0]).name
     if executable in {"python", "python3", "python3.12"} and len(words) > 2 and words[1] == "-m":
         executable = words[2]
-    if executable in {"pytest", "vitest", "cc-test", "lean-suite"}:
+    if executable in {"pytest", "vitest", "unittest"}:
         return "test"
-    if executable in {"pr-check", "claude-gate", "ruff", "mypy"}:
+    if executable in {"ruff", "mypy", "eslint"}:
         return "check"
     if executable in {"tsc", "make", "cmake"} or (
         executable == "cargo" and len(words) > 1 and words[1] == "build"
@@ -124,6 +122,7 @@ def connect(path):
     db.execute("PRAGMA mmap_size=0")
     db.create_function("activity_command", 1, command_category)
     db.create_function("activity_diff", 1, _diff_counts)
+    db.create_function("activity_timestamp", 1, timing.timestamp, deterministic=True)
     return db
 
 
@@ -155,6 +154,22 @@ class Collector:
             pr_last=None,
             source_updated=None,
         )
+        self.scans = {
+            key: {"scanned": 0, "limit": limit, "truncated": False}
+            for key, limit in (
+                ("runs", limits.metadata),
+                ("native", limits.metadata),
+                ("run_details", limits.runs),
+                ("items", limits.items),
+                ("asks", limits.metadata),
+                ("retries", limits.metadata),
+                ("turns", limits.turns),
+                ("transfers", limits.metadata),
+                ("pr_links", limits.metadata),
+                ("logs", limits.log_lines),
+            )
+        }
+        self.coverage["scans"] = self.scans
         self.handoffs: Counter = Counter()
         self.calls: dict[str, list[float]] = defaultdict(list)
         self.daily = {day: {"day": day, "seconds": 0.0, "runs": 0} for day in timing.days(window)}
@@ -170,6 +185,41 @@ class Collector:
                 yield from batch
         finally:
             cursor.close()
+
+    def truncate(self, source):
+        self.scans[source]["truncated"] = True
+        self.coverage["partial"] = True
+
+    def bounded_rows(self, source, sql, args=(), *, per_query=None):
+        """Budget eligible rows globally, then probe one omitted row without retaining it."""
+        scan = self.scans[source]
+        remaining = scan["limit"] - scan["scanned"]
+        if per_query is not None:
+            remaining = min(remaining, per_query)
+        read = 0
+        for row in self.rows(sql + " LIMIT ?", (*args, remaining)):
+            scan["scanned"] += 1
+            read += 1
+            yield row
+        if read == remaining:
+            cursor = self.db.execute("SELECT 1 FROM (" + sql + ") LIMIT 1 OFFSET ?", (*args, read))
+            try:
+                if cursor.fetchone() is not None:
+                    self.truncate(source)
+            finally:
+                cursor.close()
+
+    def during(self, start, end, open_when="0", *, points=True):
+        """The same parsed/clipped eligibility as the aggregate, before its SQL limit."""
+        a, b = f"activity_timestamp({start})", f"activity_timestamp({end})"
+        lo, hi = self.window
+        overlap = f"({a} < {hi} AND {b} > {lo} AND {b} >= {a})"
+        ongoing = f"({a} < {hi} AND {end} IS NULL AND ({open_when}))"
+        point = f" OR ({lo} <= {a} AND {a} < {hi})" if points else ""
+        return f"({overlap} OR {ongoing}{point})"
+
+    def selected_ids(self, field, values):
+        return f"{field} IN (SELECT value FROM json_each(?))", (json.dumps(list(values)),)
 
     def model_row(self, name):
         return self.models.setdefault(
@@ -196,12 +246,19 @@ class Collector:
 
     def metadata(self):
         begin = time.perf_counter()
-        count = requested = started = 0
+        requested = started = 0
+        start = "json_extract(r.payload_json,'$.startedAt')"
+        eligible = self.during(
+            start, "r.completed_at", "r.status IN ('preparing','starting','running','waiting')"
+        )
+        requested_in_window = f"activity_timestamp(r.requested_at) >= {self.window[0]} AND activity_timestamp(r.requested_at) < {self.window[1]}"
         sql = f"""SELECT r.run_id,r.thread_id,r.ordinal,r.status,r.requested_at,r.completed_at,
             json_extract(r.payload_json,'$.startedAt'),
             json_extract(r.payload_json,'$.modelSelection.model'),t.project_id,
             json_extract(t.payload_json,'$.createdBy'),t.updated_at
-            FROM {PREFIX}runs r LEFT JOIN {PREFIX}threads t ON t.thread_id=r.thread_id"""
+            FROM {PREFIX}runs r LEFT JOIN {PREFIX}threads t ON t.thread_id=r.thread_id
+            WHERE {eligible} OR (r.status='queued' AND activity_timestamp(r.requested_at)<{self.window[1]})
+            OR (activity_timestamp({start}) IS NULL AND r.status!='queued' AND {requested_in_window})"""
         for (
             rid,
             tid,
@@ -214,11 +271,7 @@ class Collector:
             project,
             creator,
             updated,
-        ) in self.rows(sql):
-            count += 1
-            if count > self.limits.metadata:
-                self.coverage["partial"] = True
-                break
+        ) in self.bounded_rows("runs", sql):
             requested_at, start_at = timing.timestamp(request), timing.timestamp(start)
             if requested_at is not None and self.window[0] <= requested_at < self.window[1]:
                 requested += 1
@@ -243,9 +296,6 @@ class Collector:
                     self.coverage["source_updated"] or 0, int(updated_at)
                 )
             anchor = start_at if start_at is not None else max(requested_at, self.window[0])
-            if len(self.runs) >= self.limits.metadata:
-                self.coverage["partial"] = True
-                continue
             if status != "queued":
                 ended = timing.timestamp(complete)
                 known = start_at is not None and (
@@ -317,14 +367,20 @@ class Collector:
             self.progress("metadata", len(self.runs))
 
     def subagents(self):
-        count = 0
+        selected, args = self.selected_ids("thread_id", self.thread_meta)
+        runs, run_args = self.selected_ids("run_id", self.runs)
+        eligible = self.during(
+            "started_at",
+            "completed_at",
+            "status IN ('preparing','starting','running','waiting')",
+            points=False,
+        )
         sql = f"""SELECT subagent_id,thread_id,child_thread_id,status,started_at,completed_at,run_id,
-            json_extract(payload_json,'$.modelSelection.model') FROM {PREFIX}subagents"""
-        for sid, tid, child, status, start, end, rid, raw_model in self.rows(sql):
-            count += 1
-            if count > self.limits.metadata:
-                self.coverage["partial"] = True
-                break
+            json_extract(payload_json,'$.modelSelection.model') FROM {PREFIX}subagents
+            WHERE {selected} AND ({eligible} OR (activity_timestamp(started_at) IS NULL AND {runs}))"""
+        for sid, tid, child, status, start, end, rid, raw_model in self.bounded_rows(
+            "native", sql, (*args, *run_args)
+        ):
             if tid not in self.thread_meta or (child in self.agents and self.agents[child]["base"]):
                 continue
             interval = timing.clipped(
@@ -366,107 +422,97 @@ class Collector:
         self.put("tool_calls", 0)
         self.put("failed_commands", 0)
         self.put("compactions", 0)
-        self.put("lines_added", reason="partial_scan")
-        self.put("lines_deleted", reason="partial_scan")
         lines = [0, 0]
         edit_known = True
+        start = "json_extract(payload_json,'$.startedAt')"
+        end = "json_extract(payload_json,'$.completedAt')"
+        eligible = self.during(
+            start, end, "status IN ('preparing','starting','running','waiting','in_progress')"
+        )
         for rid, run in sorted(
             self.runs.items(), key=lambda item: (item[1]["interval"] or (0, 0))[0], reverse=True
         ):
-            if (
-                self.coverage["runs_scanned"] >= self.limits.runs
-                or self.coverage["items_seen"] >= self.limits.items
-            ):
-                self.coverage["partial"] = True
+            if self.scans["run_details"]["scanned"] >= self.limits.runs:
+                self.truncate("run_details")
                 break
-            ordinal, item_id = -1, ""
-            while True:
-                remaining = min(256, self.limits.items - self.coverage["items_seen"])
-                if remaining <= 0:
-                    self.coverage["partial"] = True
-                    return
-                sql = f"""SELECT ordinal,turn_item_id,type,status,
-                    json_extract(payload_json,'$.startedAt'),json_extract(payload_json,'$.completedAt'),
-                    json_extract(payload_json,'$.toolName'),json_extract(payload_json,'$.exitCode'),
-                    CASE WHEN type='command_execution' AND length(json_extract(payload_json,'$.input'))<=16384
-                         THEN activity_command(json_extract(payload_json,'$.input')) ELSE NULL END,
-                    CASE WHEN type='file_change' AND length(json_extract(payload_json,'$.diffStr'))<=2097152
-                         THEN activity_diff(json_extract(payload_json,'$.diffStr')) ELSE NULL END
-                    FROM {PREFIX}turn_items WHERE run_id=? AND (ordinal>? OR (ordinal=? AND turn_item_id>?))
-                    ORDER BY ordinal,turn_item_id LIMIT ?"""
-                batch = list(self.rows(sql, (rid, ordinal, ordinal, item_id, remaining)))
-                if not batch:
-                    break
-                for (
-                    _ordinal,
-                    _item_id,
-                    kind,
-                    status,
-                    start,
-                    end,
-                    tool,
-                    exit_code,
-                    command,
-                    diff,
-                ) in batch:
-                    ordinal, item_id = _ordinal, _item_id
-                    self.coverage["items_seen"] += 1
-                    if kind == "file_change":
-                        edit_at = timing.timestamp(start)
-                        if edit_at is None:
-                            edit_known = False
-                            continue
-                        if not self.window[0] <= edit_at < self.window[1]:
-                            continue
-                        if diff:
-                            additions = json.loads(diff)
-                            lines = [a + b for a, b in zip(lines, additions)]
-                        else:
-                            edit_known = False
+            sql = f"""SELECT type,status,{start},{end},
+                json_extract(payload_json,'$.toolName'),json_extract(payload_json,'$.exitCode'),
+                CASE WHEN type='command_execution' AND length(json_extract(payload_json,'$.input'))<=16384
+                     THEN activity_command(json_extract(payload_json,'$.input')) ELSE NULL END,
+                CASE WHEN type='file_change' AND length(json_extract(payload_json,'$.diffStr'))<=2097152
+                     THEN activity_diff(json_extract(payload_json,'$.diffStr')) ELSE NULL END
+                FROM {PREFIX}turn_items WHERE run_id=? AND {eligible}
+                ORDER BY ordinal,turn_item_id"""
+            for kind, status, start_at, end_at, tool, exit_code, command, diff in self.bounded_rows(
+                "items", sql, (rid,)
+            ):
+                self.coverage["items_seen"] += 1
+                if kind == "file_change":
+                    at = timing.timestamp(start_at)
+                    if at is None:
+                        edit_known = False
                         continue
-                    if kind not in {"dynamic_tool", "command_execution", "compaction"}:
+                    if not self.window[0] <= at < self.window[1]:
                         continue
-                    interval = timing.clipped(
-                        start,
-                        end,
-                        self.window,
-                        open_at=self.window[1]
-                        if status in ACTIVE or status == "in_progress"
-                        else None,
-                    )
-                    start_at = timing.timestamp(start)
-                    if interval is None and not (
-                        start_at is not None and self.window[0] <= start_at < self.window[1]
-                    ):
-                        continue
-                    tid = run["thread"]
-                    phase = "compaction" if kind == "compaction" else "tool"
-                    category = (
-                        "compaction" if phase == "compaction" else command or tool_category(tool)
-                    )
-                    if interval:
-                        self.coverage["items_timed"] += 1
-                        self.agents[tid][phase].append(interval)
-                    self.coverage["unknown_tools"] += category == "other"
-                    failed = status == "failed" or (type(exit_code) is int and exit_code != 0)
-                    self._sample(category, interval, failed, tid)
-                    if start_at is not None and self.window[0] <= start_at < self.window[1]:
-                        self.calls[tid].append(start_at)
-                    key = "compactions" if phase == "compaction" else "tool_calls"
-                    self.metrics[key]["value"] += 1
-                    if kind == "command_execution" and failed:
-                        self.metrics["failed_commands"]["value"] += 1
-                if len(batch) < remaining:
-                    break
-            self.coverage["runs_scanned"] += 1
+                    if diff:
+                        additions = json.loads(diff)
+                        lines = [a + b for a, b in zip(lines, additions)]
+                    else:
+                        edit_known = False
+                    continue
+                if kind not in {"dynamic_tool", "command_execution", "compaction"}:
+                    continue
+                interval = timing.clipped(
+                    start_at,
+                    end_at,
+                    self.window,
+                    open_at=self.window[1] if status in ACTIVE or status == "in_progress" else None,
+                )
+                at = timing.timestamp(start_at)
+                if interval is None and not (
+                    at is not None and self.window[0] <= at < self.window[1]
+                ):
+                    continue
+                tid = run["thread"]
+                phase = "compaction" if kind == "compaction" else "tool"
+                category = "compaction" if phase == "compaction" else command or tool_category(tool)
+                if interval:
+                    self.coverage["items_timed"] += 1
+                    self.agents[tid][phase].append(interval)
+                self.coverage["unknown_tools"] += category == "other"
+                failed = status == "failed" or (type(exit_code) is int and exit_code != 0)
+                self._sample(category, interval, failed, tid)
+                if at is not None and self.window[0] <= at < self.window[1]:
+                    self.calls[tid].append(at)
+                key = "compactions" if phase == "compaction" else "tool_calls"
+                self.metrics[key]["value"] += 1
+                if kind == "command_execution" and failed:
+                    self.metrics["failed_commands"]["value"] += 1
+            self.scans["run_details"]["scanned"] += 1
+            if not self.scans["items"]["truncated"]:
+                self.coverage["runs_scanned"] += 1
             if self.progress and self.coverage["runs_scanned"] % 20 == 0:
                 self.progress("runs", self.coverage["runs_scanned"])
-        self.put("lines_added", lines[0] if edit_known else None, "edit_lines_unavailable")
-        self.put("lines_deleted", lines[1] if edit_known else None, "edit_lines_unavailable")
+        incomplete = self.scans["items"]["truncated"] or self.scans["run_details"]["truncated"]
+        self.put(
+            "lines_added",
+            lines[0] if edit_known and not incomplete else None,
+            "partial_scan" if incomplete else "edit_lines_unavailable",
+        )
+        self.put(
+            "lines_deleted",
+            lines[1] if edit_known and not incomplete else None,
+            "partial_scan" if incomplete else "edit_lines_unavailable",
+        )
 
     def asks_and_retries(self):
         samples = []
         count = answered = cancelled = 0
+        selected, args = self.selected_ids("thread_id", self.thread_meta)
+        eligible = self.during("created_at", "resolved_at", "status='pending'", points=False)
+        sql = f"""SELECT thread_id,kind,status,created_at,resolved_at,
+            json_extract(payload_json,'$.decision'),json_type(payload_json,'$.answers')='object'
+            FROM {PREFIX}runtime_requests WHERE {selected} AND kind='user_input' AND {eligible}"""
         for (
             tid,
             kind,
@@ -475,8 +521,7 @@ class Collector:
             end,
             decision,
             has_answers,
-        ) in self.rows(f"""SELECT thread_id,kind,status,created_at,resolved_at,
-            json_extract(payload_json,'$.decision'),json_type(payload_json,'$.answers')='object' FROM {PREFIX}runtime_requests"""):
+        ) in self.bounded_rows("asks", sql, args):
             if tid not in self.thread_meta or kind != "user_input":
                 continue
             interval = timing.clipped(
@@ -502,14 +547,24 @@ class Collector:
         self.put("ask_typical_seconds", timing.percentile(samples, 0.5), "no_samples")
         self.put("ask_longest_seconds", max(samples) if samples else None, "no_samples")
         retries = 0
+        selected, args = self.selected_ids("run_id", self.runs)
+        eligible = self.during(
+            "json_extract(payload_json,'$.startedAt')",
+            "json_extract(payload_json,'$.completedAt')",
+            "status IN ('preparing','starting','running','waiting')",
+            points=False,
+        )
+        sql = f"""SELECT run_id,json_extract(payload_json,'$.startedAt'),
+            json_extract(payload_json,'$.completedAt'),json_extract(payload_json,'$.reason'),status
+            FROM {PREFIX}run_attempts WHERE {selected} AND json_extract(payload_json,'$.reason')='retry'
+            AND {eligible}"""
         for (
             rid,
             start,
             end,
             reason,
             status,
-        ) in self.rows(f"""SELECT run_id,json_extract(payload_json,'$.startedAt'),
-             json_extract(payload_json,'$.completedAt'),json_extract(payload_json,'$.reason'),status FROM {PREFIX}run_attempts"""):
+        ) in self.bounded_rows("retries", sql, args):
             if rid not in self.runs or reason != "retry":
                 continue
             interval = timing.clipped(
@@ -530,25 +585,20 @@ class Collector:
             f"json_extract(p.payload_json,'$.turnTokenUsage.{key}')" for key in TOKEN_FIELDS
         )
         for tid in self.thread_meta:
-            if self.coverage["turns_seen"] >= self.limits.turns:
-                self.coverage["partial"] = True
-                break
             sql = f"""SELECT p.started_at,p.completed_at,p.run_attempt_id,
                 json_extract(p.payload_json,'$.turnTokenUsage.usageScope'),
                 json_extract(p.payload_json,'$.turnTokenUsage.usageStatus'),
                 json_extract(p.payload_json,'$.turnTokenUsage.hasSubagents'),{fields},
                 json_extract(p.payload_json,'$.tokenUsage.usedTokens'),json_extract(p.payload_json,'$.tokenUsage.maxTokens'),
                 a.run_id FROM {PREFIX}provider_turns p LEFT JOIN {PREFIX}run_attempts a ON a.attempt_id=p.run_attempt_id
-                WHERE p.thread_id=? ORDER BY p.ordinal LIMIT ?"""
-            for row in self.rows(sql, (tid, self.limits.turns + 1)):
+                WHERE p.thread_id=? AND activity_timestamp(p.started_at)>={self.window[0]}
+                AND activity_timestamp(p.started_at)<{self.window[1]} ORDER BY p.ordinal,p.provider_turn_id"""
+            for row in self.bounded_rows("turns", sql, (tid,)):
                 start, end, _attempt, scope, status, has_children, *tail = row
                 values, used, maximum, rid = tail[:5], tail[5], tail[6], tail[7]
                 a, b = timing.timestamp(start), timing.timestamp(end)
                 if a is None or not self.window[0] <= a < self.window[1]:
                     continue
-                if self.coverage["turns_seen"] >= self.limits.turns:
-                    self.coverage["partial"] = True
-                    break
                 self.coverage["turns_seen"] += 1
                 name = self.runs.get(rid, {}).get("model", "other")
                 mr = self.model_row(name)
@@ -587,6 +637,13 @@ class Collector:
         self.put("context_over_90", high if context else None, "context_missing")
 
     def transfers(self):
+        selected, args = self.selected_ids("source_thread_id", self.thread_meta)
+        targets, target_args = self.selected_ids("target_thread_id", self.thread_meta)
+        sql = f"""SELECT source_thread_id,target_thread_id,
+            target_run_id,json_extract(payload_json,'$.sourcePoint.runId'),updated_at,status
+            FROM {PREFIX}context_transfers WHERE type='provider_handoff'
+            AND status IN ('resolved_native','resolved_portable') AND ({selected} OR {targets})
+            AND activity_timestamp(updated_at)>={self.window[0]} AND activity_timestamp(updated_at)<{self.window[1]}"""
         for (
             source,
             target,
@@ -594,9 +651,7 @@ class Collector:
             source_run,
             stamp,
             status,
-        ) in self.rows(f"""SELECT source_thread_id,target_thread_id,
-            target_run_id,json_extract(payload_json,'$.sourcePoint.runId'),updated_at,status FROM {PREFIX}context_transfers
-            WHERE type='provider_handoff'"""):
+        ) in self.bounded_rows("transfers", sql, (*args, *target_args)):
             at = timing.timestamp(stamp)
             if (
                 at is None
@@ -617,8 +672,10 @@ class Collector:
             sql = f"""SELECT json_extract(j.value,'$.host'),json_extract(j.value,'$.repository'),
                 json_extract(j.value,'$.number'),json_extract(j.value,'$.snapshot.state'),
                 json_extract(j.value,'$.snapshot.syncedAt') FROM {PREFIX}threads t,
-                json_each(t.payload_json,'$.pullRequests') j WHERE t.thread_id=? LIMIT 512"""
-            for host, repo, number, state, stamp in self.rows(sql, (tid,)):
+                json_each(t.payload_json,'$.pullRequests') j WHERE t.thread_id=?"""
+            for host, repo, number, state, stamp in self.bounded_rows(
+                "pr_links", sql, (tid,), per_query=512
+            ):
                 self.coverage["pr_links"] += 1
                 if (
                     not isinstance(host, str)
@@ -649,6 +706,9 @@ class Collector:
                 ("prs_merged", "merged"),
             ):
                 self.put(key, sum(value == state for value, _ in known))
+        if self.scans["pr_links"]["truncated"] or self.scans["runs"]["truncated"]:
+            for key in ("prs_open", "prs_closed", "prs_merged"):
+                self.put(key, reason="partial_scan")
 
     def finish(self):
         threads: dict[str, dict[str, Any]] = {}
@@ -790,12 +850,13 @@ def trace_logs(paths, window, coverage, limit):
                     seen += 1
                     if seen > limit:
                         coverage["partial"] = True
+                        coverage["scans"]["logs"]["truncated"] = True
                         break
+                    coverage["scans"]["logs"]["scanned"] += 1
                     if len(raw) > 1048576:
-                        while raw and not raw.endswith(b"\n"):
-                            raw = source.readline(1048577)
                         coverage["logs_skipped"] += 1
-                        continue
+                        coverage["partial"] = True
+                        break
                     try:
                         data = json.loads(raw)
                         if not isinstance(data, dict):

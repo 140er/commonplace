@@ -16,6 +16,9 @@ MODELS = frozenset(
 )
 TOOLS = frozenset("shell build test check file web delegate other compaction wait unknown".split())
 PHASES = ("wait", "compaction", "tool", "unknown")
+SCAN_SOURCES = frozenset(
+    "runs native run_details items asks retries turns transfers pr_links logs".split()
+)
 STATUSES = frozenset(
     "queued preparing starting running waiting completed failed cancelled interrupted other".split()
 )
@@ -83,13 +86,25 @@ def _nullable_number(value):
 
 
 def _coverage(value):
+    if type(value) is not dict:
+        raise InvalidSnapshot()
     keys = (
         "runs_seen runs_scanned runs_timed runs_untimed items_seen items_timed turns_seen turns_complete turns_inclusive active_threads active_native "
         "native_agents native_agents_timed unknown_models unknown_tools threads_total threads_kept "
         "logs_read logs_skipped log_spans pr_links pr_unique pr_states metadata_ms detail_ms peak_rss_kib source_bytes log_bytes"
     ).split()
     _object(
-        value, [*keys, "partial", "log_first", "log_last", "pr_first", "pr_last", "source_updated"]
+        value,
+        [
+            *keys,
+            "partial",
+            "log_first",
+            "log_last",
+            "pr_first",
+            "pr_last",
+            "source_updated",
+            *(["scans"] if "scans" in value else []),
+        ],
     )
     for key in keys:
         _number(value[key])
@@ -100,6 +115,16 @@ def _coverage(value):
             _stamp(value[key])
     if value["runs_scanned"] > value["runs_seen"] or value["threads_kept"] > value["threads_total"]:
         raise InvalidSnapshot()
+    if "scans" in value:
+        _object(value["scans"], SCAN_SOURCES)
+        for scan in value["scans"].values():
+            _object(scan, ("scanned", "limit", "truncated"))
+            _integer(scan["scanned"])
+            _integer(scan["limit"], 500000)
+            if scan["scanned"] > scan["limit"] or type(scan["truncated"]) is not bool:
+                raise InvalidSnapshot()
+            if scan["truncated"] and not value["partial"]:
+                raise InvalidSnapshot()
 
 
 def _summaries(value):

@@ -27,7 +27,9 @@ person's rows even in retained shared workspaces; workspace purge removes all
 remaining Activity rows for that workspace. Another owner of the workspace cannot read that
 person's host activity. Anonymous callers, members, worker connections and
 external agent tokens cannot read or grant Activity access. Revocation, disabled
-machines, a new connection or grant changes invalidate access. Reports grant no
+machines, expired connections, a new connection or grant changes invalidate access.
+Enumeration, consent, recap and trace all revalidate the current connection's
+machine kind, registry binding, workspace and enrolling owner. Reports grant no
 execution, capacity, heartbeat or readiness authority.
 
 The collector has no default destination or credential discovery. A caller must
@@ -45,6 +47,12 @@ subagent with its own projected child run is counted once. Requested work withou
 a start stays separate. Run outcomes are not task completion. Task and pull
 request states need an attributable persisted record; unavailable values remain
 visible with an exact reason.
+
+Linked PR counts describe the latest dated retained state for each inspected PR,
+not open, close or merge events during the selected window. Source/as-of dates
+sit beside the counts. Window event counts remain unavailable because retained
+state snapshots do not establish event dates. Overflow in link collection makes
+state counts unavailable too; inspected unique links are not a complete denominator.
 
 Time shares use exclusive precedence: recorded user-input wait, compaction,
 tool/command execution, then unattributed run time. Summed call time remains a
@@ -68,9 +76,24 @@ an explicitly supplied machine transport. Its only outbound call is
 `POST /api/runner/activity`; the receiver checks consent again. No background
 source discovery, credential discovery or execution grant is installed.
 
+Collection filters selected identities and eligible time windows before applying
+row budgets, including input requests, retries, provider turns and handoffs.
+Intervals and percentile samples cannot exceed their source's row budget. Each
+source reports rows inspected, its budget and an overflow signal; the budget is
+not a total count. PR links have a global metadata budget and a 512-link limit per
+thread. A one-row overflow probe marks omissions partial without retaining them.
+Older snapshots without this per-source coverage say that it is unavailable.
+
 Collection has explicit row, identity and bucket limits. A capped scan reports
 partial coverage. Recap metadata and detailed scan latency, peak resident memory,
 source size, source freshness, timed/untimed runs, missing data and retention limits are measured
 independently. Polling reads stored aggregates only, stops when the page is hidden
 or paused, and offers manual refresh. A missing collector, stale snapshot or
 failed request is distinct from a real zero-activity interval.
+
+Time sinks ranks the leading retained threads across all models for the selected
+source/window, independently of Trace pagination and model filters. Each tab
+reloads its own scope. Phone rows preserve token, time, percentile and call labels.
+An empty filtered Trace list means no retained traces match; collection/retention
+caps can omit observed work. A missing detail explains that Refresh only rereads
+the stored snapshot and cannot restore omitted detail.

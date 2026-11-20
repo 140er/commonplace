@@ -56,9 +56,29 @@ def _host(db, owner, machine_id):
         "FROM runner_machines WHERE workspace_id=? AND id=? AND enrolled_by=?",
         (owner.workspace_id, machine_id, owner.user_id),
     ).fetchone()
-    if row is None or row["revoked_at"] or not row["enabled"]:
+    if row is None or not _current_host(db, row):
         raise Refused()
     return row
+
+
+def _current_host(db, machine):
+    if machine["revoked_at"] or not machine["enabled"]:
+        return False
+    live = db.authenticate_connection(machine["machine_connection_id"])
+    binding = db._conn.execute(
+        "SELECT machine_id,kind FROM runner_connections WHERE connection_id=?",
+        (machine["machine_connection_id"],),
+    ).fetchone()
+    return bool(
+        live
+        and live.auth == "pat"
+        and live.runner == "machine"
+        and live.workspace_id == machine["workspace_id"]
+        and live.user_id == machine["enrolled_by"]
+        and binding
+        and binding["machine_id"] == machine["id"]
+        and binding["kind"] == "machine"
+    )
 
 
 def _consent(db, machine):
@@ -190,10 +210,11 @@ def read(
                 "AND enabled=1 ORDER BY id LIMIT 101",
                 (owner.workspace_id, owner.user_id),
             ).fetchall()
-            hosts = [{"id": row["id"], "enabled": _consent(db, row)} for row in rows[:100]]
+            current = [row for row in rows if _current_host(db, row)]
+            hosts = [{"id": row["id"], "enabled": _consent(db, row)} for row in current[:100]]
             return {
                 "hosts": hosts,
-                "reason": "no_source" if not hosts else "host_limit" if len(rows) > 100 else None,
+                "reason": "host_limit" if len(rows) > 100 else "no_source" if not hosts else None,
             }
         machine = _host(db, owner, machine_id)
         if not _consent(db, machine):
@@ -216,7 +237,7 @@ def read(
         if thread_id is not None:
             thread = next((r for r in snapshot["threads"] if r["id"] == thread_id), None)
             if thread is None:
-                raise Refused()
+                raise Refused(404, "trace_not_retained")
             return {
                 "thread": thread,
                 "collected_at": snapshot["collected_at"],
