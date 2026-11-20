@@ -13,6 +13,7 @@ import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -27,10 +28,13 @@ from tests.test_compute_workspaces_browser import (  # noqa: F401 -- shared real
     _no_sideways_scroll,
     _serve,
     _swipe,
-    expect,
     pytestmark,
-    sync_playwright,
 )
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Route, expect, sync_playwright
+else:
+    from tests.test_compute_workspaces_browser import expect, sync_playwright
 
 SCREENS = ["desktop", "phone"]
 
@@ -743,7 +747,7 @@ def test_expired_slow_and_unverified_states_explain_themselves(served, ui, size)
 def test_the_page_shows_a_loading_state_with_the_real_words_while_the_list_loads(served, ui, size):
     fx = served
     fx.names = _populate(fx)
-    held = {}
+    held: dict[str, Route] = {}
 
     def body(page, label, context):
         pass
@@ -929,7 +933,7 @@ def test_try_again_says_it_is_trying_and_focus_lands_on_the_heading_when_it_work
         browser = pw.chromium.launch()
         try:
             context, page, errors = _open(browser, fx, ui, "phone")
-            held = {}
+            held: dict[str, Route] = {}
             page.route(
                 f"**{OVERVIEW}",
                 lambda route: route.fulfill(

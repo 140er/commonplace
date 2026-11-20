@@ -1,5 +1,4 @@
 - **Owns:** `test_workspace_preview_knowledge.py` checks ordinary API previews over real saved lifecycle state and the synthetic executor seam.
 - **Promises:** Legacy and stale Unknown records, unreachable withdrawn claims, fresh active phases and quiet controls keep correct knowledge, unchanged permissions and idempotent request behavior.
 - **How it fails:** Genuine pinned-source assertion failures distinguish contradictory effect wording from setup errors; controls preserve read-only previews and request-only execution limits.
-- **Tests:** `tests/test_workspace_preview_knowledge.py`.
-- **Browser coverage:** Empty-state assertions distinguish the reported state from the generic role explanation; both remain covered without inventing machine rows.
+- **Tests:** `tests/test_workspace_preview_knowledge.py`; empty-state browser assertions distinguish the reported state from the generic role explanation without inventing machine rows.
