@@ -1,0 +1,4 @@
+- **Owns:** `test_runner_program_delivery_regression.py` pins the missing command/delivery behavior; `test_runner_program_delivery.py` covers real offline dependency installs and negative artifact/code/prefix authority; the pairing UI harness covers capability wording.
+- **Promises:** Synthetic HTTP payload tests are distinct from real executable package tests; no test claims productive binding, provider authentication or native host confinement.
+- **How it fails:** Frozen regressions assert missing public behavior on the pinned base; malformed artifacts and revoked, replayed or foreign authority must refuse before target work.
+- **Tests:** `tests/test_runner_program_delivery_regression.py`, `tests/test_runner_program_delivery.py`, `tests/test_compute_pairing_ui.py`, `tests/test_machine_setup.py` and `tests/test_compute_pairing.py`.

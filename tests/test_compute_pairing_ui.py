@@ -12,6 +12,7 @@ import pytest
     "case",
     [
         "pure",
+        "program-delivery",
         "off",
         "member",
         "empty",

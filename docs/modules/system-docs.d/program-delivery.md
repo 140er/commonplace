@@ -1,0 +1,4 @@
+- **Owns:** `docs/system/runner-program-delivery.md` records the code-bound delivery decision and its setup-only authority boundary.
+- **Promises:** No native trust root, readiness transition or run authorization is implied by installing program files.
+- **How it fails:** Productive binding and execution remain blocked until the separate native authority prerequisite is satisfied.
+- **Tests:** `tests/test_docs_obligations.py` and `tests/test_docs_fragments.py`.

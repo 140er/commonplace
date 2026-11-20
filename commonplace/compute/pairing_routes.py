@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from commonplace.control_db import ControlError
-from commonplace.http_util import log_failure, send_json, send_text
+from commonplace.http_util import _send, log_failure, send_json, send_text
 from commonplace.runner import enrollment, enrollment_api
 
 from . import pairing
@@ -157,6 +157,23 @@ def _check(gateway, h):
                     },
                 )
                 return
+        requested = data.get("delivery")
+        if "delivery" in data:
+            from commonplace.runner import delivery
+
+            # Recheck the live code and its exact frozen pin together under the control lock.
+            # A download grants no credentials, readiness, enrollment or run authority.
+            with gateway.db._lock:
+                result = pairing.check(
+                    gateway.db, {k: v for k, v in data.items() if k != "delivery"}
+                )
+                if not result.get("usable"):
+                    send_json(h, 409, result)
+                    return
+                row = pairing._find(gateway.db, workspace, data["pairing_id"])
+                raw = delivery.artifact(gateway, row, requested)
+            _send(h, 200, raw, "application/octet-stream")
+            return
         result = pairing.check(gateway.db, data)
     except (ValueError, ControlError):
         send_json(h, 400, {"error": "invalid_request", "reason": "body"})
@@ -231,7 +248,14 @@ def launcher_text():
     source = Path(machine_setup.__file__).read_text(encoding="utf-8")
     if END_MARK in source or "\r" in source:
         raise RuntimeError("setup program cannot be embedded")
-    tail = f'{END_MARK}\nprintf \'%s\\n\' "$CODE" | "$PY" -I "$DIR/setup.py" "$ENVELOPE"\nexit $?\n'
+    tail = (
+        f"{END_MARK}\n"
+        'if [ "${2:-}" = "--program-only" ]; then\n'
+        '  printf \'%s\\n\' "$CODE" | "$PY" -I -B "$DIR/setup.py" "$ENVELOPE" --program-only\n'
+        "else\n"
+        '  printf \'%s\\n\' "$CODE" | "$PY" -I -B "$DIR/setup.py" "$ENVELOPE"\n'
+        "fi\nexit $?\n"
+    )
     return _SH + source + ("" if source.endswith("\n") else "\n") + tail
 
 
@@ -247,6 +271,9 @@ def _launcher(gateway, h):
 
 
 def install(gateway):
+    from commonplace.runner import delivery
+
+    delivery.configure(gateway)
     pairing.ensure(gateway.db)
     gateway.add_route("GET", LAUNCHER, lambda h: _launcher(gateway, h))
     gateway.add_route("POST", STATUS, lambda h: _status(gateway, h))

@@ -139,6 +139,14 @@ const alerts = html => (html.match(/role="alert"[^>]*>(?:<p>|[^<\s])/g) || []).l
 const wingBoxes = f => f.dispatch('input', { type: 'input', target: { name: 'wings', type: 'checkbox', value: 'shared', checked: true, removeAttribute() {} } });
 
 const cases = {
+  async 'program-delivery'() {
+    const f = fixture({ options: { ...ownerOptions, program_delivery: true } }); await f.open();
+    assert.match(text(f.section()), /installs this site's pinned runner program and dependencies/);
+    assert.match(text(f.section()), /Coworkers do not run on it in this version/);
+    assert.doesNotMatch(text(f.section()), /does not install the runner program itself/);
+    const legacy = fixture(); await legacy.open();
+    assert.match(text(legacy.section()), /does not install the runner program itself/);
+  },
   async pure() {
     assert.deepEqual(pr.listOf(' a, b ,a,,c '), ['a', 'b', 'c']);
     assert.match(pr.clockText('2026-11-19T12:00:00Z'), /\d/); assert.equal(pr.clockText('nope'), ''); assert.equal(pr.clockText(null), '');

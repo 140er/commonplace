@@ -21,16 +21,22 @@ Nothing here prints, logs or stores the code, and nothing touches SSH.
 
 import base64
 import errno
+import hashlib
 import importlib.util
+import io
 import json
 import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+import venv
+import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -52,6 +58,10 @@ MIN_PYTHON = (3, 10)
 MIN_FREE_BYTES = 256 * 1024 * 1024
 # Lowest supported release of each system: the app says "Ubuntu 24.04 and Debian 12 or later".
 SUPPORTED = {"ubuntu": (24, 4), "debian": (12, 0)}
+PROGRAM_PURPOSE = "runner-program-delivery"
+PROGRAM_LIMIT = 32 * 1024 * 1024
+PROGRAM_EXPANDED_LIMIT = 128 * 1024 * 1024
+PROGRAM_ROOT = ".commonplace-runner-programs"
 
 
 class Unreachable(Exception):
@@ -76,7 +86,7 @@ def parse_envelope(text):
         raise ValueError("envelope") from None
     if (
         not isinstance(data, dict)
-        or set(data) != ENVELOPE_KEYS
+        or set(data) not in (ENVELOPE_KEYS, ENVELOPE_KEYS | {"program"})
         or data["v"] != 1
         or data["kind"] != "runner"
         or not isinstance(data["label"], str)
@@ -91,7 +101,243 @@ def parse_envelope(text):
         or not origin_ok(data["hub"])
     ):
         raise ValueError("envelope")
+    if "program" in data:
+        program_pin(data["program"])
     return data
+
+
+def program_pin(value):
+    """Public digest pinned by the owner's command, never a response-selected URL or key."""
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "purpose", "sha256", "size", "python", "system", "machine"}
+        or type(value["version"]) is not int
+        or value["version"] != 1
+        or value["purpose"] != PROGRAM_PURPOSE
+        or not isinstance(value["sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", value["sha256"])
+        or type(value["size"]) is not int
+        or not 0 < value["size"] <= PROGRAM_LIMIT
+        or any(
+            not isinstance(value[k], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value[k])
+            for k in ("python", "system", "machine")
+        )
+    ):
+        raise ValueError("invalid program pin")
+    return value
+
+
+def program_contents(raw, pin):
+    """Verify the whole package before creating a prefix; never use archive extraction paths."""
+    program_pin(pin)
+    if len(raw) != pin["size"] or hashlib.sha256(raw).hexdigest() != pin["sha256"]:
+        raise ValueError("program integrity check failed")
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        entries = archive.infolist()
+        names = [item.filename for item in entries]
+        if (
+            len(entries) > 10000
+            or len(set(names)) != len(names)
+            or sum(item.file_size for item in entries) > PROGRAM_EXPANDED_LIMIT
+            or any(
+                stat.S_IFMT(item.external_attr >> 16) not in (0, stat.S_IFREG) or item.is_dir()
+                for item in entries
+            )
+            or "program.json" not in names
+            or archive.getinfo("program.json").file_size > 2 * 1024 * 1024
+        ):
+            raise ValueError("invalid program archive")
+        manifest = json.loads(archive.read("program.json"))
+        if (
+            not isinstance(manifest, dict)
+            or set(manifest)
+            != {"version", "purpose", "python", "system", "machine", "dependencies", "files"}
+            or any(
+                manifest[k] != pin[k] for k in ("version", "purpose", "python", "system", "machine")
+            )
+            or not isinstance(manifest["dependencies"], dict)
+            or set(manifest["dependencies"]) != {"cryptography", "cffi", "pycparser"}
+            or any(
+                not isinstance(v, str) or not re.fullmatch(r"[0-9][A-Za-z0-9.+-]{0,79}", v)
+                for v in manifest["dependencies"].values()
+            )
+            or not isinstance(manifest["files"], dict)
+            or set(names) != {"program.json", *manifest["files"]}
+            or "site/commonplace/runner/installer.py" not in manifest["files"]
+        ):
+            raise ValueError("invalid program manifest")
+        files = {}
+        for name, expected in manifest["files"].items():
+            parts = name.split("/")
+            if (
+                not name.startswith("site/")
+                or any(p in ("", ".", "..") for p in parts)
+                or not re.fullmatch(r"[A-Za-z0-9_./+\-]+", name)
+                or name.endswith(".pth")
+                or parts[-1] in ("sitecustomize.py", "usercustomize.py")
+                or not isinstance(expected, dict)
+                or set(expected) != {"sha256", "size"}
+                or type(expected["size"]) is not int
+                or archive.getinfo(name).file_size != expected["size"]
+            ):
+                raise ValueError("unsafe program entry")
+            data = archive.read(name)
+            if hashlib.sha256(data).hexdigest() != expected["sha256"]:
+                raise ValueError("program entry integrity check failed")
+            files[name[5:]] = data
+    return manifest, files
+
+
+def _private(info, *, directory=False, executable=False):
+    if (
+        (not stat.S_ISDIR(info.st_mode) if directory else not stat.S_ISREG(info.st_mode))
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != (0o700 if directory or executable else 0o600)
+        or (not directory and info.st_nlink != 1)
+    ):
+        raise ValueError("unsafe program prefix")
+
+
+def _program_file(prefix, relative, *, executable=False):
+    """Read through owned directory descriptors; refuse replaced parents, links and hard links."""
+    fd = os.open(prefix, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        _private(os.fstat(fd), directory=True)
+        parts = relative.split("/")
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            _private(os.fstat(fd), directory=True)
+        file = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        try:
+            _private(os.fstat(file), executable=executable)
+            with os.fdopen(file, "rb", closefd=False) as stream:
+                return stream.read(PROGRAM_LIMIT + 1)
+        finally:
+            os.close(file)
+    finally:
+        os.close(fd)
+
+
+def verify_program(prefix, pin, files):
+    site = f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+    receipt = json.loads(_program_file(prefix, "program-install.json"))
+    if receipt != {"pin": pin}:
+        raise ValueError("program prefix belongs to a different release")
+    # Python itself remains a trusted OS prerequisite. Refuse a replaced private copy or
+    # a venv configuration that could import a different standard library/system site.
+    base_executable = getattr(sys, "_base_executable", None)
+    if not isinstance(base_executable, str):
+        raise ValueError("base Python unavailable")
+    if _program_file(prefix, "bin/python", executable=True) != Path(base_executable).read_bytes():
+        raise ValueError("installed Python integrity check failed")
+    rows = [
+        line.split("=", 1) for line in _program_file(prefix, "pyvenv.cfg").decode().splitlines()
+    ]
+    if any(len(row) != 2 for row in rows):
+        raise ValueError("invalid Python environment")
+    config = {key.strip(): value.strip() for key, value in rows}
+    if (
+        len(config) != len(rows)
+        or config.get("include-system-site-packages") != "false"
+        or config.get("home") != str(Path(base_executable).parent)
+    ):
+        raise ValueError("Python environment changed")
+    for name, raw in files.items():
+        if _program_file(prefix, site + "/" + name) != raw:
+            raise ValueError("installed program integrity check failed")
+    return Path(prefix) / "bin/python"
+
+
+def install_program(home, raw, pin):
+    """Publish one complete private venv, with no pip, network, system package or service changes."""
+    manifest, files = program_contents(raw, pin)
+    if (pin["python"], pin["system"], pin["machine"]) != (
+        sys.implementation.cache_tag,
+        platform.system(),
+        platform.machine(),
+    ):
+        raise ValueError("program is built for a different Python or machine")
+    home = Path(home).absolute()
+    if home.resolve() != home or any(ord(c) < 32 for c in str(home)):
+        raise ValueError("unsafe program home")
+    home_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(home_fd)
+        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise ValueError("unsafe program home")
+        try:
+            os.mkdir(PROGRAM_ROOT, 0o700, dir_fd=home_fd)
+        except FileExistsError:
+            pass
+        root_fd = os.open(
+            PROGRAM_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=home_fd
+        )
+    finally:
+        os.close(home_fd)
+    root = home / PROGRAM_ROOT
+    prefix = root / pin["sha256"]
+    try:
+        _private(os.fstat(root_fd), directory=True)
+        import fcntl
+
+        lock = os.open(
+            pin["sha256"] + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=root_fd
+        )
+        try:
+            _private(os.fstat(lock))
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if prefix.exists() or prefix.is_symlink():
+                return verify_program(prefix, pin, files)
+            with tempfile.TemporaryDirectory(prefix=".install-", dir=root) as temporary:
+                staged = Path(temporary) / "program"
+                venv.EnvBuilder(with_pip=False, symlinks=False).create(staged)
+                site = (
+                    staged
+                    / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+                )
+                for name, data in files.items():
+                    path = site / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    with path.open("xb") as stream:
+                        stream.write(data)
+                (staged / "program-install.json").write_text(json.dumps({"pin": pin}))
+                for path in staged.rglob("*"):
+                    if path.is_symlink():
+                        # venv may create only this standard library directory alias.
+                        if path == staged / "lib64" and os.readlink(path) == "lib":
+                            path.unlink()
+                            continue
+                        raise ValueError("unexpected program link")
+                    path.chmod(0o700 if path.is_dir() or path.parent == staged / "bin" else 0o600)
+                staged.chmod(0o700)
+                # Import the real installer and perform real cryptographic operations in the new interpreter.
+                check = subprocess.run(
+                    [
+                        str(staged / "bin/python"),
+                        "-I",
+                        "-B",
+                        "-c",
+                        "from commonplace.runner.installer import Installer; "
+                        "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; "
+                        "k=Ed25519PrivateKey.generate(); k.public_key().verify(k.sign(b'program-check'),b'program-check')",
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "HOME": str(home), "LANG": "C"},
+                )
+                if check.returncode:
+                    raise ValueError("delivered runner cannot start on this machine")
+                verify_program(staged, pin, files)
+                os.rename(staged, prefix)
+                os.fsync(root_fd)
+            return prefix / "bin/python"
+        finally:
+            os.close(lock)
+    finally:
+        os.close(root_fd)
 
 
 def origin_ok(origin):
@@ -149,6 +395,26 @@ class Hub:
 
     def status(self, token, body):
         return self._post("/api/runner/pairing-status", body, token)
+
+    def program(self, body, pin):
+        request = urllib.request.Request(
+            self.origin + "/api/runner-pairing/check",
+            data=json.dumps(
+                body | {"delivery": {"purpose": PROGRAM_PURPOSE, "sha256": pin["sha256"]}}
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self.opener.open(request, timeout=20) as response:
+                if response.headers.get_content_type() != "application/octet-stream":
+                    raise ValueError
+                raw = response.read(pin["size"] + 1)
+            if len(raw) != pin["size"] or hashlib.sha256(raw).hexdigest() != pin["sha256"]:
+                raise ValueError
+            return raw
+        except Exception:
+            raise Unreachable from None
 
 
 class LiveProbe:
@@ -225,7 +491,7 @@ def _version(text):
     return tuple(int(p) for p in parts[:2]) + (0,) * (2 - len(parts[:2]))
 
 
-def prerequisites(probe):
+def prerequisites(probe, *, program=True, service=True):
     """Raise ``Failure`` for the first thing that stops setup; return None when all pass."""
     if probe.uid() == 0:
         raise Failure(
@@ -247,20 +513,20 @@ def prerequisites(probe):
             "Python 3.10 or later is required.",
             "Install it (sudo apt install python3), then open Cloud workspaces in the app and choose Set up again.",
         )
-    if not probe.can_import("cryptography"):
+    if program and not probe.can_import("cryptography"):
         raise Failure(
             "missing_prerequisite",
             "The Python package 'cryptography' is missing.",
             "Install it (sudo apt install python3-cryptography), then open Cloud workspaces in the app and choose Set up again.",
         )
-    if not probe.can_import("commonplace.runner.installer"):
+    if program and not probe.can_import("commonplace.runner.installer"):
         raise Failure(
             "missing_runner_program",
             "The runner program is not installed on this machine.",
             "This command does not install it yet. Ask the person who runs this site for the "
             "runner program, then open Cloud workspaces in the app and choose Set up again.",
         )
-    if not probe.user_manager():
+    if service and not probe.user_manager():
         raise Failure(
             "no_service_manager",
             "This machine has no login session that can run a background service.",
@@ -291,8 +557,9 @@ def _phase(installer):
 
 def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out=print):
     argv = sys.argv[1:] if argv is None else argv
+    program_only = len(argv) == 2 and argv[1] == "--program-only"
     try:
-        envelope = parse_envelope(argv[0] if len(argv) == 1 else None)
+        envelope = parse_envelope(argv[0] if len(argv) == 1 or program_only else None)
     except ValueError:
         out("The command is not complete. Copy the whole command again from the app.")
         return 2
@@ -311,6 +578,59 @@ def main(argv=None, *, code=None, probe=None, hub=None, make_installer=None, out
             out("This machine could not reach " + envelope["hub"] + ".")
             out("Check its internet connection, then run the command again.")
             return None
+
+    pin = envelope.get("program")
+    prefix = probe.home() / PROGRAM_ROOT / pin["sha256"] if pin else None
+    if program_only and pin is None:
+        out(
+            "This command has no pinned runner program. Ask the site operator to configure a release."
+        )
+        return 1
+    if pin and (program_only or Path(sys.prefix) != prefix):
+        # No service, linger, enrollment or credential operation happens at this boundary.
+        answer = ask()
+        if answer is None:
+            return 1
+        if not answer.get("usable"):
+            out(str(answer.get("text", "The code cannot be used.")))
+            out(str(answer.get("next", AGAIN)))
+            return 1
+        try:
+            prerequisites(probe, program=False, service=False)
+            conflict = _other_site(probe.home(), envelope)
+            if conflict:
+                for line in conflict:
+                    out(line)
+                return 1
+            out("Downloading and checking the pinned runner program ...")
+            raw = hub.program(base, pin)
+            python = install_program(probe.home(), raw, pin)
+        except Failure as exc:
+            ask({"step": "prerequisites", "state": "failed", "cause": exc.cause})
+            out(exc.message)
+            out(exc.then)
+            return 1
+        except (Unreachable, OSError, ValueError, zipfile.BadZipFile):
+            ask({"step": "files", "state": "failed", "cause": "program_unavailable"})
+            out(
+                "The pinned runner program could not be delivered or verified. No setup service was changed."
+            )
+            out("Ask the site operator to check its program release, then choose Set up again.")
+            return 1
+        out("Runner program and dependencies installed and checked. Execution remains disabled.")
+        if program_only:
+            out(
+                "Program delivery only: the enrollment code was not spent. No machine was bound or run."
+            )
+            return 0
+        # Start the actual delivered program, with the code on its private input pipe.
+        # The fixed environment cannot inherit a provider credential or another installation.
+        result = subprocess.run(
+            [str(python), "-I", "-B", "-m", "commonplace.runner.machine_setup", argv[0]],
+            input=code.encode(),
+            env={"PATH": "/usr/bin:/bin", "HOME": str(probe.home()), "LANG": "C"},
+        )
+        return result.returncode
 
     out("Checking this machine ...")
     failure = None
@@ -522,12 +842,15 @@ def _install(envelope, code, probe, hub, make_installer, out, ask):
 
 def _failed(exc, installer, home, hub, out, ask, lines, code, envelope):
     """Say what happened and why, tell the app the step it reached, and give the one next step."""
+    refusal_types: tuple[type[Exception], ...]
     try:
         from commonplace.runner.installer import EnrollmentRefused
+
+        refusal_types = (EnrollmentRefused,)
     except ImportError:  # pragma: no cover - the program only gets here with the runner program
-        EnrollmentRefused = ()
+        refusal_types = ()
     phase, token = _phase(installer), _token(home, envelope)
-    if isinstance(exc, EnrollmentRefused):
+    if isinstance(exc, refusal_types):
         # The site answered and said no: ask it why, in the app's own words, instead of calling it a lost connection.
         answer = ask()
         if answer is not None:

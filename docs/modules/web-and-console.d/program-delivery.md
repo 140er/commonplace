@@ -1,0 +1,4 @@
+- **Owns:** `compute-pairing.js` states whether this site's command delivers a pinned runner program or requires it preinstalled.
+- **Promises:** Both modes continue to disclose setup-only capability and no Coworker execution.
+- **How it fails:** Without configured delivery the existing preinstall limitation remains visible.
+- **Tests:** The program-delivery case in `tests/compute_pairing_ui.mjs` and `tests/test_compute_pairing_ui.py`.
