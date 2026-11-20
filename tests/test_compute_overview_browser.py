@@ -1343,7 +1343,10 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
         assert "Nothing here yet" not in page.locator("[data-ov-slot=state]").inner_text(), (
             "the headline says it once"
         )
-        assert "runner machine" not in page.locator(".compute-ov").inner_text()
+        assert "runner machine" not in page.locator("[data-ov-slot=state]").inner_text()
+        assert "A runner machine is a computer for Coworkers" in (
+            page.locator(".compute-ov").text_content() or ""
+        )
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0
         assert page.locator("[data-ov-kind-filter]").count() == 0
         _shot(page, f"{ui}-{size}-43-empty")
