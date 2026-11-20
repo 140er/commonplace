@@ -268,6 +268,62 @@ const cases = {
     const { slot } = fakeSlot();
     assert.equal(focusedKey(slot, { activeElement: null }), null);
   },
+  deleteview() {
+    // Only an owner sees Delete files, only where there are files, and never while publishing.
+    const list = [
+      preview(),
+      preview({ id: 'pv_0000000000000002', state: 'stopped', url: '/p/pv_0000000000000002/' }),
+      preview({ id: 'pv_0000000000000003', state: 'stopped', reason: 'files_deleted', url: null }),
+      preview({ id: 'pv_0000000000000004', state: 'building', url: '/p/pv_0000000000000004/' }),
+    ];
+    assert.ok(!cardPreviewsHTML(found(list)).includes('data-preview-delete'));
+    const html = cardPreviewsHTML(found(list, { can_delete: true }));
+    assert.deepEqual([...html.matchAll(/data-preview-delete="([^"]+)"/g)].map((m) => m[1]), ['pv_0123456789abcdef', 'pv_0000000000000002']);
+    // Confirming names the preview, its size and that it cannot be undone.
+    const asking = cardPreviewsHTML(found(list, { can_delete: true }), 'pv_0123456789abcdef');
+    assert.ok(asking.includes('data-preview-delete-confirm="pv_0123456789abcdef"') && asking.includes('data-preview-delete-cancel="pv_0123456789abcdef"'));
+    assert.ok(asking.includes('Delete the files of <b>home</b> (2 KiB, this card)?') && asking.includes('cannot be undone'));
+    assert.ok(!asking.includes('data-preview-delete="pv_0123456789abcdef"'));
+  },
+  async deleteflow() {
+    const { body, status, mount, handlers } = fakeSlot();
+    const sent = [];
+    let deleted = false, left = false;
+    const api = async (url, options) => {
+      // The first delete leaves files behind; the second removes them.
+      if (options?.method === 'DELETE') { sent.push([url, options.body]); deleted = true; left = sent.length === 1; return { files_remaining: left }; }
+      return found([deleted ? preview({ state: 'stopped', reason: 'files_deleted', reason_text: 'A workspace owner deleted the files of this preview.', url: null, files_remaining: left }) : preview()], { can_delete: true });
+    };
+    await attachCardPreviews(mount, { ...card, number: 26 }, { api });
+    handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
+    assert.ok(body.innerHTML.includes('cannot be undone'));
+    // Asking moves focus to Cancel; cancelling puts it back on Delete files.
+    assert.equal(focused(), 'data-preview-delete-cancel=pv_0123456789abcdef');
+    handlers.click(clickOn('previewDeleteCancel', 'pv_0123456789abcdef'));
+    assert.ok(!body.innerHTML.includes('cannot be undone') && body.innerHTML.includes('data-preview-delete="pv_0123456789abcdef"'));
+    assert.equal(focused(), 'data-preview-delete=pv_0123456789abcdef');
+    assert.deepEqual(sent, []);
+    handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
+    handlers.click(clickOn('previewDeleteConfirm', 'pv_0123456789abcdef'));
+    await wait(); await wait();
+    assert.deepEqual(sent, [['/api/previews/pv_0123456789abcdef', { confirm: 'pv_0123456789abcdef' }]]);
+    // The result is said in the one status line, not in the list.
+    assert.equal(status.textContent, 'Some files could not be removed. Use Finish deleting to try again.');
+    assert.ok(!body.innerHTML.includes('could not be removed'));
+    assert.ok(body.innerHTML.includes('deleted the files') && !body.innerHTML.includes('data-preview-open'));
+    // The retry the note promises is there, focus is on it, and it finishes the job.
+    assert.ok(body.innerHTML.includes('>Finish deleting<') && body.innerHTML.includes('data-preview-delete="pv_0123456789abcdef"'));
+    assert.equal(focused(), 'data-preview-delete=pv_0123456789abcdef');
+    handlers.click(clickOn('previewDelete', 'pv_0123456789abcdef'));
+    assert.ok(body.innerHTML.includes('that were left behind last time'));
+    handlers.click(clickOn('previewDeleteConfirm', 'pv_0123456789abcdef'));
+    await wait(); await wait();
+    assert.equal(sent.length, 2);
+    assert.equal(status.textContent, 'Deleted the files. People can no longer open this preview.');
+    assert.ok(!body.innerHTML.includes('data-preview-delete='));
+    // Nothing left to act on: focus falls back to the heading.
+    assert.equal(focused(), 'data-preview-heading=previews');
+  },
   async stale() {
     const { body, slot, mount } = fakeSlot();
     const release = [];

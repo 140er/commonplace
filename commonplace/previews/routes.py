@@ -1,4 +1,4 @@
-"""``/api/previews``: people list, publish, stop and reopen previews of their cards.
+"""``/api/previews``: people list, publish, stop, reopen and (owners) delete the files of previews of their cards.
 
     GET    /api/previews[?card=<n>|?pr=<url>]  {previews, usage, limits, rule}
     POST   /api/previews                       publish; body {card, name, files:[{path,text|base64}]}
@@ -7,6 +7,7 @@
     GET    /api/previews/<id>                  one preview with its revisions
     POST   /api/previews/<id>/stop             stop serving (files kept)
     POST   /api/previews/<id>/open-again       serve a stopped preview again
+    DELETE /api/previews/<id>                  owner: delete the files; body {confirm: <id>}
 
 Only signed-in people use these routes (a Coworker uses the preview tools); every lookup goes
 through the card, so a missing preview, another workspace's and a card the caller cannot see
@@ -104,6 +105,14 @@ def install(gateway) -> None:
                 send(200, service.set_rules(gateway, principal, body))
             elif len(parts) == 1 and method == "GET":
                 send(200, service.get(gateway, principal, parts[0]))
+            elif len(parts) == 1 and method == "DELETE":
+                try:
+                    body = http_util.read_json(h)
+                except ValueError:
+                    return
+                if not isinstance(body, dict):
+                    raise ValueError("send {confirm: <preview id>}")
+                send(200, service.delete_files(gateway, principal, parts[0], body.get("confirm")))
             elif len(parts) == 2 and method == "POST" and parts[1] == "stop":
                 send(200, service.stop(gateway, principal, parts[0]))
             elif len(parts) == 2 and method == "POST" and parts[1] == "open-again":
@@ -126,5 +135,5 @@ def install(gateway) -> None:
 
     gateway.add_route("GET", PREFIX, route)
     gateway.add_route("POST", PREFIX, route)
-    for method in ("GET", "POST", "PUT"):
+    for method in ("GET", "POST", "PUT", "DELETE"):
         gateway.add_prefix_route(method, PREFIX + "/", route)

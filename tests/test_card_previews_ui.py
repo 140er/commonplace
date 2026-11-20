@@ -26,6 +26,8 @@ CASES = [
     "redraw",
     "poll",
     "focuskeys",
+    "deleteview",
+    "deleteflow",
     "stale",
     "panel",
     "loads",
