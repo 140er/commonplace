@@ -1,0 +1,3 @@
+- **Owns:** `docs/system/workspace-preview-knowledge.md` records the distinction between lifecycle knowledge and permission to save a request.
+- **Promises:** Uncertain effect wording makes no execution or liveness claim.
+- **Tests:** Documentation obligations and fragment validation check the added slice.
