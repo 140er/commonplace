@@ -432,3 +432,69 @@ def test_staging_preserves_relative_receive_hook_refusal(clone, tmp_path):
     assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
     assert (clone / "f.txt").read_text() == "1\n"
     assert refusal.read_bytes() == original
+
+
+@pytest.mark.parametrize("kind", ["valid", "implementation_error", "stub_error"])
+def test_real_push_checks_paired_implementation_and_stub(clone, tmp_path, kind):
+    implementation = clone / "paired.py"
+    stub = clone / "paired.pyi"
+    implementation.write_text('def value() -> str:\n    return "base"\n')
+    stub.write_text("def value() -> str: ...\n")
+    (clone / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    (clone / ".gitignore").write_text(".mypy_cache/\n.ruff_cache/\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "paired fixture")
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(clone, "remote", "add", "origin", str(remote))
+    git(clone, "push", "-q", "origin", "main")
+    accepted = git(remote, "rev-parse", "refs/heads/main").stdout.strip()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged paired hooks")
+    config = (clone / ".git/config").read_bytes()
+    implementation.write_text(
+        'def value() -> int:\n    return "wrong type"\n'
+        if kind == "implementation_error"
+        else "def value() -> int:\n    return 2\n"
+    )
+    stub.write_text(
+        'BAD: int = "wrong type"\n\ndef value() -> int: ...\n'
+        if kind == "stub_error"
+        else "def value() -> int: ...\n"
+    )
+    formatted = subprocess.run(
+        [sys.executable, "-m", "ruff", "format", str(implementation), str(stub)],
+        capture_output=True,
+        text=True,
+    )
+    assert formatted.returncode == 0, formatted.stderr
+    git(clone, "add", "paired.py", "paired.pyi")
+    git(clone, "commit", "-qm", "paired type update")
+    env = dict(os.environ, **IDENTITY, COMMONPLACE_PYTHON=sys.executable)
+
+    result = git(
+        clone,
+        "-c",
+        f"core.hooksPath={staged}",
+        "push",
+        "-q",
+        "origin",
+        "main",
+        check=False,
+        env=env,
+    )
+
+    assert "Duplicate module named" not in result.stderr, result.stderr
+    assert len([line for line in result.stderr.splitlines() if "] typecheck mypy" in line]) == 2
+    if kind == "valid":
+        assert result.returncode == 0, result.stderr
+        assert "QUICK CHECK PASSED" in result.stderr
+        assert git(remote, "rev-parse", "refs/heads/main").stdout.strip() == (
+            git(clone, "rev-parse", "HEAD").stdout.strip()
+        )
+    else:
+        assert result.returncode != 0, result.stderr
+        diagnostic = "[return-value]" if kind == "implementation_error" else "[assignment]"
+        assert diagnostic in result.stderr, result.stderr
+        assert "QUICK CHECK FAILED" in result.stderr
+        assert git(remote, "rev-parse", "refs/heads/main").stdout.strip() == accepted
+    assert (clone / ".git/config").read_bytes() == config

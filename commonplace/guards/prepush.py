@@ -235,14 +235,26 @@ def _file_steps(top: Path, changed: list[str]) -> list[tuple[str, PlannedCommand
         else:
             steps.append((f"lint {command.name}", command))
     python_files = tuple(path for path in changed if path.endswith((".py", ".pyi")))
-    if python_files:
+    python_paths = set(python_files)
+    paired_stubs = {
+        path for path in python_files if path.endswith(".pyi") and path[:-1] in python_paths
+    }
+    # Mypy gives a matching implementation and stub the same module name. Keep
+    # both checks, but put their explicit roots in different invocations.
+    python_batches = (
+        tuple(path for path in python_files if path not in paired_stubs),
+        tuple(path for path in python_files if path in paired_stubs),
+    )
+    for batch in python_batches:
+        if not batch:
+            continue
         steps.append(
             (
                 "typecheck mypy",
                 PlannedCommand(
                     name="mypy",
-                    argv=("mypy", "--check-untyped-defs", "--", *python_files),
-                    files=python_files,
+                    argv=("mypy", "--check-untyped-defs", "--", *batch),
+                    files=batch,
                 ),
             )
         )

@@ -6,6 +6,9 @@ checked too. Ruff lint/format, Rust formatting, documentation checks and mapped 
 tests remain. The nine-second elapsed target is an alarm, never a cutoff or a reason
 to skip checks. Missing tools and inputs that cannot be validated block the push.
 Type errors in an existing dependency are reported rather than ignored or baselined.
+When both an implementation and its matching stub change, they remain checked as
+explicit roots in separate mypy invocations, avoiding a duplicate module while
+retaining diagnostics and push refusal for a type error in either file.
 
 The hook validates clean tracked files at the pushed HEAD; another pushed commit or
 dirty tracked input requires validation from the correct checkout. Deleted files do
