@@ -4,7 +4,7 @@ import { createPairing } from "./compute-pairing.js";
 import { createWorkspaces } from "./compute-workspaces.js";
 
 const BASE = "/api/compute";
-const intro = "Where your Coworkers run: an overview of everything first, then cloud workspaces, then (for the workspace owner) the settings of the machines themselves under Advanced.";
+const intro = "Where your Coworkers run: an overview of everything first, then Add a machine, then cloud workspaces, then (for the workspace owner) the technical settings of target machines under Advanced. A runner machine's own settings are in Admin, under Runner machines.";
 const parts = (...values) => values.filter(value => value !== undefined && value !== null && String(value).trim()).join(" · ");
 const endpoint = row => row.address ? [row.address, row.port].filter(value => value !== undefined && value !== null && value !== "").join(":") : "";
 const enc = encodeURIComponent;

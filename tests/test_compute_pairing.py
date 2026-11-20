@@ -570,7 +570,7 @@ def test_accept_enables_the_machine_but_never_attests_it(flow):
         )
     assert machine["enabled"] == 1 and machine["binding_state"] == "unbound"
     assert item["binding_state"] == "unbound"
-    assert "provider" in pairing.STATES["ready"][2]
+    assert "only checks the machine" in pairing.STATES["ready"][2]
     row = [r for r in audit_rows(flow.hub) if r["action"] == "runner.pairing.accept"]
     assert len(row) == 1 and item["id"] in row[0]["target_ids"]
 
@@ -689,6 +689,21 @@ def test_a_workspace_beside_only_a_setup_only_machine_does_not_say_no_machine_is
     row = next(i for i in listing["items"] if i["kind"] == "workspace")
     assert "No machine is set up yet" not in json.dumps(row)
     assert "only checks itself" in row["status"]["detail"]
+
+
+def test_an_approved_guided_machine_never_gets_a_confirm_card_in_needs_me(flow):
+    """The live check of the "Confirm this machine in Needs me" promise: approve a machine added through the guide, then
+    look in Needs me. The card needs the machine to be attested already and an installation record the guide's installer
+    never writes, so none appears (and the screens must not promise one)."""
+    from commonplace import sessions
+    from commonplace.runner import setup_approvals
+
+    made = flow.made()
+    flow.connect(made)
+    assert flow.accept(made)[0] == 200
+    db = flow.hub.db
+    owner = sessions.person_principal(db, flow.owner["user_id"], flow.owner["workspace"])
+    assert setup_approvals.attention(db, owner) == [], "no card: nothing in Needs me to confirm"
 
 
 def test_accept_replays_by_request_id_and_refuses_a_second_decision(flow):

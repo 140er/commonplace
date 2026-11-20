@@ -1486,24 +1486,18 @@ def test_allowed_names_what_really_holds_the_place():
 def test_a_machine_that_is_not_approved_names_one_step_in_one_place():
     record = {"reason": "heartbeat", "status": "up"}
     facts = overview.blank_facts()
-    for guided, place, absent in (
-        (True, "Needs me", "Admin"),
-        (False, "Admin, Runner machines", "Needs me"),
-    ):
-        reasons = overview.can_take_new_work(_machine(attested=False), record, facts, guided=guided)
-        (reason,) = [r for r in reasons if r["code"] == "not_approved"]
-        assert place in reason["blocker"] and place in reason["detail"] and place in reason["next"]
-        assert absent not in reason["blocker"] + reason["detail"]
-        status = overview.runner_status(_machine(attested=False), record, facts, 0, reasons)
-        assert status["code"] == "not_approved" and status["next"] == reason["next"]
-    assert "Confirm this machine" in overview.CONFIRM_STEP
+    reasons = overview.can_take_new_work(_machine(attested=False), record, facts)
+    (reason,) = [r for r in reasons if r["code"] == "not_approved"]
+    for text in (reason["blocker"], reason["detail"], reason["next"]):
+        assert "Admin > Runner machines" in text and "Needs me" not in text
+    status = overview.runner_status(_machine(attested=False), record, facts, 0, reasons)
+    assert status["code"] == "not_approved" and status["next"] == reason["next"]
     # It is something a person acts on, so the overview counts it as needing attention.
     item = overview.runner_item(
         _machine(attested=False),
         {**record, "last_signal_at": None, "age_s": None, "last_signal_source": None},
         facts,
         0,
-        guided=True,
     )
     assert item["health"]["state"] == "attention"
 
@@ -1513,16 +1507,19 @@ GUIDED = {
         "waiting_approval",
         "Waiting for your approval",
         "It connected and waits for your approval in Add a machine below.",
+        "No: not approved yet",
     ),
     "failed": (
         "not_finished",
         "Not finished",
         "A setup step failed: The background service did not start. Set up again or remove it in Add a machine below.",
+        "No: setup not finished",
     ),
     "stalled": (
         "not_finished",
         "Not finished",
         "This setup has not finished. Set up again or remove it in Add a machine below.",
+        "No: setup not finished",
     ),
 }
 
@@ -1541,14 +1538,25 @@ def test_a_guided_machine_waiting_for_approval_reads_the_same_as_add_a_machine_a
     if seen is not None:
         fleet.seen(made, seen)
     fleet.guided(made, state)
-    code, label, sentence = GUIDED[state]
+    code, label, sentence, allowed = GUIDED[state]
     status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
     assert status == 200, result
     item = result["item"]
     assert (item["status"]["code"], item["status"]["label"]) == (code, label)
     assert item["status"]["detail"] == sentence
     assert "Add a machine below" in item["status"]["next"]
-    assert item["intake"] == {"allowed": "No: not approved yet", "reasons": [code]}
+    assert item["intake"] == {"allowed": allowed, "reasons": [code]}
+    blocker = item["health"]["blockers"][0]["text"]
+    assert "Add a machine below" in blocker
+    assert blocker.count("not finished") + blocker.count("has not finished") <= 0, (
+        "the fact is said once, not three times"
+    )
+    assert (
+        "Not used in this version" in item["usage"]["summary"]
+        and "of 1 run" not in item["usage"]["summary"]
+    )
+    if state == "connected":
+        assert "finished its setup and printed its fingerprint" in item["status"]["next"]
     assert [b["code"] for b in item["health"]["blockers"]] == [code]
     assert item["health"]["state"] == "attention", "it is something the owner acts on"
     assert item["last_seen"] is not None, "it connected: the row says when, not 'never contacted'"

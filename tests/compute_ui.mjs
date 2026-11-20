@@ -70,7 +70,7 @@ const cases = {
   async presentation() {
     const f = fixture();
     await f.open(inventory({ nodes: [{ ...node, board: undefined, interface: undefined, address: '192.0.2.20' }], scopes: [], executions: [] }));
-    assert.match(f.host.innerHTML, /Where your Coworkers run: an overview of everything first, then cloud workspaces, then \(for the workspace owner\) the settings of the machines themselves under Advanced\./);
+    assert.match(f.host.innerHTML, /Where your Coworkers run: an overview of everything first, then Add a machine, then cloud workspaces, then \(for the workspace owner\) the technical settings of target machines under Advanced\. A runner machine's own settings are in Admin, under Runner machines\./);
     assert.match(f.host.innerHTML, /No scripts saved yet\./);
     assert.doesNotMatch(f.host.innerHTML, /Set up pinned gateways|No immutable script bundles saved/);
     assert.match(f.host.innerHTML, /<p>192\.0\.2\.20:22<\/p>/);
