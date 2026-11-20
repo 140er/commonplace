@@ -10,7 +10,9 @@ import { actor, api as request, escape as e, elapsed } from "./api.js";
 // Focus and announcements: the list is drawn into its own body element, and results are said in
 // one status line that stays in place, so a screen reader hears them. After an action, focus
 // moves to the control that replaced the one used (or to the heading); a redraw keeps focus on
-// the same control.
+// the same control. The owner's stop-rule form lives in its own element outside the redrawn list
+// (like the status line): it is built once and only its sentence and untouched fields follow the
+// server, so a list redraw never collapses it, never clears what was typed and never takes focus.
 
 export const STATE_WORDS = {
   ready: "Ready",
@@ -30,7 +32,7 @@ const KIND_WORDS = {
   cmmn_token: "a Commonplace token", cmmn_oauth: "a Commonplace token", session_cookie: "a session cookie",
 };
 // Controls that keep their identity across a redraw, so focus can return to the same one.
-export const FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-heading"];
+export const FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-rule-save", "data-preview-heading"];
 
 const sentence = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}${/[.!?]$/.test(value) ? "" : "."}` : "";
 const networkError = (error) => !error?.status;
@@ -58,12 +60,18 @@ const mib = (bytes) => {
   // Small amounts in KiB, so a few files never read as "0 MiB".
   return value < MIB ? `${Math.max(value ? 1 : 0, Math.round(value / 1024))} KiB` : `${Math.round(value / MIB * 10) / 10} MiB`;
 };
-const byWords = (preview) => preview.by === "person" ? "a person" : actor(`conn:${preview.published_by || ""}`);
+// The publisher as the card names it; a connection with no display name reads as words ("Release coworker"), not as an id.
+const plainName = (name) => { const words = String(name).replace(/[-_]+/g, " ").trim(); return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "a Coworker"; };
+const byWords = (preview) => {
+  if (preview.by === "person") return "a person";
+  const ref = `conn:${preview.published_by || ""}`, named = actor(ref);
+  return named === String(preview.published_by || "") ? plainName(named) : named;
+};
 
 function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
   const state = STATE_WORDS[preview.state] ? preview.state : "failed";
   const url = URL_SHAPE.test(preview.url || "") ? preview.url : null;
-  const revision = preview.revision ? ` · revision ${e(preview.revision)}` : "";
+  const revision = preview.revision ? ` · version ${e(preview.revision)}` : "";
   // Only a published revision has a publish time; an attempt says when it started.
   const time = preview.published_at
     ? ` · published ${when(preview.published_at)} by ${e(byWords(preview))}`
@@ -80,7 +88,7 @@ function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
   const deletable = (url && state !== "building") || retry;
   const id = e(preview.id);
   const acts = [
-    state === "ready" && url ? `<a class="btn sm primary" href="${e(url)}" target="_blank" rel="noopener noreferrer" data-preview-open="${e(preview.id)}" aria-label="Open preview ${e(name)} in a new tab">Open</a>` : "",
+    state === "ready" && url ? `<a class="btn sm primary" href="${e(url)}" target="_blank" rel="noopener noreferrer" data-preview-open="${e(preview.id)}" aria-label="Open in new tab: preview ${e(name)}">Open in new tab</a>` : "",
     state === "ready" ? `<button class="btn sm" type="button" data-preview-stop="${e(preview.id)}" aria-label="Stop preview ${e(name)}">Stop</button>` : "",
     state === "stopped" && url ? `<button class="btn sm" type="button" data-preview-reopen="${e(preview.id)}" aria-label="Open again: serve preview ${e(name)}">Open again</button>` : "",
     canDelete && deletable && confirming !== preview.id ? `<button class="btn sm danger" type="button" data-preview-delete="${id}" aria-label="${retry ? "Finish deleting the files of" : "Delete the files of"} preview ${e(name)}">${retry ? "Finish deleting" : "Delete files"}</button>` : "",
@@ -97,28 +105,37 @@ function usageHTML(found) {
   return `<p class="run-reason" data-preview-usage>${e(usage.ready)} of ${e(limits.max_ready)} previews served in this workspace · ${e(mib(usage.bytes))} of ${e(mib(limits.max_workspace_bytes))} used (stopped previews still count).</p>`;
 }
 
-function ruleHTML(found) {
+// What a person needs to know about the address and the kind of page, once, under the list.
+const NOTE = "Open gives this address a key for 30 minutes: anyone with the exact address can open the preview until then, so share the preview, not the address. If parts stop loading, reload it from the card. A preview is a static page: no server code, no network requests, and links between its files must be relative.";
+const noteHTML = (found) => Array.isArray(found?.previews) && found.previews.length ? `<p class="run-reason" data-preview-note>${e(NOTE)}</p>` : "";
+
+const RULE_HINT = "preview-rule-hint";
+const ruleField = (name, words, max, value) => `<label class="run-start-field">${words}<input type="number" inputmode="numeric" name="${name}" data-preview-field="${name}" min="1" max="${max}" step="1" value="${value == null ? "" : e(value)}" placeholder="Never" aria-describedby="${RULE_HINT}"></label>`;
+
+// The owner's rule: its sentence for everyone, and for the owner the form. It is drawn into its
+// own element (`paintRule` below), never into the redrawn list.
+export function ruleHTML(found) {
   const rule = found?.rule;
   if (!rule) return "";
   const text = `<p class="run-reason" data-preview-rule-text>${e(rule.text || "")}</p>`;
   if (!found.can_set_rule) return text;
-  const field = (name, words, max, value) => `<label class="run-start-field">${words}<input type="number" inputmode="numeric" name="${name}" data-preview-field="${name}" min="1" max="${max}" step="1" value="${value == null ? "" : e(value)}" placeholder="Never"></label>`;
-  return `${text}<details class="preview-rule" data-preview-rule><summary data-preview-rule-summary="rule">Change the stop rule</summary><form class="run-start" data-preview-rule-form><p>Leave a field empty to keep previews served until someone stops them. Stopping never deletes the files.</p><div class="run-start-row">${field("stop_days_after_pr", "Days after the card records the pull request as merged or closed", 365, rule.stop_days_after_pr)}${field("max_age_days", "Days after it was last made live", 3650, rule.max_age_days)}</div><button class="btn sm" type="submit">Save rule</button></form></details>`;
+  return `${text}<details class="preview-rule" data-preview-rule><summary data-preview-rule-summary="rule">Change when previews stop</summary><form class="run-start" data-preview-rule-form><p id="${RULE_HINT}">Leave a field empty to keep previews served until someone stops them. Stopping never deletes the files.</p><div class="run-start-row">${ruleField("stop_days_after_pr", "Days after the card records the pull request as merged or closed", 365, rule.stop_days_after_pr)}${ruleField("max_age_days", "Days after it was last made live", 3650, rule.max_age_days)}</div><button class="btn sm" type="submit" data-preview-rule-save="rule">Save rule</button></form></details>`;
 }
 
-// The list part of the section for a loaded answer (the status line is separate); `confirming`
-// is the id of the preview whose delete the owner is being asked to confirm.
+// The list part of the section for a loaded answer (the status line and the rule are separate);
+// `confirming` is the id of the preview whose delete the owner is being asked to confirm.
 export function cardPreviewsHTML(found, confirming = "") {
   const previews = Array.isArray(found?.previews) ? found.previews : [];
   const options = { canDelete: Boolean(found?.can_delete), confirming };
   const list = previews.length
     ? `<ul class="run-list">${previews.map((preview) => previewHTML(preview, options)).join("")}</ul>`
-    : `<p class="run-empty" data-preview-empty>No preview yet. When a Coworker publishes one for this card, it appears here and stays after the work session ends.</p>`;
-  return `${list}${usageHTML(found)}${ruleHTML(found)}`;
+    : `<p class="run-empty" data-preview-empty>No preview yet. When a Coworker publishes one for this card, it appears here and stays after it finishes working.</p>`;
+  return `${list}${noteHTML(found)}${usageHTML(found)}`;
 }
 
 // What the section says when there is no list to show; the retry button is real.
-export const offlineHTML = (error) => `<p class="run-empty" data-preview-offline>${networkError(error) ? "Could not load the previews. Check the connection and try again." : "Could not load the previews. Try again."}</p><button class="btn sm" type="button" data-preview-retry="load">Try again</button>`;
+export const offlineWords = (error) => networkError(error) ? "Could not load the previews. Check the connection and try again." : "Could not load the previews. Try again.";
+export const offlineHTML = (error) => `<p class="run-empty" data-preview-offline>${e(offlineWords(error))}</p><button class="btn sm" type="button" data-preview-retry="load">Try again</button>`;
 
 const HEAD = `<div class="sec-h"><h3 tabindex="-1" data-preview-heading="previews">Previews</h3></div>`;
 const keyOf = (card) => `${card.board}/${card.number}`;
@@ -126,7 +143,7 @@ const keyOf = (card) => `${card.board}/${card.number}`;
 // The one insertion renderDetails makes: an empty, hidden section that attachCardPreviews fills.
 // There is no module-level cache: a list is only ever repainted from the panel that showed it a
 // moment ago (see `previous`), so nothing can carry over to another session or workspace.
-export const cardPreviewsSlot = (card) => `<section class="card-previews" data-card-previews data-card-key="${e(keyOf(card))}" aria-label="Previews" hidden>${HEAD}<div data-preview-body></div><p class="run-note" role="status" aria-live="polite" data-preview-status></p></section>`;
+export const cardPreviewsSlot = (card) => `<section class="card-previews" data-card-previews data-card-key="${e(keyOf(card))}" aria-label="Previews" hidden>${HEAD}<div data-preview-body></div><div data-preview-rule-slot></div><p class="run-note" role="status" aria-live="polite" data-preview-status></p></section>`;
 
 const hasList = (html) => /data-preview="|data-preview-empty/.test(html || "");
 
@@ -145,7 +162,14 @@ export function focusedKey(scope, doc = globalThis.document) {
 export function previousPreviews(mount) {
   const slot = mount?.querySelector?.("[data-card-previews]");
   const body = slot?.querySelector?.("[data-preview-body]");
-  return slot && !slot.hidden && body?.innerHTML ? { key: slot.dataset?.cardKey, html: body.innerHTML, focus: focusedKey(slot) } : null;
+  if (!slot || slot.hidden || !body?.innerHTML) return null;
+  // The rule form is kept as it stands: open or closed, with what was typed.
+  const holder = slot.querySelector?.("[data-preview-rule-slot]");
+  const fields = [...(holder?.querySelectorAll?.("[data-preview-field]") || [])];
+  const rule = holder?.innerHTML
+    ? { html: holder.innerHTML, open: Boolean(holder.querySelector?.("[data-preview-rule]")?.open), values: Object.fromEntries(fields.map((input) => [input.getAttribute("data-preview-field"), input.value])) }
+    : null;
+  return { key: slot.dataset?.cardKey, html: body.innerHTML, rule, focus: focusedKey(slot) };
 }
 
 // Load the card's previews into the slot inside `mount` and wire Stop, Open again, Delete files and the rule.
@@ -153,16 +177,37 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
   const slot = mount.querySelector?.("[data-card-previews]");
   if (!slot || card?.number == null) return;
   const body = slot.querySelector?.("[data-preview-body]");
+  const holder = slot.querySelector?.("[data-preview-rule-slot]");
   const status = slot.querySelector?.("[data-preview-status]");
-  if (!body || !status) return;
+  if (!body || !status || !holder) return;
   const key = keyOf(card);
   let revision = 0, last = null, wanted = null, polling = false, confirming = "";
   const live = (token) => token === revision && slot.isConnected;
   const say = (note) => { status.textContent = note || ""; };
+  // True only when the control really has focus: a control inside a closed <details> accepts the
+  // call and keeps nothing, so the heading fallback must still run for it.
   const focus = (selector) => {
     const target = selector && slot.querySelector?.(selector);
-    if (target?.focus) { target.focus({ preventScroll: true }); return true; }
-    return false;
+    if (!target?.focus) return false;
+    target.focus({ preventScroll: true });
+    return globalThis.document?.activeElement === target;
+  };
+  const control = (selector) => slot.querySelector?.(selector);
+  // The rule is built once per kind of viewer. Afterwards only its sentence follows the server,
+  // and a field follows it only while it still holds what the server last sent.
+  const paintRule = (found) => {
+    const wantsForm = Boolean(found?.rule && found.can_set_rule);
+    const hasForm = Boolean(holder.querySelector?.("[data-preview-rule-form]"));
+    if (!found?.rule || wantsForm !== hasForm || !holder.innerHTML) { holder.innerHTML = ruleHTML(found); return; }
+    const text = holder.querySelector("[data-preview-rule-text]");
+    if (text) text.textContent = found.rule.text || "";
+    for (const name of ["stop_days_after_pr", "max_age_days"]) {
+      const input = holder.querySelector(`[data-preview-field="${name}"]`);
+      if (!input) continue;
+      const fresh = found.rule[name] == null ? "" : String(found.rule[name]);
+      if (input.value === input.defaultValue) input.value = fresh;
+      input.defaultValue = fresh;
+    }
   };
   const paint = (html) => {
     // Keep focus on the same control through the redraw, or move it where an action asked.
@@ -175,6 +220,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
   };
   const show = (found, note) => {
     last = found;
+    paintRule(found);
     paint(cardPreviewsHTML(found, confirming));
     if (note !== undefined) say(note);
     // While something is being published the card follows it by itself.
@@ -187,6 +233,15 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
   const painted = previous?.key === key && hasList(previous.html);
   if (painted) {
     body.innerHTML = previous.html;
+    if (previous.rule?.html) {
+      holder.innerHTML = previous.rule.html;
+      const details = holder.querySelector?.("[data-preview-rule]");
+      if (details && previous.rule.open) details.open = true;
+      for (const [name, value] of Object.entries(previous.rule.values || {})) {
+        const input = holder.querySelector?.(`[data-preview-field="${name}"]`);
+        if (input) input.value = value;
+      }
+    }
     slot.hidden = false;
     focus(previous.focus);
   }
@@ -198,15 +253,18 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     } catch (error) {
       if (!live(token)) return;
       // A card this person cannot see (or no longer exists): show nothing, as for a missing card.
-      if ([403, 404].includes(error?.status)) { last = null; slot.hidden = true; body.innerHTML = ""; say(""); return; }
+      if ([403, 404].includes(error?.status)) { last = null; slot.hidden = true; body.innerHTML = ""; holder.innerHTML = ""; say(""); return; }
       if (last) { show(last, note ?? "Could not refresh the previews. Showing the last list."); return; }
       if (hasList(body.innerHTML)) { say(note ?? "Could not refresh the previews. Showing the last list."); return; }
       paint(offlineHTML(error));
-      say(note ?? "");
+      say(note ?? offlineWords(error));
     }
   }
-  async function act(control, path, method, payload, done, next) {
-    control.closest?.("li, form")?.querySelectorAll?.("button, input").forEach((item) => { item.disabled = true; });
+  async function act(trigger, path, method, payload, done, next, { progress = "", failure = '[data-preview-heading="previews"]' } = {}) {
+    const items = [...(trigger.closest?.("li, form")?.querySelectorAll?.("button, input") || [])];
+    items.forEach((item) => { item.disabled = true; });
+    // Said before the request, so a screen reader hears that something is happening.
+    if (progress) say(progress);
     let note;
     try {
       const result = await api(path, { method, body: payload });
@@ -214,8 +272,10 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
       wanted = next;
     } catch (error) {
       note = refusalWords(error);
-      wanted = '[data-preview-heading="previews"]';
+      wanted = failure;
     }
+    // The rule form is not redrawn with the list, so it is enabled again before focus returns to it.
+    if (trigger.closest?.("[data-preview-rule-form]")) items.forEach((item) => { item.disabled = false; });
     // A refusal usually means the preview moved on: reload so the list shows what is true now.
     await load(note);
   }
@@ -225,7 +285,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
       const id = stop.dataset.previewStop;
       void act(stop, `/api/previews/${encodeURIComponent(id)}/stop`, "POST", {},
         (result) => result?.state === "stopped" ? "Stopped. The files are kept; use Open again to serve it." : `Not stopped: ${result?.reason_text || "it was not being served."}`,
-        `[data-preview-reopen="${id}"]`);
+        `[data-preview-reopen="${id}"]`, { progress: "Stopping…" });
       return;
     }
     const reopen = event.target.closest?.("[data-preview-reopen]");
@@ -233,7 +293,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
       const id = reopen.dataset.previewReopen;
       void act(reopen, `/api/previews/${encodeURIComponent(id)}/open-again`, "POST", {},
         (result) => result?.state === "ready" ? "Served again. Press Open to view it." : `Not served: ${result?.reason_text || "it is not stopped."}`,
-        `[data-preview-open="${id}"]`);
+        `[data-preview-open="${id}"]`, { progress: "Serving it again…" });
       return;
     }
     const remove = event.target.closest?.("[data-preview-delete]");
@@ -259,7 +319,7 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
         (result) => result?.files_remaining
           ? "Some files could not be removed. Use Finish deleting to try again."
           : "Deleted the files. People can no longer open this preview.",
-        `[data-preview-delete="${id}"]`);
+        `[data-preview-delete="${id}"]`, { progress: "Deleting the files…" });
       return;
     }
     if (event.target.closest?.("[data-preview-retry]")) { wanted = '[data-preview-heading="previews"]'; void load(); }
@@ -272,7 +332,8 @@ export async function attachCardPreviews(mount, card, { api = request, previous 
     const payload = { stop_days_after_pr: days(form.elements.stop_days_after_pr.value), max_age_days: days(form.elements.max_age_days.value) };
     const bad = Object.values(payload).some((value) => value !== null && !(Number.isInteger(value) && value >= 1));
     if (bad) { say("Use whole days of 1 or more, or leave the field empty."); return; }
-    void act(form, "/api/previews/rules", "PUT", payload, "Saved the stop rule.", '[data-preview-rule-summary="rule"]');
+    // A refused save keeps the form open with what was typed, and puts focus back on Save.
+    void act(form, "/api/previews/rules", "PUT", payload, "Saved the stop rule.", '[data-preview-rule-summary="rule"]', { progress: "Saving the rule…", failure: '[data-preview-rule-save="rule"]' });
   });
   await load();
 }

@@ -238,7 +238,7 @@ function callTree(card) {
 // Stable selectors survive a re-render, so focus can return to the same control. The Previews
 // section's keys are listed here too (kept equal to FOCUS_KEYS in cardpreviews.js by a test), so
 // this shell does not load that module before a card is opened.
-const PREVIEW_FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-heading"];
+const PREVIEW_FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-rule-save", "data-preview-heading"];
 function focusKey(el) {
   if (el.id) return `#${CSS.escape(el.id)}`;
   for (const name of ["data-action", "data-details-tab", "data-details-title", ...PREVIEW_FOCUS_KEYS]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
@@ -822,7 +822,12 @@ function releaseControl(card) {
 // Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
 const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
-const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal");
+// The owner's stop-rule form counts while it has focus or unsaved text: a background refresh then leaves the panel alone.
+const ruleFormInUse = () => {
+  const form = root.querySelector("#card-panel [data-preview-rule-form]");
+  return form && (form.contains(document.activeElement) || [...form.querySelectorAll("input")].some((input) => input.value !== input.defaultValue)) ? form : null;
+};
+const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal") || ruleFormInUse();
 async function cardPanel(number, epoch, { keepForm = false } = {}) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
