@@ -1,5 +1,15 @@
 ### Compute: add a machine without SSH (guided pairing, slice 1)
 
+#### One setup state across the app
+
+Add a machine, Overview and Admin > Runner machines use the pairing's own words for a guided machine: **Waiting for your approval**, **Not finished** (a failed or stalled setup), or **Set up and checked**. Admin's registered-machine inventory uses that projection too, through its existing read-only connection. A guided machine has no Attest, grant or requester editor there: those controls cannot make this setup run work. Its working next step links to Add a machine in Cloud workspaces. The limitation **Coworkers do not run on it in this version** remains visible after an earlier attestation, on the ready row as well as its detail.
+
+The token enrollment form remains available as **Add a runner agent (developer route, with tokens)**. Its tokens are shown once, its setup instructions still explain where to put them, and its attestation and grant controls continue to work. A card with no project configuration and an existing unattested developer machine points to Admin > Runner machines for attestation. It does not send that owner to create another guided machine.
+
+Projects, topics, wings and permission mode in guided setup are recorded for later. The form says so before those questions; its automatic-mode warning describes a future capability. Members retain their read-only state names and no approval controls. A runner machine means a computer for Coworkers; the distinct Advanced kind is a **target machine**. Guided, set-up-only and not-approved detail panels omit unused run and hourly capacity figures beside their refusal to take work.
+
+Regression evidence uses matching synthetic machines across all three screens, including an attested guided machine and the actual developer enrollment and attestation form. Both looks are checked at desktop, phone, 320 pixels and a 768-pixel coarse-pointer viewport. No real machine is enrolled or accessed.
+
 A person adds a machine in the Compute section by choosing what kind of machine it is, copying one command, running it on the machine and accepting once in the app. The app shows the machine as it connects, shows every step's state, and says what to do next when a step fails. This note is the design; it was written before the code. Slice 1 is delivered as three stacked changes: **A** the server (pairing records, the approval state machine, the API, the code lifecycle), **B** the installer that the command runs, **C** the screens (Classic and Deck, phone included). Where this note says "not in this slice" the app says the same in plain words.
 
 #### What exists today (gap analysis, develop at the start of this slice)

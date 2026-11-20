@@ -313,6 +313,7 @@ def test_runtime_machines(hub, runtime):
     found = data["machines"]["items"]
     assert len(found) == 4
     expected_keys = {
+        "guided",
         "id",
         "label",
         "enabled",

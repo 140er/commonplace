@@ -108,7 +108,7 @@ const cases = {
     const counts = ov.filterCounts(items);
     assert.deepEqual(counts.kinds, { runner: 2, machine: 1, workspace: 2 }); assert.equal(counts.attention, 2);
     assert.equal(counts.statuses.offline.label, 'Offline');
-    assert.equal(ov.summaryText(items), '2 runners, 1 machine, 2 cloud workspaces. 2 need attention: edge-runner, Old box.');
+    assert.equal(ov.summaryText(items), '2 runners, 1 target machine, 2 cloud workspaces. 2 need attention: edge-runner, Old box.');
     assert.equal(ov.summaryText([items[0]]), '1 runner. Nothing needs attention.');
     const many = ['a', 'b', 'c', 'd', 'e'].map(n => item('runner', n, `Runner ${n}`, { code: 'offline', label: 'Offline' }, { attention: true }));
     assert.match(ov.summaryText(many), /5 need attention: Runner a, Runner b, Runner c and 2 more\.$/);
@@ -181,11 +181,11 @@ const cases = {
     await first;
     assert.equal(f.calls.length, 1);
     const shown = f.shown();
-    assert.match(shown, /2 runners, 1 machine, 2 cloud workspaces\. 2 need attention: edge-runner, Old box\./);
-    for (const label of ['Runners', 'Machines', 'Cloud workspaces']) assert.match(shown, new RegExp(`${label} \\(`));
+    assert.match(shown, /2 runners, 1 target machine, 2 cloud workspaces\. 2 need attention: edge-runner, Old box\./);
+    for (const label of ['Runners', 'Target machines', 'Cloud workspaces']) assert.match(shown, new RegExp(`${label} \\(`));
     assert.match(shown, /Starting and stopping cloud workspaces on a machine is not available in this version/);
     assert.match(f.nodes.meta.textContent, /^Updated just now \(as of \d{1,2}:\d\d:\d\d.*\)\. It refreshes every 30 seconds while this tab is visible, or use Refresh above\.$/);
-    assert.match(f.nodes.summary.textContent, /2 runners, 1 machine, 2 cloud workspaces\. 2 need attention: edge-runner, Old box\./, 'the closed fold still says what needs attention');
+    assert.match(f.nodes.summary.textContent, /2 runners, 1 target machine, 2 cloud workspaces\. 2 need attention: edge-runner, Old box\./, 'the closed fold still says what needs attention');
     assert.equal(f.nodes.stale.hidden, true);
     // The one Refresh button is the page's: the overview has no button of its own named for refreshing.
     assert.doesNotMatch(f.html(), /Update overview|data-ov-action="refresh"/, 'no refresh button in the state, list or panel slots');
@@ -312,7 +312,7 @@ const cases = {
     // An unchanged poll says nothing new; a manual refresh says what it found, once.
     await f.ui.load({ quiet: true }); assert.equal(f.nodes.announce.textContent, 'build-runner is now Offline.');
     await f.ui.load({ say: true });
-    assert.match(f.nodes.announce.textContent, /^Overview updated\. 2 runners, 1 machine, 2 cloud workspaces\. 3 need attention: build-runner, edge-runner, Old box\.$/);
+    assert.match(f.nodes.announce.textContent, /^Overview updated\. 2 runners, 1 target machine, 2 cloud workspaces\. 3 need attention: build-runner, edge-runner, Old box\.$/);
     // One live region for all of it: the list and the summary carry none of their own.
     assert.equal((f.html().match(/aria-live/g) || []).length, 0);
     assert.match(f.ui.html(), /role="status" aria-live="polite" data-ov-announce/);
@@ -368,7 +368,7 @@ const cases = {
     // The panel opens at once (loading) and takes focus on its heading; the list gives way to it.
     assert.match(f.html(), /aria-busy="true"/); assert.match(f.html(), /id="compute-ov-heading"/);
     assert.doesNotMatch(f.html(), /data-ov-kind-filter|compute-ov-group/);
-    assert.match(f.shown(), /2 runners, 1 machine/, 'the summary stays visible with the panel open');
+    assert.match(f.shown(), /2 runners, 1 target machine/, 'the summary stays visible with the panel open');
     assert.ok(f.focused.includes('#compute-ov-heading'));
     await flush();
     assert.deepEqual(f.calls.slice(-1), ['/api/compute/overview/runner/mach_2']);
@@ -554,6 +554,39 @@ const cases = {
     assert.equal(f.ui.state.paused, false); assert.equal(f.calls.length, 3, 'resuming reads at once');
     assert.equal(f.liveTimers(30000).length, 1);
     assert.match(f.nodes.top.html, />Pause automatic updates</);
+  },
+
+  async 'pause-workspaces-sync'() {
+    let signature = 'initial';
+    const f = fixture({ signature: () => signature });
+    f.ui.start(); await f.ui.load();
+    f.click('pause');
+    const snapshot = f.ui.state.data, reads = f.calls.length;
+    signature = 'list-finished-loading';
+    const changed = fleet(); changed[0].name = 'Changed runner';
+    f.state.answers.set('/api/compute/overview', overviewOf(changed));
+    await f.fire(10000);
+    assert.equal(f.calls.length, reads, 'paused signature changes must not read the overview');
+    assert.equal(f.ui.state.data, snapshot, 'the paused server snapshot is retained');
+    f.bump(15 * 60 * 1000); await f.fire(10000);
+    assert.equal(f.calls.length, reads);
+    assert.match(f.html(), /data-ov-chip>Last known: Online</);
+    f.doc.hidden = true; await f.fire(10000);
+    f.doc.hidden = false; f.docListeners.get('visibilitychange')(); await flush();
+    assert.equal(f.calls.length, reads, 'visibility cannot resume a paused overview');
+    await f.ui.load({ say: true });
+    assert.equal(f.calls.length, reads + 1, 'manual Refresh still reads while paused');
+    assert.equal(f.ui.state.paused, true);
+    assert.match(f.shown(), /Changed runner/);
+    signature = 'renamed-again';
+    await f.fire(10000);
+    assert.equal(f.calls.length, reads + 1, 'later signature changes remain paused after Refresh');
+    f.click('pause'); await flush();
+    assert.equal(f.calls.length, reads + 2, 'Resume reads the current signature once');
+    assert.equal(f.ui.state.paused, false);
+    await f.fire(10000);
+    assert.equal(f.calls.length, reads + 2, 'Resume acknowledged the changed signature');
+    assert.equal(f.liveTimers(30000).length, 1);
   },
 
   async 'workspaces-sync'() {
@@ -763,9 +796,9 @@ const cases = {
 
   async member() {
     const members = [item('workspace', 'w_1', 'Shared box', { code: 'running', label: 'Running' }, { more: { placement: { assigned: true, machine_name: null, machine_id: null } } })];
-    const f = fixture({ data: overviewOf(members, { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Machines and runners are visible to the workspace owner.' }, executor: { available: false, text: 'hidden from members' } }) });
+    const f = fixture({ data: overviewOf(members, { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Runner machines and target machines are visible to the workspace owner.' }, executor: { available: false, text: 'hidden from members' } }) });
     await f.ui.load();
-    assert.match(f.shown(), /Machines and runners are visible to the workspace owner\./);
+    assert.match(f.shown(), /Runner machines and target machines are visible to the workspace owner\./);
     assert.doesNotMatch(f.shown(), /hidden from members/, 'members are not told about owner-only machinery');
     assert.match(f.nodes.top.html, /The cloud workspaces in this workspace and what each is doing\./, 'a member\'s intro describes only what a member sees');
     assert.doesNotMatch(f.nodes.top.html, /runner is a machine|Every machine, runner/);
@@ -785,7 +818,7 @@ const cases = {
       const calls = [], user = { workspace: 'w', actor: 'user:u' }, doc = new EventTarget();
       const api = path => {
         calls.push(path);
-        if (path === '/api/compute/overview') return Promise.resolve(structuredClone(owner ? overviewOf() : overviewOf([fleet()[3]], { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Machines and runners are visible to the workspace owner.' } })));
+        if (path === '/api/compute/overview') return Promise.resolve(structuredClone(owner ? overviewOf() : overviewOf([fleet()[3]], { can_manage: false, hidden: { kinds: ['machine', 'runner'], text: 'Runner machines and target machines are visible to the workspace owner.' } })));
         if (path === '/api/compute') return owner ? Promise.resolve({ gateways: [], nodes: [], scopes: [], executions: [], can_manage: true, capabilities: {} }) : Promise.reject(failure(403, { error: 'owner_required' }));
         if (path === '/api/compute/workspaces') return Promise.resolve({ workspaces: [], total: 0, can_manage: owner });
         return Promise.reject(failure(404, { error: 'not_found' }));
@@ -795,7 +828,7 @@ const cases = {
       assert.ok(calls.includes('/api/compute/overview'), 'the screen reads the overview');
       const shown = text(html);
       assert.ok(html.indexOf('compute-overview') > -1 && html.indexOf('compute-overview') < html.indexOf('compute-workspaces'), 'the overview comes first');
-      assert.match(shown, owner ? /2 runners, 1 machine, 2 cloud workspaces/ : /1 cloud workspace\./);
+      assert.match(shown, owner ? /2 runners, 1 target machine, 2 cloud workspaces/ : /1 cloud workspace\./);
       assert.match(shown, /Where your Coworkers run: an overview of everything first/);
       assert.equal((html.match(/id="compute-overview"/g) || []).length, 1);
       ui.stop();

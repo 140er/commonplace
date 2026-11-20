@@ -221,6 +221,19 @@ def test_options_refuse_plainly_when_no_machine_can_be_used(world, owner):
     assert body["refusal"] == "no_machine"
 
 
+def test_unattested_developer_machine_points_to_admin_without_board_config(world, owner):
+    card = world.card(board=PLAIN)
+    # Editing topics through the owner route clears the binding, as it must.
+    status, _ = owner.call("PATCH", f"/api/runners/{world.machine_id}", {"topics": ["review"]})
+    assert status == 200
+    status, body = options(owner, card)
+    assert status == 200
+    assert body["configured"] is False and body["machines"] == []
+    assert body["refusal"] == "binding_not_attested", (
+        "the owner must attest the existing developer machine in Admin"
+    )
+
+
 def test_options_on_a_configured_board_report_a_machine_that_is_gone(world, owner):
     card = world.card()
     world.configure()

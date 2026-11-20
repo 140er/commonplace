@@ -57,14 +57,22 @@ def _configured(ctx, row, board) -> dict:
     }
 
 
-def _guided_refusal(ctx) -> str | None:
-    """A machine exists but was added through the setup guide and only checks itself in this version: say which step it
-    is at (waiting for approval, not finished, or approved), so the card links the right place."""
+def _setup_refusal(ctx) -> str | None:
+    """Name the setup step of an existing machine: a developer attestation, or a guided machine that only checks itself
+    (waiting for approval, not finished, or approved), so the card links the right place."""
     found = []
     for machine in registry.machines(ctx.gateway.db, ctx.principal.workspace_id):
         if not machine["revoked_at"]:
-            found.append(setup_only_refusal(ctx.gateway, machine))
-    for code in ("setup_waiting", "setup_unfinished", "setup_only"):
+            guided = setup_only_refusal(ctx.gateway, machine)
+            if guided:
+                found.append(guided)
+            elif (
+                machine["enabled"]
+                and machine["binding_state"] != "owner_attested"
+                and requester_ok(ctx.gateway, ctx.principal, machine)
+            ):
+                found.append("binding_not_attested")
+    for code in ("binding_not_attested", "setup_waiting", "setup_unfinished", "setup_only"):
         if code in found:
             return code
     return None
@@ -96,10 +104,10 @@ def _free(ctx, row, board) -> dict:
     refusal = None
     if not offers:
         # A reason about the card (blocked, assigned...) wins over a setup reason.
-        guided = _guided_refusal(ctx)
-        refusals = [(guided or r) if r.startswith("setup_") else r for r in refusals]
+        setup = _setup_refusal(ctx)
+        refusals = [(setup or r) if r.startswith("setup_") else r for r in refusals]
         card_reasons = [r for r in refusals if r in NOT_CLAIMABLE]
-        refusal = (card_reasons or refusals or [guided or "no_machine"])[0]
+        refusal = (card_reasons or refusals or [setup or "no_machine"])[0]
     return {"configured": False, "machines": offers, "refusal": refusal}
 
 

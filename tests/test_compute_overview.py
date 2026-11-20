@@ -476,6 +476,19 @@ def test_runner_detail_lists_recent_runs_and_limits(api, fleet):
     )
 
 
+def test_not_approved_detail_hides_unused_capacity_figures(api, fleet):
+    made = fleet.enroll("runner-not-approved")
+    fleet.seen(made, 10)
+    registry.patch(api.env.db, api.env.principal, made["machine_id"], {"topics": ["review"]})
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    item = result["item"]
+    assert item["status"]["code"] == "not_approved"
+    facts = {fact["label"]: fact["value"] for fact in item["facts"]}
+    assert facts["Allowed to start card runs"].startswith("No:")
+    assert not {"Runs at once", "Starts per hour"} & facts.keys()
+
+
 def test_unknown_ids_kinds_and_paths_are_refused_with_a_reason(api):
     assert api.request(path=f"{BASE}/workspace/nothing") == (
         404,
@@ -507,7 +520,7 @@ def test_a_member_sees_cloud_workspaces_only_with_no_machine_names_or_addresses(
     assert [i["name"] for i in result["items"]] == ["Shared box"]
     assert result["hidden"] == {
         "kinds": ["machine", "runner"],
-        "text": "Machines and runners are visible to the workspace owner.",
+        "text": "Runner machines and target machines are visible to the workspace owner.",
     }
     item = result["items"][0]
     assert item["actions"] == [] and item["basis"] is None
@@ -1506,19 +1519,19 @@ GUIDED = {
     "connected": (
         "waiting_approval",
         "Waiting for your approval",
-        "It connected and waits for your approval in Add a machine below.",
+        "It connected and waits for your approval in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
         "No: not approved yet",
     ),
     "failed": (
         "not_finished",
         "Not finished",
-        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine below.",
+        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
         "No: setup not finished",
     ),
     "stalled": (
         "not_finished",
         "Not finished",
-        "This setup has not finished. Set up again or remove it in Add a machine below.",
+        "This setup has not finished. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
         "No: setup not finished",
     ),
 }
@@ -1544,10 +1557,10 @@ def test_a_guided_machine_waiting_for_approval_reads_the_same_as_add_a_machine_a
     item = result["item"]
     assert (item["status"]["code"], item["status"]["label"]) == (code, label)
     assert item["status"]["detail"] == sentence
-    assert "Add a machine below" in item["status"]["next"]
+    assert "Add a machine in Cloud workspaces" in item["status"]["next"]
     assert item["intake"] == {"allowed": allowed, "reasons": [code]}
     blocker = item["health"]["blockers"][0]["text"]
-    assert "Add a machine below" in blocker
+    assert "Add a machine in Cloud workspaces" in blocker
     assert blocker.count("not finished") + blocker.count("has not finished") <= 0, (
         "the fact is said once, not three times"
     )

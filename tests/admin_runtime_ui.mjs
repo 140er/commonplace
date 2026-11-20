@@ -31,6 +31,17 @@ try {
     assert.match(host.innerHTML,/Card &lt;8&gt;/);assert.doesNotMatch(host.innerHTML,/private-canary/);
     click('needs');find('needs-me').resolve({count:0});await flush();
     assert.match(host.innerHTML,/No cards waiting/);
+  } else if(process.argv[2]==='guided') {
+    const items = ['Waiting for your approval', 'Not finished', 'Set up and checked'].map((label, i) => ({
+      id: `mach_${i}`, label: `guided-${i}`, enabled: false, binding_state: 'unbound',
+      guided: { label }, max_in_flight: 9, max_starts_per_hour: 99, requesters: [],
+    }));
+    find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0},machines:{state:'ready',items,count:3,requester_candidates:[{id:'conn_a',name:'planner'}]}});
+    await flush();
+    const html = section(host.innerHTML, 'runtime');
+    for (const item of items) assert.ok(html.includes(item.guided.label));
+    assert.equal((html.match(/Coworkers do not run on it in this version/g) || []).length, 3);
+    assert.doesNotMatch(html, /disabled|unbound|99 starts|9 in flight|requester-add|requester-remove|Machine requesters/);
   } else if(process.argv[2]==='labels') {
     find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Alpha',source:'coordinator',connected:true,activity:'working'},{id:2,name:'Beta',source:'seat',connected:false},{id:3,name:'Gamma',source:'not_configured',connected:false}],count:3},machines:{state:'ready',items:[],count:0}});
     find('limits').resolve({workspace_id:'ws-one',projects:[{id:1,name:'Alpha',counting_mode:'distinct_doing_agents'},{id:2,name:'Beta',counting_mode:'orchestration_slots'}],machines:[]});await flush();

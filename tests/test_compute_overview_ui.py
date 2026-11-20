@@ -27,6 +27,7 @@ import pytest
         "clock-ticks-in-place",
         "refresh-in-place",
         "pause",
+        "pause-workspaces-sync",
         "workspaces-sync",
         "fold",
         "skew",
