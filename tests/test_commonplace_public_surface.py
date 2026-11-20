@@ -21,6 +21,8 @@ from commonplace.workers import WorkerSupervisor
 EXACT = {
     **{(method, "/api/compute"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/compute/discoveries"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/compute/activity"): "authenticated" for method in ("GET", "POST")},
+    ("POST", "/api/runner/activity"): "authenticated",
     **{(method, "/api/coworkers"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/github"): "authenticated",
     ("POST", "/api/github/connect"): "authenticated",
@@ -188,6 +190,7 @@ PREFIX = {
     ("DELETE", "/api/runners/enrollments/"): "unavailable",
     ("GET", "/api/instance-admin/"): "authenticated",
     **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/compute/activity/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/previews/"): "authenticated" for method in ("GET", "POST", "PUT", "DELETE")},
     **{(method, "/api/pr-review/"): "authenticated" for method in ("GET", "POST", "PUT")},
     **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
@@ -366,7 +369,7 @@ def test_complete_installed_route_inventory(surface):
     for index, ((method, path), auth) in enumerate({**EXACT, **PREFIX, **BUILTIN}.items()):
         concrete = path + "unknown" if (method, path) in PREFIX else path
         headers = {
-            "X-Forwarded-For": f"192.0.2.{index + 1}",
+            "X-Forwarded-For": f"198.18.{index // 254}.{index % 254 + 1}",
             "Content-Type": "application/json",
         }
         response = request(surface, method, concrete, headers=headers, body=b"{")

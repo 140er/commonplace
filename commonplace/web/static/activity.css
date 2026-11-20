@@ -1,0 +1,73 @@
+.compute-activity { color: var(--text); font-size: 14px; line-height: 1.5; min-width: 0; font-variant-numeric: tabular-nums; }
+.ca-title { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+.ca-title h1 { font-size: 24px; line-height: 32px; margin: 0; font-weight: 600; }
+.ca-title p { margin: 4px 0 0; color: var(--text-2); }
+.ca-actions, .ca-controls, .ca-tabs, .ca-page, .ca-phases { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.compute-activity button, .compute-activity select, .compute-activity a.ca-text { min-height: 44px; min-width: 44px; color: var(--text); font: inherit; }
+.compute-activity button, .compute-activity select { background: var(--well); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+.compute-activity select { width: 100%; }
+:root[data-ui="deck"] .compute-activity :is(button, select) { min-height: 44px; }
+.compute-activity [hidden] { display: none; }
+.ca-timing-note { color: var(--text-2); font-size: 12px; margin: 0 0 16px; }
+.compute-activity button:hover { border-color: var(--text-2); }
+.compute-activity button:disabled { cursor: default; color: var(--text-3); border-color: var(--line); }
+.compute-activity :is(button, a, select):focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.ca-controls label { display: grid; gap: 4px; flex: 1 1 140px; max-width: 280px; color: var(--text-2); }
+.ca-fresh { color: var(--text-2); font-size: 12px; margin: 16px 0 8px; }
+[data-ca-problem]:not(:empty) { border-left: 3px solid var(--block); padding: 8px 12px; margin: 12px 0; }
+.ca-tabs { flex-wrap: nowrap; border-bottom: 1px solid var(--line); overflow-x: auto; margin: 16px 0; }
+.ca-tabs button { white-space: nowrap; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 4px; }
+.ca-tabs button[aria-pressed=true] { border-bottom-color: var(--text); }
+.ca-lead { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin: 0 0 16px; border-bottom: 1px solid var(--line); gap: 16px; padding-bottom: 16px; }
+.ca-metric { min-width: 0; padding: 8px 0; }
+.ca-metric dt { color: var(--text-2); }
+.ca-metric dd { margin: 4px 0; font-size: 18px; font-weight: 500; }
+.ca-lead dd { font-size: 28px; font-weight: 400; }
+.ca-metric small, .compute-activity td small, .compute-activity th small { display: block; font-size: 12px; line-height: 18px; color: var(--text-2); font-weight: 400; }
+.ca-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px 24px; margin: 0; }
+.ca-panel { min-width: 0; margin: 0 0 16px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.ca-panel h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
+.ca-panel p { color: var(--text-2); margin: 12px 0 0; }
+.ca-panel p.ca-finding { color: var(--text); font-size: 18px; margin: 0 0 12px; }
+.ca-table-wrap { max-width: 100%; overflow-x: auto; }
+.compute-activity table { width: 100%; border-collapse: collapse; table-layout: auto; }
+.compute-activity th, .compute-activity td { text-align: right; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.compute-activity th:first-child { text-align: left; padding-left: 0; }
+.compute-activity th:last-child, .compute-activity td:last-child { padding-right: 0; }
+.compute-activity thead th { color: var(--text-2); font-weight: 400; font-size: 12px; border: 0; }
+.compute-activity tbody th { font-weight: 500; min-width: 140px; }
+.compute-activity .ca-text { background: transparent; border: 0; border-radius: 4px; padding: 0 4px; text-decoration: underline; text-underline-offset: 3px; display: inline-flex; align-items: center; justify-content: start; }
+.ca-page { justify-content: flex-end; margin-top: 12px; }
+.ca-page span { margin-right: auto; color: var(--text-2); font-size: 12px; }
+.ca-heat { display: flex; align-items: end; gap: 8px; overflow-x: auto; padding: 4px 0; }
+.ca-heat > div { display: grid; gap: 6px; min-width: 64px; flex: 1; font-size: 12px; }
+.ca-heat-bar { height: 56px; display: block; background: var(--well); position: relative; border-radius: 4px; }
+.ca-heat-bar::after { content: ''; position: absolute; inset: auto 0 0; height: calc(var(--fill)*100%); background: var(--wait); border-radius: 3px; }
+.ca-heat strong { font-weight: 500; }
+.ca-rank { display: block; height: 2px; width: calc(var(--fill)*100%); background: var(--wait); margin-top: 6px; }
+.ca-bucket { display: flex; height: 16px; min-width: 150px; width: 100%; background: var(--well); }
+.ca-phase-tool { background: var(--wait); }
+.ca-phase-wait { background: var(--text); }
+.ca-phase-compaction { background: var(--text-2); }
+.ca-phase-unknown { background: var(--line-strong); }
+.ca-phases { font-size: 12px; color: var(--text-2); margin: 16px 0; }
+.ca-phases i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
+@media(max-width: 900px) { .ca-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width: 640px) {
+  .ca-title { margin: 16px 0; }
+  .ca-title h1 { font-size: 22px; }
+  .ca-panel { padding: 14px; }
+  .ca-lead { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ca-metrics { grid-template-columns: minmax(0,1fr); }
+  .ca-controls { gap: 8px; }
+  .ca-controls label { flex-basis: 30%; min-width: 0; }
+  .compute-activity select { padding: 8px 4px; font-size: 13px; }
+  .ca-tabs { gap: 16px; }
+  .compute-activity table, .compute-activity tbody { display: block; }
+  .compute-activity thead { display: none; }
+  .compute-activity tbody tr { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px 12px; border-bottom: 1px solid var(--line); padding: 12px 0; }
+  .compute-activity tbody th, .compute-activity tbody td { padding: 0; min-width: 0; border: 0; text-align: left; }
+  .compute-activity tbody th { grid-column: 1 / -1; }
+  .ca-table-wrap { overflow: visible; }
+  .ca-bucket { min-width: 0; }
+}
