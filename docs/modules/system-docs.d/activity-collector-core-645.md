@@ -1,0 +1,4 @@
+- **Owns:** `docs/system/activity-collector-core-645.md`, documenting the collector-only prerequisite and the meaning of untimed active work.
+- **Promises:** The Activity collection contract distinguishes observed activity from known execution duration and grants no new transport or execution authority.
+- **How it fails:** Missing timing is explicit coverage, never a fabricated start time or a known zero execution duration.
+- **Tests:** The collector-only SQLite regressions and documentation guards check this contract.
