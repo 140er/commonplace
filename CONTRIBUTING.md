@@ -20,7 +20,8 @@ uv sync --extra dev
 python -m commonplace.guards.hooks install
 ```
 
-Run the install after setup, including in existing clones. Do not use
+Run the install after setup in a new clone. For an existing hook chain, use the
+preserved-chain staging process below. Do not use
 `pre-commit install`: the hook it writes hard-codes the interpreter of the
 worktree that ran it and needs `pre-commit` on PATH, so in a fresh linked
 worktree every commit fails with "`pre-commit` not found".
