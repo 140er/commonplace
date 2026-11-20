@@ -1,6 +1,6 @@
 ## pr-review
 
-- **Paths:** `commonplace/pr_review/`, `tests/test_pr_review.py`, `tests/test_pr_review_loop.py`, `tests/_pr_review_fakes.py`
+- **Paths:** `commonplace/pr_review/`, `tests/test_pr_review.py`, `tests/test_pr_review_loop.py`, `tests/_pr_review_fakes.py`, `tests/test_card_reviews_ui.py`, `tests/test_card_reviews_browser.py`, `tests/cardreviews.mjs`
 - **Owns:**
 
   - Auto-addressed PR review comments, slice 1 (card #613, design in `docs/system/pr-review-loop.md`): comments of a pull request in the workspace file `pr_review.sqlite3` (`pr_review_prs`, `pr_review_comments`, `pr_review_events` append-only, `pr_review_boards`, `pr_review_people`), their six statuses (`new`, `working`, `addressed`, `answered`, `needs_you`, `skipped`) with fixed reasons and the words people read (`status.py`), the idempotent intake of a feeder's batches (`intake.py`, `store.py`), PR to card mapping and the fork and branch rules (`mapping.py`), the work trigger (`trigger.py`), the one question per PR (`needs_me.py`), `/api/pr-review` (`routes.py`) and the Coworker tools `pr_review_list` (read), `pr_review_take` and `pr_review_report` (writes) (`tools.py`). The hub never calls GitHub: a feeder outside the hub posts the comments.
@@ -32,6 +32,8 @@
   - A started Coworker reads the waiting comments of its card's PR (at most 25, quoted, redacted) under the rules it must follow; a failure to read them never stops a start and logs no words. A report that says a reply was posted is refused where the board shows replies on the card only (`dry_run`), and every recorded reply keeps whether it was posted.
 
   - The feeder survives bad input (card #629): a watch answer or a GitHub answer that is not the JSON it expects is a fixed code (`hub_bad_answer` stops the pass, `github_bad_answer` skips that PR and keeps nothing of the read), a watch entry that is not a repository and a whole PR number is left out, an unexpected error skips only its PR and is logged by type (a near rate limit is never one PR's error: it still ends the whole pass), and the polling loop outlives any bad pass. A report batch is checked whole and stored in one transaction: one refused report (a posted reply in a dry run, a changed comment, a missing commit, reply or note, an unknown comment) stores none of the batch.
+
+  - Slice 3 (the screens' server side): the loop's question offers three answers in plain words (`One/Two/Three more rounds` after the board's rounds, `I will do it myself`, `Ignore`). An answer given in the card's Review comments section also answers the card's own question (back to the Coworker, or to Backlog for "I will do it myself"); an answer given anywhere else the question shows (Needs me, the card) reaches the comments on the next trigger pass, once, by the board event that carried it (`decided_event`). The card view carries the answers' words and whether the reader may answer (`can_decide`, owner only). `GET /api/pr-review/status` (owner only) says whether the comment reader has its token and when it last read (`no_token`, `waiting_first_read`, `reading`, `stale` after 12 minutes), never a token.
 
 - **How it fails:**
 
