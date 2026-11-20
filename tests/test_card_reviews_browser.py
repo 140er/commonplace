@@ -349,6 +349,63 @@ def test_long_classic_review_keeps_header_and_composer_in_place(browser, role, s
     page.close()
 
 
+@pytest.mark.parametrize("look", ["deck", "classic"])
+@pytest.mark.parametrize("size", ["desktop", "phone"])
+@pytest.mark.parametrize("role", ["owner", "member"])
+def test_revealed_original_follows_the_current_comment_revision(
+    browser,  # noqa: F811
+    look,
+    size,
+    role,
+    tmp_path,
+):
+    page, errors, _ = open_shell(browser, look, size, cards(), member=role == "member")
+    page.clock.install()
+    current = {"rev": 1}
+
+    def reviews_api(route):
+        rev = current["rev"]
+        if urlsplit(route.request.url).path.endswith("/original"):
+            route.fulfill(json={"id": 1, "rev": rev, "text": f"Exact original revision {rev}."})
+            return
+        route.fulfill(
+            json=view(
+                [
+                    comment(
+                        1,
+                        "working" if rev == 1 else "new",
+                        "The Coworker is working on it" if rev == 1 else "New",
+                        rev=rev,
+                        text=f"Comment revision {rev}: [redacted].",
+                        text_redacted=True,
+                    )
+                ],
+                owner=role == "owner",
+            )
+        )
+
+    evidence = Path(os.environ.get("CARD_REVIEWS_SHOTS") or tmp_path)
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.route("**/api/pr-review/cards/**", reviews_api)
+    page.evaluate("location.hash='#/card/6'")
+    section = page.locator("#card-panel [data-card-reviews]")
+    section.locator('[data-review-original="1"]').click()
+    section.get_by_text("Exact original revision 1.", exact=True).wait_for()
+    page.screenshot(path=str(evidence / f"original-{look}-{size}-{role}-rev1.png"))
+    current["rev"] = 2
+    page.clock.run_for(5100)
+    section.get_by_text("New", exact=True).wait_for()
+    assert section.get_by_text("Comment revision 2: [redacted].", exact=True).count() == 1
+    assert section.get_by_text("Exact original revision 1.", exact=True).count() == 0
+    page.screenshot(path=str(evidence / f"original-{look}-{size}-{role}-edited.png"))
+    section.locator('[data-review-original="1"]').click()
+    section.get_by_text("Exact original revision 2.", exact=True).wait_for()
+    assert section.get_by_text("Exact original revision 1.", exact=True).count() == 0
+    page.screenshot(path=str(evidence / f"original-{look}-{size}-{role}-rev2.png"))
+    assert not errors, errors
+    page.close()
+
+
 def test_the_owner_answers_and_focus_holds_through_the_answer_and_a_background_reload(browser):  # noqa: F811
     page, errors, _ = open_shell(browser, "deck", "desktop", cards())
     answered = {"done": False}
