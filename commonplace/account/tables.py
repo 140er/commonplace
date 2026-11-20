@@ -243,7 +243,7 @@ def unclassified(tables: dict) -> list:
         for name, columns in tables.items()
         if name not in RULES
         or not set(RULES[name].columns()) <= set(columns)
-        or (RULES[name].parent is not None and RULES[name].parent[1] not in tables)
+        or ((parent := RULES[name].parent) is not None and parent[1] not in tables)
     )
 
 

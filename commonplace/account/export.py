@@ -167,7 +167,8 @@ def workspace_files(directory) -> tuple:
     readable SQLite (an encrypted store) refuses the export.
     """
     directory = Path(directory)
-    databases, files = [], []
+    databases: list[str] = []
+    files: list[str] = []
     if not directory.is_dir() or directory.is_symlink():
         return databases, files
     for root, dirs, names in os.walk(directory, followlinks=False):
