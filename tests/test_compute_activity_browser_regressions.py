@@ -152,3 +152,16 @@ def test_global_sinks_and_trace_refresh_keep_independent_scopes(activity_page):
     assert page.locator("[data-ca-model]").input_value() == "other"
     assert page.locator("[data-ca-body] [data-ca-thread]").count() == 15
     assert "Threads 1–15 of 15 retained" in page.locator(".ca-page").inner_text()
+
+
+@pytest.mark.parametrize("width", [390, 320])
+def test_phone_first_summary_is_above_fixed_navigation(activity_page, width):
+    page = activity_page
+    page.set_viewport_size({"width": width, "height": 700})
+    page.locator("[data-ca-tab=trace]").click()
+    page.locator("[data-ca-model]").select_option("other")
+    page.get_by_text("Threads 1–15 of 15 retained", exact=False).wait_for()
+    first = page.locator("[data-ca-body] [data-ca-thread]").first.bounding_box()
+    footer = page.locator("[data-deck=tabs]").bounding_box()
+    assert first and footer
+    assert first["y"] + first["height"] <= footer["y"]
