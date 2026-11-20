@@ -75,6 +75,10 @@ def clean_path(raw) -> str:
     )
     if bad:
         raise Refused("bad_path", file=_shown(raw))
+    kinds = redact.find_kinds(raw, SECRET_KINDS)
+    if kinds:
+        # The path is shown to everyone who can open the card: name the kind, never the path.
+        raise Refused("contains_secret_like_text", kind=kinds[0])
     return raw
 
 

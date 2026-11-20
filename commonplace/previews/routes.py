@@ -112,11 +112,13 @@ def install(gateway) -> None:
                 send(404, {"error": "Not found", "reason": "not_found"})
         except NotFound:
             send(404, {"error": "Preview or card not found", "reason": "not_found"})
-        except Forbidden:
-            send(
-                403,
-                {"error": "You cannot do that to this preview.", "reason": "forbidden"},
+        except Forbidden as exc:
+            words = (
+                "Only the workspace owner can change this rule."
+                if exc.args == ("owner",)
+                else "You cannot do that to this preview."
             )
+            send(403, {"error": words, "reason": "forbidden"})
         except Refused as exc:
             send(service.REFUSAL_STATUS.get(exc.reason, 422), service.refusal_payload(exc))
         except ValueError as exc:
