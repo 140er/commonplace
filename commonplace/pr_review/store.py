@@ -684,20 +684,10 @@ class ReviewStore:
                 taken.append(self.shown(fresh))
             return taken
 
-    def report(
-        self,
-        comment_id: int,
-        holder: str,
-        rev: int,
-        outcome: str,
-        now: datetime,
-        *,
-        commit=None,
-        reply=None,
-        note=None,
-    ) -> dict:
-        """One Coworker outcome for one comment it holds. Idempotent for the same outcome."""
-        at = stamp(now)
+    @staticmethod
+    def checked(outcome, commit=None, reply=None, note=None) -> tuple:
+        """``(commit, reply, note)`` of one report, checked and redacted; ``Invalid`` otherwise.
+        Nothing is read or written: a batch checks every report before it stores any."""
         if outcome not in st.REPORTED:
             raise Invalid("outcome must be addressed, answered or needs_you")
         if commit is not None and not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", str(commit)):
@@ -714,70 +704,122 @@ class ReviewStore:
             raise Invalid(f"note is longer than {MAX_NOTE} characters")
         if outcome == st.NEEDS_YOU and not note:
             raise Invalid("a comment that needs a person needs a note saying why")
-        with self._tx() as conn:
-            row = conn.execute(
-                "SELECT * FROM pr_review_comments WHERE id=?", (comment_id,)
-            ).fetchone()
-            if row is None:
-                raise Refused("not_found")
-            if row["status"] == outcome and row["holder"] == "" and row["rev"] == rev:
-                return self.shown(row)  # a repeated report: the stored state, no second move
-            if row["rev"] != rev:
-                raise Refused("comment_changed")
-            if row["status"] != st.WORKING or row["holder"] != holder:
-                raise Refused("not_working", "this comment is not held by you")
-            if outcome == st.ADDRESSED:
-                pr_row = conn.execute(
-                    "SELECT * FROM pr_review_prs WHERE repo=? AND pr=?", (row["repo"], row["pr"])
-                ).fetchone()
-                code = self._commit_problem(pr_row, commit)
-                pending = 1 if code in PENDING else 0
-                if code not in (None, *PENDING):
-                    self._move(
-                        conn,
-                        row,
-                        st.NEEDS_YOU,
-                        code,
-                        holder,
-                        at,
-                        kind="reported",
-                        fix_commit=commit,
-                        fix_pending=0,
-                        reply=reply,
-                        note=note,
-                    )
-                    return self._shown_id(conn, comment_id)
-                if pending:
-                    # The feeder has not seen this commit yet: the comment stays working until
-                    # it does (or the grace passes), so "addressed" always names a real commit.
-                    conn.execute(
-                        "UPDATE pr_review_comments SET fix_commit=?, fix_pending=1, reply=COALESCE(?, reply), "
-                        "touched_at=?, updated_at=? WHERE id=?",
-                        (commit, reply, at, at, comment_id),
-                    )
-                    return self._shown_id(conn, comment_id)
-            self._move(
-                conn,
-                row,
-                outcome,
-                "coworker_asks" if outcome == st.NEEDS_YOU else None,
-                holder,
-                at,
-                kind="reported",
-                fix_commit=commit,
-                fix_pending=0,
-                reply=reply,
-                note=note,
-            )
-            return self._shown_id(conn, comment_id)
+        return commit, reply, note
 
-    def mark_posted(self, comment_id: int, posted: bool) -> None:
-        """Record whether the Coworker posted its reply on the PR (it posts with its own access)."""
-        with self._tx() as conn:
-            conn.execute(
-                "UPDATE pr_review_comments SET reply_posted=? WHERE id=?",
-                (int(bool(posted)), comment_id),
+    def report(
+        self,
+        comment_id: int,
+        holder: str,
+        rev: int,
+        outcome: str,
+        now: datetime,
+        *,
+        commit=None,
+        reply=None,
+        note=None,
+    ) -> dict:
+        """One Coworker outcome for one comment it holds. Idempotent for the same outcome."""
+        item = {
+            "comment": comment_id,
+            "rev": rev,
+            "outcome": outcome,
+            "commit": commit,
+            "reply": reply,
+            "note": note,
+        }
+        return self.report_many([item], holder, now)[0]
+
+    def report_many(self, items: list, holder: str, now: datetime) -> list:
+        """Several outcomes in one transaction: every report is checked first and a refused one
+        stores none of the batch. ``items`` hold comment, rev, outcome, commit, reply, note and
+        optionally posted (kept with a recorded reply)."""
+        at = stamp(now)
+        ready = [
+            (
+                item,
+                *self.checked(
+                    item["outcome"], item.get("commit"), item.get("reply"), item.get("note")
+                ),
             )
+            for item in items
+        ]
+        with self._tx() as conn:
+            shown = []
+            for item, commit, reply, note in ready:
+                one = self._report_in(
+                    conn,
+                    item["comment"],
+                    holder,
+                    item["rev"],
+                    item["outcome"],
+                    at,
+                    commit,
+                    reply,
+                    note,
+                )
+                if one.get("reply") and "posted" in item:
+                    conn.execute(
+                        "UPDATE pr_review_comments SET reply_posted=? WHERE id=?",
+                        (int(bool(item["posted"])), item["comment"]),
+                    )
+                    one["reply_posted"] = bool(item["posted"])
+                shown.append(one)
+            return shown
+
+    def _report_in(self, conn, comment_id, holder, rev, outcome, at, commit, reply, note):
+        row = conn.execute("SELECT * FROM pr_review_comments WHERE id=?", (comment_id,)).fetchone()
+        if row is None:
+            raise Refused("not_found")
+        if row["status"] == outcome and row["holder"] == "" and row["rev"] == rev:
+            return self.shown(row)  # a repeated report: the stored state, no second move
+        if row["rev"] != rev:
+            raise Refused("comment_changed")
+        if row["status"] != st.WORKING or row["holder"] != holder:
+            raise Refused("not_working", "this comment is not held by you")
+        if outcome == st.ADDRESSED:
+            pr_row = conn.execute(
+                "SELECT * FROM pr_review_prs WHERE repo=? AND pr=?", (row["repo"], row["pr"])
+            ).fetchone()
+            code = self._commit_problem(pr_row, commit)
+            pending = 1 if code in PENDING else 0
+            if code not in (None, *PENDING):
+                self._move(
+                    conn,
+                    row,
+                    st.NEEDS_YOU,
+                    code,
+                    holder,
+                    at,
+                    kind="reported",
+                    fix_commit=commit,
+                    fix_pending=0,
+                    reply=reply,
+                    note=note,
+                )
+                return self._shown_id(conn, comment_id)
+            if pending:
+                # The feeder has not seen this commit yet: the comment stays working until
+                # it does (or the grace passes), so "addressed" always names a real commit.
+                conn.execute(
+                    "UPDATE pr_review_comments SET fix_commit=?, fix_pending=1, reply=COALESCE(?, reply), "
+                    "touched_at=?, updated_at=? WHERE id=?",
+                    (commit, reply, at, at, comment_id),
+                )
+                return self._shown_id(conn, comment_id)
+        self._move(
+            conn,
+            row,
+            outcome,
+            "coworker_asks" if outcome == st.NEEDS_YOU else None,
+            holder,
+            at,
+            kind="reported",
+            fix_commit=commit,
+            fix_pending=0,
+            reply=reply,
+            note=note,
+        )
+        return self._shown_id(conn, comment_id)
 
     def _shown_id(self, conn, comment_id):
         return self.shown(

@@ -134,17 +134,11 @@ def pr_review_report(ctx, args):
     _held(ctx, facts)
     store = open_review(ctx.gateway, ctx.principal.workspace_id)
     mode = reply_mode(store.pr(repo, pr), store.board(facts["board"]))
-    lines, asked = [], False
+    keys = {"comment", "rev", "outcome", "commit", "reply", "note", "posted"}
+    items = []
+    # Every report is checked before any is stored: a refused batch stores nothing.
     for report in args["reports"]:
-        if not isinstance(report, dict) or report.keys() - {
-            "comment",
-            "rev",
-            "outcome",
-            "commit",
-            "reply",
-            "note",
-            "posted",
-        }:
+        if not isinstance(report, dict) or report.keys() - keys:
             raise ToolError(
                 "no: a report holds comment, rev, outcome, commit, reply, note and posted only"
             )
@@ -164,28 +158,21 @@ def pr_review_report(ctx, args):
             or (original["repo"], original["pr"]) != (repo, pr)
         ):
             raise ToolError(f"no: {_REFUSALS['not_found']}")
-        try:
-            shown = store.report(
-                cid,
-                ctx.principal.actor,
-                rev,
-                report.get("outcome"),
-                _now(),
-                commit=report.get("commit"),
-                reply=report.get("reply"),
-                note=report.get("note"),
-            )
-        except Invalid as exc:
-            raise ToolError(f"no: {exc}") from None
-        except Refused as exc:
-            raise ToolError(f"no: {_REFUSALS.get(exc.code, exc.code)} [{exc.code}]") from None
-        if shown.get("reply"):
-            store.mark_posted(cid, posted)
-        asked = asked or shown["status"] == st.NEEDS_YOU
-        lines.append(
-            f"#{shown['id']} now {shown['status']}"
-            + (f" ({shown['reason_text']})" if shown["reason"] else "")
-        )
+        items.append({**report, "posted": posted})
+    try:
+        stored = store.report_many(items, ctx.principal.actor, _now())
+    except Invalid as exc:
+        raise ToolError(f"no: {exc} (nothing was stored)") from None
+    except Refused as exc:
+        raise ToolError(
+            f"no: {_REFUSALS.get(exc.code, exc.code)} [{exc.code}] (nothing was stored)"
+        ) from None
+    asked = any(shown["status"] == st.NEEDS_YOU for shown in stored)
+    lines = [
+        f"#{shown['id']} now {shown['status']}"
+        + (f" ({shown['reason_text']})" if shown["reason"] else "")
+        for shown in stored
+    ]
     if asked and not facts.get("ask"):
         counts = store.counts(repo, pr)
         try:

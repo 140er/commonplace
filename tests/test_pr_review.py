@@ -1306,3 +1306,32 @@ def test_a_broken_review_read_never_stops_a_start_and_logs_no_words(world, monke
         text = start_context.assemble(start_context.load(ctx, number))
     assert "Card: #" in text and "Review comments on PR" not in text
     assert "Why this approach?" not in caplog.text
+
+
+# ── card #629: a refused report batch stores nothing ──
+
+
+@pytest.mark.parametrize(
+    "bad, fragment",
+    [
+        ({"comment": 2, "rev": 1, "outcome": "answered", "reply": "x", "posted": True}, "dry_run"),
+        ({"comment": 2, "rev": 9, "outcome": "answered", "reply": "x"}, "comment_changed"),
+        ({"comment": 2, "rev": 1, "outcome": "addressed"}, "needs the commit"),
+        ({"comment": 999, "rev": 1, "outcome": "answered", "reply": "x"}, "not found"),
+    ],
+)
+def test_a_report_batch_with_one_refused_report_stores_none_of_it(world, bad, fragment):
+    h = world
+    number = start(h)
+    take(h, number)
+    good = {"comment": 1, "rev": 1, "outcome": "answered", "reply": "Kept on purpose."}
+    ok, text = mcp(h, h.t1, "pr_review_report", card=number, reports=[good, bad])
+    assert not ok and fragment in text, text
+    one = rows(h)["1"]
+    assert (one["status"], one["reply"]) == ("working", None)
+    assert [e["kind"] for e in h.store.history(REPO, 7) if e["comment_id"] == one["id"]] == [
+        "arrived",
+        "taken",
+    ]
+    ok, text = mcp(h, h.t1, "pr_review_report", card=number, reports=[good])
+    assert ok and rows(h)["1"]["status"] == "answered"

@@ -31,6 +31,8 @@
 
   - A started Coworker reads the waiting comments of its card's PR (at most 25, quoted, redacted) under the rules it must follow; a failure to read them never stops a start and logs no words. A report that says a reply was posted is refused where the board shows replies on the card only (`dry_run`), and every recorded reply keeps whether it was posted.
 
+  - The feeder survives bad input (card #629): a watch answer or a GitHub answer that is not the JSON it expects is a fixed code (`hub_bad_answer` stops the pass, `github_bad_answer` skips that PR and keeps nothing of the read), a watch entry that is not a repository and a whole PR number is left out, an unexpected error skips only its PR and is logged by type (a near rate limit is never one PR's error: it still ends the whole pass), and the polling loop outlives any bad pass. A report batch is checked whole and stored in one transaction: one refused report (a posted reply in a dry run, a changed comment, a missing commit, reply or note, an unknown comment) stores none of the batch.
+
 - **How it fails:**
 
   - A refused batch is a plain 400 with nothing stored, a full PR or workspace is a 429 `intake_limit` that drops nothing, a stale revision or a comment someone else holds is refused (`comment_changed`, `not_working`), and every `needs you` reason has fixed text and a next step in `status.py`. The trigger's own failures are logged by type and never fail an intake.
