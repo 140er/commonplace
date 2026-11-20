@@ -252,7 +252,7 @@ def decision_for(gateway, principal, board: str):
     """The model mode's decision for this person's chat message (``None``: it cannot be read)."""
     choice = models.resolve(gateway.db, principal.workspace_id, board, "main")
     try:
-        return model_modes.decide(
+        return model_modes.resolve_account(
             gateway.db,
             principal.workspace_id,
             board,
@@ -339,7 +339,7 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
                 machine = registry.get_machine(db, ws, candidate["machine_id"])
                 if machine is None:
                     continue
-                account = model_modes.decide(
+                account = model_modes.resolve_account(
                     db, ws, board, person=user, provider=cli, machine=machine
                 )
                 if account.refusal is None:
@@ -517,7 +517,7 @@ def lease(
         return None
     try:
         with db._lock:
-            account = model_modes.decide(
+            account = model_modes.resolve_account(
                 db,
                 claimed["workspace_id"],
                 claimed["board"],

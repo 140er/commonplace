@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - `projects/model_modes.py`: the mode record (`org`, `personal`, `hybrid`, no record = `unset`), a person's connections, the `decide` precedence matrix and the person's own Needs me items (card #617, `docs/system/model-modes.md`).
+  - `projects/model_modes.py`: the mode record (`org`, `personal`, `hybrid`, no record = `unset`), a person's connections, the `resolve_account` precedence matrix and the person's own Needs me items (card #617, `docs/system/model-modes.md`).
 
 - **Promises:**
 

@@ -56,7 +56,9 @@ def _pref(h, user, on):
 
 
 def _decide(h, user, **kwargs):
-    return model_modes.decide(h.db, h.workspace, "work", person=user, provider="claude", **kwargs)
+    return model_modes.resolve_account(
+        h.db, h.workspace, "work", person=user, provider="claude", **kwargs
+    )
 
 
 # ---------------------------------------------------------------- the precedence matrix
@@ -611,20 +613,20 @@ def _unreadable_mode_store(h, failure, monkeypatch):
             conn.execute(f"DROP TABLE {table}")
         yield
         return
-    original_decide = model_modes.decide
+    original_resolver = model_modes.resolve_account
     causes = []
 
-    def locked_decide(*args, **kwargs):
+    def locked_resolver(*args, **kwargs):
         # Hold a real table lock only during resolution; later URL writes need the store too.
         with _locked_mode_settings(h):
             try:
-                return original_decide(*args, **kwargs)
+                return original_resolver(*args, **kwargs)
             except model_modes.ModeUnavailable as exc:
                 causes.append(exc.__cause__)
                 raise
 
     with monkeypatch.context() as patch:
-        patch.setattr(model_modes, "decide", locked_decide)
+        patch.setattr(model_modes, "resolve_account", locked_resolver)
         yield
     assert len(causes) == 1 and isinstance(causes[0], sqlite3.OperationalError)
     assert "locked" in str(causes[0])
