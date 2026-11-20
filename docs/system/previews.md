@@ -165,3 +165,14 @@ A later slice (separate card, after the Compute start slice) adds `app` previews
 - The browser isolation tests run only where Playwright is installed (they are skipped otherwise, and `CP_BROWSER_E2E=1` makes a missing Playwright fail); this round's evidence ran them in Chromium.
 - Open on a phone opens a new tab, as on a desktop.
 
+#### Review round 1 (the card)
+
+- **Times.** A preview that was never published says when it started ("started 2 min ago by ..."), never "published"; the publisher is named as on the card header.
+- **What a person reads.** The card shows the server's words for people (see "Review round 1 (server and serving)"), the file and the kind of credential when a refusal named one ("File: config/env.js, which looked like a GitHub token."), and no "Try again" where there is no button.
+- **Focus and announcements.** The list is drawn into its own element and results are said in one status line that stays in place (`role=status`), so screen readers hear them. After Stop, focus moves to Open again; after Open again, to Open; after saving the rule, to its summary; after a refusal, to the heading. A redraw (the card panel's own, or the section following a publish) keeps focus on the same control; the shell's focus restore knows the section's keys too. A repainted list never repeats an old result.
+- **Offline.** "Showing the last list" is said only when a list is shown; a section that had no list shows the not-loaded view. A connection failure says "Check the connection and try again."; a server error says "Try again."; both have a real Try again button.
+- **While publishing** the section asks again every 3 seconds until nothing is being published.
+- **Touch and small screens.** On touch screens and below 1000 px every control in the section is at least 44 px, rule inputs use 16 px text, long names wrap at 320 px. Open again's name starts with its visible words; after Open again the status says "Press Open to view it."; the result note follows the state the server returned.
+- **Copy.** The rule says "after the card records the pull request as merged or closed" and "after it was last made live"; the usage says stopped previews still count toward the space.
+- Not done here (follow-ups): a Previews page in Settings and a link in Needs me; the panel-wide scroll position after a redraw.
+
