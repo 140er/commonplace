@@ -1,0 +1,1 @@
+- **Owns:** `tests/spaces_surfaces.json` pins the preview tool descriptions that say previews are static, isolated and opened through a 30-minute key, and that a Coworker stopping one cannot change the stop rule.

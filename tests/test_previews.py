@@ -344,7 +344,7 @@ def test_the_ready_limit_refuses_without_evicting_and_stopping_makes_room(consol
     for name in ("a", "b"):
         assert publish(h, h.t1, number, name=name)[0]
     text = refused(h, number, PAGE, "workspace_quota_full", "c")
-    assert "Stop an older preview" in text
+    assert "Stop a preview that is no longer needed" in text
     ids = {p["name"]: p for p in previews(h, card=number)[1]["previews"]}
     assert ids["a"]["state"] == ids["b"]["state"] == "ready" and ids["c"]["state"] == "failed"
     assert mcp(h, h.t1, "preview_stop", id=ids["a"]["id"])[0]
@@ -479,7 +479,7 @@ def test_the_rule_is_off_by_default_and_only_the_owner_sets_it(console_hub):
     status, body, _ = h.request(h.owner, "PUT", "/api/previews/rules", {"stop_days_after_pr": 7})
     assert status == 200 and body["stop_days_after_pr"] == 7
     assert (
-        "7 days after its pull request is merged or closed" in body["text"]
+        "7 days after the card records its pull request as merged or closed" in body["text"]
         and "files are kept" in body["text"]
     )
     for bad in (

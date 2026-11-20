@@ -30,7 +30,9 @@ MAX_NAME = 80
 
 STATES = ("building", "ready", "stopped", "failed")
 
-# code -> (what the person reads, what they can do next)
+# code -> (what the caller reads, what they can do next). These are said to whoever made the
+# request: a refused publish is told to the Coworker that sent it. A stored preview is shown to
+# people on the card with ``PERSON_WORDS`` where the two differ.
 REASONS = {
     "validating": ("The files are being checked.", "Wait a moment."),
     "storing": ("The files are being saved.", "Wait a moment."),
@@ -79,8 +81,9 @@ REASONS = {
     ),
     "workspace_quota_full": (
         "This workspace is at its preview limit (25 open previews or 500 MiB).",
-        "Stop an older preview to free an open place. Freeing space needs deleting previews, "
-        "which is not available yet.",
+        "Stop a preview that is no longer needed: at most 25 are served at once. Stopped "
+        "previews still use space; freeing space needs deleting previews, which is not "
+        "available yet.",
     ),
     "storage_unavailable": (
         "The files could not be saved on the server.",
@@ -98,11 +101,95 @@ REASONS = {
         "A person stopped this preview while it was being published, so nothing was changed.",
         "Look at the preview's current state, then publish again if it is still wanted.",
     ),
+    "person_stopped": (
+        "A person stopped this preview, so it is not published again by a Coworker.",
+        "Ask on the card whether it should be served again; a person can use Open again.",
+    ),
+    "files_unreadable": (
+        "The files of this preview cannot be read on the server right now.",
+        "Try again later; if it keeps happening, tell the workspace owner.",
+    ),
     "rate_limited": (
         "Too many publishes for this card in the last hour (limit 10).",
         "Wait before publishing again.",
     ),
 }
+
+_ASK = "Ask the Coworker that published it to publish again"
+_REPLY = "Reply on this card."
+# What a person reads about a stored preview on the card, where it differs from ``REASONS``.
+PERSON_WORDS = {
+    "validating": (
+        "The files are being checked.",
+        "This takes a few seconds; the card updates by itself.",
+    ),
+    "storing": (
+        "The files are being saved.",
+        "This takes a few seconds; the card updates by itself.",
+    ),
+    "stopped_by_person": (
+        "Stopped by a person. The files are kept.",
+        "Use Open again on this card to serve it.",
+    ),
+    "files_deleted": (
+        "A workspace owner deleted the files of this preview.",
+        f"{_ASK} if it is still wanted. {_REPLY}",
+    ),
+    "stopped_by_coworker": (
+        "Stopped by the Coworker that published it. The files are kept.",
+        "Use Open again on this card to serve it.",
+    ),
+    "pr_merged": (
+        "Stopped because the card records its pull request as merged. The files are kept.",
+        "Use Open again on this card to serve it.",
+    ),
+    "pr_closed": (
+        "Stopped because the card records its pull request as closed. The files are kept.",
+        "Use Open again on this card to serve it.",
+    ),
+    "expired": (
+        "Stopped by the workspace's stop rule. The files are kept.",
+        "Use Open again on this card to serve it.",
+    ),
+    "no_index_html": (
+        "Nothing was published: the files had no index.html at the top.",
+        f"{_ASK} with an index.html at the top of the files. {_REPLY}",
+    ),
+    "too_large": (
+        "Nothing was published: the files were larger than 5 MiB.",
+        f"{_ASK} with fewer or smaller files. {_REPLY}",
+    ),
+    "too_many_files": (
+        "Nothing was published: there were more than 500 files.",
+        f"{_ASK} with fewer files. {_REPLY}",
+    ),
+    "bad_path": (
+        "Nothing was published: a file name was not allowed.",
+        f"{_ASK} with that file renamed (relative names, no hidden or empty parts). {_REPLY}",
+    ),
+    "contains_secret_like_text": (
+        "Nothing was published: a file looked like it holds a credential.",
+        f"{_ASK} without the credential in that file. {_REPLY}",
+    ),
+    "workspace_quota_full": (
+        "Nothing was published: the workspace was at its preview limit (25 served or 500 MiB).",
+        "Stop a preview that is no longer needed, then ask the Coworker to publish again.",
+    ),
+    "too_many_previews": (
+        "Nothing was published: the workspace keeps at most 200 previews.",
+        "Tell the workspace owner. Deleting previews is not available yet.",
+    ),
+    "storage_unavailable": (
+        "Nothing was published: the server could not save the files.",
+        f"{_ASK} later. If it keeps failing, tell the workspace owner.",
+    ),
+    "publish_interrupted": ("Publishing did not finish.", f"{_ASK}. {_REPLY}"),
+}
+
+
+def person_words(reason) -> tuple:
+    return PERSON_WORDS.get(reason) or REASONS[reason]
+
 
 LIMITS = {
     "max_bundle_bytes": bundle.MAX_BUNDLE_BYTES,
@@ -149,6 +236,7 @@ def ensure_schema(db) -> None:
                 pr_url TEXT NOT NULL DEFAULT '', pr_head TEXT NOT NULL DEFAULT '',
                 actor TEXT NOT NULL, published_by TEXT NOT NULL, by_person INTEGER NOT NULL,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                failure_file TEXT NOT NULL DEFAULT '', failure_kind TEXT NOT NULL DEFAULT '',
                 UNIQUE (workspace_id, card, name)
             );
             CREATE INDEX IF NOT EXISTS previews_by_workspace ON previews(workspace_id, state);
@@ -176,7 +264,16 @@ def ensure_schema(db) -> None:
             );
             """
         )
-        # A workspace that ran the first slice has the revision table without this column.
+        # A workspace that ran an earlier slice has these columns missing.
+        columns = [row[1] for row in db._conn.execute("PRAGMA table_info(previews)")]
+        if "failure_file" not in columns:
+            db._conn.execute(
+                "ALTER TABLE previews ADD COLUMN failure_file TEXT NOT NULL DEFAULT ''"
+            )
+        if "failure_kind" not in columns:
+            db._conn.execute(
+                "ALTER TABLE previews ADD COLUMN failure_kind TEXT NOT NULL DEFAULT ''"
+            )
         columns = [row[1] for row in db._conn.execute("PRAGMA table_info(preview_revisions)")]
         if "deleted_at" not in columns:
             db._conn.execute("ALTER TABLE preview_revisions ADD COLUMN deleted_at TEXT")
@@ -309,7 +406,7 @@ def shape(row, current, revisions=None, stops_at=None) -> dict:
     """The public shape of a preview, from rows already read. It names no path, host or
     environment value."""
     state, reason = effective(row)
-    text, nxt = REASONS[reason]
+    text, nxt = person_words(reason)
     shown = {
         "id": row["id"],
         "card": row["card"],
@@ -327,9 +424,17 @@ def shape(row, current, revisions=None, stops_at=None) -> dict:
         "pr": {"url": row["pr_url"], "head": row["pr_head"]} if row["pr_url"] else None,
         "published_by": current["published_by"] if current else row["published_by"],
         "by": "person" if (current["by_person"] if current else row["by_person"]) else "coworker",
-        "published_at": current["published_at"] if current else row["created_at"],
+        # Only a revision that was published has a publish time; an attempt has a start time.
+        "published_at": current["published_at"] if current else None,
+        "started_at": None if current else row["updated_at"],
         "stops_at": stops_at if state == "ready" else None,
         "last_changed_at": row["updated_at"],
+        # Which file a refused publish was about (never its content), when the reason names one.
+        "failure": (
+            {"file": row["failure_file"], "kind": row["failure_kind"]}
+            if state == "failed" and row["failure_file"]
+            else None
+        ),
         "url": f"/p/{row['id']}/"
         if current is not None and current["deleted_at"] is None
         else None,

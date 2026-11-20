@@ -32,7 +32,8 @@ _ID = re.compile(r"pv_[0-9a-f]{16}")
 # the page to its own files and lets the Deck frame it.
 FILE_POLICY = (
     "sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob:; "
-    "connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'"
+    "connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'self'"
 )
 # The state and sign-in pages are this module's own text: no script at all.
 PAGE_POLICY = (
@@ -101,18 +102,28 @@ def _send(h, status, body: bytes, kind: str, policy: str, extra=()) -> None:
     h.wfile.write(body)
 
 
-def page(h, status, title, lines, extra=()) -> None:
-    """A plain page in words: the title, a few sentences, nothing else."""
+def page(h, status, title, lines, extra=(), links=()) -> None:
+    """A plain page in words: the title, a few sentences and the links to go on with. The links
+    are this module's own fixed addresses; nothing from the request is quoted."""
     text = "".join(f"<p>{html.escape(line)}</p>" for line in lines if line)
+    onward = "".join(
+        f'<p><a href="{html.escape(href, quote=True)}">{html.escape(words)}</a></p>'
+        for href, words in links
+    )
     body = (
         "<!doctype html><html lang=en><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
         "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:3rem auto;"
-        "padding:0 1rem;color:#1d1d1f;background:#fff}h1{font-size:1.4rem}</style>"
-        f"<h1>{html.escape(title)}</h1>{text}"
+        "padding:0 1rem;color:#1d1d1f;background:#fff}h1{font-size:1.4rem}"
+        "a{display:inline-block;min-height:44px;line-height:44px;color:#0b57d0}</style>"
+        f"<main><h1>{html.escape(title)}</h1>{text}{onward}</main>"
     ).encode("utf-8")
     _send(h, status, body, "text/html; charset=utf-8", PAGE_POLICY, extra)
+
+
+def card_link(number) -> tuple:
+    return (f"/app/#/card/{int(number)}", f"Open card #{int(number)} in Commonplace")
 
 
 def not_found(h) -> None:
@@ -122,8 +133,9 @@ def not_found(h) -> None:
         "Preview not found",
         [
             "There is no preview at this address that you can open.",
-            "Check the link, or open the card it belongs to.",
+            "Check the link, or find the preview under Previews on its card.",
         ],
+        links=[("/app/", "Open Commonplace")],
     )
 
 
@@ -143,21 +155,30 @@ def file_path(rest: str) -> str | None:
         return None
 
 
-def read_file(folder: Path, path: str) -> bytes | None:
-    """The bytes of ``path`` inside ``folder``, or ``None``: never a directory, never a link and
-    never anything that resolves outside the folder."""
+def resolve_file(folder: Path, path: str) -> Path | None:
+    """The real file ``path`` names inside ``folder``, or ``None``: never a directory, never a
+    link (the file or any folder on the way) and never anything that resolves outside."""
     base = folder.resolve()
     target = folder / path
     try:
         if target.is_symlink() or not target.is_file():
             return None
+        inner = Path(path).parents
+        if any((folder / part).is_symlink() for part in inner if str(part) != "."):
+            return None
         real = target.resolve(strict=True)
         if not real.is_relative_to(base) or real == base:
             return None
-        if any(p.is_symlink() for p in target.relative_to(folder).parents if str(p) != "."):
-            return None
-        return real.read_bytes()
+        return real
     except (OSError, ValueError):
+        return None
+
+
+def read_file(folder: Path, path: str) -> bytes | None:
+    real = resolve_file(folder, path)
+    try:
+        return real.read_bytes() if real is not None else None
+    except OSError:
         return None
 
 
@@ -180,9 +201,10 @@ def _sign_in(h) -> None:
         "Sign in to open this preview",
         [
             "Previews are open only to people in the workspace who can open the card.",
-            "Sign in to the app, then open this link again.",
+            "Sign in to Commonplace, then open this preview again from its card.",
         ],
         (("Link", '</app/login>; rel="login"'),),
+        links=[("/app/login", "Sign in to Commonplace")],
     )
 
 
@@ -234,6 +256,7 @@ def install(gateway) -> None:
             _redirect(h, 308, base)
             return
         state = shown["state"]
+        card = card_link(shown["card"])
         if state != "ready":
             extra = (("Retry-After", "30"),) if state == "building" else ()
             title = {
@@ -241,10 +264,27 @@ def install(gateway) -> None:
                 "failed": "This preview could not be published",
                 "building": "This preview is being published",
             }[state]
-            page(h, STATE_STATUS[state], title, [shown["reason_text"], shown["next"]], extra)
+            lines = [shown["reason_text"], shown["next"]]
+            page(h, STATE_STATUS[state], title, lines, extra, links=[card])
             return
         wanted = file_path(inner)
-        if wanted is not None and token is None:
+        unreadable = folder is None or not folder.is_dir()
+        if wanted is not None and not unreadable and resolve_file(folder, wanted) is None:
+            wanted = None  # an address that names no file: no key is made for it
+        if wanted is None or unreadable:
+            if unreadable:
+                text, nxt = store.REASONS["files_unreadable"]
+                page(h, 503, "This preview cannot be opened right now", [text, nxt], links=[card])
+                return
+            page(
+                h,
+                404,
+                "Not in this preview",
+                ["This preview has no file at this address."],
+                links=[(f"{PREFIX}{identity}/", "Go to the preview's start page"), card],
+            )
+            return
+        if token is None:
             # The page's own requests carry no session (it has no origin of its own), so it is
             # opened under a short-lived link that stands in for the session for this preview.
             _redirect(
@@ -253,21 +293,10 @@ def install(gateway) -> None:
                 f"{PREFIX}{identity}/{links.MARK}{links.mint(gateway, principal, identity)}/{inner}",
             )
             return
-        data = read_file(folder, wanted) if wanted and folder is not None else None
+        data = read_file(folder, wanted)
         if data is None:
-            if wanted is not None and (folder is None or not folder.is_dir()):
-                text, nxt = store.REASONS["storage_unavailable"]
-                page(h, 503, "This preview cannot be opened right now", [text, nxt])
-                return
-            page(
-                h,
-                404,
-                "Not in this preview",
-                [
-                    "This preview has no file at this address.",
-                    f"Its start page is {PREFIX}{identity}/.",
-                ],
-            )
+            text, nxt = store.REASONS["files_unreadable"]
+            page(h, 503, "This preview cannot be opened right now", [text, nxt], links=[card])
             return
         kind = content_type(wanted)
         extra = (("Content-Disposition", "attachment"),) if kind == UNKNOWN_TYPE else ()

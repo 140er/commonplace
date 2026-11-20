@@ -235,10 +235,13 @@ function callTree(card) {
   return `<section class="cs" aria-label="Call tree"><div class="cs-head">${head}</div><div class="cs-body"><ul class="cs-tree">${(stack.roots || []).map((n, i) => node(n, String(i), "")).join("")}${cut}${rest}</ul></div></section>`;
 }
 
-// Stable selectors survive a re-render, so focus can return to the same control.
+// Stable selectors survive a re-render, so focus can return to the same control. The Previews
+// section's keys are listed here too (kept equal to FOCUS_KEYS in cardpreviews.js by a test), so
+// this shell does not load that module before a card is opened.
+const PREVIEW_FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-heading"];
 function focusKey(el) {
   if (el.id) return `#${CSS.escape(el.id)}`;
-  for (const name of ["data-action", "data-details-tab", "data-details-title"]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
+  for (const name of ["data-action", "data-details-tab", "data-details-title", ...PREVIEW_FOCUS_KEYS]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
   return null;
 }
 function remember() {

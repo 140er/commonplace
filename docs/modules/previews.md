@@ -1,6 +1,6 @@
 ## previews
 
-- **Paths:** `commonplace/previews/`, `tests/test_previews.py`, `tests/test_previews_account.py`, `tests/test_previews_serving.py`, `tests/test_previews_browser.py`, `commonplace/web/static/cardpreviews.js`, `tests/cardpreviews.mjs`, `tests/test_card_previews_ui.py`, `tests/test_card_previews_browser.py`, `tests/test_previews_delete.py`
+- **Paths:** `commonplace/previews/`, `tests/test_previews.py`, `tests/test_previews_account.py`, `tests/test_previews_serving.py`, `tests/test_previews_browser.py`, `commonplace/web/static/cardpreviews.js`, `tests/cardpreviews.mjs`, `tests/test_card_previews_ui.py`, `tests/test_card_previews_browser.py`, `tests/test_previews_round2.py`, `tests/test_previews_delete.py`
 - **Owns:**
 
   - Persistent previews, slice 1 (card #612, design in `docs/system/previews.md`): a Coworker publishes a bundle of files for a card and people who can open that card list, stop and reopen it later. Rows live in the control database (`previews`, `preview_revisions`, append-only `preview_events`, `preview_rules`); each revision's files live under `<workspace dir>/previews/<id>/r<n>/` and are written once.
@@ -19,7 +19,7 @@
 
   - Responses name no filesystem path, host or environment value; a credential-shaped value in a file refuses the publish and names only the file and the kind.
 
-  - Files are served only to signed-in people who can open the card, or under a page link of such a person for that one preview, re-checked on every request; signed-out browsers get a sign-in page, agent tokens a 403 page, and unknown, foreign or hidden previews one identical 404 page. Every file carries the sandbox policy, so a preview cannot read the viewer's cookies or storage or call `/api/`.
+  - Files are served only to signed-in people who can open the card, or under a 30-minute page key of such a person for that one preview (anyone with that exact address can open it until it ends; the texts say so), re-checked on every request; signed-out browsers get a sign-in page, agent tokens a 403 page, and unknown, foreign or hidden previews one identical 404 page. Every file carries the sandbox policy, so a preview cannot read the viewer's cookies or storage or call `/api/`.
 
   - Nothing outside the revision folder is read: decoded paths follow the published-path rules, links are never followed, and the state pages quote nothing from the request.
 
@@ -40,5 +40,9 @@
   - `tests/test_previews_serving.py` covers the served files and headers, content types, redirects, the uniform 404, the sign-in and agent pages, path discipline and links, every state page, missing files, the age and pull request stop rules with a moved clock, a hostile page's `Origin: null` writes, a restarted server and the page link (no session needed, one preview only, re-checked, expiry and pruning). `tests/test_previews_browser.py` (Playwright) opens a hostile page in Chromium: its own stylesheet and script load, the cookie, storage and `/api/` do not.
 
   - `tests/cardpreviews.mjs` (run by `tests/test_card_previews_ui.py`) covers every state, the empty and offline views, escaping, link checks, the stop rule form, Stop, Open again, refusals and the panel placement; `tests/test_card_previews_browser.py` (Playwright) shows every state in the real shell at desktop and phone size, 44 px touch targets on a phone, one click to open in a new tab and Stop from the keyboard.
+
+  - `tests/test_previews_round2.py` covers the review round: the 30-minute key and the three kept per person, no key for an address that names no file, the texts that name the key, person words and the stored file and kind of a refusal, start and publish times, links on every served page, a Coworker refused on a preview a person stopped, the same files served again without a copy, card lines for Stop and Open again, credential-like names, a leading `~`, a linked folder, and the schema upgrade.
+
+  - `tests/cardpreviews.mjs` also covers the review round on the card: start versus publish times, the failure file and kind, accessible names, the offline wording and the not-loaded view, focus after Stop, Open again, a refusal and saving the rule, focus through a redraw, the status line, polling while publishing, and that the shell's focus keys match; `tests/test_card_previews_browser.py` adds 320 px, 768 px touch and the open rule form, 44 px checks off the desktop, focus after Stop and focus through a polling redraw.
 
   - `tests/test_previews_delete.py` covers deleting files: owner only with the repeated id, the removal with the lock released, a delete racing a republish (deterministic, no sleeps), a preview still being published, a removal that leaves files and the retry, a refused rename that changes nothing, the cap after a delete, the column added to a first-slice revision table, and the served page of a deleted preview. `tests/cardpreviews.mjs` covers the owner-only Delete files button, its confirmation and the result.

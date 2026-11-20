@@ -158,32 +158,133 @@ def _holding(count):
     )
 
 
+def _at_once(cap):
+    return f"{cap} run{'' if cap == 1 else 's'} at once"
+
+
 def _in_use(running, held, cap):
     """The one count of a machine's runs at once, the same words in the sentence and the blocker."""
     used = running + held
     parts = [f"{running} in progress"] if running else []
     if held:
         parts.append(_holding(held).rstrip("."))
-    return (
-        f"{used} of {cap} runs at once {'is' if used == 1 else 'are'} in use: {'; '.join(parts)}."
-    )
+    return f"{used} of {_at_once(cap)} {'is' if used == 1 else 'are'} in use: {'; '.join(parts)}."
 
 
-def _allowed_to_start(machine, item):
-    """ "Allowed to start runs" from the status the chip shows, so the two can never disagree."""
-    code = item["status"]["code"]
-    if code == "revoked":
-        return "No: it was removed"
-    if code == "disabled":
-        return "No: it is turned off"
+def _cap_text(machine, facts):
+    """The hourly start limit in words, the same in the status sentence and the blocker."""
+    cap, started = machine["max_starts_per_hour"], facts["starts_hour"]
+    count = f"{_runs(started)} in the last hour"
+    limit = "its limit" if started == cap else f"over its limit of {cap}"
+    return f"It has started {count}, {limit}. New runs wait until an earlier start is more than an hour old."
+
+
+# Can this runner take new work? One answer, derived once from the inputs the hub's lease reads (``jobs.lease``,
+# ``capacity.available``, ``jobs.binding_problem``): enrollment (removed, turned off, not approved), drain, the hourly
+# start limit, the runs at once in use (finished runs whose card is still Doing included) and whether it is reporting.
+# The status chip and sentence, the blockers and "Allowed to start card runs" all come from this list, so they cannot
+# disagree. Each reason has a ``kind``: "no" (nothing starts), "not_now" (nothing starts until time passes), "slot" (waits
+# for a run to finish) or "report" (the hub would hand it work once it reports).
+REASON_KINDS = ("no", "not_now", "slot", "report")
+
+
+def can_take_new_work(machine, record, facts, red_after_s=900, setup_only=False):
+    """The ordered reasons this runner cannot take new work right now: ``[{code, kind, allowed, blocker}]``, in blocker
+    order. An empty list means it can. A removed runner has the one reason. A machine added through the setup guide
+    sends no heartbeat, so what it reports says nothing about whether it is on and is not listed as quiet."""
+    reason, drain, held = record["reason"], facts["drain"], facts["finished_holding"]
+    if reason == "revoked":
+        return [
+            {
+                "code": "revoked",
+                "kind": "no",
+                "allowed": "No: it was removed",
+                "blocker": "Removed: the owner removed this runner. It can't be used again.",
+            }
+        ]
+    reasons = []
+    if reason == "disabled":
+        reasons.append(
+            {
+                "code": "disabled",
+                "kind": "no",
+                "allowed": "No: it is turned off",
+                "blocker": "Turned off: the owner turned it off. Turn it on again in Admin, Runner machines.",
+            }
+        )
     if machine["binding_state"] != "owner_attested":
-        return "No: it is not set up and approved yet"
-    if item["draining"]:
-        return "No: it is " + ("drained" if code == "drained" else "draining")
-    if code in ("offline", "never_connected"):
-        return "Yes, once it reports"
-    if code == "full":
-        return "Yes, once a run finishes"
+        reasons.append(
+            {
+                "code": "not_approved",
+                "kind": "no",
+                "allowed": "No: it is not set up and approved yet",
+                "blocker": "Not approved: it can't start runs yet. Approve its setup in Admin, Runner machines.",
+            }
+        )
+    if drain["draining"]:
+        # One word per state, the chip's: "Draining" while runs are in progress, "Drained" when none are. That resuming
+        # is not available is said once, in the status sentence.
+        word = "Draining" if facts["running"] else "Drained"
+        reasons.append(
+            {
+                "code": "draining",
+                "kind": "no",
+                "allowed": f"No: it is {word.lower()}",
+                "blocker": f"{word}: {DRAIN_SCOPE}",
+            }
+        )
+    if reason == "never_reported":
+        reasons.append(
+            {
+                "code": "never_connected",
+                "kind": "report",
+                "allowed": "Yes, once it reports",
+                "blocker": "Never connected: it has not contacted Commonplace yet, so runs would wait.",
+            }
+        )
+    elif reason == "no_heartbeat" and not setup_only:
+        reasons.append(
+            {
+                "code": "offline",
+                "kind": "report",
+                "allowed": "Yes, once it reports",
+                "blocker": f"Offline: nothing heard for over {span(red_after_s)}, so new card runs would wait.",
+            }
+        )
+    # A draining runner starts nothing whatever its load: "full" would say new runs wait for one to finish, which a drain
+    # already overrides, so it is not listed beside it.
+    if facts["running"] + held >= machine["max_in_flight"] and not drain["draining"]:
+        reasons.append(
+            {
+                "code": "full",
+                "kind": "slot",
+                "allowed": "Yes, once a run finishes",
+                "blocker": "Full: "
+                + _in_use(facts["running"], held, machine["max_in_flight"])
+                + " New runs wait.",
+            }
+        )
+    if facts["starts_hour"] >= machine["max_starts_per_hour"] and not drain["draining"]:
+        reasons.append(
+            {
+                "code": "hourly_cap",
+                "kind": "not_now",
+                "allowed": "Not right now: hourly limit reached",
+                "blocker": "Hourly limit: " + _cap_text(machine, facts),
+            }
+        )
+    return reasons
+
+
+def _allowed_to_start(reasons):
+    """ "Allowed to start card runs": the first reason by kind, so a limit that finishing a run does not clear is never
+    reported as "Yes, once a run finishes"."""
+    for kind in REASON_KINDS:
+        for item in reasons:
+            if item["kind"] == kind:
+                if kind == "slot" and any(r["kind"] == "report" for r in reasons):
+                    return "Yes, once it reports and a run finishes"
+                return item["allowed"]
     return "Yes"
 
 
@@ -792,13 +893,17 @@ def _recent_runs(conn, machine_id):
     return [dict(row) for row in conn.execute(RECENT_RUNS_SQL, (machine_id, ACTIVITY_LIMIT))]
 
 
-def runner_status(machine, record, facts, now, setup_only=False):
+def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
     """The one status of a runner machine: ``record`` is ``topology.status.machine_status``."""
     # The age of the last signal is the health line's job (``last_seen``); a sentence here says what it means.
     running, held = facts["running"], facts["finished_holding"]
     drain = facts["drain"]
     note = f" It is also set to drain. {DRAIN_SCOPE}" if drain["draining"] else ""
     reason = record["reason"]
+    codes = {
+        item["code"]
+        for item in (reasons if reasons is not None else can_take_new_work(machine, record, facts))
+    }
     if reason == "revoked":
         return _status(
             "revoked",
@@ -812,6 +917,13 @@ def runner_status(machine, record, facts, now, setup_only=False):
             "wait",
             "Disabled",
             "The owner turned this runner off. It starts no runs.",
+        )
+    if "not_approved" in codes:
+        return _status(
+            "not_approved",
+            "wait",
+            "Not approved",
+            "Its setup is not approved yet, so it starts no runs. It can be approved in Admin, Runner machines.",
         )
     if reason == "never_reported":
         return _status(
@@ -871,6 +983,15 @@ def runner_status(machine, record, facts, now, setup_only=False):
             next_text=_holding_step(facts["holding_cards"]) if held else None,
         )
     used, cap = running + held, machine["max_in_flight"]
+    if "hourly_cap" in codes:
+        # Finishing a run does not clear this limit, only time does, so it is the status whatever the load.
+        return _status(
+            "limit_reached",
+            "wait",
+            "Online · Limit reached",
+            _cap_text(machine, facts) + (f" {_in_use(running, held, cap)}" if used else ""),
+            next_text=_holding_step(facts["holding_cards"]) if held else None,
+        )
     if used:
         # One word and one count everywhere (chip, sentence, blocker): "Full" when every one of its runs at once is in
         # use, "Busy" when some are, and the same "used of cap" in the sentence and the blocker.
@@ -885,71 +1006,10 @@ def runner_status(machine, record, facts, now, setup_only=False):
     return _status("online", "ok", "Online", "Waiting for work.")
 
 
-def runner_blockers(machine, record, facts, red_after_s=900):
-    blockers = []
-    reason = record["reason"]
-    drain = facts["drain"]
-    if reason == "revoked":
-        blockers.append(
-            {
-                "code": "revoked",
-                "text": "Removed: the owner removed this runner. It can't be used again.",
-            }
-        )
-        return blockers
-    if reason == "disabled":
-        blockers.append(
-            {
-                "code": "disabled",
-                "text": "Turned off: the owner turned it off. Turn it on again in Admin, Runner machines.",
-            }
-        )
-    if machine["binding_state"] != "owner_attested":
-        blockers.append(
-            {
-                "code": "not_approved",
-                "text": "Not approved: it can't start runs yet. Approve its setup in Admin, Runner machines.",
-            }
-        )
-    if drain["draining"]:
-        # One word per state, the chip's: "Draining" while runs are in progress, "Drained" when none are. That resuming is
-        # not available is said once, in the status sentence.
-        word = "Draining" if facts["running"] else "Drained"
-        blockers.append({"code": "draining", "text": f"{word}: {DRAIN_SCOPE}"})
-    if reason == "never_reported":
-        blockers.append(
-            {
-                "code": "never_connected",
-                "text": "Never connected: it has not contacted Commonplace yet, so runs would wait.",
-            }
-        )
-    elif reason == "no_heartbeat":
-        blockers.append(
-            {
-                "code": "offline",
-                "text": f"Offline: nothing heard for over {span(red_after_s)}, so new card runs would wait.",
-            }
-        )
-    # A draining runner starts nothing whatever its load: "full" would say new runs wait for one to finish, which a drain
-    # already overrides, so it is not listed beside it.
-    held = facts["finished_holding"]
-    if facts["running"] + held >= machine["max_in_flight"] and not drain["draining"]:
-        blockers.append(
-            {
-                "code": "full",
-                "text": "Full: "
-                + _in_use(facts["running"], held, machine["max_in_flight"])
-                + " New runs wait.",
-            }
-        )
-    if facts["starts_hour"] >= machine["max_starts_per_hour"]:
-        blockers.append(
-            {
-                "code": "hourly_cap",
-                "text": f"Hourly limit: it reached {machine['max_starts_per_hour']} starts this hour. New runs wait.",
-            }
-        )
-    return blockers
+def runner_blockers(machine, record, facts, red_after_s=900, reasons=None):
+    if reasons is None:
+        reasons = can_take_new_work(machine, record, facts, red_after_s)
+    return [{"code": item["code"], "text": item["blocker"]} for item in reasons]
 
 
 def _runner_usage(machine, facts, now, *, silent=""):
@@ -961,7 +1021,7 @@ def _runner_usage(machine, facts, now, *, silent=""):
     in_progress = (
         f"{_runs(running)} recorded in progress; more may be running while it is {silent}"
         if silent
-        else f"{used} of {machine['max_in_flight']} runs at once in use"
+        else f"{used} of {_at_once(machine['max_in_flight'])} in use"
     )
     usage = {
         "runs": {
@@ -1065,8 +1125,9 @@ def _runner_usage(machine, facts, now, *, silent=""):
 
 
 def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False):
-    status = runner_status(machine, record, facts, now, setup_only)
-    blockers = runner_blockers(machine, record, facts, red_after_s)
+    reasons = can_take_new_work(machine, record, facts, red_after_s, setup_only)
+    status = runner_status(machine, record, facts, now, reasons, setup_only)
+    blockers = runner_blockers(machine, record, facts, red_after_s, reasons)
     issues = []
     if facts["uncertain"]:
         issues.append(
@@ -1123,6 +1184,8 @@ def runner_item(machine, record, facts, now, red_after_s=900, setup_only=False):
         ),
         "placement": {"approved": machine["binding_state"] == "owner_attested"},
         "draining": facts["drain"]["draining"],
+        # Whether it can take new work, from the one predicate the status and the blockers also come from.
+        "intake": {"allowed": _allowed_to_start(reasons), "reasons": [r["code"] for r in reasons]},
         "basis": {"seq": facts["drain"]["seq"]},
         "actions": [],
     }
@@ -1509,8 +1572,8 @@ def detail(store, principal, kind, item_id, *, session_hash):
         {"label": "Runs at once", "value": f"Up to {machine['max_in_flight']}"},
         {"label": "Starts per hour", "value": f"Up to {machine['max_starts_per_hour']}"},
         {
-            "label": "Allowed to start runs",
-            "value": _allowed_to_start(machine, item),
+            "label": "Allowed to start card runs",
+            "value": item["intake"]["allowed"],
         },
         {
             "label": "Logs",

@@ -280,10 +280,17 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 .card-previews .run-start { width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .card-previews .run-start-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .card-previews .run-start-field { display: flex; flex-direction: column; gap: 2px; flex: 1 1 180px; font-size: 12.5px; color: var(--text-2); }
-@media (max-width: 699px) {
-  .card-previews .preview-acts .btn, .card-previews .run-start .btn, .card-previews [data-preview-retry] { min-height: 44px; flex: 1 1 auto; justify-content: center; }
-  .card-previews .preview-acts { width: 100%; }
-  .card-previews summary { min-height: 44px; padding: 12px 0; box-sizing: border-box; }
+.card-previews .run-line, .card-previews .preview-name, .card-previews .run-note { overflow-wrap: anywhere; min-width: 0; }
+.card-previews .run-line { max-width: 100%; }
+.card-previews .run-note { font-size: 12.5px; color: var(--text-2); margin: 0; }
+.card-previews h3[data-preview-heading]:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+/* Touch screens and narrow windows: every control at least 44 px, inputs large enough not to zoom. */
+/* "section." outweighs the Deck look's 36 px buttons, which load later. */
+@media (pointer: coarse), (max-width: 999px) {
+  section.card-previews .preview-acts .btn, section.card-previews .run-start .btn, section.card-previews .btn[data-preview-retry] { min-height: 44px; flex: 1 1 auto; justify-content: center; }
+  section.card-previews .preview-acts { width: 100%; }
+  section.card-previews summary { min-height: 44px; padding: 12px 0; box-sizing: border-box; }
+  section.card-previews .run-start-field input[type="number"] { min-height: 44px; font-size: 16px; }
 }
 .card-runs .run-empty { font-size: 13px; color: var(--text-2); }
 .card-runs .run-note { font-size: 12.5px; color: var(--text-2); }

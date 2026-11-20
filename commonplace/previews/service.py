@@ -14,6 +14,7 @@ import secrets
 import shutil
 from datetime import timedelta
 
+from commonplace import redact
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import require_visible, task_row
 from commonplace.extensions import ToolContext, ToolError
@@ -109,6 +110,9 @@ def _name(raw) -> str:
     name = raw.strip()
     if not 1 <= len(name) <= store.MAX_NAME or any(ord(c) < 32 or ord(c) == 127 for c in name):
         raise ValueError("name must be text of 1 to 80 characters")
+    # The name is shown to everyone who can open the card: it must not carry a credential.
+    if redact.find_kinds(name, bundle.SECRET_KINDS):
+        raise ValueError("name looks like it holds a credential; choose a plain name")
     return name
 
 
@@ -136,13 +140,17 @@ def _failure(gateway, principal, info, name, exc) -> dict:
     workspace = principal.workspace_id
     who, by_person = _who(principal)
     now = store.stamp(store.clock())
+    # The file a refusal is about and the kind of credential, never the content.
+    failure_file = str(exc.detail.get("file") or "")[:80]
+    failure_kind = str(exc.detail.get("kind") or "")[:40]
     with db._lock, db._tx() as conn:
         row = store.row_by_name(conn, workspace, info["number"], name)
         if row is None:
             identity = store.new_id()
             conn.execute(
                 "INSERT INTO previews(id,workspace_id,card,name,state,reason,pr_url,pr_head,actor,"
-                "published_by,by_person,created_at,updated_at) VALUES (?,?,?,?,'failed',?,?,?,?,?,?,?,?)",
+                "published_by,by_person,created_at,updated_at,failure_file,failure_kind) "
+                "VALUES (?,?,?,?,'failed',?,?,?,?,?,?,?,?,?,?)",
                 (
                     identity,
                     workspace,
@@ -156,14 +164,26 @@ def _failure(gateway, principal, info, name, exc) -> dict:
                     by_person,
                     now,
                     now,
+                    failure_file,
+                    failure_kind,
                 ),
             )
             row = store.row_by_id(conn, workspace, identity)
         elif row["current_revision"] == 0 and row["state"] == "failed":
             # Only a refused attempt is refreshed; a publish that is still building is left alone.
             conn.execute(
-                "UPDATE previews SET state='failed',reason=?,updated_at=? WHERE id=?",
-                (exc.reason, now, row["id"]),
+                "UPDATE previews SET state='failed',reason=?,updated_at=?,failure_file=?,"
+                "failure_kind=?,actor=?,published_by=?,by_person=? WHERE id=?",
+                (
+                    exc.reason,
+                    now,
+                    failure_file,
+                    failure_kind,
+                    principal.actor,
+                    who,
+                    by_person,
+                    row["id"],
+                ),
             )
             row = store.row_by_id(conn, workspace, row["id"])
         store.event(
@@ -177,7 +197,43 @@ def _failure(gateway, principal, info, name, exc) -> dict:
         )
         shown = store.view(conn, row)
         store.prune_failed(conn, workspace)
-        return shown
+    text, _next = store.person_words(exc.reason)
+    _history(gateway, principal, info["number"], f"Preview {name} was not published. {text}")
+    return shown
+
+
+def _same_or_refused(conn, principal, workspace, info, row, digest, now) -> tuple:
+    """Before a publish takes a revision: ``(refusal, None)`` when a Coworker would bring back a
+    preview a person stopped, or ``(None, view)`` when the files are the ones already kept (a
+    ready preview is unchanged; a stopped one is served again without a copy)."""
+    if (
+        row is not None
+        and not principal.person
+        and row["state"] == "stopped"
+        and row["reason"] == "stopped_by_person"
+    ):
+        # A person took it down: a Coworker does not bring it back by publishing again.
+        return Refused("person_stopped"), None
+    held = (
+        conn.execute(
+            "SELECT digest FROM preview_revisions WHERE preview_id=? AND revision=?",
+            (row["id"], row["current_revision"]),
+        ).fetchone()
+        if row is not None and row["current_revision"]
+        else None
+    )
+    if held is None or held["digest"] != digest or row["state"] not in ("ready", "stopped"):
+        return None, None
+    if row["state"] == "ready":
+        return None, store.view(conn, row)
+    if store.usage(conn, workspace)["ready"] >= store.MAX_READY:
+        return Refused("workspace_quota_full"), None
+    conn.execute(
+        "UPDATE previews SET state='ready',reason='published',updated_at=? WHERE id=?",
+        (now, row["id"]),
+    )
+    store.event(conn, workspace, row["id"], info["number"], "reopened", principal.actor)
+    return None, store.view(conn, store.row_by_id(conn, workspace, row["id"]))
 
 
 def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
@@ -208,14 +264,9 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
     now = store.stamp(store.clock())
     with db._lock, db._tx() as conn:
         row = store.row_by_name(conn, workspace, info["number"], name)
-        if row is not None and row["state"] == "ready":
-            held = conn.execute(
-                "SELECT digest FROM preview_revisions WHERE preview_id=? AND revision=?",
-                (row["id"], row["current_revision"]),
-            ).fetchone()
-            if held is not None and held["digest"] == digest:
-                return store.view(conn, row), False
-        refusal = None
+        refusal, same = _same_or_refused(conn, principal, workspace, info, row, digest, now)
+        if same is not None:
+            return same, False
         try:
             store.check_room(
                 conn, workspace, size, needs_ready_slot=row is None or row["state"] != "ready"
@@ -225,7 +276,7 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
             ) >= store.MAX_ROWS:
                 raise Refused("too_many_previews")
         except Refused as exc:
-            refusal = exc
+            refusal = refusal or exc
         before = None
         keep = row is not None and row["state"] == "ready"
         if refusal is not None:
@@ -377,7 +428,8 @@ def publish(gateway, principal, card, name, files) -> tuple[dict, bool]:
         gateway,
         principal,
         info["number"],
-        f"Published preview {name} (revision {shown['revision']}): {shown['url']}",
+        f"Published preview {name} (revision {shown['revision']}). Open it from this card, "
+        "under Previews.",
     )
     return shown, True
 
@@ -591,7 +643,10 @@ def _change(gateway, principal, preview_id, *, kind, to_state, reason_for, allow
             (to_state, reason, store.stamp(store.clock()), row["id"]),
         )
         store.event(conn, workspace, row["id"], row["card"], kind, principal.actor, reason)
-        return store.view(conn, store.row_by_id(conn, workspace, row["id"]))
+        shown = store.view(conn, store.row_by_id(conn, workspace, row["id"]))
+    words = {"stopped": "Stopped", "reopened": "Served again"}.get(kind, kind)
+    _history(gateway, principal, row["card"], f"{words}: preview {row['name']}.")
+    return shown
 
 
 def stop(gateway, principal, preview_id) -> dict:
@@ -743,10 +798,11 @@ def rule_text(held) -> str:
     parts = []
     if held["stop_days_after_pr"]:
         parts.append(
-            f"{held['stop_days_after_pr']} days after its pull request is merged or closed"
+            f"{held['stop_days_after_pr']} days after the card records its pull request as "
+            "merged or closed"
         )
     if held["max_age_days"]:
-        parts.append(f"{held['max_age_days']} days after it was published")
+        parts.append(f"{held['max_age_days']} days after it was last made live")
     if not parts:
         return "Previews are served until a person or the Coworker that published them stops them."
     return "A preview stops being served " + " or ".join(parts) + ". Its files are kept."
@@ -804,6 +860,7 @@ REFUSAL_STATUS = {
     "validating": 409,
     "storage_unavailable": 503,
     "files_deleted": 409,
+    "person_stopped": 409,
 }
 
 

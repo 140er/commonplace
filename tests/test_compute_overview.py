@@ -155,13 +155,11 @@ def test_busy_and_full_use_one_word_and_one_count_in_the_chip_the_sentence_and_t
     fleet.job(all_of_them, "queued", task=2)
     busy = by_name(read(api))["runner-busy"]
     assert (busy["status"]["code"], busy["status"]["label"]) == ("full", "Online · Full")
-    assert (
-        busy["status"]["detail"] == "1 of 1 runs at once is in use: 1 in progress. New runs wait."
-    )
+    assert busy["status"]["detail"] == "1 of 1 run at once is in use: 1 in progress. New runs wait."
     assert busy["last_seen"]["label"] == "Last seen 20 seconds ago"
     assert busy["usage"]["runs"]["running"] == 1 and busy["usage"]["runs"]["queued"] == 1
     assert [(b["code"], b["text"]) for b in busy["health"]["blockers"]] == [
-        ("full", "Full: 1 of 1 runs at once is in use: 1 in progress. New runs wait.")
+        ("full", "Full: 1 of 1 run at once is in use: 1 in progress. New runs wait.")
     ]
 
 
@@ -186,7 +184,7 @@ def test_a_finished_run_whose_card_is_still_doing_still_counts_and_says_what_to_
     item = by_name(read(api))["runner-finished"]
     assert (item["status"]["code"], item["status"]["label"]) == ("full", "Online · Full")
     assert item["status"]["detail"] == (
-        "1 of 1 runs at once is in use: 1 finished run still counts until its card moves out of Doing. New runs wait."
+        "1 of 1 run at once is in use: 1 finished run still counts until its card moves out of Doing. New runs wait."
     )
     assert item["status"]["next"] == (
         f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
@@ -196,7 +194,7 @@ def test_a_finished_run_whose_card_is_still_doing_still_counts_and_says_what_to_
     assert (runs["running"], runs["finished_holding"], runs["end_unreported"]) == (0, 1, 0)
     full = [b for b in item["health"]["blockers"] if b["code"] == "full"]
     assert full and full[0]["text"].startswith(
-        "Full: 1 of 1 runs at once is in use: 1 finished run still counts"
+        "Full: 1 of 1 run at once is in use: 1 finished run still counts"
     )
     assert "slot" not in json.dumps(item).lower().replace("slots", "")
     # Moving the card out of Doing is what really clears it: the screen and the hub's lease both free the machine.
@@ -473,7 +471,9 @@ def test_runner_detail_lists_recent_runs_and_limits(api, fleet):
     assert status == 200
     assert result["item"]["activity"][0]["text"].startswith("Started: demo card 7")
     facts = {f["label"]: f["value"] for f in result["item"]["facts"]}
-    assert facts["Allowed to start runs"] == "Yes" and facts["Logs"].startswith("Not collected")
+    assert facts["Allowed to start card runs"] == "Yes" and facts["Logs"].startswith(
+        "Not collected"
+    )
 
 
 def test_unknown_ids_kinds_and_paths_are_refused_with_a_reason(api):
@@ -1137,16 +1137,18 @@ def test_allowed_to_start_runs_follows_the_drain_and_the_approval(api, fleet):
     def allowed():
         status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
         assert status == 200
-        return {f["label"]: f["value"] for f in result["item"]["facts"]}["Allowed to start runs"]
+        return {f["label"]: f["value"] for f in result["item"]["facts"]}[
+            "Allowed to start card runs"
+        ]
 
     assert allowed() == "Yes"
     api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
     assert allowed() == "No: it is drained"  # drained: nothing is running
     loose = fleet.enroll("runner-loose", attest=False)
     status, result = api.request(path=f"{BASE}/runner/{loose['machine_id']}")
-    assert {f["label"]: f["value"] for f in result["item"]["facts"]}["Allowed to start runs"] == (
-        "No: it is not set up and approved yet"
-    )
+    assert {f["label"]: f["value"] for f in result["item"]["facts"]}[
+        "Allowed to start card runs"
+    ] == ("No: it is not set up and approved yet")
 
 
 def _allowed(api, made):
@@ -1154,7 +1156,7 @@ def _allowed(api, made):
     assert status == 200
     item = result["item"]
     return item["status"]["code"], {f["label"]: f["value"] for f in item["facts"]}[
-        "Allowed to start runs"
+        "Allowed to start card runs"
     ]
 
 
@@ -1195,7 +1197,29 @@ def test_allowed_to_start_runs_follows_the_status_the_chip_shows_one_case_per_st
     both = fleet.enroll("allowed-drain-offline")
     fleet.seen(both, 4000)
     api.request("POST", f"{BASE}/runner/{both['machine_id']}/drain", {"expected_seq": 0})
-    assert _allowed(api, both) == ("offline", "No: it is draining")
+    assert _allowed(api, both) == (
+        "offline",
+        "No: it is drained",
+    )  # none is in progress: the blocker's word too
+    # the hourly start limit: finishing a run does not clear it, so it is never "once a run finishes"
+    for index, (name, running, seen_ago, chip) in enumerate(
+        (
+            ("allowed-cap-idle", False, 5, "limit_reached"),
+            ("allowed-cap-full", True, 5, "limit_reached"),
+            ("allowed-cap-offline", False, 4000, "offline"),
+        )
+    ):
+        capped = fleet.enroll(name, max_in_flight=1, max_starts_per_hour=2)
+        fleet.seen(capped, seen_ago)
+        ago = (
+            40 if seen_ago > 900 else 30
+        )  # an offline runner's runs are older than its quiet window
+        for start in range(1 if running else 2):  # finished starts whose cards are long gone
+            job = fleet.job(capped, "started", minutes_ago=ago, task=6000 + index * 10 + start)
+            fleet.end(job, minutes_ago=ago - 5)
+        if running:
+            fleet.job(capped, "started", minutes_ago=1, task=fleet.work(capped))
+        assert _allowed(api, capped) == (chip, "Not right now: hourly limit reached"), name
     # turned off and removed
     off = fleet.enroll("allowed-off")
     fleet.seen(off, 5)
@@ -1209,6 +1233,188 @@ def test_allowed_to_start_runs_follows_the_status_the_chip_shows_one_case_per_st
     loose = fleet.enroll("allowed-loose", attest=False)
     fleet.seen(loose, 5)
     assert _allowed(api, loose)[1] == "No: it is not set up and approved yet"
+
+
+HOURLY = 3  # the matrix runners' limit of starts per hour
+
+
+def _matrix_cases():
+    """Every combination that can exist: liveness x load x drain x enrollment x hourly limit. A draining runner has a run
+    in progress and a drained one none; removed, turned off and not approved runners are tried with every load but not
+    with every drain."""
+    cases = []
+    for enrollment in ("ok", "disabled", "revoked", "not_approved"):
+        for liveness in ("online", "offline", "never"):
+            for load in ("idle", "busy", "full", "held", "held_full"):
+                for drain in ("none", "draining", "drained"):
+                    if drain != "none" and (enrollment != "ok" or liveness == "never"):
+                        continue
+                    running = load in ("busy", "full")
+                    if drain == "draining" and not running:
+                        continue
+                    if drain == "drained" and load != "idle":
+                        continue
+                    for cap in ("under", "at"):
+                        if liveness == "never" and (load != "idle" or cap == "at"):
+                            continue  # a runner that never connected has no runs
+                        cases.append((enrollment, liveness, load, drain, cap))
+    return cases
+
+
+def _expected_reasons(enrollment, liveness, load, drain, cap):
+    """What the hub's lease reads, written out independently of the overview: the reasons it cannot take new work."""
+    if enrollment == "revoked":
+        return ["revoked"]
+    codes = []
+    if enrollment == "disabled":
+        codes.append("disabled")
+    if enrollment == "not_approved":
+        codes.append("not_approved")
+    if drain != "none":
+        codes.append("draining")
+    if enrollment != "disabled":  # a turned-off runner is one reason, not also quiet
+        codes += {"offline": ["offline"], "never": ["never_connected"]}.get(liveness, [])
+    used = {"idle": 0, "busy": 1, "full": 1, "held": 1, "held_full": 1}[load]
+    slots = {"idle": 2, "busy": 2, "full": 1, "held": 2, "held_full": 1}[load]
+    if used >= slots and drain == "none":
+        codes.append("full")
+    if cap == "at" and drain == "none":
+        codes.append("hourly_cap")
+    return codes
+
+
+def test_can_it_take_new_work_never_disagrees_between_status_blocker_and_allowed_and_the_hub_agrees(
+    api, fleet
+):
+    """The matrix: for every combination, the chip, the sentence, the blockers and "Allowed to start card runs" come from one
+    answer, and the hub's own lease (the oracle) refuses exactly when that answer says it cannot start now."""
+    from commonplace.runner import jobs
+
+    problems, checked = [], 0
+    for number, spec in enumerate(_matrix_cases()):
+        enrollment, liveness, load, drain, cap = spec
+        slots = {"idle": 2, "busy": 2, "full": 1, "held": 2, "held_full": 1}[load]
+        made = fleet.enroll(
+            f"m{number}",
+            attest=enrollment != "not_approved",
+            max_in_flight=slots,
+            max_starts_per_hour=HOURLY,
+        )
+        if liveness != "never":
+            fleet.seen(made, 5 if liveness == "online" else 4000)
+        cards = []
+        if load in ("busy", "full"):
+            cards.append(fleet.work(made))
+            fleet.job(
+                made, "started", minutes_ago=40 if liveness == "offline" else 1, task=cards[-1]
+            )
+        if load in ("held", "held_full"):
+            cards.append(fleet.work(made))
+            # A run's own activity counts as a signal, so a quiet machine's runs are older than the offline window.
+            old = 50 if liveness == "offline" else 30
+            fleet.end(
+                fleet.job(made, "started", minutes_ago=old, task=cards[-1]), minutes_ago=old - 10
+            )
+        if cap == "at":
+            extra = HOURLY - len(cards)
+            for index in range(extra):  # started in the last hour, finished, their cards long gone
+                fleet.end(
+                    fleet.job(made, "started", minutes_ago=40, task=20000 + number * 10 + index),
+                    minutes_ago=35,
+                )
+        if drain != "none":
+            api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+        if enrollment == "disabled":
+            fleet.disable(made)
+        if enrollment == "revoked":
+            revoke_machine(api.env, made)
+        status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+        assert status == 200, (spec, result)
+        item = result["item"]
+        code, detail = item["status"]["code"], item["status"]["detail"]
+        allowed = item["intake"]["allowed"]
+        blockers = [(b["code"], b["text"]) for b in item["health"]["blockers"]]
+        facts = {f["label"]: f["value"] for f in item["facts"]}
+        wanted = _expected_reasons(*spec)
+        where = f"{spec}: chip {code!r}, allowed {allowed!r}, blockers {[c for c, _ in blockers]}"
+        # 1. The blockers are exactly the reasons the hub's inputs give, in one order, and Allowed is the one fact the
+        #    screen shows (detail and item agree).
+        if [c for c, _ in blockers] != wanted or item["intake"]["reasons"] != wanted:
+            problems.append(f"blockers: {where} wanted {wanted}")
+        if facts["Allowed to start card runs"] != allowed:
+            problems.append(f"fact: {where}")
+        # 2. The words of the answer: the chip never says it can take work when a blocker says it cannot.
+        refuses_now = allowed.startswith(("No", "Not right now"))
+        if code in ("online", "busy") and allowed != "Yes":
+            problems.append(f"chip says it works, allowed does not: {where}")
+        if code == "full" and (allowed != "Yes, once a run finishes" or "full" not in wanted):
+            problems.append(f"full: {where}")
+        if code == "limit_reached" and not (
+            allowed == "Not right now: hourly limit reached"
+            and "hourly_cap" in wanted
+            and "more than an hour old" in detail
+        ):
+            problems.append(f"limit: {where}")
+        if code in ("draining", "drained") and not (
+            allowed == f"No: it is {code}"
+            and dict(blockers)["draining"].startswith(code.capitalize() + ":")
+            and detail.startswith(code.capitalize() + ". ")
+        ):
+            problems.append(f"drain words: {where}")
+        if code in ("revoked", "disabled", "not_approved") and not allowed.startswith("No: "):
+            problems.append(f"enrollment: {where}")
+        if refuses_now and "Waiting for work" in detail:
+            problems.append(f"sentence: {where}")
+        if "hourly_cap" in wanted and allowed.startswith("Yes"):
+            problems.append(f"a limit time clears is reported as Yes: {where}")
+        # 3. The oracle. A queued run is offered to the hub's lease: it refuses exactly when the answer says nothing can
+        #    start now, and an answer of "Yes" or "once it reports" or "once a run finishes" is honoured by it.
+        machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+        epoch = machine["binding_epoch"]
+        fleet.job(made, "queued", task=10000 + number, project="other", binding_epoch=epoch)
+        leased = jobs.lease(fleet.store(), machine)
+        grants = allowed in ("Yes", "Yes, once it reports")
+        if grants != (leased is not None):
+            problems.append(f"lease {'granted' if leased else 'refused'}: {where}")
+        if allowed.startswith("Yes, once") and "a run finishes" in allowed:
+            if leased is not None:
+                problems.append(f"full but leased: {where}")
+            else:
+                for card in cards:
+                    fleet.move_out_of_doing(card)
+                if jobs.lease(fleet.store(), machine) is None:
+                    problems.append(f"freeing the card did not lease: {where}")
+        checked += 1
+    assert checked >= 90, checked
+    assert problems == [], "\n".join(problems)
+
+
+def test_an_idle_runner_at_its_hourly_limit_says_so_in_the_chip_the_sentence_and_allowed(
+    api, fleet
+):
+    made = fleet.enroll("runner-cap", max_starts_per_hour=2)
+    fleet.seen(made, 5)
+    for index in range(2):
+        fleet.end(fleet.job(made, "started", minutes_ago=30, task=700 + index), minutes_ago=25)
+    item = by_name(read(api))["runner-cap"]
+    assert (item["status"]["code"], item["status"]["label"], item["status"]["tone"]) == (
+        "limit_reached",
+        "Online · Limit reached",
+        "wait",
+    )
+    assert item["status"]["detail"] == (
+        "It has started 2 runs in the last hour, its limit. "
+        "New runs wait until an earlier start is more than an hour old."
+    )
+    assert item["intake"]["allowed"] == "Not right now: hourly limit reached"
+    blocker = {b["code"]: b["text"] for b in item["health"]["blockers"]}["hourly_cap"]
+    assert blocker == "Hourly limit: " + item["status"]["detail"]
+    assert "Waiting for work" not in json.dumps(item)
+    # An earlier start that is more than an hour old no longer counts: the limit clears with time alone.
+    after(api.env, 3600)
+    fleet.seen(made, 5)
+    cleared = by_name(read(api))["runner-cap"]
+    assert cleared["status"]["code"] == "online" and cleared["intake"]["allowed"] == "Yes"
 
 
 def test_a_finished_card_in_doing_needs_attention_and_the_row_count_includes_it(api, fleet):
