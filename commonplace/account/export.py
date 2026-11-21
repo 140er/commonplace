@@ -167,7 +167,8 @@ def workspace_files(directory) -> tuple:
     readable SQLite (an encrypted store) refuses the export.
     """
     directory = Path(directory)
-    databases, files = [], []
+    databases: list[str] = []
+    files: list[str] = []
     if not directory.is_dir() or directory.is_symlink():
         return databases, files
     for root, dirs, names in os.walk(directory, followlinks=False):
@@ -259,9 +260,13 @@ def _write(gateway, planned: dict, sink) -> dict:
             for name in present:
                 clause = tables.workspace_clause(name, present, rules=rules)
                 if clause is not None:
+                    params = {"wid": workspace["id"]}
+                    if name in {"compute_activity_consent", "compute_activity_snapshots"}:
+                        clause += ' AND "owner_id" = :uid'
+                        params["uid"] = planned["user"]
                     cursor = control.execute(
                         f"SELECT * FROM {tables.quote(name)} WHERE {clause}",
-                        {"wid": workspace["id"]},
+                        params,
                     )
                     archive.rows(f"{prefix}/control/{name}.ndjson", cursor, redact=True)
             directory = Path(workspace["directory"])
