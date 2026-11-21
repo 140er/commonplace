@@ -836,3 +836,134 @@ def test_external_receipt_stored_resolution_never_verifies_a_new_transition(
         record_receipt(receipt_setup, state="done", evidence=evidence)
     assert getattr(exc.value, "code", None) == "evidence_required"
     assert database_snapshot(env) == before
+
+
+@pytest.mark.parametrize(
+    "state,change",
+    [("done", "title"), ("done", "reopen"), ("failed", "title"), ("failed", "reopen")],
+    ids=["done-title", "done-reopen", "failed-title", "failed-reopen"],
+)
+def test_external_receipt_original_checked_request_replays_after_card_change(
+    env, receipt_setup, state, change
+):
+    ctx, clock, arguments, card = receipt_setup
+    park_receipt_for_resolution(receipt_setup)
+    BoardService(ctx).task_update(card, status="done")
+    clock["now"] = at(3)
+    request = {"state": state, "code": "checked", "evidence": {"type": "card_state"}}
+    finished = record_receipt(receipt_setup, **request)
+    resolution = finished["evidence"]["resolution"]
+    assert resolution["status"] == "done"
+    if change == "title":
+        env.owner_board.task_update(card, title="Edited after checked completion")
+    else:
+        env.owner_board.task_update(card, status="todo")
+    with env.boards_db() as conn:
+        current = dict(
+            conn.execute("SELECT status,version FROM tasks WHERE id=?", (card,)).fetchone()
+        )
+    assert current["version"] > resolution["version"]
+    if change == "reopen":
+        assert current["status"] == "todo"
+    clock["now"] = at(4)
+    tools.dispatch(ctx, "orch_heartbeat", arguments)
+    before = database_snapshot(env)
+    assert record_receipt(receipt_setup, **request) == finished
+    assert database_snapshot(env) == before
+
+
+@pytest.mark.parametrize(
+    "wrong",
+    ["actor", "session", "workspace", "epoch", "token", "voided", "code", "evidence", "ref"],
+)
+def test_external_receipt_original_checked_retry_retains_all_guards(env, receipt_setup, wrong):
+    ctx, clock, arguments, card = receipt_setup
+    park_receipt_for_resolution(receipt_setup)
+    BoardService(ctx).task_update(card, status="done")
+    clock["now"] = at(3)
+    record_receipt(receipt_setup, state="done", code="checked", evidence={"type": "card_state"})
+    call_ctx = ctx
+    changes: dict[str, object] = {}
+    if wrong == "actor":
+        call_ctx = env.ctx(env.b).with_claim_session(SESSION)
+    elif wrong == "session":
+        changes["session_id"] = "foreign-session"
+    elif wrong == "workspace":
+        workspace = env.hub.db.create_workspace("retry-elsewhere", env.hub.admin)
+        call_ctx = env.ctx(replace(env.a, workspace_id=workspace)).with_claim_session(SESSION)
+    elif wrong == "epoch":
+        changes["epoch"] = arguments["epoch"] + 1
+    elif wrong == "token":
+        changes["token"] = "not-the-lease-token"
+    elif wrong == "voided":
+        durable.void_step(env.ctx(env.owner), BOARD, ROLE, "external-one")
+    elif wrong == "code":
+        changes["code"] = "changed"
+    elif wrong == "evidence":
+        changes["evidence"] = {"type": "holder_attested", "note": "a different request"}
+    else:
+        changes["evidence"] = {**RECEIPT, "thread_ref": "opaque:another-thread"}
+    clock["now"] = at(4)
+    tools.dispatch(ctx, "orch_heartbeat", arguments)
+    before = database_snapshot(env)
+    request = {"state": "done", "code": "checked", "evidence": {"type": "card_state"}, **changes}
+    with pytest.raises(ToolError):
+        record_receipt((call_ctx, clock, arguments, card), **request)
+    assert database_snapshot(env) == before
+
+
+@pytest.mark.parametrize(
+    "session,error",
+    [
+        ("", "not_allowed"),
+        (" ", "invalid_evidence"),
+        ("\t", "invalid_evidence"),
+        (" \t\n", "invalid_evidence"),
+        ("s" * 2001, "invalid_evidence"),
+    ],
+    ids=["empty", "space", "tab", "mixed-whitespace", "over-limit"],
+)
+def test_external_receipt_invalid_stamped_session_refuses_without_poisoning_checkpoint(
+    env, monkeypatch, session, error
+):
+    epoch, token = lease(env)
+    ctx = env.ctx(env.a)
+    if 1 <= len(session) <= 200:
+        ctx = ctx.with_claim_session(session)
+    else:
+        # Exercise server metadata directly; the public caller session policy stays unchanged.
+        ctx = replace(ctx, extra={**ctx.extra, "claim_session": session})
+    card = env.card("Invalid stamped session")
+    BoardService(ctx).task_take_next(board=BOARD, task=card)
+    with env.boards_db() as conn:
+        conn.execute("UPDATE tasks SET claim_until=? WHERE id=?", (at(9000), card))
+        claim_row = conn.execute(
+            "SELECT assignee,claim_session FROM tasks WHERE id=?", (card,)
+        ).fetchone()
+        assert claim_row["assignee"] == ctx.principal.actor
+        assert claim_row["claim_session"] == session
+    clock = {"now": at(1)}
+    monkeypatch.setattr(durable, "_now", lambda: clock["now"])
+    arguments = {"board": BOARD, "role": ROLE, "epoch": epoch, "token": token}
+    tools.dispatch(
+        ctx,
+        "orch_journal_intent",
+        {**arguments, "step_key": "invalid-session", "kind": "thread", "card": card},
+    )
+    clock["now"] = at(2)
+    before = database_snapshot(env)
+    with pytest.raises(ToolError) as exc:
+        tools.dispatch(
+            ctx,
+            "orch_journal_record",
+            {**arguments, "step_key": "invalid-session", "state": "started", "evidence": RECEIPT},
+        )
+    assert getattr(exc.value, "code", None) == error
+    assert database_snapshot(env) == before
+    assert durable.checkpoint(ctx, BOARD, ROLE)["jobs"] == []
+    assert database_snapshot(env) == before
+    voided = durable.void_step(env.ctx(env.owner), BOARD, ROLE, "invalid-session")
+    assert voided["voided"]
+    after_void = database_snapshot(env)
+    assert durable.checkpoint(ctx, BOARD, ROLE)["jobs"] == []
+    assert database_snapshot(env) == after_void
