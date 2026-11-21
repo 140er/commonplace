@@ -527,45 +527,6 @@ or grant access. Session commands do not reserve per-card worker slots.
   Runner jobs carry `source: "runner"`. The list is derived on every read;
   the hub does not check that the thread exists.
 
-  For structured references, use that same intent, then record `started` with
-  `evidence={"type": "external_thread", "thread_ref": "<opaque-thread-ref>",
-  "delegate_ref": "<opaque-attempt-ref>"}` and the card's owning `session_id`.
-  `delegate_ref` is optional; when omitted, `thread_ref` identifies the attempt.
-  References must contain 1–2000 characters. Registration checks the authenticated
-  lease holder and the real card's live doing claim with that exact session. The
-  server stamps the owner/session; another caller cannot gain authority by naming
-  them. Retrying the same receipt is idempotent and never refreshes progress;
-  conflicting refs or a second key for the same attempt in that board role are
-  refused. A new attempt can share a thread reference with a fresh delegate ref.
-
-  Report actual progress with `orch_heartbeat` using its usual lease arguments
-  plus `step_key` and owning `session_id`. Omitting `step_key` still renews only
-  the coordinator lease. Initial start supplies the first report time; unrelated
-  lease renewals, card heartbeats and state transitions cannot keep a thread fresh.
-  A journal job carries `thread_ref`, `delegate_ref`, `last_heartbeat_at`,
-  `age_seconds`, `heartbeat_age_seconds` and `liveness` (`reported` or `in_doubt`).
-  These ages measure caller reports, not verified process runtime. At a heartbeat report age
-  of 1800 seconds, or after claim/lease ownership loss, a possibly running receipt
-  remains visible as uncertain. This is not a task timeout and never stops work.
-  A late heartbeat is refused; resolve the actual result explicitly.
-
-  Record `done`, `failed`, or `failed` with `code=cancelled` for the truthful
-  terminal outcome. Identity remains immutable, terminal retries are idempotent,
-  and no external cancellation is sent. The hub makes no provider/network call,
-  infers no PID and grants no native readiness or capacity from a receipt.
-  To resolve an owned receipt from `needs_person`, record `done` or `failed` with
-  `evidence={"type": "card_state"}` and the owning session. The hub checks the
-  bound card in the actual workspace; `done` requires its status to be `done`.
-  The receipt keeps its refs/owner/session and gains a server-built
-  `resolution={type:card_state,card,status,version}` snapshot. Terminal retries
-  preserve it. This checked snapshot does not prove continuously current card
-  state or verify any later transition; callers cannot supply resolution metadata.
-  `jobs` includes native history, so its length is not an active-capacity count.
-  With explicit receipts, `next`/`next_step` describe real pending actions:
-  reconcile uncertain work before awaiting a fresh report, retain native/other
-  pending work, and remove stale next prose when the external work is finished.
-  Unstructured legacy entries retain the earlier claim-gated behavior.
-
 ## Merge policy
 
 A config may carry one optional `[factory]` section: what guards a merge on
