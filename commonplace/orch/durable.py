@@ -558,7 +558,9 @@ def insert_step_in(
         ),
     )
     _log(conn, board, role, step_key, epoch, "start", actor, now, state="waiting")
-    return step_in(conn, board=board, role=role, step_key=step_key)
+    step = step_in(conn, board=board, role=role, step_key=step_key)
+    assert step is not None
+    return step
 
 
 def link_job_in(conn, *, board: str, role: str, step_key: str, job_id: str, now: str) -> dict:
@@ -570,7 +572,9 @@ def link_job_in(conn, *, board: str, role: str, step_key: str, job_id: str, now:
     ).rowcount
     if changed != 1:
         raise DurableError("step_exists", 409, "step already has a job")
-    return step_in(conn, board=board, role=role, step_key=step_key)
+    step = step_in(conn, board=board, role=role, step_key=step_key)
+    assert step is not None
+    return step
 
 
 def step_public(row) -> dict:
@@ -657,7 +661,9 @@ def _snapshot(ctx, st, board, role):
             ["seat_of_another_project"],
             "connect a seat for this project in Project settings > Connect agent",
         )
-    machine = registry.get_machine(ctx.db, principal.workspace_id, config.runner.machine)
+    runner = config.runner
+    assert runner is not None
+    machine = registry.get_machine(ctx.db, principal.workspace_id, runner.machine)
     if machine is None or machine["revoked_at"]:
         raise _refusal(
             "not_allowed",
@@ -967,7 +973,9 @@ def journal_intent(
             (board, role, step_key, kind, card, state, detail, epoch, epoch, now, now),
         )
         _log(conn, board, role, step_key, epoch, "intent", actor, now, state=state)
-        return step_in(conn, board=board, role=role, step_key=step_key)
+        step = step_in(conn, board=board, role=role, step_key=step_key)
+        assert step is not None
+        return step
 
 
 def _policy(version):
@@ -1127,6 +1135,7 @@ def journal_record(
             if evidence["type"] == "runner_job":
                 stored = _job_evidence(conn, step, board, role, step_key, evidence["job"], state)
             elif evidence["type"] == "card_state":
+                assert card_snapshot is not None
                 if state == "done" and card_snapshot["status"] != "done":
                     raise DurableError(
                         "card_not_done",
@@ -1183,7 +1192,9 @@ def journal_record(
             (*values.values(), board, role, step_key),
         )
         _log(conn, board, role, step_key, epoch, "record", actor, now, state=state, code=code)
-        return step_in(conn, board=board, role=role, step_key=step_key)
+        recorded = step_in(conn, board=board, role=role, step_key=step_key)
+        assert recorded is not None
+        return recorded
 
 
 # ------------------------------------------------------------ fleet: repairs, findings
@@ -1657,7 +1668,9 @@ def void_step(ctx: ToolContext, board: str, role: str, step_key: str, *, now=Non
             (now, actor, board, role, step_key),
         )
         _log(conn, board, role, step_key, None, "void", actor, now)
-        return step_in(conn, board=board, role=role, step_key=step_key)
+        voided = step_in(conn, board=board, role=role, step_key=step_key)
+        assert voided is not None
+        return voided
 
 
 # ----------------------------------------------------------- resume internals
@@ -1722,7 +1735,11 @@ def _card_classes(ctx, board_row, principal, now, *, heartbeat):
             "WHERE board_id=? AND status='doing' ORDER BY id LIMIT ?",
             (board_row["id"], MAX_LIST * 3),
         ).fetchall()
-    classes = {"held": [], "expired": [], "not_held_by_caller": []}
+    classes: dict[str, list[dict[str, object]]] = {
+        "held": [],
+        "expired": [],
+        "not_held_by_caller": [],
+    }
     for row in rows:
         card = {
             "card": row["id"],
@@ -2001,7 +2018,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
                 (board, role, MAX_LIST),
             )
         ]
-    view = {
+    view: dict[str, list[dict[str, object]]] = {
         "open": [],
         "in_doubt": [],
         "needs_person": [],
