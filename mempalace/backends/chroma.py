@@ -15,7 +15,7 @@ import warnings
 import weakref
 from numbers import Integral
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional, Sequence
 
 import chromadb
 from chromadb.config import Settings as _ChromaSettings
@@ -405,10 +405,12 @@ def _caller_vector_schema(options: Optional[dict]):
             hnsw_options[option] = int(opts[option])
 
     return chromadb.Schema().create_index(
-        config=chromadb.VectorIndexConfig(
-            embedding_function=None,
-            hnsw=chromadb.HnswIndexConfig(**hnsw_options),
-            space=str(opts.get("hnsw_space") or "cosine"),
+        config=chromadb.VectorIndexConfig.model_validate(
+            {
+                "embedding_function": None,
+                "hnsw": chromadb.HnswIndexConfig(**hnsw_options),
+                "space": str(opts.get("hnsw_space") or "cosine"),
+            }
         )
     )
 
@@ -540,6 +542,8 @@ def _schema_hnsw_config(
     schema: Optional[dict],
 ) -> Optional[dict]:
     """Return the persisted #embedding HNSW configuration."""
+    if schema is None:
+        return None
     try:
         hnsw = schema["keys"]["#embedding"]["float_list"]["vector_index"]["config"].get("hnsw")
     except (
@@ -716,7 +720,7 @@ def quarantine_stale_hnsw(palace_path: str, stale_seconds: float = 300.0) -> lis
         stamp = filename_stamp()
         target = f"{seg_dir}.drift-{stamp}"
 
-        if header_corrupt:
+        if binary_header is not None and header_corrupt:
             reason = (
                 "header.bin contains impossible HNSW element counts "
                 f"(max={binary_header['max_elements']:,}, "
@@ -1812,6 +1816,7 @@ def quarantine_invalid_hnsw_metadata(palace_path: str) -> list[str]:
                     has_labels = bool(id_to_label)
                     if (
                         has_labels
+                        and id_to_label is not None
                         and dimensionality is None
                         and not _missing_dimensionality_appears_recoverable(
                             persisted, id_to_label, seg_dir
@@ -2373,6 +2378,9 @@ class ChromaCollection(BaseCollection):
     directly without going through ``ChromaBackend``.
     """
 
+    _require_embeddings: bool
+    _migration_vectors: bool
+
     overview_projection_bounded = True
     upsert_merges_metadata = True
 
@@ -2757,7 +2765,7 @@ class ChromaCollection(BaseCollection):
             return None
         return sqlite_overview_metadata(self._palace_path, self._collection.name, where)
 
-    def get_all_metadata(self, where: Optional[dict] = None) -> list[dict]:
+    def get_all_metadata(self, where: Optional[dict] = None) -> Sequence[Optional[dict]]:
         """Every drawer's metadata in one pass over chroma.sqlite3.
 
         The base implementation pages ``get(limit, offset)``, and Chroma turns

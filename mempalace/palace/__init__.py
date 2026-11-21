@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from .. import paths
 from ..backends import (
@@ -44,6 +44,9 @@ from ..entity_detector import (
     _get_coca_filter,
 )
 from ..metadata_types import coerce_metadata_types
+
+if TYPE_CHECKING:
+    from .palace_lock import mine_palace_lock as mine_palace_lock
 
 logger = logging.getLogger(__name__)
 
