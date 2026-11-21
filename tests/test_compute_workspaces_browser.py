@@ -18,7 +18,7 @@ import re
 import threading
 from pathlib import Path
 from types import ModuleType
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
 
@@ -31,6 +31,9 @@ from commonplace.extensions import ToolContext
 from commonplace.gateway import Gateway
 from commonplace.workers import Worker, WorkerSupervisor
 from tests.test_compute_control import gateway_payload, node_payload
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Route
 
 playwright_api: ModuleType | None
 HAS_PLAYWRIGHT = importlib.util.find_spec("playwright") is not None
@@ -1630,5 +1633,98 @@ def test_the_deck_phone_tab_labels_keep_their_distance_at_320(served):
             settings = next(item for item in labels if item["text"] == "Settings")
             assert settings["left"] - workspaces["right"] >= 1, (workspaces, settings)
             context.close()
+        finally:
+            browser.close()
+
+
+def test_background_badge_read_preserves_unchanged_phone_navigation_and_focus(served):
+    fx = served
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context = browser.new_context(
+                viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
+            )
+            context.add_cookies([{"name": sessions.COOKIE, "value": fx.cookie, "url": fx.origin}])
+            page = context.new_page()
+            page.set_default_timeout(20000)
+            held: dict[str, list[Route]] = {}
+            for path in ("/api/needs-me", "/api/rules/count", "/api/bots"):
+                page.route(
+                    "**" + path,
+                    lambda route: held.setdefault(route.request.url, []).append(route),
+                )
+            with page.expect_request("**/api/rules/count"):
+                page.goto(f"{fx.origin}/app/?ui=deck#/compute")
+            entry = page.locator('nav.m-tabs a[data-nav="compute"]')
+            expect(entry).to_be_visible()
+            original = entry.element_handle()
+            assert original is not None
+            original.focus()
+            page.evaluate("""() => {
+                window.__phoneNavigationPaint = new Promise(resolve => {
+                    const observer = new MutationObserver(() => { observer.disconnect(); resolve(); });
+                    observer.observe(document.querySelector('.shell'), {
+                        attributes: true, attributeFilter: ['data-view']
+                    });
+                });
+            }""")
+            routes = held[fx.origin + "/api/rules/count"]
+            assert routes
+            routes.pop(0).continue_()
+            page.evaluate("() => window.__phoneNavigationPaint")
+            assert original.evaluate("el => el.isConnected && document.activeElement === el")
+            expect(entry).to_be_visible()
+        finally:
+            browser.close()
+
+
+def test_phone_navigation_renders_changed_badges_routes_and_a_new_mount(served):
+    fx = served
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            context = browser.new_context(
+                viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True
+            )
+            context.add_cookies([{"name": sessions.COOKIE, "value": fx.cookie, "url": fx.origin}])
+            page = context.new_page()
+            page.set_default_timeout(20000)
+            held: dict[str, list[Route]] = {}
+            for path in ("/api/needs-me", "/api/rules/count", "/api/bots", "/api/connections"):
+                page.route(
+                    "**" + path,
+                    lambda route: held.setdefault(route.request.url, []).append(route),
+                )
+            with page.expect_request("**/api/needs-me"), page.expect_request("**/api/rules/count"):
+                page.goto(f"{fx.origin}/app/?ui=deck#/compute")
+            today = page.locator('nav.m-tabs a[data-nav="today"]')
+            expect(today).to_be_visible()
+            expect(today.locator(".count")).to_have_count(0)
+            service = BoardService(ToolContext(principal=fx.principal, gateway=fx.store.gateway))
+            service.ask(
+                "Review this synthetic navigation control?",
+                board="compute",
+                options=["Proceed with the change", "Wait for more information"],
+                context="Synthetic navigation proof; no external work is performed.",
+            )
+            held[fx.origin + "/api/needs-me"].pop(0).continue_()
+            expect(today.locator(".count")).to_contain_text("1")
+            # A fresh shell mount starts empty; the next real badge read must render it
+            # even though its requested navigation markup has not changed.
+            old_mount = page.locator("#phone-tabs").element_handle()
+            assert old_mount is not None
+            old_mount.evaluate("el => el.replaceWith(el.cloneNode(false))")
+            assert page.locator("#phone-tabs").inner_html() == ""
+            held[fx.origin + "/api/rules/count"].pop(0).continue_()
+            expect(page.locator('nav.m-tabs a[data-nav="compute"]')).to_be_visible()
+            expect(today.locator(".count")).to_contain_text("1")
+            assert old_mount.evaluate("el => !el.isConnected")
+            settings = page.locator('nav.m-tabs a[data-nav="settings"]')
+            settings.click()
+            expect(settings).to_have_attribute("aria-current", "page")
+            expect(page.locator('nav.m-tabs a[data-nav="compute"]')).not_to_have_attribute(
+                "aria-current", "page"
+            )
         finally:
             browser.close()

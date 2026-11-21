@@ -1,0 +1,3 @@
+- **Owns:** `app.js` paints the phone tabs for navigation refreshes and the shared chat dock.
+- **Promises:** An unchanged navigation refresh preserves the existing phone links and keyboard focus. Changed badge or route markup still renders, and a fresh mount receives its tabs even when its requested markup matches the previous mount.
+- **Tests:** `tests/test_compute_workspaces_browser.py` releases a real background rules response while a tab is focused. A separate synthetic shell-mount control uses a real owner queue update, an empty replacement phone mount and a Settings click. This is separate from Activity consent stop or application remount acceptance.
