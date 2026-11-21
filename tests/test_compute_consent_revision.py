@@ -397,7 +397,7 @@ def test_new_table_migration_seeds_denied_and_preserves_existing_machine_data(tm
         db.close()
 
 
-def archive(api, who):
+def archive(api, who, table="compute_consents"):
     sink = io.BytesIO()
     manifest = export.write(api.gateway, export.plan(api.gateway, api.users[who]), sink)
     assert manifest["complete"] is True and manifest["unclassified_tables"] == []
@@ -405,7 +405,7 @@ def archive(api, who):
         return {
             name: [json.loads(line) for line in zipped.read(name).splitlines()]
             for name in zipped.namelist()
-            if name.endswith("compute_consents.ndjson")
+            if name.endswith(f"{table}.ndjson")
         }
 
 
@@ -423,6 +423,56 @@ def test_export_classifies_workspace_lifecycle_without_leaking_another_owners_co
             assert all(row["user_id"] == api.users[who] for row in rows)
             assert member_machine not in {row["machine_id"] for row in rows}
     assert archive(api, "member") == {}
+
+
+def test_consent_audit_is_owner_private_in_exports_and_workspace_reads(api):
+    machines = {"owner": api.machine, "coowner": api.enroll("coowner", "coowned")}
+    for who, machine in machines.items():
+        for allowed, revision in ((True, 0), (False, 1)):
+            assert api.write(allowed, revision, path=PREFIX + machine, who=who)[0] == 200
+    api.db.audit(
+        action="synthetic.workspace.shared",
+        decision="ok",
+        workspace_id=api.workspace,
+        user_id=api.users["owner"],
+        target_ids=("synthetic-shared-record",),
+    )
+    for who, machine in machines.items():
+        exported = archive(api, who, "audit_log")
+        decisions = [
+            row
+            for rows in exported.values()
+            for row in rows
+            if row["action"].startswith("compute.consent.")
+        ]
+        assert {row["user_id"] for row in decisions} == {api.users[who]}
+        assert all(json.loads(row["target_ids"]) == [machine] for row in decisions)
+        personal = [
+            row
+            for row in exported["account/audit_log.ndjson"]
+            if row["action"].startswith("compute.consent.")
+        ]
+        assert len(personal) == 2
+        assert {row["action"] for row in personal} == {
+            "compute.consent.allow",
+            "compute.consent.revoke",
+        }
+        shared = exported[f"workspaces/{api.workspace}/control/audit_log.ndjson"]
+        assert not any(row["action"].startswith("compute.consent.") for row in shared)
+        assert any(row["action"] == "synthetic.workspace.shared" for row in shared)
+    assert not any(
+        row["action"].startswith("compute.consent.")
+        for rows in archive(api, "member", "audit_log").values()
+        for row in rows
+    )
+    shared = api.db.audit_entries(api.workspace)
+    assert not any(row["action"].startswith("compute.consent.") for row in shared)
+    assert any(row["action"] == "synthetic.workspace.shared" for row in shared)
+    instance = [
+        row for row in api.db.audit_entries() if row["action"].startswith("compute.consent.")
+    ]
+    assert len(instance) == 4
+    assert {row["user_id"] for row in instance} == {api.users[who] for who in machines}
 
 
 def test_purge_deletes_only_the_leaving_owners_consent_in_a_retained_workspace(api, monkeypatch):

@@ -224,7 +224,6 @@ def write(
             db.audit(
                 action="compute.consent.allow" if allowed else "compute.consent.revoke",
                 decision="ok",
-                workspace_id=principal.workspace_id,
                 user_id=principal.user_id,
                 auth=principal.auth,
                 target_ids=(row["machine_id"],),
