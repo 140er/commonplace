@@ -1,2 +1,2 @@
 - **Promises:** The `compute_consents` control table is classified by both user and workspace for deletion. An owned-workspace export additionally filters its consent rows by the exporting user's id, so a coowner cannot export another enrolling owner's private consent. Purging an owner removes that owner's records in retained workspaces; workspace deletion also includes the table.
-- **Tests:** `tests/test_compute_consent_revision.py` checks owner/coowner/member export scope and a real account purge across retained and deleted workspaces.
+- **Tests:** `tests/test_compute_consent_revision.py` checks owner/coowner/member export scope and a real account purge across retained and deleted workspaces, followed by repeated installation to ensure purged consent stays absent.

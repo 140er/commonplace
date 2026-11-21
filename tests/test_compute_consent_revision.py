@@ -456,5 +456,15 @@ def test_purge_deletes_only_the_leaving_owners_consent_in_a_retained_workspace(a
             is None
         )
     assert api.stored(other_machine) == other_before
+    consent.ensure(api.db)
+    consent.ensure(api.db)
+    with api.db._lock:
+        assert (
+            api.db._conn.execute(
+                "SELECT * FROM compute_consents WHERE user_id=?", (api.users["owner"],)
+            ).fetchall()
+            == []
+        )
+    assert api.stored(other_machine) == other_before
     assert api.request(who="owner")[0] == 401
     assert api.request(path=PREFIX + other_machine, who="coowner")[0] == 200

@@ -116,7 +116,8 @@ def ensure(db: ControlDB) -> None:
         """)
         conn.execute("""
             INSERT INTO compute_consents(machine_id,workspace_id,user_id)
-            SELECT id,workspace_id,enrolled_by FROM runner_machines WHERE true
+            SELECT m.id,m.workspace_id,m.enrolled_by FROM runner_machines m
+            JOIN users u ON u.id=m.enrolled_by WHERE u.disabled_at IS NULL
             ON CONFLICT(machine_id) DO NOTHING
         """)
 
