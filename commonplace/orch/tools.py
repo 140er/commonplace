@@ -29,23 +29,47 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
+from typing import Literal, TypedDict
 
-from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
+from commonplace.extensions import WORK_PROFILES, LocalTool, ToolContext, ToolError, register
 
 logger = logging.getLogger("commonplace.orch")
 
-STRING = {"type": "string", "minLength": 1}
-BOARD = {"type": "string", "minLength": 1, "maxLength": 64}
-ROLE = {"type": "string", "minLength": 1, "maxLength": 32}
-VERSION = {"type": "integer", "minimum": 1}
-CHANNEL = {"type": "string", "minLength": 1, "maxLength": 40}
-EPOCH = {"type": "integer", "minimum": 1}
-TOKEN = {"type": "string", "minLength": 1, "maxLength": 200}
-STEP_KEY = {"type": "string", "minLength": 1, "maxLength": 80}
-SHA256 = {"type": "string", "minLength": 64, "maxLength": 64}
-CARD = {"type": "integer", "minimum": 1}
-TEXT = {"type": "string", "minLength": 1, "maxLength": 128 * 1024}
-SOURCE_REF = {"type": "string", "minLength": 1, "maxLength": 200}
+
+class _PropertyType(TypedDict):
+    type: Literal["string", "integer", "boolean", "object"]
+
+
+class PropertySpec(_PropertyType, total=False):
+    minLength: int
+    maxLength: int
+    minimum: int
+    enum: list[str]
+
+
+Operation = tuple[
+    Callable[..., object],
+    dict[str, PropertySpec],
+    tuple[str, ...],
+    Literal["read", "write"],
+    bool,
+    bool,
+    str,
+]
+
+STRING: PropertySpec = {"type": "string", "minLength": 1}
+BOARD: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 64}
+ROLE: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 32}
+VERSION: PropertySpec = {"type": "integer", "minimum": 1}
+CHANNEL: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 40}
+EPOCH: PropertySpec = {"type": "integer", "minimum": 1}
+TOKEN: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 200}
+STEP_KEY: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 80}
+SHA256: PropertySpec = {"type": "string", "minLength": 64, "maxLength": 64}
+CARD: PropertySpec = {"type": "integer", "minimum": 1}
+TEXT: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 128 * 1024}
+SOURCE_REF: PropertySpec = {"type": "string", "minLength": 1, "maxLength": 200}
 MAX_VERSIONS = 100
 LEASE = {"board": BOARD, "role": ROLE, "epoch": EPOCH, "token": TOKEN}
 _registered = False
@@ -57,7 +81,7 @@ class SurfaceError(ToolError):
     def __init__(self, code: str, message: str, status: int):
         self.code = code
         self.status = status
-        self.details = {}
+        self.details: dict[str, object] = {}
         super().__init__(f"no: {message} ({code})")
 
 
@@ -316,10 +340,14 @@ def resume(ctx, board, role, force=False, session_id=None):
     return durable.resume(ctx, board, role, force=bool(force))
 
 
-def heartbeat(ctx, board, role, epoch, token):
+def heartbeat(
+    ctx, board, role, epoch, token, step_key: str | None = None, session_id: str | None = None
+):
     from . import durable
 
-    return durable.heartbeat(ctx, board, role, epoch, token)
+    if session_id is not None:
+        ctx = ctx.with_claim_session(session_id)
+    return durable.heartbeat(ctx, board, role, epoch, token, step_key=step_key)
 
 
 def release(ctx, board, role, epoch, token):
@@ -356,9 +384,22 @@ def journal_intent(ctx, board, role, epoch, token, step_key, kind, card=None, de
     )
 
 
-def journal_record(ctx, board, role, epoch, token, step_key, state, evidence=None, code=None):
+def journal_record(
+    ctx,
+    board,
+    role,
+    epoch,
+    token,
+    step_key,
+    state,
+    evidence=None,
+    code=None,
+    session_id: str | None = None,
+):
     from . import durable
 
+    if session_id is not None:
+        ctx = ctx.with_claim_session(session_id)
     return durable.journal_record(
         ctx, board, role, epoch, token, step_key, state, evidence=evidence, code=code
     )
@@ -420,7 +461,7 @@ def checkpoint(ctx, board, role, session_id=None):
 # ---------------------------------------------------------------- registry
 
 # Each entry: handler, properties, required keys, kind, trusted_only, owner_only, text.
-OPERATIONS = {
+OPERATIONS: dict[str, Operation] = {
     "orch_config_get": (
         config_get,
         {"board": BOARD, "version": VERSION, "channel": CHANNEL},
@@ -544,12 +585,17 @@ OPERATIONS = {
     ),
     "orch_heartbeat": (
         heartbeat,
-        dict(LEASE),
+        {
+            **LEASE,
+            "step_key": STEP_KEY,
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        },
         tuple(LEASE),
         "write",
         True,
         False,
-        "Renew your Coworker lease.",
+        "Renew your Coworker lease. Optional step_key and owning session_id report progress "
+        "of a fresh external thread receipt; lease-only renewals never count as thread progress.",
     ),
     "orch_release": (
         release,
@@ -616,6 +662,7 @@ OPERATIONS = {
                 "enum": ["started", "waiting", "done", "failed", "in_doubt", "needs_person"],
             },
             "evidence": {"type": "object"},
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
             "code": {"type": "string", "minLength": 1, "maxLength": 64},
         },
         (*LEASE, "step_key", "state"),
@@ -623,7 +670,8 @@ OPERATIONS = {
         True,
         False,
         "Move a journal step to a new state with evidence (runner_job, card_state or "
-        "holder_attested).",
+        "holder_attested or external_thread). External receipt registration requires the "
+        "owning card session_id and thread_ref (optional delegate_ref); refs are caller-attested.",
     ),
     "orch_gate_open": (
         gate_open,
@@ -787,6 +835,10 @@ def register_tools() -> None:
     if _registered:
         return
     for name, (_h, properties, required, kind, trusted, owner, text) in OPERATIONS.items():
+
+        def handler(ctx: ToolContext, args: dict, operation: str = name) -> object:
+            return _mcp(ctx, operation, args)
+
         register(
             LocalTool(
                 name=name,
@@ -797,7 +849,7 @@ def register_tools() -> None:
                     "required": list(required),
                     "additionalProperties": False,
                 },
-                handler=lambda ctx, args, name=name: _mcp(ctx, name, args),
+                handler=handler,
                 scope="memory:write" if kind == "write" else "memory:read",
                 kind=kind,
                 profiles=WORK_PROFILES,

@@ -24,8 +24,9 @@ hub-verified evidence). Unvoided runner-start steps follow their job
 the hub never re-issues an external effect.
 
 Evidence: ``runner_job`` (the hub checks that the job belongs to this step, card and
-board), ``card_state`` (the hub reads the card; ``done`` needs the card in ``done``) and
-``holder_attested`` (stored, never acted on).
+board), ``card_state`` (the hub reads the card; ``done`` needs the card in ``done``),
+``holder_attested`` (stored, never acted on), and ``external_thread`` (caller-attested
+refs bound to the holder's actual card session, never verified native authority).
 
 Gates: one attempt per ``(board, repo, PR, head)`` across roles, whatever its verdict
 (``gate_pass``, ``gate_fail``, ``gate_error``, ``gate_budget``), until the owner voids
@@ -81,7 +82,9 @@ import logging
 import re
 import secrets
 import sqlite3
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from typing import Literal, TypedDict
 
 from commonplace.boards.priority import name as priority_name, source as priority_source
 from commonplace.boards.store import BoardStore
@@ -130,9 +133,31 @@ JOB_STEP_STATE = {
     "cancelled": "failed",
 }
 ACTIVE_JOB_STATES = ("queued", "leased", "starting", "uncertain")
-EVIDENCE_TYPES = ("runner_job", "card_state", "holder_attested")
+EVIDENCE_TYPES = ("runner_job", "card_state", "holder_attested", "external_thread")
 VERIFIED_EVIDENCE = frozenset({"runner_job", "card_state"})
 GATE_STATES = ("gate_pass", "gate_fail", "gate_error", "gate_budget")
+
+
+class ThreadReceipt(TypedDict):
+    type: Literal["external_thread"]
+    thread_ref: str
+    delegate_ref: str | None
+    by: str
+    session_id: str
+
+
+class ThreadReport(TypedDict):
+    state: str
+    thread_ref: str
+    delegate_ref: str | None
+    started_at: str
+    last_heartbeat_at: str
+    age_seconds: int
+    heartbeat_age_seconds: int
+    liveness: Literal["reported", "in_doubt"]
+    assignee: str | None
+    claim_until: str | None
+
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS orch_leases (
@@ -558,7 +583,9 @@ def insert_step_in(
         ),
     )
     _log(conn, board, role, step_key, epoch, "start", actor, now, state="waiting")
-    return step_in(conn, board=board, role=role, step_key=step_key)
+    step = step_in(conn, board=board, role=role, step_key=step_key)
+    assert step is not None
+    return step
 
 
 def link_job_in(conn, *, board: str, role: str, step_key: str, job_id: str, now: str) -> dict:
@@ -570,7 +597,9 @@ def link_job_in(conn, *, board: str, role: str, step_key: str, job_id: str, now:
     ).rowcount
     if changed != 1:
         raise DurableError("step_exists", 409, "step already has a job")
-    return step_in(conn, board=board, role=role, step_key=step_key)
+    step = step_in(conn, board=board, role=role, step_key=step_key)
+    assert step is not None
+    return step
 
 
 def step_public(row) -> dict:
@@ -657,7 +686,9 @@ def _snapshot(ctx, st, board, role):
             ["seat_of_another_project"],
             "connect a seat for this project in Project settings > Connect agent",
         )
-    machine = registry.get_machine(ctx.db, principal.workspace_id, config.runner.machine)
+    runner = config.runner
+    assert runner is not None
+    machine = registry.get_machine(ctx.db, principal.workspace_id, runner.machine)
     if machine is None or machine["revoked_at"]:
         raise _refusal(
             "not_allowed",
@@ -785,7 +816,8 @@ def _fence(conn, board, role, epoch, token, now):
 def _card_row(ctx, board, card):
     with BoardStore(ctx.workspace_dir()).connection() as conn:
         row = conn.execute(
-            "SELECT t.id, t.status, t.version, b.slug FROM tasks t "
+            "SELECT t.id, t.status, t.version, t.assignee, t.claim_until, "
+            "t.claim_expired_at, t.claim_session, b.slug FROM tasks t "
             "JOIN boards b ON b.id=t.board_id WHERE t.id=?",
             (card,),
         ).fetchone()
@@ -865,13 +897,58 @@ def resume(ctx: ToolContext, board: str, role: str, *, force: bool = False, now=
     }
 
 
-def heartbeat(ctx: ToolContext, board: str, role: str, epoch: int, token: str, *, now=None):
-    """``orch_heartbeat``: renew the lease. Returns ``{"epoch", "expires_at"}``;
-    ``fenced`` when the lease is not current."""
+def heartbeat(
+    ctx: ToolContext,
+    board: str,
+    role: str,
+    epoch: int,
+    token: str,
+    *,
+    step_key: str | None = None,
+    now=None,
+):
+    """Renew the lease, optionally reporting progress of its bound external thread.
+
+    A lease-only renewal is never thread progress. A stale, terminal or voided
+    receipt cannot be revived by a heartbeat. Returns ``{"epoch", "expires_at"}``.
+    """
     now = _clock(now)
+    if step_key is not None:
+        _check_step_key(step_key)
     st, _version = _holder(ctx, board, role)
     with st.transaction() as conn:
         expires = _fence(conn, board, role, epoch, token, now)
+        if step_key is not None:
+            step = step_in(conn, board=board, role=role, step_key=step_key)
+            if step is None:
+                raise DurableError("step_not_found", 404, "step not found")
+            if step["voided"]:
+                raise DurableError("step_voided", 409, "step was voided by the owner")
+            receipt = _thread_receipt(step["evidence"])
+            if step["kind"] != "thread" or receipt is None:
+                raise DurableError("invalid_evidence", 400, "step has no external thread receipt")
+            current_row = conn.execute(
+                "SELECT * FROM orch_leases WHERE board=? AND role=?", (board, role)
+            ).fetchone()
+            assert current_row is not None
+            current = dict(current_row)
+            _thread_owner(ctx, current, receipt)
+            if step["state"] in TERMINAL_STATES:
+                raise DurableError("transition", 409, "thread receipt is terminal")
+            reports = _thread_reports(ctx, st, board, role, [step], current, now)
+            if reports[step_key]["liveness"] == "in_doubt":
+                raise DurableError("thread_in_doubt", 409, "reconcile the uncertain thread receipt")
+            _log(
+                conn,
+                board,
+                role,
+                step_key,
+                epoch,
+                "thread_heartbeat",
+                _actor_ref(ctx.principal),
+                now,
+                state=step["state"],
+            )
     return {"epoch": epoch, "expires_at": expires}
 
 
@@ -967,7 +1044,9 @@ def journal_intent(
             (board, role, step_key, kind, card, state, detail, epoch, epoch, now, now),
         )
         _log(conn, board, role, step_key, epoch, "intent", actor, now, state=state)
-        return step_in(conn, board=board, role=role, step_key=step_key)
+        step = step_in(conn, board=board, role=role, step_key=step_key)
+        assert step is not None
+        return step
 
 
 def _policy(version):
@@ -1031,6 +1110,7 @@ def _parse_evidence(evidence):
         "runner_job": {"type", "job"},
         "card_state": {"type"},
         "holder_attested": {"type", "note"},
+        "external_thread": {"type", "thread_ref", "delegate_ref"},
     }
     if set(evidence) - allowed[kind]:
         raise DurableError("invalid_evidence", 400, "unknown evidence field")
@@ -1044,7 +1124,131 @@ def _parse_evidence(evidence):
         )
     if kind == "holder_attested":
         _text(evidence.get("note"), "note")
+    if kind == "external_thread":
+        _thread_ref(evidence.get("thread_ref"))
+        if "delegate_ref" in evidence:
+            _thread_ref(evidence["delegate_ref"])
     return dict(evidence)
+
+
+def _thread_ref(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > MAX_TEXT:
+        raise DurableError("invalid_evidence", 400, f"thread refs must be 1-{MAX_TEXT} characters")
+    return value
+
+
+def _thread_receipt(evidence: object) -> ThreadReceipt | None:
+    if isinstance(evidence, str):
+        evidence = json.loads(evidence)
+    if not isinstance(evidence, dict) or evidence.get("type") != "external_thread":
+        return None
+    delegate = evidence.get("delegate_ref")
+    return {
+        "type": "external_thread",
+        "thread_ref": _thread_ref(evidence.get("thread_ref")),
+        "delegate_ref": None if delegate is None else _thread_ref(delegate),
+        "by": _thread_ref(evidence.get("by")),
+        "session_id": _thread_ref(evidence.get("session_id")),
+    }
+
+
+def _thread_owner(
+    ctx: ToolContext, current: Mapping[str, object] | None, receipt: ThreadReceipt
+) -> None:
+    actor = _actor_ref(ctx.principal)
+    if (
+        current is None
+        or current["holder"] != actor
+        or receipt["by"] != actor
+        or ctx.extra.get("claim_session") != receipt["session_id"]
+    ):
+        raise DurableError(
+            "not_allowed", 403, "external receipt belongs to another actor or session"
+        )
+
+
+def _thread_resolution_retry(
+    step: Mapping[str, object], evidence: dict | None, state: str, code: str | None
+) -> bool:
+    stored = step["evidence"]
+    resolution = stored.get("resolution") if isinstance(stored, dict) else None
+    return (
+        evidence is not None
+        and evidence["type"] == "card_state"
+        and step["kind"] == "thread"
+        and step["state"] == state
+        and state in ("done", "failed")
+        and code == step["code"]
+        and isinstance(stored, dict)
+        and stored.get("type") == "external_thread"
+        and isinstance(resolution, dict)
+        and resolution.get("type") == "card_state"
+    )
+
+
+def _checked_card_snapshot(snapshot: dict | None, state: str, step: dict) -> dict:
+    if snapshot is None:
+        raise DurableError("transition", 409, "step changed before recording", step=step)
+    if state == "done" and snapshot["status"] != "done":
+        raise DurableError(
+            "card_not_done",
+            409,
+            "card is not done",
+            card_status=snapshot["status"],
+        )
+    return snapshot
+
+
+def _thread_claim_live(card: Mapping[str, object] | None, now: str) -> bool:
+    return (
+        card is not None
+        and card["status"] == "doing"
+        and isinstance(card["assignee"], str)
+        and bool(card["assignee"])
+        and card["claim_expired_at"] is None
+        and (
+            card["claim_until"] is None
+            or (isinstance(card["claim_until"], str) and card["claim_until"] > now)
+        )
+    )
+
+
+def _check_thread_registration(
+    ctx: ToolContext,
+    conn: sqlite3.Connection,
+    step: Mapping[str, object],
+    current: Mapping[str, object] | None,
+    proposed: ThreadReceipt,
+    previous: ThreadReceipt | None,
+    card: Mapping[str, object] | None,
+    state: str,
+    now: str,
+) -> None:
+    if step["kind"] != "thread":
+        raise DurableError("invalid_evidence", 400, "external receipts need a thread step")
+    _thread_owner(ctx, current, proposed)
+    if previous is not None:
+        if proposed != previous:
+            raise DurableError("step_exists", 409, "external receipt identity is immutable")
+        return
+    if step["state"] != "intent" or state != "started":
+        raise DurableError("invalid_evidence", 400, "register a receipt at its initial start")
+    if (
+        not _thread_claim_live(card, now)
+        or card is None
+        or card["assignee"] != ctx.principal.actor
+        or card["claim_session"] != proposed["session_id"]
+    ):
+        raise DurableError("not_allowed", 403, "card claim belongs to another session or expired")
+    identity = proposed["delegate_ref"] or proposed["thread_ref"]
+    for other in conn.execute(
+        "SELECT evidence FROM orch_steps WHERE board=? AND role=? AND kind='thread' "
+        "AND step_key!=? AND evidence IS NOT NULL",
+        (step["board"], step["role"], step["step_key"]),
+    ):
+        receipt = _thread_receipt(other["evidence"])
+        if receipt is not None and identity == (receipt["delegate_ref"] or receipt["thread_ref"]):
+            raise DurableError("step_exists", 409, "external attempt is already registered")
 
 
 def _job_evidence(conn, step, board, role, step_key, job_id, state):
@@ -1090,6 +1294,8 @@ def journal_record(
     - ``{"type": "card_state"}``: the hub reads the step's card; ``done`` needs it in
       ``done`` (``card_not_done``).
     - ``{"type": "holder_attested", "note": <text>}``: stored, never acted on.
+    - ``external_thread``: opaque receipt refs, bound to this holder's real card claim
+      and exact session. This is caller attestation, never verified runner evidence.
 
     ``done`` or ``failed`` of a ``runner_start`` step needs ``runner_job`` (``failed``: a
     job in ``failed``, ``cancelled`` or ``uncertain``); ``done`` of a ``card`` step
@@ -1104,14 +1310,17 @@ def journal_record(
     evidence = _parse_evidence(evidence)
     st, _version = _holder(ctx, board, role)
     card_snapshot = None
-    if evidence is not None and evidence["type"] == "card_state":
+    if evidence is not None and evidence["type"] in ("card_state", "external_thread"):
         with st.connection() as conn:
             pre = step_in(conn, board=board, role=role, step_key=step_key)
         if pre is None:
             raise DurableError("step_not_found", 404, "step not found")
         if pre["card"] is None:
             raise DurableError("evidence_unbound", 409, "step has no card")
-        card_snapshot = _card_row(ctx, board, pre["card"])
+        if not _thread_resolution_retry(pre, evidence, state, code) and (
+            evidence["type"] == "card_state" or _thread_receipt(pre["evidence"]) is None
+        ):
+            card_snapshot = _card_row(ctx, board, pre["card"])
     actor = _actor_ref(ctx.principal)
     with st.transaction() as conn:
         _fence(conn, board, role, epoch, token, now)
@@ -1122,24 +1331,54 @@ def journal_record(
             raise DurableError("step_voided", 409, "step was voided by the owner", step=step)
         if step["kind"] == "gate":
             raise DurableError("use_gate_record", 400, "gate verdicts go through gate_record")
-        stored = None
+        receipt = _thread_receipt(step["evidence"])
+        current = lease_in(conn, board, role)
+        if receipt is not None:
+            _thread_owner(ctx, current, receipt)
+            if (
+                evidence is not None
+                and evidence["type"] != "external_thread"
+                and (
+                    evidence["type"] != "card_state"
+                    or step["kind"] != "thread"
+                    or state not in ("done", "failed")
+                )
+            ):
+                raise DurableError("step_exists", 409, "external receipt identity is immutable")
+            if _thread_resolution_retry(step, evidence, state, code):
+                return step
+        stored = None if receipt is None else dict(step["evidence"])
+        checked_resolution = False
         if evidence is not None:
             if evidence["type"] == "runner_job":
                 stored = _job_evidence(conn, step, board, role, step_key, evidence["job"], state)
             elif evidence["type"] == "card_state":
-                if state == "done" and card_snapshot["status"] != "done":
-                    raise DurableError(
-                        "card_not_done",
-                        409,
-                        "card is not done",
-                        card_status=card_snapshot["status"],
-                    )
-                stored = {
+                card_snapshot = _checked_card_snapshot(card_snapshot, state, step)
+                checked = {
                     "type": "card_state",
                     "card": card_snapshot["id"],
                     "status": card_snapshot["status"],
                     "version": card_snapshot["version"],
                 }
+                stored = checked if receipt is None else {**step["evidence"], "resolution": checked}
+                checked_resolution = True
+            elif evidence["type"] == "external_thread":
+                session = ctx.extra.get("claim_session")
+                if not isinstance(session, str) or not session:
+                    raise DurableError(
+                        "not_allowed", 403, "external receipts need the owning session"
+                    )
+                proposed: ThreadReceipt = {
+                    "type": "external_thread",
+                    "thread_ref": evidence["thread_ref"],
+                    "delegate_ref": evidence.get("delegate_ref"),
+                    "by": actor,
+                    "session_id": _thread_ref(session),
+                }
+                _check_thread_registration(
+                    ctx, conn, step, current, proposed, receipt, card_snapshot, state, now
+                )
+                stored = dict(proposed) if receipt is None else stored
             else:
                 stored = {"type": "holder_attested", "note": evidence["note"], "by": actor}
         if step["state"] == state:
@@ -1148,7 +1387,9 @@ def journal_record(
             raise DurableError("transition", 409, "step is already in that state", step=step)
         if state not in TRANSITIONS[step["state"]]:
             raise DurableError("transition", 409, "step cannot move to that state", step=step)
-        verified = stored is not None and stored["type"] in VERIFIED_EVIDENCE
+        verified = checked_resolution or (
+            stored is not None and stored["type"] in VERIFIED_EVIDENCE
+        )
         if step["state"] == "needs_person" and not verified:
             raise DurableError(
                 "evidence_required", 409, "needs_person ends only with hub-checked evidence"
@@ -1183,7 +1424,9 @@ def journal_record(
             (*values.values(), board, role, step_key),
         )
         _log(conn, board, role, step_key, epoch, "record", actor, now, state=state, code=code)
-        return step_in(conn, board=board, role=role, step_key=step_key)
+        recorded = step_in(conn, board=board, role=role, step_key=step_key)
+        assert recorded is not None
+        return recorded
 
 
 # ------------------------------------------------------------ fleet: repairs, findings
@@ -1657,7 +1900,9 @@ def void_step(ctx: ToolContext, board: str, role: str, step_key: str, *, now=Non
             (now, actor, board, role, step_key),
         )
         _log(conn, board, role, step_key, None, "void", actor, now)
-        return step_in(conn, board=board, role=role, step_key=step_key)
+        voided = step_in(conn, board=board, role=role, step_key=step_key)
+        assert voided is not None
+        return voided
 
 
 # ----------------------------------------------------------- resume internals
@@ -1722,7 +1967,11 @@ def _card_classes(ctx, board_row, principal, now, *, heartbeat):
             "WHERE board_id=? AND status='doing' ORDER BY id LIMIT ?",
             (board_row["id"], MAX_LIST * 3),
         ).fetchall()
-    classes = {"held": [], "expired": [], "not_held_by_caller": []}
+    classes: dict[str, list[dict[str, object]]] = {
+        "held": [],
+        "expired": [],
+        "not_held_by_caller": [],
+    }
     for row in rows:
         card = {
             "card": row["id"],
@@ -1867,12 +2116,125 @@ def _derived(step, job_state):
 THREAD_JOB_STATES = ("started", "waiting", "in_doubt", "needs_person")
 
 
-def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
+def _thread_reports(
+    ctx: ToolContext,
+    st: orch_store.Store,
+    board: str,
+    role: str,
+    steps: Sequence[Mapping[str, object]],
+    current: Mapping[str, object] | None,
+    now: str,
+) -> dict[str, ThreadReport]:
+    """One read-side clock for explicit receipts; no native liveness is inferred."""
+    pending: dict[str, tuple[Mapping[str, object], ThreadReceipt]] = {}
+    numbers: set[int] = set()
+    for step in steps:
+        receipt = _thread_receipt(step["evidence"])
+        if (
+            receipt is None
+            or step["voided_at"] is not None
+            or step["state"] not in THREAD_JOB_STATES
+        ):
+            continue
+        key, number = step["step_key"], step["card"]
+        assert isinstance(key, str) and isinstance(number, int)
+        pending[key] = step, receipt
+        numbers.add(number)
+    if not pending:
+        return {}
+    cards: dict[int, dict[str, object]] = {}
+    with BoardStore(ctx.workspace_dir()).connection() as conn:
+        ordered = sorted(numbers)
+        for start in range(0, len(ordered), 500):
+            chunk = ordered[start : start + 500]
+            for row in conn.execute(
+                "SELECT t.id, t.status, t.assignee, t.claim_until, t.claim_expired_at, "
+                "t.claim_session FROM tasks t JOIN boards b ON b.id=t.board_id "
+                "WHERE b.slug=? AND t.id IN (" + ",".join("?" * len(chunk)) + ")",
+                (board, *chunk),
+            ):
+                cards[row["id"]] = dict(row)
+    clocks: dict[str, tuple[str, str | None]] = {}
+    keys = list(pending)
+    with st.connection() as conn:
+        for start in range(0, len(keys), 500):
+            chunk_keys = keys[start : start + 500]
+            for row in conn.execute(
+                "SELECT step_key, MIN(CASE WHEN event='record' AND state='started' THEN at END) AS started, "
+                "MAX(CASE WHEN event='thread_heartbeat' THEN at END) AS heartbeat "
+                "FROM orch_journal WHERE board=? AND role=? AND step_key IN ("
+                + ",".join("?" * len(chunk_keys))
+                + ") GROUP BY step_key",
+                (board, role, *chunk_keys),
+            ):
+                clocks[row["step_key"]] = row["started"], row["heartbeat"]
+    reports: dict[str, ThreadReport] = {}
+    for key, (step, receipt) in pending.items():
+        started, heartbeat_at = clocks[key]
+        last = max(started, heartbeat_at or started)
+        age = max(
+            0,
+            int(
+                (
+                    datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
+                    - datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ")
+                ).total_seconds()
+            ),
+        )
+        heartbeat_age = max(
+            0,
+            int(
+                (
+                    datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
+                    - datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ")
+                ).total_seconds()
+            ),
+        )
+        number = step["card"]
+        assert isinstance(number, int)
+        card = cards.get(number)
+        fresh = (
+            current is not None
+            and _lease_live(current, now)
+            and current["epoch"] == step["created_epoch"]
+            and current["holder"] == receipt["by"]
+            and _thread_claim_live(card, now)
+            and card is not None
+            and card["assignee"] == current["holder_actor"]
+            and card["claim_session"] == receipt["session_id"]
+            and heartbeat_age < TTL_SECONDS
+            and step["state"] in ("started", "waiting")
+        )
+        state = step["state"]
+        assert isinstance(state, str)
+        assignee = None if card is None else card["assignee"]
+        claim_until = None if card is None else card["claim_until"]
+        assert assignee is None or isinstance(assignee, str)
+        assert claim_until is None or isinstance(claim_until, str)
+        reports[key] = {
+            "state": "in_doubt" if not fresh and state in OPEN_STATES else state,
+            "thread_ref": receipt["thread_ref"],
+            "delegate_ref": receipt["delegate_ref"],
+            "started_at": started,
+            "last_heartbeat_at": last,
+            "age_seconds": age,
+            "heartbeat_age_seconds": heartbeat_age,
+            "liveness": "reported" if fresh else "in_doubt",
+            "assignee": assignee,
+            "claim_until": claim_until,
+        }
+    return reports
+
+
+def _thread_jobs(ctx, st, board_row, role, steps, now, *, reports=None) -> list[dict]:
     """Builders started outside the runner (kind ``thread``), derived read-only from
     two facts that must both hold: the journal recorded the start of an unvoided,
     unfinished thread step for a card (``started`` or ``waiting``; it stays listed
     when a later epoch marks the step ``in_doubt``), and that card is in ``doing``
-    on this board under a live claim. Newest first, at most ``MAX_LIST``."""
+    on this board under a live claim. Explicit receipts additionally retain their
+    uncertainty after ownership loss using the checkpoint's shared report view.
+    Newest first, at most ``MAX_LIST``; a linked native job is represented there.
+    """
     found = [
         row
         for row in steps
@@ -1880,6 +2242,7 @@ def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
         and row["card"] is not None
         and row["voided_at"] is None
         and row["state"] in THREAD_JOB_STATES
+        and row["job_id"] is None
     ]
     if not found:
         return []
@@ -1899,7 +2262,8 @@ def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
                 (board_row["id"], now, *chunk),
             ):
                 doing[row["id"]] = row
-    found = [row for row in found if row["card"] in doing][-MAX_LIST:]
+    reports = {} if reports is None else reports
+    found = [row for row in found if row["card"] in doing or row["step_key"] in reports][-MAX_LIST:]
     if not found:
         return []
     marks = ",".join("?" * len(found))
@@ -1918,15 +2282,18 @@ def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
             "task_number": row["card"],
             "state": row["state"],
             "outcome_code": row["code"],
-            "thread_id": None,
+            "thread_id": reports[row["step_key"]]["thread_ref"]
+            if row["step_key"] in reports
+            else None,
             "started_at": started[row["step_key"]],
             "updated_at": row["updated_at"],
             "step_key": row["step_key"],
             "source": "journal",
-            "assignee": doing[row["card"]]["assignee"],
-            "claim_until": doing[row["card"]]["claim_until"],
+            "assignee": doing[row["card"]]["assignee"] if row["card"] in doing else None,
+            "claim_until": doing[row["card"]]["claim_until"] if row["card"] in doing else None,
             "detail": row["detail"],
             "evidence": json.loads(row["evidence"]) if row["evidence"] else None,
+            **reports.get(row["step_key"], {}),
         }
         for row in reversed(found)
         if row["step_key"] in started
@@ -1960,8 +2327,10 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         ).fetchall()
         job_rows = conn.execute(
             "SELECT j.id, j.task_number, j.state, j.outcome_code, j.thread_id, j.started_at, "
-            "j.updated_at, s.step_key FROM runner_jobs j JOIN orch_steps s ON s.job_id=j.id "
-            "WHERE s.board=? AND s.role=? ORDER BY j.created_at DESC, j.rowid DESC LIMIT ?",
+            "j.updated_at, COALESCE(MAX(CASE WHEN s.kind='runner_start' THEN s.step_key END), "
+            "MIN(s.step_key)) AS step_key FROM runner_jobs j JOIN orch_steps s ON s.job_id=j.id "
+            "WHERE s.board=? AND s.role=? GROUP BY j.id "
+            "ORDER BY j.created_at DESC, j.rowid DESC LIMIT ?",
             (board, role, MAX_LIST),
         ).fetchall()
         gates = conn.execute(
@@ -2001,7 +2370,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
                 (board, role, MAX_LIST),
             )
         ]
-    view = {
+    view: dict[str, list[dict[str, object]]] = {
         "open": [],
         "in_doubt": [],
         "needs_person": [],
@@ -2011,14 +2380,24 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
     }
     next_note = None
     next_step = None
+    public_steps: list[dict[str, object]] = []
     for row in steps:
         job_state = row["job_state"]
         data = dict(row)
         data.pop("job_state")
-        step = _derived(step_public(data), job_state)
+        public_steps.append(_derived(step_public(data), job_state))
+    reports = _thread_reports(
+        ctx, st, board, role, public_steps, None if lease is None else dict(lease), now
+    )
+    for step in public_steps:
+        key = step["step_key"]
+        assert isinstance(key, str)
+        step = {**step, **reports.get(key, {})}
         if step["voided"]:
             continue
-        if step["state"] in TERMINAL_STATES and (step["destination"] or {}).get("kind") == "parked":
+        destination = step["destination"]
+        assert destination is None or isinstance(destination, dict)
+        if step["state"] in TERMINAL_STATES and (destination or {}).get("kind") == "parked":
             view["parked"].append(step)
         if step["kind"] == "next":
             next_note = step["detail"]
@@ -2034,6 +2413,35 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         view[key] = view[key][-MAX_LIST:]
     view["finished"].reverse()
     view["parked"].reverse()
+    if any(_thread_receipt(step["evidence"]) is not None for step in public_steps):
+        uncertain: list[dict[str, object]] = []
+        other_work: list[dict[str, object]] = []
+        reported: list[dict[str, object]] = []
+        for step in (*view["in_doubt"], *view["needs_person"], *view["holds"], *view["open"]):
+            receipt = _thread_receipt(step["evidence"])
+            if receipt is None:
+                other_work.append(step)
+            elif step["job_id"] is None:
+                (uncertain if step["state"] in ("in_doubt", "needs_person") else reported).append(
+                    step
+                )
+        pending = [*uncertain, *other_work, *reported][:MAX_LIST]
+        next_step = pending[0] if pending else None
+        actions = []
+        for step in pending:
+            external = _thread_receipt(step["evidence"]) is not None
+            action = (
+                "Reconcile"
+                if step["state"] in ("in_doubt", "needs_person")
+                else "Await"
+                if external
+                else "Continue"
+            )
+            actions.append(
+                f"{action} {step['kind']} step {step['step_key']}"
+                + (f" for card #{step['card']}" if step["card"] is not None else "")
+            )
+        next_note = "; ".join(actions) if actions else None
     from commonplace.projects import orchestration, split
 
     inbox_note = {}
@@ -2046,7 +2454,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         log_failure(logger, "checkpoint inbox unavailable", exc)
     job_rows = [
         *({**dict(row), "source": "runner"} for row in job_rows),
-        *_thread_jobs(ctx, st, board_row, role, steps, now),
+        *_thread_jobs(ctx, st, board_row, role, steps, now, reports=reports),
     ]
     return {
         **inbox_note,

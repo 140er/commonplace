@@ -13,7 +13,7 @@
 
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
-  - The read-only mapping from journaled thread starts and doing-card claims to checkpoint jobs.
+  - The read-only mapping from journaled thread starts and doing-card claims to checkpoint jobs, including explicit caller-attested receipts and per-step progress reports.
 
   - `commonplace/orch/organigram.py`: the reporting line (`parent`) between a config's roles, the checkpoint `escalations` of a role's direct reports and `orch_reassign_step` (`tests/test_orch_organigram.py`).
 
@@ -49,6 +49,14 @@
 
   - Checkpoint `jobs` also lists builders started outside the runner (`source=journal`): an unvoided, unfinished `thread` step whose start was recorded for a card, while that card is in `doing` on the same board under a live claim. Runner jobs carry `source=runner`. The view is derived on read and never stored.
 
+  - An explicit `external_thread` receipt binds opaque `thread_ref` and optional `delegate_ref` to the authenticated lease holder and the card's exact live claim session. Identity is immutable; duplicate attempts within a board role are refused in the same transaction. A fresh attempt may reuse a thread reference with a distinct delegate reference. The receipt never creates a runner job or verifies a process.
+
+  - Step-specific `orch_heartbeat` reports progress only for the bound owning session and current lease. Lease-only renewals do not refresh a thread. At a heartbeat report age of 1800 seconds, or after claim/lease ownership loss, the read-only checkpoint retains the receipt as uncertain. A late heartbeat cannot revive uncertain, terminal or voided work. `done`, `failed` and `failed(code=cancelled)` remove pending external work without sending a cancellation.
+
+  - An owned explicit thread receipt can resolve to `done` or `failed` using fresh hub-checked `card_state` evidence; `done` requires the actual card to be done. Its immutable receipt retains a server-built resolution with the checked card/status/version snapshot. Retries preserve that snapshot. An old resolution never verifies another transition, and caller-stamped resolution metadata is rejected.
+
+  - Explicit-receipt checkpoints derive `next` and `next_step` from actual unsettled work, reconcile uncertain external receipts before awaiting fresh reports, retain real native/other pending actions, and discard stale next prose after completion. Legacy-only behavior and native admission/readiness remain unchanged; job history is not an active-capacity count, and linked native jobs are represented once.
+
 
 - **How it fails:**
 
@@ -80,6 +88,7 @@
   - R1, R1b, R1d, R1e, R8b, R10a and R11e map to `tests/test_orch_acceptance.py`.
 
   - `tests/test_orch_checkpoint_threads.py` covers journaled thread starts as checkpoint jobs: the recorded start plus a live doing claim, board and role scoping, in-doubt visibility after a new epoch and the absence of writes.
+  - The same file covers explicit receipts over real MCP/REST aliases, owning-session checks, immutable attempt identity, heartbeat and exact 1799/1800/1801-second boundaries, terminal retries, claim/lease loss, no-write snapshots, genuine next actions and native-job coexistence. Its seven legacy cases retain their original assertions.
   - `tests/test_orch_stall_wake.py` covers exactly one wake for an idle board with open work, backoff, a done card restarting the timer, no wake for blocked or person-held cards, owner escalation after three nudges and the off switch.
 
   - `tests/test_orch_trigger_stall.py` covers a split start without a `main` role (including the live v3 config shape), unplannable starts as misses, a released todo card starting, and the failing-sweep owner alert.
