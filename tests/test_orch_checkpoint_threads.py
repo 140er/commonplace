@@ -697,3 +697,142 @@ def test_external_receipt_void_retires_progress_without_cancelling_a_process(env
         receipt_heartbeat(receipt_setup)
     assert getattr(exc.value, "code", None) == "step_voided"
     assert database_snapshot(env) == before
+
+
+def park_receipt_for_resolution(setup):
+    record_receipt(setup)
+    record_receipt(setup, state="in_doubt")
+    return record_receipt(setup, state="needs_person")
+
+
+@pytest.mark.parametrize("state", ["done", "failed"])
+def test_external_receipt_checked_terminal_resolution_preserves_full_evidence(
+    env, receipt_setup, state
+):
+    ctx, clock, arguments, card = receipt_setup
+    parked = park_receipt_for_resolution(receipt_setup)
+    if state == "done":
+        BoardService(ctx).task_update(card, status="done")
+    with env.boards_db() as conn:
+        snapshot = dict(
+            conn.execute("SELECT id,status,version FROM tasks WHERE id=?", (card,)).fetchone()
+        )
+    clock["now"] = at(3)
+    finished = record_receipt(receipt_setup, state=state, evidence={"type": "card_state"})
+    assert finished["state"] == state
+    assert finished["evidence"] == {
+        **parked["evidence"],
+        "resolution": {
+            "type": "card_state",
+            "card": card,
+            "status": snapshot["status"],
+            "version": snapshot["version"],
+        },
+    }
+    assert "external_thread" not in durable.VERIFIED_EVIDENCE
+    assert durable.checkpoint(ctx, BOARD, ROLE)["jobs"] == []
+    # Later card changes do not rewrite the checked snapshot or receipt on retries.
+    env.owner_board.task_update(card, title="Changed after checked resolution")
+    clock["now"] = at(4)
+    # Fenced writes normally renew the lease; establish that renewal before the snapshot.
+    tools.dispatch(ctx, "orch_heartbeat", arguments)
+    before = database_snapshot(env)
+    for evidence in (None, RECEIPT):
+        assert record_receipt(receipt_setup, state=state, evidence=evidence) == finished
+        assert database_snapshot(env) == before
+    for operation in (
+        lambda: receipt_heartbeat(receipt_setup),
+        lambda: record_receipt(receipt_setup),
+        lambda: record_receipt(receipt_setup, state="waiting", evidence={"type": "card_state"}),
+    ):
+        with pytest.raises(ToolError):
+            operation()
+        assert database_snapshot(env) == before
+
+
+def test_external_receipt_checked_done_refuses_actual_not_done_card(env, receipt_setup):
+    parked = park_receipt_for_resolution(receipt_setup)
+    before = database_snapshot(env)
+    with pytest.raises(ToolError) as exc:
+        record_receipt(receipt_setup, state="done", evidence={"type": "card_state"})
+    assert getattr(exc.value, "code", None) == "card_not_done"
+    assert database_snapshot(env) == before
+    ctx, _clock, _arguments, _card = receipt_setup
+    assert durable.checkpoint(ctx, BOARD, ROLE)["needs_person"][0]["evidence"] == parked["evidence"]
+
+
+@pytest.mark.parametrize("wrong", ["actor", "session", "workspace", "epoch", "token"])
+def test_external_receipt_checked_resolution_refuses_wrong_identity(env, receipt_setup, wrong):
+    ctx, clock, arguments, card = receipt_setup
+    park_receipt_for_resolution(receipt_setup)
+    changes = {
+        "actor": {},
+        "session": {"session_id": "foreign-session"},
+        "workspace": {},
+        "epoch": {"epoch": arguments["epoch"] + 1},
+        "token": {"token": "not-the-lease-token"},
+    }[wrong]
+    if wrong == "actor":
+        ctx = env.ctx(env.b).with_claim_session(SESSION)
+    elif wrong == "workspace":
+        workspace = env.hub.db.create_workspace("resolution-elsewhere", env.hub.admin)
+        ctx = env.ctx(replace(env.a, workspace_id=workspace)).with_claim_session(SESSION)
+    before = database_snapshot(env)
+    with pytest.raises(ToolError):
+        record_receipt(
+            (ctx, clock, arguments, card),
+            state="failed",
+            evidence={"type": "card_state"},
+            **changes,
+        )
+    assert database_snapshot(env) == before
+
+
+@pytest.mark.parametrize("state", ["started", "waiting", "in_doubt"])
+def test_external_receipt_card_state_cannot_authorize_nonterminal_transition(
+    env, receipt_setup, state
+):
+    park_receipt_for_resolution(receipt_setup)
+    before = database_snapshot(env)
+    with pytest.raises(ToolError):
+        record_receipt(receipt_setup, state=state, evidence={"type": "card_state"})
+    assert database_snapshot(env) == before
+
+
+@pytest.mark.parametrize("field", ["resolution", "by", "session_id", "card", "version"])
+@pytest.mark.parametrize("kind", ["external_thread", "card_state"])
+def test_external_receipt_resolution_metadata_is_server_only(env, receipt_setup, field, kind):
+    park_receipt_for_resolution(receipt_setup)
+    evidence = dict(RECEIPT) if kind == "external_thread" else {"type": "card_state"}
+    evidence[field] = "caller-supplied"
+    before = database_snapshot(env)
+    with pytest.raises(ToolError) as exc:
+        record_receipt(receipt_setup, state="failed", evidence=evidence)
+    assert getattr(exc.value, "code", None) == "invalid_evidence"
+    assert database_snapshot(env) == before
+
+
+@pytest.mark.parametrize("evidence", [None, RECEIPT])
+def test_external_receipt_stored_resolution_never_verifies_a_new_transition(
+    env, receipt_setup, evidence
+):
+    parked = park_receipt_for_resolution(receipt_setup)
+    # A stored old snapshot must not become authority, even if present on an unsettled row.
+    ctx, _clock, _arguments, card = receipt_setup
+    stored = {
+        **parked["evidence"],
+        "resolution": {"type": "card_state", "card": card, "status": "done", "version": -1},
+    }
+    st = orch_store.Store(ctx.workspace_dir())
+    with st.transaction() as conn:
+        import json
+
+        conn.execute(
+            "UPDATE orch_steps SET evidence=? WHERE board=? AND role=? AND step_key=?",
+            (json.dumps(stored), BOARD, ROLE, "external-one"),
+        )
+    before = database_snapshot(env)
+    with pytest.raises(ToolError) as exc:
+        record_receipt(receipt_setup, state="done", evidence=evidence)
+    assert getattr(exc.value, "code", None) == "evidence_required"
+    assert database_snapshot(env) == before

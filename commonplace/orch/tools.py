@@ -340,10 +340,14 @@ def resume(ctx, board, role, force=False, session_id=None):
     return durable.resume(ctx, board, role, force=bool(force))
 
 
-def heartbeat(ctx, board, role, epoch, token):
+def heartbeat(
+    ctx, board, role, epoch, token, step_key: str | None = None, session_id: str | None = None
+):
     from . import durable
 
-    return durable.heartbeat(ctx, board, role, epoch, token)
+    if session_id is not None:
+        ctx = ctx.with_claim_session(session_id)
+    return durable.heartbeat(ctx, board, role, epoch, token, step_key=step_key)
 
 
 def release(ctx, board, role, epoch, token):
@@ -380,9 +384,22 @@ def journal_intent(ctx, board, role, epoch, token, step_key, kind, card=None, de
     )
 
 
-def journal_record(ctx, board, role, epoch, token, step_key, state, evidence=None, code=None):
+def journal_record(
+    ctx,
+    board,
+    role,
+    epoch,
+    token,
+    step_key,
+    state,
+    evidence=None,
+    code=None,
+    session_id: str | None = None,
+):
     from . import durable
 
+    if session_id is not None:
+        ctx = ctx.with_claim_session(session_id)
     return durable.journal_record(
         ctx, board, role, epoch, token, step_key, state, evidence=evidence, code=code
     )
@@ -568,12 +585,17 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "orch_heartbeat": (
         heartbeat,
-        dict(LEASE),
+        {
+            **LEASE,
+            "step_key": STEP_KEY,
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        },
         tuple(LEASE),
         "write",
         True,
         False,
-        "Renew your Coworker lease.",
+        "Renew your Coworker lease. Optional step_key and owning session_id report progress "
+        "of a fresh external thread receipt; lease-only renewals never count as thread progress.",
     ),
     "orch_release": (
         release,
@@ -640,6 +662,7 @@ OPERATIONS: dict[str, Operation] = {
                 "enum": ["started", "waiting", "done", "failed", "in_doubt", "needs_person"],
             },
             "evidence": {"type": "object"},
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
             "code": {"type": "string", "minLength": 1, "maxLength": 64},
         },
         (*LEASE, "step_key", "state"),
@@ -647,7 +670,8 @@ OPERATIONS: dict[str, Operation] = {
         True,
         False,
         "Move a journal step to a new state with evidence (runner_job, card_state or "
-        "holder_attested).",
+        "holder_attested or external_thread). External receipt registration requires the "
+        "owning card session_id and thread_ref (optional delegate_ref); refs are caller-attested.",
     ),
     "orch_gate_open": (
         gate_open,
