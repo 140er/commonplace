@@ -14,7 +14,7 @@ let deckPaletteItems, mountWorkspaceOrchestration, mountProjectPanel, mountAgent
   createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview,
   reviewerChange, addBlockers, parseBlockerNumbers, removeBlocker, lifecycleRequest, placeLifecycle,
   createNeeds, createMemory, createPalette, mountOnboarding, createCardMenu, putMove,
-  moveNotice, conflictText;
+  moveNotice, conflictText, showPriorityUndo;
 const routeModules = new Map();
 function loadRouteModule(name) {
   if (!routeModules.has(name)) routeModules.set(name, (async () => {
@@ -50,7 +50,7 @@ function loadRouteModule(name) {
       case "memory": ({ createMemory } = await import("./memory.js")); break;
       case "palette": ({ createPalette } = await import("./palette.js")); break;
       case "onboarding": ({ mountOnboarding } = await import("./onboarding.js")); break;
-      case "cardmenu": ({ createCardMenu } = await import("./cardmenu.js")); break;
+      case "cardmenu": ({ createCardMenu } = await import("./cardmenu.js")); ({ showPriorityUndo } = await import("./card-priority.js")); break;
       case "cardmove": ({ putMove, moveNotice, conflictText } = await import("./cardmove.js")); break;
       default: throw new Error("Unknown screen module");
     }
@@ -414,7 +414,11 @@ function cardMenuUI() {
   if (state.cardMenu?.mount !== mount) {
     state.cardMenu?.ui.stop();
     state.cardMenu = { mount, ui: createCardMenu({ mount, api,
-      async onChange(card, { moved, asked } = {}) {
+      async onChange(card, { moved, asked, priority } = {}) {
+        if (priority) {
+          const session = state.me;
+          showPriorityUndo({ mount: root.querySelector("#priority-notice"), card, change: priority, onChange: refresh, valid: () => state.me === session });
+        }
         if (moved && card?.status) showNotice(moveNotice(card, state.me.actor, asked));
         await refresh();
       },
@@ -426,7 +430,7 @@ function shell() {
   state.workbenchChat?.dispose();
   state.palette?.ui.stop(); state.palette = null; state.cardMenu?.ui.stop(); state.cardMenu = null;
   state.shellSync = null;
-  root.innerHTML = `<a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog><div id="card-menu-root"></div>`;
+  root.innerHTML = `<a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="priority-notice" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog><div id="card-menu-root"></div>`;
   navigation();
   const panel = root.querySelector("#card-panel"), layout = root.querySelector(".shell");
   if (!panel || !layout) return;
@@ -614,7 +618,7 @@ function boardView() {
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  const options = { board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column };
+  const options = { board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", priorityFilter: state.boardPriority || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column };
   // Counts/readiness do not change card markup. Retain the mounted tree on a
   // revisit and skip identical polls; changed cards keep their unchanged peers.
   const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], fromBar });
@@ -655,6 +659,10 @@ function boardView() {
   });
   boardDispose = bindBoard(content, { api, board, me: state.me.actor,
     onFilter(filter) { const saved = remember(); state.boardFilter = filter; boardView(); restore(saved); },
+    onPriorityFilter(value) {
+      const saved = remember(); state.boardPriority = value; boardView(); restore(saved);
+      [...root.querySelectorAll("[data-priority-filter]")].find(input => input.getClientRects().length)?.focus({ preventScroll: true });
+    },
     onAdded: cardAdded,
     onSelect(number) { state.selected = number; state.justAdded = null; markOpenCard(); },
     onOpen(number) { state.selected = number; state.justAdded = null; location.hash = `#/card/${number}`; },
@@ -1948,7 +1956,7 @@ root.addEventListener("click", async (event) => {
       await move(state.card.number, root.querySelector("#card-status").value);
     } else if (action === "panel-priority") {
       const priority = root.querySelector("#card-priority").value;
-      if (priority !== (state.card.priority || "normal")) await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { version: state.card.version, priority } }));
+      if (priority !== (state.card.priority || "normal") || state.card.priority_source !== "person") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { version: state.card.version, priority } }));
     } else if (action === "panel-reviewer") {
       const change = reviewerChange(state.card, root.querySelector("#card-reviewer"));
       if (change) await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: change }));

@@ -2,6 +2,7 @@ import { api as request, escape as e } from './api.js';
 import { cardId } from './board.js';
 import { cardTitle } from './deck-board.js';
 import { moveOptions, putMove } from './cardmove.js';
+import { priorityChoices, putPriority, priorityUndo, priorityFailure } from './card-priority.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const label = (value) => value[0].toUpperCase() + value.slice(1);
@@ -40,7 +41,7 @@ export function renderCardMenu(card, { board = {}, editing = false, me = '' } = 
   const moves = deck
     ? moveOptions(card, me).map((option) => choice(option.status || option.column, option.name, option)).join('')
     : columns.map((status) => choice(status, label(status), { current: status === card.status, note: status === card.status ? 'now here' : '' })).join('');
-  const actions = `<p class="move-label">Move to…</p><div role="group" aria-label="Move to column">${moves}</div><div role="group" aria-label="Other actions"><button type="button" class="opt" data-menu-action="edit">${icon('<path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/>')}Edit title</button><button type="button" class="opt" data-menu-action="copy">${icon('<path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/>')}Copy link</button></div>`;
+  const actions = `<p class="move-label">Move to…</p><div role="group" aria-label="Move to column">${moves}</div>${priorityChoices(card, { board, me })}<div role="group" aria-label="Other actions"><button type="button" class="opt" data-menu-action="edit">${icon('<path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/>')}Edit title</button><button type="button" class="opt" data-menu-action="copy">${icon('<path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/>')}Copy link</button></div>`;
   return `<dialog class="sheet menu-sheet card-menu" aria-modal="true" aria-labelledby="cm-h" data-return-focus="more-${e(id)}"><div class="menu-body"><span class="grab" aria-hidden="true"></span><h2 id="cm-h">${e(deck ? cardTitle(card.title) : `${id} ${card.title}`)}</h2>${editing ? `<form data-menu-title><label>Title<input name="title" value="${e(card.title)}" maxlength="5000" required></label><button class="btn primary" type="submit">Save title</button><button class="btn" type="button" data-menu-action="cancel-edit">Cancel</button></form>` : actions}<p role="alert" data-menu-error></p><button type="button" class="btn menu-close" data-menu-action="close">Close</button></div></dialog>`;
 }
 
@@ -56,7 +57,7 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
   function close(later = false) {
     if (!dialog) return () => {};
     generation++;
-    const id = `more-${cardId(settings.board || {}, card.number)}`, from = opener;
+    const id = opener?.id || `more-${cardId(settings.board || {}, card.number)}`, from = opener;
     dialog.close();
     dialog = null;
     mount.innerHTML = '';
@@ -82,7 +83,7 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
     paint();
   }
   // `moved` is the status a move asked for, so the notice can say when the card landed elsewhere.
-  async function run(action, failure, moved = '') {
+  async function run(action, failure, moved = '', previous = null) {
     if (busy || !dialog) return;
     busy = true;
     const current = generation;
@@ -97,11 +98,12 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
       if (result === undefined) { close(); return; }
       // The menu leaves as soon as the server answers; the board refresh that follows can take seconds.
       const focus = close(true);
-      try { await onChange(result, { moved: Boolean(moved), asked: moved || undefined }); }
+      try { await onChange(result, { moved: Boolean(moved), asked: moved || undefined,
+        ...(previous ? { priority: { previous, undo: priorityUndo(api, previous, result) } } : {}) }); }
       catch { /* the move happened; the next refresh shows it */ }
       finally { focus(); }
     } catch (err) {
-      if (current === generation) error(err.plain ? err.message : err.status === 409 ? 'This card changed. Close and reopen its actions before trying again.' : failure);
+      if (current === generation) error(previous ? priorityFailure(err) : err.plain ? err.message : err.status === 409 ? 'This card changed. Close and reopen its actions before trying again.' : failure);
     } finally {
       if (current === generation) {
         busy = false;
@@ -110,13 +112,17 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
     }
   }
   async function click(event) {
-    const button = event.target.closest('[data-menu-move], [data-menu-action]');
+    const button = event.target.closest('[data-menu-move], [data-menu-action], [data-menu-priority]');
     if (!button || !dialog || button.disabled) return;
     event.stopPropagation();
     const action = button.dataset.menuAction, status = button.dataset.menuMove;
     if (action === 'close') { close(); return; }
     if (busy) return;
-    if (status) {
+    if (button.dataset.menuPriority) {
+      if (card.can_prioritize !== true) return;
+      const previous = { ...card };
+      await run(() => putPriority(api, previous, button.dataset.menuPriority), '', '', previous);
+    } else if (status) {
       if (!columns.includes(status) || card.proposal_status === 'pending') return;
       if (status === card.status) { close(); return; }
       await run(() => putMove(api, card, status), 'Could not move this card. Try again.', status);
