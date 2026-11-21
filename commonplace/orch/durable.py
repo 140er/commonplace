@@ -1167,6 +1167,38 @@ def _thread_owner(
         )
 
 
+def _thread_resolution_retry(
+    step: Mapping[str, object], evidence: dict | None, state: str, code: str | None
+) -> bool:
+    stored = step["evidence"]
+    resolution = stored.get("resolution") if isinstance(stored, dict) else None
+    return (
+        evidence is not None
+        and evidence["type"] == "card_state"
+        and step["kind"] == "thread"
+        and step["state"] == state
+        and state in ("done", "failed")
+        and code == step["code"]
+        and isinstance(stored, dict)
+        and stored.get("type") == "external_thread"
+        and isinstance(resolution, dict)
+        and resolution.get("type") == "card_state"
+    )
+
+
+def _checked_card_snapshot(snapshot: dict | None, state: str, step: dict) -> dict:
+    if snapshot is None:
+        raise DurableError("transition", 409, "step changed before recording", step=step)
+    if state == "done" and snapshot["status"] != "done":
+        raise DurableError(
+            "card_not_done",
+            409,
+            "card is not done",
+            card_status=snapshot["status"],
+        )
+    return snapshot
+
+
 def _thread_claim_live(card: Mapping[str, object] | None, now: str) -> bool:
     return (
         card is not None
@@ -1285,7 +1317,9 @@ def journal_record(
             raise DurableError("step_not_found", 404, "step not found")
         if pre["card"] is None:
             raise DurableError("evidence_unbound", 409, "step has no card")
-        if evidence["type"] == "card_state" or _thread_receipt(pre["evidence"]) is None:
+        if not _thread_resolution_retry(pre, evidence, state, code) and (
+            evidence["type"] == "card_state" or _thread_receipt(pre["evidence"]) is None
+        ):
             card_snapshot = _card_row(ctx, board, pre["card"])
     actor = _actor_ref(ctx.principal)
     with st.transaction() as conn:
@@ -1311,20 +1345,15 @@ def journal_record(
                 )
             ):
                 raise DurableError("step_exists", 409, "external receipt identity is immutable")
+            if _thread_resolution_retry(step, evidence, state, code):
+                return step
         stored = None if receipt is None else dict(step["evidence"])
         checked_resolution = False
         if evidence is not None:
             if evidence["type"] == "runner_job":
                 stored = _job_evidence(conn, step, board, role, step_key, evidence["job"], state)
             elif evidence["type"] == "card_state":
-                assert card_snapshot is not None
-                if state == "done" and card_snapshot["status"] != "done":
-                    raise DurableError(
-                        "card_not_done",
-                        409,
-                        "card is not done",
-                        card_status=card_snapshot["status"],
-                    )
+                card_snapshot = _checked_card_snapshot(card_snapshot, state, step)
                 checked = {
                     "type": "card_state",
                     "card": card_snapshot["id"],
@@ -1344,7 +1373,7 @@ def journal_record(
                     "thread_ref": evidence["thread_ref"],
                     "delegate_ref": evidence.get("delegate_ref"),
                     "by": actor,
-                    "session_id": session,
+                    "session_id": _thread_ref(session),
                 }
                 _check_thread_registration(
                     ctx, conn, step, current, proposed, receipt, card_snapshot, state, now
