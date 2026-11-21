@@ -23,6 +23,7 @@ def test_two_models_can_be_added_in_a_row_and_a_pick_survives(hub, chromium):
         errors = []
         page.on("pageerror", lambda error: errors.append(f"{type(error).__name__}: {error}"))
         page.goto(origin + "/app/#/board/alpha", wait_until="domcontentloaded")
+        page.get_by_role("button", name="Board options", exact=True).click()
         page.locator('[data-action="coordinator"]:visible').first.click()
         section = page.locator("[data-project-models-section]")
         section.locator("summary").click()
