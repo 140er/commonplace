@@ -7,6 +7,7 @@ import os
 import pickle
 import shlex
 import sqlite3
+import stat
 import struct
 import sys
 import threading
@@ -1194,8 +1195,16 @@ def _db_change_counter(palace_path: str) -> Optional[bytes]:
     which the stat signature alone cannot see. Never raises.
     """
     try:
-        with open(os.path.join(palace_path, "chroma.sqlite3"), "rb") as handle:
-            header = handle.read(28)
+        fd = os.open(
+            os.path.join(palace_path, "chroma.sqlite3"),
+            os.O_RDONLY | getattr(os, "O_NONBLOCK", 0),
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            header = os.read(fd, 28)
+        finally:
+            os.close(fd)
     except Exception:
         return None
     return header[24:28] if len(header) == 28 else None
