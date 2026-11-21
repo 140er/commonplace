@@ -11,6 +11,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
+from typing import TypedDict
 from urllib.parse import urlparse
 
 from commonplace import decide_grant, events, privacy, sessions
@@ -55,6 +56,22 @@ from .store import (
 
 logger = logging.getLogger(__name__)
 _UNSET = object()
+
+
+class _ApprovalItem(TypedDict):
+    number: int
+    approval_kind: str
+
+
+class _ApprovalPage(TypedDict):
+    items: list[_ApprovalItem]
+    truncated: bool
+    more: bool
+
+
+class _ApprovalResult(_ApprovalPage, total=False):
+    role_checks: int
+    elapsed_ms: float
 
 
 def open_store(workspace_dir, *, legacy_origin=None, db=None, workspace_id=None) -> BoardStore:
@@ -387,7 +404,7 @@ def needs_me(
         if not coordinated and not release_boards and not reviewing:
             raise
         owner_queue = False
-    result = {
+    result: dict[str, list[dict[str, object]]] = {
         key: []
         for key in (
             "asks",
@@ -457,7 +474,7 @@ def needs_me(
                 and (release is None or release(row))
             ):
                 kind = "backlog_from_agents"
-            routes = ()
+            routes: tuple[tuple[str, str], ...] = ()
             if _stuck(row, cutoff):
                 routes = supervisors(row) if supervisors is not None else ()
             if (
@@ -555,8 +572,10 @@ def needs_me(
                 ]
             item.update(why=why, actions=actions if principal.person or own_ask else [])
             result[kind].append(item)
-    result["count"] = len({c["number"] for bucket in result.values() for c in bucket})
-    return result
+    return {
+        **result,
+        "count": len({c["number"] for bucket in result.values() for c in bucket}),
+    }
 
 
 class BoardService(lifecycle.LifecycleMixin):
@@ -574,6 +593,11 @@ class BoardService(lifecycle.LifecycleMixin):
             else None
         )
         self.pending = []
+
+    def _require_store(self) -> BoardStore:
+        if self.store is None:
+            raise RuntimeError("board operation requires a store")
+        return self.store
 
     @contextmanager
     def _projection(self):
@@ -659,7 +683,7 @@ class BoardService(lifecycle.LifecycleMixin):
         """Boards whose live ask recipient is this connection, using current policy."""
         if self.principal.person:
             return ()
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return tuple(
                 b["id"]
                 for b in conn.execute(
@@ -783,7 +807,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if p.person:
             return ()
         leased = self._leased_boards()
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return tuple(
                 b["id"]
                 for b in conn.execute("SELECT * FROM boards WHERE archived=0")
@@ -810,13 +834,13 @@ class BoardService(lifecycle.LifecycleMixin):
             return True
         return not self._live_approvers(row)
 
-    def approvals_for_me(self, conn=None, *, limit=10, budget="tools"):
+    def approvals_for_me(self, conn=None, *, limit=10, budget="tools") -> _ApprovalResult:
         """Bound role checks after SQL and visibility filtering, without a row cap."""
         if conn is None:
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 return self.approvals_for_me(conn, limit=limit, budget=budget)
         p = self.principal
-        result = dict(items=[], truncated=False, more=False)
+        result: _ApprovalResult = dict(items=[], truncated=False, more=False)
         if (
             not p.policy.has_scope("memory:read")
             or not p.policy.has_scope("memory:write")
@@ -971,7 +995,7 @@ class BoardService(lifecycle.LifecycleMixin):
         leased = self._lease_coordinator(row)
         if leased is not None:
             candidates.append((leased.actor[5:], "board coordinator"))
-        routes = {}
+        routes: dict[str, str] = {}
         for ref, role in candidates:
             try:
                 q = self._live_connection(ref)
@@ -1175,7 +1199,7 @@ class BoardService(lifecycle.LifecycleMixin):
         """The workspace's orchestration facts one request reads, taken before its board connection."""
         from commonplace.projects import orchestration as orch, reports
 
-        self._claim_grace = claim_grace(Path(self.store.path).parent)
+        self._claim_grace = claim_grace(Path(self._require_store().path).parent)
         try:
             self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
             self._orchestration_on = self._report_snapshot.enabled
@@ -1204,7 +1228,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.projects import orchestration as orch
 
         self.pending = []
-        self._auto_release = []
+        self._auto_release: list[int] = []
         conflict = None
         self._request_state()
         # Commit/rollback boards before releasing the admission lock.
@@ -1213,7 +1237,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 self._admission_conn = self._admissions.enter_context(
                     orch.admission(self.ctx.gateway, self.principal.workspace_id)
                 )
-            with self.store.transaction() as conn:
+            with self._require_store().transaction() as conn:
                 self._report_existing_boards = {r[0] for r in conn.execute("SELECT id FROM boards")}
                 try:
                     yield conn
@@ -1249,7 +1273,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.projects import seats
 
         try:
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 row = task_row(conn, number)
             state, coordinator = self._origin_authority(row)
             if state != "coordinator" or not seats.held_by(
@@ -1567,7 +1591,7 @@ class BoardService(lifecycle.LifecycleMixin):
             created = self.ctx.db.connection(name, self.principal.workspace_id)["created_at"]
         except (ControlError, ValueError, TypeError):
             return False
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM task_events WHERE task_id=? AND kind='decide' "
@@ -2079,7 +2103,7 @@ class BoardService(lifecycle.LifecycleMixin):
         """
         from commonplace.web.startup import snapshots, viewer_key
 
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             boards = self._visible_boards(conn)
         if names_only:
             return [dict(board) for board in boards]
@@ -2087,7 +2111,7 @@ class BoardService(lifecycle.LifecycleMixin):
         def counts():
             from commonplace.rules.checks import connection
 
-            with connection(self.store.path, timeout=0.1) as conn:
+            with connection(self._require_store().path, timeout=0.1) as conn:
                 return {
                     row["board_id"]: dict(row)
                     for row in conn.execute(
@@ -2226,7 +2250,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def space_metadata(self, slug):
         """Exact active workspace row and counts, without write/expiry machinery."""
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             board = conn.execute(
                 "SELECT * FROM boards WHERE slug=? AND archived=0", (slug,)
             ).fetchone()
@@ -2382,7 +2406,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def board_coordinator(self, board):
         _owner(self.principal)
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             b = self._board(conn, board)
             return {
                 "board": b["slug"],
@@ -2417,8 +2441,8 @@ class BoardService(lifecycle.LifecycleMixin):
     def _coordinator_waiting(self):
         if not self.principal.person or self.principal.role != "owner":
             return []
-        waiting = {}
-        with self.store.connection() as conn, self._projection():
+        waiting: dict[str, list[int]] = {}
+        with self._require_store().connection() as conn, self._projection():
             rows = conn.execute(
                 "SELECT t.*,b.slug AS board,b.wing AS board_wing,"
                 "b.coordinator AS board_coordinator FROM tasks t JOIN boards b ON b.id=t.board_id "
@@ -2464,7 +2488,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 ).fetchone()
             ):
                 return []
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 boards = conn.execute(
                     "SELECT slug,name,wing FROM boards WHERE archived=0 ORDER BY slug"
                 ).fetchall()
@@ -2615,7 +2639,7 @@ class BoardService(lifecycle.LifecycleMixin):
             raise ToolError("no: last must be between 1 and 100")
         if after is not None and (last is not None or before is not None):
             raise ToolError("no: after cannot be combined with last or before")
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             b = self._board(conn, board)
             backward = last is not None or before is not None
             boundary = before if before is not None else 2**63 - 1
@@ -2808,7 +2832,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.snooze import store as snooze
 
         self._request_state()
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             conn.execute("BEGIN")
             try:
                 conn.execute("PRAGMA query_only=ON")
@@ -2828,8 +2852,8 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def _shown(self, conn, row):
         result = self._card(conn, row, self.principal)
-        hidden = self.store.hidden_link_targets(conn, row["id"], self.principal)
-        linked = self.store.links(conn, row["id"], self.principal)
+        hidden = self._require_store().hidden_link_targets(conn, row["id"], self.principal)
+        linked = self._require_store().links(conn, row["id"], self.principal)
         visibility = {memory_id: False for memory_id in hidden}
         visibility.update({link["drawer_id"]: True for link in linked})
         result["events"] = [
@@ -3006,7 +3030,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 elif worker.actor != card["assignee"]:
                     reason = "assignee_not_runner_worker"
                 else:
-                    with self.store.connection() as conn:
+                    with self._require_store().connection() as conn:
                         row = task_row(conn, card["number"])
                         board = conn.execute(
                             "SELECT * FROM boards WHERE id=?", (row["board_id"],)
@@ -3386,7 +3410,7 @@ class BoardService(lifecycle.LifecycleMixin):
             raise runner_bridge.StartRefused("orchestration_disabled")
 
         def card_snapshot():
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 row = task_row(conn, task)
                 found = conn.execute(
                     "SELECT * FROM boards WHERE id=?", (row["board_id"],)
@@ -3401,7 +3425,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 self._write(found, row=row)
                 return dict(row), dict(found)
 
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             origin = conn.execute(
                 "SELECT task_id FROM chat_task_origins WHERE actor=? AND origin_key=?",
                 (self.principal.actor, origin_key),
@@ -3584,7 +3608,7 @@ class BoardService(lifecycle.LifecycleMixin):
                     from commonplace.orch import plan_check
 
                     plan_check.require_plan(row["body"], what="the plan")
-            changes = {"escalated_to": None} if owner else {}
+            changes: dict[str, str | None] = {"escalated_to": None} if owner else {}
             if plan:
                 if approve:
                     changes["labels"] = json.dumps(
@@ -4099,7 +4123,8 @@ class BoardService(lifecycle.LifecycleMixin):
             previous["labels"] = json.loads(row["labels"] or "[]")
         if set(args) & {"link", "unlink"}:
             previous["links"] = [
-                link["drawer_id"] for link in self.store.links(conn, row["id"], self.principal)
+                link["drawer_id"]
+                for link in self._require_store().links(conn, row["id"], self.principal)
             ]
         return json.dumps(previous, ensure_ascii=False) if previous else None
 
@@ -4218,7 +4243,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if args.get("status") != "doing":
             return None, None
         # Resolve control identity before taking the board write transaction.
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             prospective = task_row(conn, task)
             require_visible(prospective, self.principal)
             actor = self._update_acquisition_actor(prospective, args)
@@ -4372,7 +4397,7 @@ class BoardService(lifecycle.LifecycleMixin):
         p = self.principal
         if not p.person or p.role == "owner":
             return False
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM tasks WHERE status='review' AND review_kind='completion' "
@@ -4819,7 +4844,7 @@ class BoardService(lifecycle.LifecycleMixin):
             )
 
     def decide(self, task, choice=None, reply=None, then="return", version=None):
-        audited = []
+        audited: list[tuple[int, str]] = []
         try:
             return self._decide(task, choice, reply, then, version, audited)
         except BaseException:
@@ -5012,7 +5037,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def coordinator_actors(self):
         """Every board coordinator actor in this workspace (archived boards included)."""
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return frozenset(
                 r[0]
                 for r in conn.execute(
@@ -5037,7 +5062,7 @@ class BoardService(lifecycle.LifecycleMixin):
             raise ToolError("no: format must be list or digest")
         with self._projection():
             groups = needs_me(
-                self.store,
+                self._require_store(),
                 self.principal,
                 release=self._needs_person_release,
                 names=lambda text: people(self.ctx, text),
@@ -5147,7 +5172,7 @@ class BoardService(lifecycle.LifecycleMixin):
         ]
 
     def _visible_board_slug(self, slug):
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             row = conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()
         return row is not None and self.principal.policy.can_read_wing(row["wing"])
 
