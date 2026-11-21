@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import PurePath
-from typing import Optional
+from typing import Optional, Sequence
 
 from .base import (
     BaseCollection,
@@ -142,7 +142,9 @@ def _metadata_can_change_embedding(metadata) -> bool:
     return bool(isinstance(metadata, dict) and _EMBEDDING_TITLE_FIELDS.intersection(metadata))
 
 
-def _metadata_title(metadata: dict) -> Optional[str]:
+def _metadata_title(metadata: Optional[dict]) -> Optional[str]:
+    if metadata is None:
+        raise AttributeError("'NoneType' object has no attribute 'get'", name="get", obj=metadata)
     title = metadata.get("title")
     if isinstance(title, str) and title.strip():
         return title.strip()
@@ -155,7 +157,9 @@ def _metadata_title(metadata: dict) -> Optional[str]:
     return None
 
 
-def _is_native_media(metadata: dict) -> bool:
+def _is_native_media(metadata: Optional[dict]) -> bool:
+    if metadata is None:
+        raise AttributeError("'NoneType' object has no attribute 'get'", name="get", obj=metadata)
     return metadata.get("media_type") in {"image", "audio", "video"}
 
 
@@ -176,6 +180,10 @@ class EmbeddingCollection(BaseCollection):
     @property
     def upsert_merges_metadata(self):
         return self._inner.upsert_merges_metadata
+
+    @upsert_merges_metadata.setter
+    def upsert_merges_metadata(self, value: bool) -> None:
+        self._inner.upsert_merges_metadata = value
 
     @property
     def distance_metric(self) -> str:
@@ -210,7 +218,7 @@ class EmbeddingCollection(BaseCollection):
         positions = [
             i for i, meta in enumerate(metadatas) if (meta or {}).get(KEYWORD_ONLY) is not True
         ]
-        vectors = [None] * len(documents)
+        vectors: list[Optional[list[float]]] = [None] * len(documents)
         if positions:
             embedded = _embed_texts(
                 [documents[i] for i in positions],
@@ -252,7 +260,8 @@ class EmbeddingCollection(BaseCollection):
             needs_vectors = (
                 documents is not None
                 or any(
-                    old.get(record_id, ("", {}))[1].get(KEYWORD_ONLY) is True
+                    (metadata := old.get(record_id, ("", {}))[1]) is not None
+                    and metadata.get(KEYWORD_ONLY) is True
                     and effective[i].get(KEYWORD_ONLY) is not True
                     for i, record_id in enumerate(ids)
                 )
@@ -360,6 +369,8 @@ class EmbeddingCollection(BaseCollection):
         where_document: Optional[dict] = None,
         include: Optional[list[str]] = None,
     ):
+        if isinstance(query_texts, str):
+            query_texts = [query_texts]
         if query_texts is not None and query_embeddings is None:
             query_embeddings = _embed_texts(_as_list(query_texts), query=True)
             query_texts = None
@@ -438,7 +449,7 @@ class EmbeddingCollection(BaseCollection):
         # client-side counting in mcp_server's try/except.
         return self._inner.facet_counts(field, where=where, limit=limit)
 
-    def get_all_metadata(self, where: Optional[dict] = None) -> list[dict]:
+    def get_all_metadata(self, where: Optional[dict] = None) -> Sequence[Optional[dict]]:
         # ``BaseCollection.get_all_metadata`` ships a concrete default that
         # pages through ``self.get(include=["metadatas"])``. Without this
         # forwarder, MRO resolves the call here on the subclass and runs the
