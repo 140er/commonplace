@@ -1,0 +1,2 @@
+- **Owns:**
+  - Synthetic inert-store controls in `tests/test_sealed_records.py` and `tests/test_sealed_store.py`: strict envelopes, opaque close/reopen, workspace binding, retries/conflicts, independent processes, finite and invalid cursors, rollback, unavailable stores and forbidden runtime dependencies. Deterministic replacement at validation/open covers main files, directories, side files and unchanged victims.
