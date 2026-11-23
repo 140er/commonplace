@@ -25,6 +25,9 @@ def install(gateway):
 
     trust.configure(gateway)
     registry.ensure(gateway.db)
+    from commonplace.compute import activity
+
+    activity.install(gateway)
     enrollment_api.install(gateway)
     from commonplace.compute import pairing_routes
 
