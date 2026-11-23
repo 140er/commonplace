@@ -354,7 +354,10 @@ def test_same_builder_and_no_other_person_queue_or_route_authority(phone, monkey
         ).fetchone()
     for path in ("/api/events", "/api/account", "/api/chat", "/api/settings/workspace"):
         expected = api(phone.hub, ordinary["access_token"], "GET", path)
-        assert expected[0] in (403, 404)
+        if path == "/api/chat":
+            assert expected[0] == 200
+        else:
+            assert expected[0] in (403, 404)
         assert api(phone.hub, pair["access_token"], "GET", path) == expected
     existing = service(phone.hub, phone.hub.gateway.authenticate("Bearer " + pair["access_token"]))
     assert api(phone.hub, pair["access_token"], "GET", "/api/needs-me/digest")[

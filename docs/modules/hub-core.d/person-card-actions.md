@@ -3,7 +3,7 @@
   - `person_actions.py` verifies separate native-phone consent records, the live OAuth bearer, current person/workspace/client binding and absence of machinery or board coordination authority. The same authority serves card actions and the three chat routes; OAuth principals remain non-person globally.
 - **Promises:**
 
-  - The phone keeps exactly its requested `memory:read` OAuth scope; no policy or OAuth scope is added. Separate unticked capabilities are `cards:decide:person`, `cards:approve:person` and `chat:person`. Only a new native PKCE consent records them. The default-off switch is `COMMONPLACE_PHONE_ACTIONS=on`.
+  - The phone keeps exactly its requested `memory:read` OAuth scope; no policy or OAuth scope is added. Separate unticked capabilities are `cards:decide:person`, `cards:approve:person` and `chat:person`. Only a new native PKCE consent records them. The default-off switch is `COMMONPLACE_PHONE_ACTIONS=on`. The workspace owner's own cmmn phone (redirect list exactly `cmmn://auth/callback`, not machinery or a board coordinator) reads and posts on the three chat routes as that owner without the chat checkbox and without the switch. Members and every other client do not.
   - Card actions require a positive version and an `Idempotency-Key`; receipts commit with the card. Chat posts use the person's ordinary board operation without granting the bearer `memory:write`. Grants and successful writes record the person, connection and client name; audit failure rolls back the action.
   - `clear_decide` revokes and audits phone capabilities before parsing the connection's policy, including when that policy is malformed. Repeating the revocation leaves no active grant and creates no duplicate revocation rows.
 - **Tests:**

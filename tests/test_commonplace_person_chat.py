@@ -37,6 +37,46 @@ def test_mobile_oauth_sign_in_receives_person_chat(hub, monkeypatch):
     assert api(hub, pair["access_token"], "GET", "/api/chat")[0] == 200
 
 
+def test_owner_native_phone_chats_without_a_separate_grant(phone, monkeypatch):
+    monkeypatch.delenv("COMMONPLACE_PHONE_ACTIONS")
+    pair = grant(phone, checked=[])
+    assert pair["scope"] == "memory:read"
+    status, listing_body = api(phone.hub, pair["access_token"], "GET", "/api/chat")
+    assert status == 200, listing_body
+    project = listing_body["projects"][0]
+    assert project["slug"] == "work"
+    assert "status" in project and "last_message" in project
+    status, message = api(
+        phone.hub, pair["access_token"], "POST", "/api/boards/work/chat", {"text": "Owner phone"}
+    )
+    assert status == 201, message
+    assert message["actor"] == "user:" + phone.hub.admin
+    assert message["stamp_connection"] is None
+    for path in ("/api/chat-settings", "/api/chat/work/status", "/api/chat/work/search?q=one"):
+        assert api(phone.hub, pair["access_token"], "GET", path)[0] == 403
+    saved = phone.cid
+    phone.cid = phone.register(
+        client_name="Mixed redirects",
+        redirect_uris=["cmmn://auth/callback", REDIRECT],
+    )
+    mixed = grant(phone, checked=[], redirect_uri="cmmn://auth/callback")
+    phone.cid = saved
+    assert api(phone.hub, mixed["access_token"], "GET", "/api/chat")[0] == 403
+    member_client(phone)
+    member = grant(phone, checked=[])
+    assert api(phone.hub, member["access_token"], "GET", "/api/chat")[0] == 403
+    assert (
+        api(
+            phone.hub,
+            member["access_token"],
+            "POST",
+            "/api/boards/work/chat",
+            {"text": "Member phone"},
+        )[0]
+        == 403
+    )
+
+
 def test_phone_reads_and_posts_as_person_without_memory_write(phone):
     pair = grant(phone)
     token = pair["access_token"]
@@ -78,11 +118,16 @@ def listing(phone, pair):
 @pytest.mark.parametrize("path", ["/api/chat", "/api/chat/work?last=50", "/api/boards/work/chat"])
 @pytest.mark.parametrize("kind", ["ordinary-oauth", "agent", "machine", "worker", "revoked", "off"])
 def test_unverified_and_revoked_chat_authority_refused(phone, monkeypatch, path, kind):
-    pair = grant(phone, checked=[] if kind == "ordinary-oauth" else None)
-    app = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
     if kind == "off":
+        member_client(phone)
+        pair = grant(phone, capabilities=[CHAT])
         monkeypatch.delenv("COMMONPLACE_PHONE_ACTIONS")
-    elif kind == "agent":
+    elif kind == "ordinary-oauth":
+        pair = grant(phone, checked=[])
+    else:
+        pair = grant(phone)
+    app = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
+    if kind == "agent":
         with phone.hub.db._lock:
             phone.hub.db._conn.execute(
                 "UPDATE connections SET started_by='agent' WHERE id=?", (app.connection_id,)
@@ -99,11 +144,22 @@ def test_unverified_and_revoked_chat_authority_refused(phone, monkeypatch, path,
         )
     method = "POST" if path.startswith("/api/boards") else "GET"
     status, _ = api(phone.hub, pair["access_token"], method, path, {"text": "Attempt"})
-    assert status in (401, 403)
+    if kind == "ordinary-oauth":
+        assert status == (201 if method == "POST" else 200)
+    else:
+        assert status in (401, 403)
 
 
 def test_non_phone_oauth_post_keeps_connection_semantics(phone):
-    pair = grant(phone, checked=[], oauth_scopes=("memory:read", "memory:write"))
+    ordinary = Client(phone.hub)
+    ordinary.cookies = dict(phone.cookies)
+    ordinary.cid = ordinary.register(client_name="Ordinary app")
+    pair = grant(
+        ordinary,
+        checked=[],
+        oauth_scopes=("memory:read", "memory:write"),
+        redirect_uri=REDIRECT,
+    )
     app = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
     # A normal app can post only where its existing memory policy allows it.
     phone.owner.board_add(slug="inbox", wing="inbox")

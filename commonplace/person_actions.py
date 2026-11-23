@@ -262,12 +262,88 @@ def chat_post_path(method, path):
     )
 
 
-def chat_person(gateway, h):
-    """Optional phone capability for an existing chat route, never a global principal change."""
-    if not enabled():
+def _native_phone_client(db, connection_id):
+    """The cmmn phone registers exactly one redirect. Any extra redirect is a different app."""
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT c.client_id, c.client_name, c.redirect_uris FROM oauth_clients c "
+            "JOIN oauth_tokens t ON t.client_id=c.client_id "
+            "WHERE t.connection_id=? AND t.kind='access' AND t.revoked_at IS NULL "
+            "ORDER BY t.expires_at DESC LIMIT 1",
+            (connection_id,),
+        ).fetchone()
+    if row is None:
         return None
     try:
-        return authority(gateway, h, CHAT_CAPABILITY)[1]
+        redirects = json.loads(row["redirect_uris"])
+    except (TypeError, ValueError):
+        return None
+    if redirects != [NATIVE_REDIRECT]:
+        return None
+    return {key: row[key] for key in ("client_id", "client_name")}
+
+
+def owner_phone_actor(gateway, h, board_conn=None):
+    """The workspace owner's own cmmn phone, using the chat rights that owner already has on the web.
+
+    Members, any other OAuth client, and agent machinery stay on the explicit chat grant.
+    This does not add a scope to the bearer and does not make the OAuth principal a person.
+    """
+    from commonplace import decide_grant
+
+    header = h.headers.get("Authorization", "")
+    app = gateway.authenticate(header)
+    if not (
+        app
+        and not app.person
+        and app.auth == "oauth"
+        and app.role == "owner"
+        and app.runner is None
+        and app.parent_connection_id is None
+        and app.policy.has_scope("memory:read")
+    ):
+        return None
+    try:
+        row = gateway.db.connection(app.connection_id, app.workspace_id)
+        if row["user_id"] != app.user_id or decide_grant.machinery(gateway.db, row):
+            return None
+        origin = _native_phone_client(gateway.db, app.connection_id)
+        if origin is None:
+            return None
+        if board_conn is None:
+            service = BoardService(ToolContext(principal=app, gateway=gateway))
+            coordinator = app.actor in service.coordinator_actors()
+        else:
+            coordinator = board_conn.execute(
+                "SELECT 1 FROM boards WHERE coordinator=? LIMIT 1", (app.actor,)
+            ).fetchone()
+        if coordinator:
+            return None
+        person = sessions.person_principal(gateway.db, app.user_id, app.workspace_id)
+        if person is None or person.role != "owner":
+            return None
+        return app, person, origin
+    except (ControlError, LookupError):
+        return None
+
+
+def chat_actor(gateway, h, board_conn=None):
+    """A live chat:person grant, or the owner's own native phone when that grant is absent."""
+    if enabled():
+        try:
+            return authority(gateway, h, CHAT_CAPABILITY, board_conn)
+        except HTTPError:
+            pass
+    found = owner_phone_actor(gateway, h, board_conn)
+    if found is None:
+        raise HTTPError(404, "not found")
+    return found
+
+
+def chat_person(gateway, h):
+    """The person a phone chat route acts as, or None. Never a global principal change."""
+    try:
+        return chat_actor(gateway, h)[1]
     except HTTPError:
         return None
 
@@ -308,9 +384,7 @@ def post_chat(gateway, h, board, body):
     audit_seq = None
     try:
         with BoardService.transaction(service) as conn:
-            service.app, service.principal, service.origin = authority(
-                gateway, h, CHAT_CAPABILITY, conn
-            )
+            service.app, service.principal, service.origin = chat_actor(gateway, h, conn)
             service.ctx = ToolContext(principal=service.principal, gateway=gateway)
             targets = []
             with rest.rest_write(
