@@ -403,3 +403,36 @@ def test_real_typechecker_rejects_a_stub_with_a_space_in_its_path(repo):
     assert mypy.status == "failed" and report.exit_code == 1
     assert "stub dir/a b.pyi:1" in text
     assert "Incompatible types in assignment" in text and "[assignment]" in text
+
+
+@pytest.mark.parametrize("mistake", ["none", "helper", "consumer", "untyped_body"])
+def test_real_typechecker_checks_namespace_import_roots(repo, mistake):
+    """Changed namespace modules keep one identity and errors in both explicit roots."""
+    helper = 'VALUE: int = "wrong"\n' if mistake == "helper" else "VALUE: int = 1\n"
+    consumer = "from tests.namespace_helper import VALUE\n\n"
+    if mistake == "consumer":
+        consumer += "RESULT: str = VALUE\n"
+    elif mistake == "untyped_body":
+        consumer += "def value():\n    result: str = VALUE\n    return result\n"
+    else:
+        consumer += "def value() -> int:\n    return VALUE\n"
+    roots = ["tests/namespace_helper.py", "tests/namespace_consumer.py"]
+    _write(repo / roots[0], helper)
+    _write(repo / roots[1], consumer)
+    assert not (repo / "tests/__init__.py").exists()
+    commands = [
+        command for name, command in prepush._file_steps(repo, roots) if name == "typecheck mypy"
+    ]
+    assert len(commands) == 1
+    result = subprocess.run(
+        commands[0].argv,
+        cwd=repo,
+        env=dict(os.environ, PATH=prepush.tool_path(repo)),
+        capture_output=True,
+        text=True,
+    )
+    if mistake == "none":
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "[assignment]" in result.stdout

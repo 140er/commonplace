@@ -6,6 +6,10 @@ checked too. Ruff lint/format, Rust formatting, documentation checks and mapped 
 tests remain. The nine-second elapsed target is an alarm, never a cutoff or a reason
 to skip checks. Missing tools and inputs that cannot be validated block the push.
 Type errors in an existing dependency are reported rather than ignored or baselined.
+The hook passes explicit package bases with the repository as its working directory.
+This gives namespace modules such as tests.helpers the same identity when supplied as
+changed roots and reached through imports. All roots and untyped-body checks remain;
+no test-package marker, ignore, exclusion or strictness reduction is introduced.
 When both an implementation and its matching stub change, they remain checked as
 explicit roots in separate mypy invocations, avoiding a duplicate module while
 retaining diagnostics and push refusal for a type error in either file.

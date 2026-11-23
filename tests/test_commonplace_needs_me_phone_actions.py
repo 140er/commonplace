@@ -69,7 +69,7 @@ def test_consented_phone_gets_web_actions_per_capability(phone, capabilities):
         "/api/needs-me",
     )
     assert web_status == 200, web
-    allowed = set()
+    allowed: set[str] = set()
     if DECIDE in capabilities:
         allowed.update(("accept", "answer"))
     if APPROVE in capabilities:
