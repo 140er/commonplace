@@ -268,12 +268,16 @@ class CoworkerWorker:
         uid, cid, mid = job["user_id"], job["conversation_id"], job["message_id"]
         rows = store.list_messages(uid, cid, before=mid, limit=CONTEXT_MESSAGES)
         bot = snapshot["bot"]
-        system = SYSTEM + bot.get("instructions", "")[:2000]
+        system = SYSTEM + redact.redact(bot.get("instructions", ""))[0][:2000]
         data = {
-            "bot": {"id": bot["id"], "name": bot["name"]},
+            "bot": {"id": bot["id"], "name": redact.redact(bot["name"])[0]},
             "history": [],
             "memories": [],
-            "message": {"id": mid, "actor": message["actor"], "text": message["text"]},
+            "message": {
+                "id": mid,
+                "actor": message["actor"],
+                "text": redact.redact(message["text"])[0],
+            },
         }
 
         def fits():
@@ -300,7 +304,7 @@ class CoworkerWorker:
             if len(used) >= MEMORY_ITEMS or memory_chars + len(memory["text"]) > MEMORY_CHARS:
                 continue
             entry = {k: memory[k] for k in ("id", "actor", "text")}
-            data["memories"].append(entry)
+            data["memories"].append({**entry, "text": redact.redact(entry["text"])[0]})
             if fits():
                 used.append(entry)
                 memory_chars += len(memory["text"])
@@ -311,7 +315,13 @@ class CoworkerWorker:
                 continue
             if row["conversation_id"] != cid:
                 raise _Withheld("no_access")
-            data["history"].insert(0, {k: row[k] for k in ("id", "actor", "bot_id", "text")})
+            data["history"].insert(
+                0,
+                {
+                    **{k: row[k] for k in ("id", "actor", "bot_id")},
+                    "text": redact.redact(row["text"])[0],
+                },
+            )
             if not fits():
                 data["history"].pop(0)
                 break
