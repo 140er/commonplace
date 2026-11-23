@@ -131,9 +131,8 @@ that original empty scan; an unmatched kind retains the same global bound.
 
 ## Printed-only metadata and deferred client work
 
-Jeffrey selected printed recovery code only; the old SAMEchat99 recovery/design
-holds were released. This unit does not reopen that choice. A `printed-recovery`
-object contains a public locator, content-key ID, nonce and opaque wrapped-key
+Recovery uses printed codes only. A `printed-recovery` object contains a public
+locator, content-key ID, nonce and opaque wrapped-key
 ciphertext plus server stamps. Its eventual client body wraps a 32-byte content
 key using an independent 32-byte random recovery secret. Neither the secret/code,
 a code verifier, unwrapped key, passkey, operator slot nor bearer-derived key is
@@ -151,7 +150,7 @@ is included in this unit.
 The sibling store does not inherit account export, deletion/retention, backups,
 metering or workspace lifecycle coverage. Those adapters remain required before
 activation. Existing account ZIP and Markdown exports do not cover this store.
-Unknown historical SAMEchat99 bytes receive no automatic importer. Existing
+Unknown historical sealed bytes receive no automatic importer. Existing
 SQLCipher, workspace encryption, token slots and ordinary memory remain separate.
 Device key custody, volatile local indexing/search, synchronization, both stdio
 forwarders, server-image evidence and real distinct-device recovery remain later

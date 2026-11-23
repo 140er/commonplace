@@ -16,6 +16,6 @@ power-loss recovery, server-image safety or distinct-device behavior.
 
 The contract and all nine remaining OPEN obligations are in
 `docs/sealed-memory-store.md`; finite synthetic controls are in
-`tests/test_sealed_records.py` and `tests/test_sealed_store.py`. Printed recovery
-code only and release of the old SAMEchat99 holds remain settled; no full-card
-acceptance, scope grant, key UX, export coverage or deployment follows.
+`tests/test_sealed_records.py` and `tests/test_sealed_store.py`. Recovery uses
+printed codes only; full-card acceptance, key UX, export coverage and deployment
+remain future work.
