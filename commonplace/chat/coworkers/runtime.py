@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 from commonplace import redact, sessions
 from commonplace.boards.service import BoardService
@@ -34,6 +35,14 @@ from commonplace.projects import orchestration
 from . import model_effort
 from .routes import Authority
 from .store import StoreError, open_store
+
+
+class _ContextPayload(TypedDict):
+    bot: dict[str, object]
+    history: list[dict[str, object]]
+    memories: list[dict[str, object]]
+    message: dict[str, object]
+
 
 logger = logging.getLogger(__name__)
 POLL_SECONDS = 1
@@ -133,12 +142,11 @@ class CoworkerWorker:
                 # Never include provider errors, prompt text or local values.
                 logger.warning("Coworker background pass failed")
             with self._condition:
-                self._condition.wait_for(
-                    lambda generation=generation: (
-                        self._stop.is_set() or generation != self._generation
-                    ),
-                    timeout=POLL_SECONDS,
-                )
+
+                def ready(generation: int = generation) -> bool:
+                    return self._stop.is_set() or generation != self._generation
+
+                self._condition.wait_for(ready, timeout=POLL_SECONDS)
 
     def _claim(self, workspace_id=None):
         with self._claim_lock:
@@ -269,7 +277,7 @@ class CoworkerWorker:
         rows = store.list_messages(uid, cid, before=mid, limit=CONTEXT_MESSAGES)
         bot = snapshot["bot"]
         system = SYSTEM + redact.redact(bot.get("instructions", ""))[0][:2000]
-        data = {
+        data: _ContextPayload = {
             "bot": {"id": bot["id"], "name": redact.redact(bot["name"])[0]},
             "history": [],
             "memories": [],
@@ -296,7 +304,7 @@ class CoworkerWorker:
             ),
             reverse=True,
         )
-        used = []
+        used: list[dict[str, object]] = []
         memory_chars = 0
         for memory in memories[:MEMORY_CANDIDATES]:
             if memory["conversation_id"] != cid:
