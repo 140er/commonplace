@@ -253,7 +253,7 @@ def _file_steps(top: Path, changed: list[str]) -> list[tuple[str, PlannedCommand
                 "typecheck mypy",
                 PlannedCommand(
                     name="mypy",
-                    argv=("mypy", "--check-untyped-defs", "--", *batch),
+                    argv=("mypy", "--explicit-package-bases", "--check-untyped-defs", "--", *batch),
                     files=batch,
                 ),
             )
