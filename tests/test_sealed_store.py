@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import ctypes
 import hashlib
 import multiprocessing
 import os
@@ -55,7 +56,86 @@ def assert_code(code, call):
     assert "synthetic-forbidden-body" not in str(failure.value)
 
 
-def test_memory_and_printed_wrap_bytes_survive_close_reopen(tmp_path):
+@pytest.fixture(autouse=False)
+def sealed_store_capability() -> None:
+    if sys.platform != "linux":
+        pytest.skip("sealed store unsupported: Linux is required")
+    required_os = (
+        "O_DIRECTORY",
+        "O_NOFOLLOW",
+        "O_CLOEXEC",
+        "O_NONBLOCK",
+        "O_RDONLY",
+        "O_RDWR",
+        "O_CREAT",
+        "O_EXCL",
+        "open",
+        "close",
+        "mkdir",
+        "stat",
+        "fstat",
+        "pread",
+        "geteuid",
+        "supports_dir_fd",
+        "supports_follow_symlinks",
+    )
+    missing_os = [name for name in required_os if not hasattr(os, name)]
+    if missing_os:
+        pytest.skip("sealed store unsupported: missing OS primitives: " + ", ".join(missing_os))
+    if any(function not in os.supports_dir_fd for function in (os.open, os.mkdir, os.stat)):
+        pytest.skip("sealed store unsupported: descriptor-relative open/mkdir/stat unavailable")
+    if os.stat not in os.supports_follow_symlinks:
+        pytest.skip("sealed store unsupported: non-following stat unavailable")
+    try:
+        import fcntl
+    except ModuleNotFoundError as error:
+        if error.name != "fcntl":
+            raise
+        pytest.skip("sealed store unsupported: fcntl is unavailable")
+    required_fcntl = ("flock", "LOCK_EX", "LOCK_NB")
+    missing_fcntl = [name for name in required_fcntl if not hasattr(fcntl, name)]
+    if missing_fcntl:
+        pytest.skip(
+            "sealed store unsupported: missing fcntl primitives: " + ", ".join(missing_fcntl)
+        )
+    try:
+        native = ctypes.CDLL("libsqlite3.so.0")
+    except OSError:
+        pytest.skip("sealed store unsupported: libsqlite3.so.0 is unavailable")
+    required_abi = (
+        "sqlite3_libversion_number",
+        "sqlite3_open_v2",
+        "sqlite3_close",
+        "sqlite3_busy_timeout",
+        "sqlite3_prepare_v2",
+        "sqlite3_step",
+        "sqlite3_finalize",
+        "sqlite3_bind_int64",
+        "sqlite3_bind_text",
+        "sqlite3_bind_blob",
+        "sqlite3_column_count",
+        "sqlite3_column_type",
+        "sqlite3_column_int64",
+        "sqlite3_column_blob",
+        "sqlite3_column_bytes",
+        "sqlite3_vfs_find",
+    )
+    missing_abi = [name for name in required_abi if not hasattr(native, name)]
+    if missing_abi:
+        pytest.skip(
+            "sealed store unsupported: missing native SQLite ABI: " + ", ".join(missing_abi)
+        )
+    version = native.sqlite3_libversion_number
+    version.argtypes, version.restype = [], ctypes.c_int
+    if version() < 3_037_000:
+        pytest.skip("sealed store unsupported: native SQLite version is below 3.37")
+    find_vfs = native.sqlite3_vfs_find
+    find_vfs.argtypes, find_vfs.restype = [ctypes.c_char_p], ctypes.c_void_p
+    if not find_vfs(b"unix"):
+        pytest.skip("sealed store unsupported: native SQLite Unix VFS is unavailable")
+
+
+def test_memory_and_printed_wrap_bytes_survive_close_reopen(tmp_path, sealed_store_capability):
     with open_sealed_store(tmp_path, "ws_A", create=True, clock=lambda: STAMP) as store:
         memory = store.put(envelope(), writer=WRITER)
         wrap = store.put(envelope(2, "printed-recovery"), writer=WRITER)
@@ -71,7 +151,9 @@ def test_memory_and_printed_wrap_bytes_survive_close_reopen(tmp_path):
     assert database(tmp_path).stat().st_mode & 0o777 == 0o600
 
 
-def test_workspace_binding_and_path_escape_refuse_without_touching_victim(tmp_path):
+def test_workspace_binding_and_path_escape_refuse_without_touching_victim(
+    tmp_path, sealed_store_capability
+):
     with open_sealed_store(tmp_path, "ws_A", create=True) as store:
         original = store.put(envelope(), writer=WRITER).record
     source = database(tmp_path)
@@ -109,7 +191,7 @@ def test_workspace_binding_and_path_escape_refuse_without_touching_victim(tmp_pa
     ],
 )
 def test_replacement_between_validation_and_sqlite_open_preserves_victim(
-    tmp_path, monkeypatch, replacement
+    tmp_path, monkeypatch, replacement, sealed_store_capability
 ):
     root = tmp_path / "owned"
     with open_sealed_store(root, "ws_A", create=True) as store:
@@ -156,7 +238,9 @@ def test_replacement_between_validation_and_sqlite_open_preserves_victim(
         assert digest(path) == original_hash
 
 
-def test_writable_directories_hardlinks_and_unsupported_platform_refuse(tmp_path, monkeypatch):
+def test_writable_directories_hardlinks_and_unsupported_platform_refuse(
+    tmp_path, monkeypatch, sealed_store_capability
+):
     with open_sealed_store(tmp_path, "ws_A", create=True):
         pass
     path = database(tmp_path)
@@ -175,7 +259,7 @@ def test_writable_directories_hardlinks_and_unsupported_platform_refuse(tmp_path
     assert digest(path) == before
 
 
-def test_server_stamp_is_stable_across_retry(tmp_path):
+def test_server_stamp_is_stable_across_retry(tmp_path, sealed_store_capability):
     times = iter([STAMP, STAMP + timedelta(days=1)])
     with open_sealed_store(tmp_path, "ws_A", create=True, clock=lambda: next(times)) as store:
         first = store.put(envelope(), writer=WRITER)
@@ -187,7 +271,9 @@ def test_server_stamp_is_stable_across_retry(tmp_path):
     assert second.record.written_at.startswith("2026-01-03")
 
 
-def test_put_retry_conflict_and_nonce_collision_preserve_original(tmp_path):
+def test_put_retry_conflict_and_nonce_collision_preserve_original(
+    tmp_path, sealed_store_capability
+):
     with open_sealed_store(tmp_path, "ws_A", create=True) as store:
         first = store.put(envelope(), writer=WRITER).record
         for changed, writer in (
@@ -213,7 +299,7 @@ def _append_process(root, numbers):
             store.put(envelope(number), writer=WRITER)
 
 
-def test_concurrent_append_and_finite_cursor_have_no_loss(tmp_path):
+def test_concurrent_append_and_finite_cursor_have_no_loss(tmp_path, sealed_store_capability):
     with open_sealed_store(tmp_path, "ws_A", create=True) as store:
         originals = tuple(store.put(envelope(n), writer=WRITER).record for n in range(1, 6))
         store.put(envelope(6, "printed-recovery"), writer=WRITER)
@@ -272,14 +358,16 @@ def test_concurrent_append_and_finite_cursor_have_no_loss(tmp_path):
         {"limit": 1.0},
     ],
 )
-def test_invalid_cursor_is_explicit_refusal_without_refresh_or_clamp(tmp_path, arguments):
+def test_invalid_cursor_is_explicit_refusal_without_refresh_or_clamp(
+    tmp_path, arguments, sealed_store_capability
+):
     with open_sealed_store(tmp_path, "ws_A", create=True) as store:
         record = store.put(envelope(), writer=WRITER).record
         assert_code("INVALID_RECORD", lambda: store.list(kind="memory", **arguments))
         assert store.list(kind="memory").records == (record,)
 
 
-def test_empty_cursor_bounds_are_finite_and_retained(tmp_path):
+def test_empty_cursor_bounds_are_finite_and_retained(tmp_path, sealed_store_capability):
     with open_sealed_store(tmp_path, "ws_A", create=True) as store:
         empty = store.list(kind="memory")
         assert empty.through == 0 and empty.records == () and empty.next_after is None
@@ -292,7 +380,9 @@ def test_empty_cursor_bounds_are_finite_and_retained(tmp_path):
         assert filtered.records == () and filtered.through == record.sequence
 
 
-def test_interrupted_insert_and_initialization_keep_committed_records(tmp_path, monkeypatch):
+def test_interrupted_insert_and_initialization_keep_committed_records(
+    tmp_path, monkeypatch, sealed_store_capability
+):
     root = tmp_path / "existing"
     with open_sealed_store(root, "ws_A", create=True) as store:
         original = store.put(envelope(), writer=WRITER).record
@@ -330,7 +420,9 @@ def test_interrupted_insert_and_initialization_keep_committed_records(tmp_path, 
     assert digest(database(root)) == before
 
 
-def test_store_works_without_palace_keys_network_or_embeddings(tmp_path, monkeypatch):
+def test_store_works_without_palace_keys_network_or_embeddings(
+    tmp_path, monkeypatch, sealed_store_capability
+):
     real_import = builtins.__import__
     forbidden = []
 
@@ -372,7 +464,7 @@ def _hold_sqlite(path, connection):
     connection.close()
 
 
-def test_missing_corrupt_unknown_and_busy_store_fail_closed(tmp_path):
+def test_missing_corrupt_unknown_and_busy_store_fail_closed(tmp_path, sealed_store_capability):
     missing = tmp_path / "missing"
     assert_code("NOT_INITIALIZED", lambda: open_sealed_store(missing, "ws_A"))
     assert not missing.exists()
@@ -409,7 +501,7 @@ def test_missing_corrupt_unknown_and_busy_store_fail_closed(tmp_path):
     assert digest(database(tmp_path)) == corrupt_hash
 
 
-def test_context_close_and_naive_clock_refuse_without_appending(tmp_path):
+def test_context_close_and_naive_clock_refuse_without_appending(tmp_path, sealed_store_capability):
     with open_sealed_store(
         tmp_path, "ws_A", create=True, clock=lambda: datetime(2026, 1, 1)
     ) as store:
@@ -419,3 +511,45 @@ def test_context_close_and_naive_clock_refuse_without_appending(tmp_path):
     assert_code("STORAGE_UNAVAILABLE", lambda: store.list(kind="memory"))
     with open_sealed_store(tmp_path, "ws_A") as reopened:
         assert reopened.get(kind="memory", record_id=envelope().record_id) is None
+
+
+@pytest.mark.parametrize("platform_name", ["win32", "darwin"], ids=["windows", "macos"])
+def test_unsupported_platform_refuses_before_native_or_os_open(
+    tmp_path, monkeypatch, platform_name
+):
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"synthetic untouched victim")
+    before = digest(victim)
+    missing = tmp_path / "missing"
+    calls: list[str] = []
+
+    def native_open_forbidden(*args, **kwargs):
+        calls.append("native")
+        raise AssertionError("unsupported platform reached native SQLite")
+
+    def os_open_forbidden(*args, **kwargs):
+        calls.append("os.open")
+        raise AssertionError("unsupported platform reached OS open")
+
+    def os_mkdir_forbidden(*args, **kwargs):
+        calls.append("os.mkdir")
+        raise AssertionError("unsupported platform reached OS mkdir")
+
+    implementation._library.cache_clear()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sys, "platform", platform_name)
+            patch.setattr(implementation.ctypes, "CDLL", native_open_forbidden)
+            patch.setattr(implementation.os, "open", os_open_forbidden)
+            patch.setattr(implementation.os, "mkdir", os_mkdir_forbidden)
+            for selected in (missing, tmp_path):
+                assert_code(
+                    "UNSAFE_PATH",
+                    lambda selected=selected: open_sealed_store(selected, "ws_A", create=True),
+                )
+    finally:
+        implementation._library.cache_clear()
+    assert calls == []
+    assert not missing.exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["victim"]
+    assert digest(victim) == before
