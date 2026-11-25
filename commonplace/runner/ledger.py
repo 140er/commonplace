@@ -44,6 +44,7 @@ VIEW_KEYS = (
     "model_provider",
     "model",
 )
+ACCOUNT_COLUMNS = ("mode", "mode_source", "account_kind", "account_label", "account_person")
 JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}\Z")
 CURRENCY = re.compile(r"[A-Z]{3}\Z")
 TABLE = """
@@ -59,12 +60,18 @@ CREATE TABLE IF NOT EXISTS run_ledger (
  input_tokens INTEGER, output_tokens INTEGER,
  cost_micros INTEGER, currency TEXT,
  reported_at TEXT,
- created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ source TEXT,
+ mode TEXT, mode_source TEXT, account_kind TEXT, account_label TEXT, account_person TEXT
 )
 """
 INDEXES = (
     "CREATE INDEX IF NOT EXISTS run_ledger_task ON run_ledger(task_number)",
     "CREATE INDEX IF NOT EXISTS run_ledger_created ON run_ledger(created_at)",
+    "CREATE INDEX IF NOT EXISTS run_ledger_started ON run_ledger(started_at)",
+)
+BACKFILL_MARKER = (
+    "CREATE TABLE IF NOT EXISTS run_ledger_backfill (id INTEGER PRIMARY KEY CHECK(id = 1))"
 )
 _MISSING = (
     "SELECT j.* FROM runner_jobs j "
@@ -82,14 +89,44 @@ class ReportError(Exception):
 
 def ensure(conn):
     """Create the table and give every job that predates it a row. Autocommit connection."""
+    fresh = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_ledger'"
+        ).fetchone()
+        is None
+    )
     conn.execute(TABLE)
+    if fresh:  # a ledger made (or made again) now has not been backfilled, whatever a marker from before says
+        conn.execute("DROP TABLE IF EXISTS run_ledger_backfill")
+    # NULL is a card run; 'chat' is a chat-relay job (see chat_ledger). Added in place.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(run_ledger)")}
+    if "source" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN source TEXT")
+    # Model modes (card #617): the account a run is billed to. NULL on every run from before.
+    if "mode" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN mode TEXT")
+    if "mode_source" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN mode_source TEXT")
+    if "account_kind" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN account_kind TEXT")
+    if "account_label" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN account_label TEXT")
+    if "account_person" not in columns:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN account_person TEXT")
     for statement in INDEXES:
         conn.execute(statement)
-    if conn.execute(_MISSING + " LIMIT 1").fetchone() is not None:
+    # The backfill for jobs that predate the ledger is an anti-join over every job: it runs once (a marker row says so),
+    # not at every open of the store. Every job written since goes through ``sync`` and has its row from the start.
+    conn.execute(BACKFILL_MARKER)
+    if conn.execute("SELECT 1 FROM run_ledger_backfill").fetchone() is None:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for row in conn.execute(_MISSING).fetchall():
-                sync(conn, row)
+            # Two first opens can both see no marker above; the second one waits for the first one's transaction and
+            # must find it done, so the marker is checked again inside it (and written with OR IGNORE).
+            if conn.execute("SELECT 1 FROM run_ledger_backfill").fetchone() is None:
+                for row in conn.execute(_MISSING).fetchall():
+                    sync(conn, row)
+                conn.execute("INSERT OR IGNORE INTO run_ledger_backfill(id) VALUES (1)")
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
@@ -116,8 +153,9 @@ def sync(conn, job, *, agent=None):
     conn.execute(TABLE)
     conn.execute(
         "INSERT INTO run_ledger(job_id,task_number,board_slug,project,topic,machine_id,agent,"
-        "requested_by,model_provider,model,status,started_at,created_at,updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "requested_by,model_provider,model,status,started_at,created_at,updated_at,"
+        "mode,mode_source,account_kind,account_label,account_person) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(job_id) DO UPDATE SET "
         "status=CASE WHEN run_ledger.ended_at IS NULL THEN excluded.status "
         "ELSE run_ledger.status END, "
@@ -138,6 +176,7 @@ def sync(conn, job, *, agent=None):
             job["started_at"],
             job["created_at"],
             job["updated_at"],
+            *(_optional(job, name) for name in ACCOUNT_COLUMNS),
         ),
     )
 

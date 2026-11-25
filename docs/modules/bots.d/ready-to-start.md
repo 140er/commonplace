@@ -1,0 +1,4 @@
+- **Owns:** Readiness attached to personal and project bots by the existing listing route.
+- **Promises:** Personal chat needs no machine or agent connection; project bots use the same projection as project settings, and no secret or key reference enters it.
+- **How it fails:** Missing model configuration and unavailable or disallowed keys retain explicit setup states; normal model resolution and start admission still decide execution.
+- **Tests:** `tests/test_ready_to_start_states.py` exercises personal and project bot listing responses for owners and members; the existing Bots API checks retain their contract.

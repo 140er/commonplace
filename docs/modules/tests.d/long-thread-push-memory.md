@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_long_thread_push_memory.py` and the `stacks` command of `scripts/gateway_memory_harness.py`.
+- **Promises:** The peak test pushes 20 lines onto a synthetic 8 MiB thread on both thread stores and bounds the traced allocation peak at eight times the thread (old code: 15.4 and 12.3 times; now about 3 and 6). It measures allocated bytes, not time, so it is deterministic and takes seconds.
+- **How it fails:** A change that again reads or serializes the whole saved thread several times per push exceeds the bound. The bound covers Python allocations only; SQLite's own pages are outside it.
+- **Tests:** The file is its own test; the old code fails the peak test on both stores.

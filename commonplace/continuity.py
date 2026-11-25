@@ -9,7 +9,7 @@ from datetime import datetime
 from io import StringIO
 
 from . import capture, import_parts, plans, sync_protocol
-from .continuity_schema import MARKER, archive_segments, ensure_schema, fork_id
+from .continuity_schema import MARKER, archive_segments, ensure_schema, fork_id, is_archive_start
 from .handoff.api import _RequestError
 from .handoff.models import ThreadMessage
 from .handoff.thread_store import ThreadConflict, ThreadStore, canonical_sha256
@@ -37,11 +37,27 @@ def _group(conn, ws, user, source, native):
     ).fetchone()
 
 
-def _archive(store, stored):
+def _archive(store, stored, cache=None):
+    """The thread's archived bytes and the time of the last segment.
+
+    Reads a page of messages at a time and keeps only the archive segments, so the parsed
+    messages that sit beside them are never held in memory all at once. ``cache`` is a
+    dict a caller shares across reads of an unchanged thread, so each is read once.
+    """
     if not stored:
         return b"", ""
-    segments = archive_segments(store.messages(stored.id))
-    return b"".join(s.raw for s in segments), segments[-1].at if segments else ""
+    if cache is not None and stored.id in cache:
+        return cache[stored.id]
+    parts, last = [], ""
+    for message in store.iter_messages(stored.id):
+        if is_archive_start(message):
+            parts.append(message.raw.encode("utf-8"))
+            last = message.at
+    found = b"".join(parts), last
+    del parts
+    if cache is not None:
+        cache[stored.id] = found
+    return found
 
 
 def _private(stored):
@@ -49,13 +65,13 @@ def _private(stored):
         raise ThreadConflict()
 
 
-def _own_bytes(conn, store, row):
+def _own_bytes(conn, store, row, cache=None):
     group = conn.execute(
         "SELECT * FROM sync_groups WHERE group_id=?", (row["group_id"],)
     ).fetchone()
-    body, _ = _archive(store, store.get(group["holder_stored_id"]))
+    body, _ = _archive(store, store.get(group["holder_stored_id"]), cache)
     if row["fork_stored_id"]:
-        suffix, _ = _archive(store, store.get(row["fork_stored_id"]))
+        suffix, _ = _archive(store, store.get(row["fork_stored_id"]), cache)
         body = body[: row["fork_offset"]] + suffix
     return body[: row["offset"]]
 
@@ -182,12 +198,14 @@ def _rows(raw, fmt, at, *, part=None, identity=None, recognized=True):
 
 
 def _write(store, ws, identity, rows, actor, stored=None):
-    previous = store.messages(stored.id) if stored else []
-    combined = previous + [replace(m, seq=len(previous) + i) for i, m in enumerate(rows)]
     if stored:
-        return store.append(stored.id, combined, max_storage_bytes=None)
+        # Only the new rows: the saved thread is never read back whole to be extended.
+        first = store.get(stored.id).message_count
+        rows = [replace(m, seq=first + i) for i, m in enumerate(rows)]
+        return store.append_rows(stored.id, rows, max_storage_bytes=None)
+    rows = [replace(m, seq=i) for i, m in enumerate(rows)]
     return store.store(
-        ws, identity, combined, actor=actor, wing=capture.PRIVATE_WING, max_storage_bytes=None
+        ws, identity, rows, actor=actor, wing=capture.PRIVATE_WING, max_storage_bytes=None
     )
 
 
@@ -333,7 +351,8 @@ def stream_push(
                 source_id=stream_id,
                 wing=capture.PRIVATE_WING,
             )
-        previous = _own_bytes(conn, store, row) if row else b""
+        archives = {}  # each thread's archive is read once; this call writes only after its reads
+        previous = _own_bytes(conn, store, row, archives) if row else b""
         duplicate = _validate_cursor(
             conn, ws, stream_id, row, previous, data, offset, prefix, native_source, part
         )
@@ -384,12 +403,12 @@ def stream_push(
         else:
             holder = store.get(group["holder_stored_id"])
             _private(holder)
-            body, _ = _archive(store, holder)
+            body, _ = _archive(store, holder, archives)
             if fork_stored:
                 target = store.get(fork_stored)
                 # A store commit may precede its control commit. A retry only
                 # writes the portion not already in the durable fork.
-                fork_bytes, _ = _archive(store, target)
+                fork_bytes, _ = _archive(store, target, archives)
                 expected = candidate[fork_offset:]
                 if not expected.startswith(fork_bytes):
                     raise ThreadConflict()

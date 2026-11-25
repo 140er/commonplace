@@ -1,0 +1,4 @@
+- **Owns:** The decision queue applies the shared active-snooze predicate before grouping cards.
+- **Promises:** A snoozed Backlog proposal leaves the needs queue and returns after Wake now or its return time, using the same stored snooze as dispatch and task lists.
+- **How it fails:** Snoozing changes neither a proposal's approval state nor its goal; waking restores its original eligibility.
+- **Tests:** `tests/test_card_snooze_controls.py` reproduces a snoozed proposal still offered in the needs queue and verifies the existing snooze and cancel routes hide and restore it.

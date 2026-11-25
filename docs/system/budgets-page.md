@@ -1,0 +1,5 @@
+### Spend and budgets page
+
+Card #361, UI slice. Decision: the owner sees spend and sets budgets in one standalone page linked from Settings (Classic and Deck), on the routes slice 1 already has; budgets stay REST-only and no tool is added. Spend and the budget state of a scope share one row, so a limit is read next to what it limits.
+
+Rules the page keeps: the window is always stated; a run with no cost, or in another currency, is named and never added to a total or shown as zero; the hard stop is described before the owner confirms ("New starts are refused; running work finishes"), and nothing is written before that confirm. Only the owner sees an editor: a budget route that answers 404 shows one plain note that only the workspace owner can see budgets, and a member still reads the spend of the projects they can read. A failed read says what failed and offers a retry (only a 401 is "signed out"); a failed write keeps the old values and says so. The owner's Needs me budget warning is rendered as a sentence with a link here. Changing the cost window is not part of this page.

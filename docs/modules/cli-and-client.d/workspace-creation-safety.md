@@ -1,0 +1,4 @@
+- **Owns:** The workspace CLI's reuse of signup's default-board initializer.
+- **Promises:** A CLI-created workspace uses ControlDB.create_workspace and the same empty Commonplace board as a new signup or browser-created workspace, without starting a memory worker.
+- **How it fails:** Initialization retains its retry marker until the default board is usable. The database handle closes on success or failure.
+- **Tests:** tests/test_commonplace_cli.py and tests/test_workspace_creation_safety.py cover CLI ownership counting and provisioning behavior.

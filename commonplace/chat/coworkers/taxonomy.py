@@ -221,7 +221,10 @@ def team_bots(gateway, principal):
     if not exists(gateway, principal.workspace_id):
         return []
     store = open_bots(gateway, principal.workspace_id)
-    with gateway.db._lock, store._tx(write=False) as conn:
+    # Roster reads hold the bot store while consulting the sharing setting in
+    # the control DB. Use the same order, so a busy roster never pins identity
+    # and Settings behind a control -> bots / bots -> control cycle.
+    with store._tx(write=False) as conn, gateway.db._lock:
         roster = store.roster(principal.user_id)
         pending = {
             (r["bot_id"], r["thread_id"])

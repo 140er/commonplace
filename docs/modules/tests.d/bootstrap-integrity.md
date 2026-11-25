@@ -1,0 +1,4 @@
+- **Owns:** Existing-prefix entry and unused startup-file regressions in `tests/test_runner_bootstrap_integrity.py`.
+- **Promises:** A real delivered interpreter runs the standalone bootstrap against a modified installer; a marker proves the unverified import on the unchanged source. A valid-prefix control reaches the ordinary code refusal without enrollment or service writes. Content and link replacements of interpreter aliases and activation files, and a changed cached archive, must refuse reuse.
+- **How it fails:** Test-only platform discovery and hub responses isolate the import boundary. They are not native enforcement, issuer custody, productive binding or a real runner execution proof.
+- **Tests:** The same seven-case file runs on pinned source and final source; existing real offline-install and setup tests remain required.

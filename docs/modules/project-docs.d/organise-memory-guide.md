@@ -1,0 +1,1 @@
+- **Promises:** `docs/memory-organise.md` says what the organise memory page shows, which changes it offers, what each keeps, and what it does not do.

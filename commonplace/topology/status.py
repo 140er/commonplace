@@ -221,8 +221,17 @@ def _instant(value):
     return None if not value else model.instant(value)
 
 
-def collect_signals(gateway, workspace_id: str, *, now: datetime) -> dict[str, MachineSignals]:
-    """Every enrolled runner machine of the workspace with the signals the hub keeps for it."""
+# A run recorded as started this long ago or longer is history, not a signal that the machine is working.
+STARTED_WINDOW_S = 90 * 86400
+
+
+def collect_signals(
+    gateway, workspace_id: str, *, now: datetime, runs=None
+) -> dict[str, MachineSignals]:
+    """Every enrolled runner machine of the workspace with the signals the hub keeps for it.
+
+    ``runs`` is a runner job store the caller already holds (opening one re-runs its schema); one is opened
+    when it is not given."""
     from commonplace.runner import jobs
 
     now = model.clock(now)
@@ -252,18 +261,24 @@ def collect_signals(gateway, workspace_id: str, *, now: datetime) -> dict[str, M
     if rows:
         lease_limit = model.stamp(now)
         starting_limit = model.stamp(now - timedelta(seconds=_STARTING_GRACE_S))
-        with jobs.open_store(gateway, workspace_id).connection() as conn:
+        with (runs or jobs.open_store(gateway, workspace_id)).connection() as conn:
+            # One row per machine, not one per run, and only what can still matter: a lease or a start under way is
+            # current (a handful of rows), and the newest start counts back ``STARTED_WINDOW_S`` (a finished run stays
+            # "started", so the history is never read whole). Both reads name an index that leads with the state.
             for job in conn.execute(
-                "SELECT machine_id,state,updated_at,lease_until,starting_at FROM runner_jobs "
-                "WHERE state IN ('started','leased','starting')"
+                "SELECT machine_id,max(updated_at) AS started_at FROM runner_jobs "
+                "INDEXED BY runner_jobs_state_updated WHERE state='started' AND updated_at>? GROUP BY machine_id",
+                (model.stamp(now - timedelta(seconds=STARTED_WINDOW_S)),),
             ):
-                if job["state"] == "started":
-                    started[job["machine_id"]] = max(
-                        started.get(job["machine_id"], ""), job["updated_at"]
-                    )
-                elif (job["state"] == "leased" and (job["lease_until"] or "") > lease_limit) or (
-                    job["state"] == "starting" and (job["starting_at"] or "") > starting_limit
-                ):
+                started[job["machine_id"]] = job["started_at"]
+            for job in conn.execute(
+                "SELECT machine_id,max(CASE WHEN state='leased' THEN lease_until END) AS lease_until,"
+                "max(CASE WHEN state='starting' THEN starting_at END) AS starting_at FROM runner_jobs "
+                "INDEXED BY runner_jobs_state_updated WHERE state IN ('leased','starting') GROUP BY machine_id"
+            ):
+                if (job["lease_until"] or "") > lease_limit or (
+                    job["starting_at"] or ""
+                ) > starting_limit:
                     busy.add(job["machine_id"])
     result = {}
     for row in rows:

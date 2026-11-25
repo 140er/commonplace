@@ -19,11 +19,38 @@ class Limit:
 
 ANONYMOUS = Limit("anonymous", 30, 60)
 APP_SHELL = Limit("app-shell", 600, 60)
+STATIC_ASSETS = Limit("static-assets", 6000, 60)
 CREDENTIALS = Limit("credentials", 10, 60)
 AUTHENTICATED = Limit("authenticated", 600, 60)
 UNTRUSTED = Limit("untrusted", 60, 60)
 WRITES = Limit("untrusted-writes", 120, 3600)
 SHORT_LINKS = Limit("short-links", 120, 60)
+
+
+def app_asset(path: str) -> bool:
+    """Public executable/style/media reads, excluding documents and credential routes."""
+    return (
+        path.startswith("/app/")
+        and not path.startswith("/app/auth/")
+        and path.endswith(
+            (
+                ".js",
+                ".css",
+                ".woff2",
+                ".woff",
+                ".ttf",
+                ".otf",
+                ".svg",
+                ".png",
+                ".ico",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".webp",
+                ".avif",
+            )
+        )
+    )
 
 
 @dataclass

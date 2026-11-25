@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,291 @@ def test_the_cli_installs_and_reports(clone, capsys, monkeypatch):
     assert "pre-push: written" in capsys.readouterr().out
     assert hooks.main(["status"]) == 0
     assert "pre-commit: installed" in capsys.readouterr().out
+
+
+def test_staging_preserves_existing_hooks_and_configuration(clone, tmp_path):
+    directory = hooks.hooks_dir(clone)
+    original = b"#!/bin/sh\necho original\n"
+    (directory / "pre-commit").write_bytes(original)
+    (directory / "pre-commit").chmod(0o755)
+    config = (clone / ".git/config").read_bytes()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged hooks")
+    assert (directory / "pre-commit").read_bytes() == original
+    with pytest.raises(ValueError, match="outside the active hook directory"):
+        hooks.stage_pre_push(clone, directory / "nested")
+    assert not (directory / "nested").exists()
+    assert (clone / ".git/config").read_bytes() == config
+    assert not (directory / "pre-push").exists()
+    result = subprocess.run([str(staged / "pre-commit")], capture_output=True, text=True)
+    assert result.returncode == 0 and result.stdout == "original\n"
+    with pytest.raises(FileExistsError):
+        hooks.stage_pre_push(clone, staged)
+    assert (directory / "pre-commit").read_bytes() == original
+
+
+def test_staging_uses_the_effective_custom_hooks_path(clone, tmp_path):
+    custom = tmp_path / "custom hooks"
+    custom.mkdir()
+    git(clone, "config", "core.hooksPath", str(custom))
+    original = custom / "pre-commit"
+    original.write_text("#!/bin/sh\nexit 17\n")
+    original.chmod(0o755)
+    staged = hooks.stage_pre_push(clone, tmp_path / "overlay")
+    assert subprocess.run([str(staged / "pre-commit")]).returncode == 17
+    assert git(clone, "config", "--get", "core.hooksPath").stdout.strip() == str(custom)
+
+
+def test_real_push_checks_types_format_and_lint_and_preserves_previous_hook_input(clone, tmp_path):
+    """Real Git + Ruff + mypy, with all hook installation confined to this fixture."""
+    source = clone / "probe.py"
+    clean = b"VALUE: int = 1\n"
+    source.write_bytes(clean)
+    (clone / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    (clone / ".gitignore").write_text(".mypy_cache/\n.ruff_cache/\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "typed fixture")
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(clone, "remote", "add", "origin", str(remote))
+    git(clone, "push", "-q", "origin", "main")
+    previous = hooks.hooks_dir(clone) / "pre-push"
+    previous.write_text(
+        '#!/bin/sh\ncat > "$CHAIN_INPUT"\nprintf "%s\\n" "$@" > "$CHAIN_ARGS"\n'
+        'exit "${CHAIN_EXIT:-0}"\n'
+    )
+    previous.chmod(0o755)
+    original_hook = previous.read_bytes()
+    config = (clone / ".git/config").read_bytes()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged")
+    env = dict(
+        os.environ,
+        **IDENTITY,
+        COMMONPLACE_PYTHON=sys.executable,
+        CHAIN_INPUT=str(tmp_path / "stdin"),
+        CHAIN_ARGS=str(tmp_path / "args"),
+    )
+
+    def push():
+        return git(
+            clone,
+            "-c",
+            f"core.hooksPath={staged}",
+            "push",
+            "-q",
+            "origin",
+            "main:refs/heads/feature",
+            check=False,
+            env=env,
+        )
+
+    def commit_source(content):
+        source.write_bytes(content)
+        git(clone, "add", "probe.py")
+        git(clone, "commit", "-qm", "fixture mutation")
+
+    # A new branch, a space in both directory and filename, a deletion and mixed file types.
+    (clone / "space dir").mkdir()
+    (clone / "space dir/a b.py").write_text("OTHER: int = 2\n")
+    (clone / "f.txt").unlink()
+    (clone / "note.md").write_text("fixture\n")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-qm", "mixed changes")
+    good = push()
+    assert good.returncode == 0, good.stderr
+    assert "typecheck mypy" in good.stderr and "QUICK CHECK PASSED" in good.stderr
+    accepted = git(remote, "rev-parse", "refs/heads/feature").stdout.strip()
+    expected = f"refs/heads/main {accepted} refs/heads/feature {'0' * 40}\n"
+    assert Path(env["CHAIN_INPUT"]).read_text() == expected
+    assert Path(env["CHAIN_ARGS"]).read_text().splitlines() == ["origin", str(remote)]
+    for mutation, failing_step in (
+        (b"VALUE: int=1\n", "format ruff"),
+        (b"VALUE: int = UNDEFINED_NAME\n", "lint ruff"),
+        (b'VALUE: int = "wrong type"\n', "typecheck mypy"),
+    ):
+        try:
+            commit_source(mutation)
+            bad = push()
+            assert bad.returncode != 0, bad.stderr
+            assert f"] {failing_step}" in bad.stderr and "QUICK CHECK FAILED" in bad.stderr
+            assert git(remote, "rev-parse", "refs/heads/feature").stdout.strip() == accepted
+        finally:
+            source.write_bytes(clean)
+        commit_source(clean)
+    env["CHAIN_EXIT"] = "23"
+    assert push().returncode != 0
+    assert git(remote, "rev-parse", "refs/heads/feature").stdout.strip() == accepted
+    env.pop("CHAIN_EXIT")
+    restored = push()
+    assert restored.returncode == 0, restored.stderr
+    assert source.read_bytes() == clean and previous.read_bytes() == original_hook
+    assert (clone / ".git/config").read_bytes() == config
+
+
+@pytest.mark.parametrize("original_hook", ["absent", "non_executable"])
+@pytest.mark.parametrize("dirty", ["clean", "worktree", "index"])
+def test_staging_keeps_update_instead_checkout_and_dirty_refusal(
+    clone, tmp_path, original_hook, dirty
+):
+    """A staged hook chain must preserve Git's real receive-side defaults."""
+    previous = hooks.hooks_dir(clone) / "push-to-checkout"
+    if original_hook == "non_executable":
+        previous.write_text("#!/bin/sh\nexit 0\n")
+        previous.chmod(0o644)
+    git(clone, "config", "receive.denyCurrentBranch", "updateInstead")
+    sender = tmp_path / "sender"
+    git(tmp_path, "clone", "-q", str(clone), str(sender))
+    (sender / "f.txt").write_text("incoming\n")
+    git(sender, "commit", "-qam", "incoming")
+    incoming = git(sender, "rev-parse", "HEAD").stdout.strip()
+    accepted = git(clone, "rev-parse", "HEAD").stdout.strip()
+    if dirty != "clean":
+        (clone / "f.txt").write_text("local edit\n")
+        if dirty == "index":
+            git(clone, "add", "f.txt")
+    content = (clone / "f.txt").read_bytes()
+    index = git(clone, "ls-files", "--stage").stdout
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged receive hooks")
+    git(clone, "config", "core.hooksPath", str(staged))
+
+    result = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+
+    if dirty == "clean":
+        assert result.returncode == 0, result.stderr
+        assert (clone / "f.txt").read_text() == "incoming\n"
+        assert git(clone, "rev-parse", "HEAD").stdout.strip() == incoming
+        assert git(clone, "diff", "--quiet", check=False).returncode == 0
+        assert git(clone, "diff", "--cached", "--quiet", check=False).returncode == 0
+    else:
+        assert result.returncode != 0, "a dirty receiver must refuse the push"
+        assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+        assert (clone / "f.txt").read_bytes() == content
+        assert git(clone, "ls-files", "--stage").stdout == index
+
+
+def test_staging_keeps_custom_push_to_checkout_refusal(clone, tmp_path):
+    previous = hooks.hooks_dir(clone) / "push-to-checkout"
+    previous.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >&2\nexit 23\n')
+    previous.chmod(0o755)
+    original = previous.read_bytes()
+    git(clone, "config", "receive.denyCurrentBranch", "updateInstead")
+    sender = tmp_path / "sender"
+    git(tmp_path, "clone", "-q", str(clone), str(sender))
+    (sender / "f.txt").write_text("incoming\n")
+    git(sender, "commit", "-qam", "incoming")
+    incoming = git(sender, "rev-parse", "HEAD").stdout.strip()
+    accepted = git(clone, "rev-parse", "HEAD").stdout.strip()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged receive hooks")
+    git(clone, "config", "core.hooksPath", str(staged))
+
+    result = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+
+    assert result.returncode != 0
+    assert incoming in result.stderr
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+    assert (clone / "f.txt").read_text() == "1\n"
+    assert previous.read_bytes() == original
+
+
+def test_staging_preserves_relative_receive_hook_refusal(clone, tmp_path):
+    """Relative hooks resolve differently for worktree and receiving Git calls."""
+    (clone / ".hooks").mkdir()
+    receiving = clone / ".git" / ".hooks"
+    receiving.mkdir()
+    refusal = receiving / "pre-receive"
+    refusal.write_text("#!/bin/sh\ncat >/dev/null\necho 'fixture receive refusal' >&2\nexit 23\n")
+    refusal.chmod(0o755)
+    original = refusal.read_bytes()
+    git(clone, "config", "core.hooksPath", ".hooks")
+    git(clone, "config", "receive.denyCurrentBranch", "updateInstead")
+    config = (clone / ".git/config").read_bytes()
+    sender = tmp_path / "sender"
+    git(tmp_path, "clone", "-q", str(clone), str(sender))
+    (sender / "f.txt").write_text("incoming\n")
+    git(sender, "commit", "-qam", "incoming")
+    accepted = git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    before = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+    assert before.returncode != 0 and "fixture receive refusal" in before.stderr
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+    destination = tmp_path / "staged relative hooks"
+    try:
+        staged = hooks.stage_pre_push(clone, destination)
+    except ValueError as exc:
+        assert "relative core.hooksPath" in str(exc)
+        assert not destination.exists()
+        assert (clone / ".git/config").read_bytes() == config
+    else:
+        git(clone, "config", "core.hooksPath", str(staged))
+
+    after = git(sender, "push", "-q", "origin", "HEAD:main", check=False)
+    assert after.returncode != 0, "staging must retain the existing receive-hook refusal"
+    assert "fixture receive refusal" in after.stderr
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == accepted
+    assert (clone / "f.txt").read_text() == "1\n"
+    assert refusal.read_bytes() == original
+
+
+@pytest.mark.parametrize("kind", ["valid", "implementation_error", "stub_error"])
+def test_real_push_checks_paired_implementation_and_stub(clone, tmp_path, kind):
+    implementation = clone / "paired.py"
+    stub = clone / "paired.pyi"
+    implementation.write_text('def value() -> str:\n    return "base"\n')
+    stub.write_text("def value() -> str: ...\n")
+    (clone / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    (clone / ".gitignore").write_text(".mypy_cache/\n.ruff_cache/\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-qm", "paired fixture")
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(clone, "remote", "add", "origin", str(remote))
+    git(clone, "push", "-q", "origin", "main")
+    accepted = git(remote, "rev-parse", "refs/heads/main").stdout.strip()
+    staged = hooks.stage_pre_push(clone, tmp_path / "staged paired hooks")
+    config = (clone / ".git/config").read_bytes()
+    implementation.write_text(
+        'def value() -> int:\n    return "wrong type"\n'
+        if kind == "implementation_error"
+        else "def value() -> int:\n    return 2\n"
+    )
+    stub.write_text(
+        'BAD: int = "wrong type"\n\ndef value() -> int: ...\n'
+        if kind == "stub_error"
+        else "def value() -> int: ...\n"
+    )
+    formatted = subprocess.run(
+        [sys.executable, "-m", "ruff", "format", str(implementation), str(stub)],
+        capture_output=True,
+        text=True,
+    )
+    assert formatted.returncode == 0, formatted.stderr
+    git(clone, "add", "paired.py", "paired.pyi")
+    git(clone, "commit", "-qm", "paired type update")
+    env = dict(os.environ, **IDENTITY, COMMONPLACE_PYTHON=sys.executable)
+
+    result = git(
+        clone,
+        "-c",
+        f"core.hooksPath={staged}",
+        "push",
+        "-q",
+        "origin",
+        "main",
+        check=False,
+        env=env,
+    )
+
+    assert "Duplicate module named" not in result.stderr, result.stderr
+    assert len([line for line in result.stderr.splitlines() if "] typecheck mypy" in line]) == 2
+    if kind == "valid":
+        assert result.returncode == 0, result.stderr
+        assert "QUICK CHECK PASSED" in result.stderr
+        assert git(remote, "rev-parse", "refs/heads/main").stdout.strip() == (
+            git(clone, "rev-parse", "HEAD").stdout.strip()
+        )
+    else:
+        assert result.returncode != 0, result.stderr
+        diagnostic = "[return-value]" if kind == "implementation_error" else "[assignment]"
+        assert diagnostic in result.stderr, result.stderr
+        assert "QUICK CHECK FAILED" in result.stderr
+        assert git(remote, "rev-parse", "refs/heads/main").stdout.strip() == accepted
+    assert (clone / ".git/config").read_bytes() == config

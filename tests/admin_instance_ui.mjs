@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 let source=''; for await (const part of process.stdin) source+=part;
-const {createAdmin}=await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const {createAdmin}=await import(`data:text/javascript;base64,${Buffer.from(source.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href)).toString('base64')}`);
 const flush=async()=>{for(let i=0;i<35;i++)await Promise.resolve();};
 const e=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function fixture(instance=true){

@@ -27,6 +27,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import unicodedata
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,7 +37,7 @@ from . import bots_grant, decide_grant, tokens
 from .admission import GATE
 from .db_busy import BUSY_TIMEOUT_S, begin_immediate
 from .decide_grant import DECIDE_SCOPE
-from .policy import PIPELINE_SCOPE, Policy
+from .policy import FEED_SCOPES, PIPELINE_SCOPE, Policy
 
 SCHEMA_VERSION = 1
 ROLES = ("owner", "member")
@@ -55,12 +56,15 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     name TEXT NOT NULL DEFAULT '',
     is_admin INTEGER NOT NULL DEFAULT 0,
+    is_person INTEGER NOT NULL DEFAULT 1 CHECK (is_person IN (0,1)),
+    is_disposable INTEGER NOT NULL DEFAULT 0 CHECK (is_disposable IN (0,1)),
     created_at TEXT NOT NULL,
     disabled_at TEXT
 );
 CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    slug TEXT,
     personal_of TEXT REFERENCES users(id),
     initial_space_pending INTEGER NOT NULL DEFAULT 0 CHECK (initial_space_pending IN (0,1)),
     created_at TEXT NOT NULL
@@ -143,6 +147,9 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
+
+
+_FEED_NAMES = {PIPELINE_SCOPE: "pipeline", "pr_review:write": "review-comment"}
 
 
 class ControlError(ValueError):
@@ -262,7 +269,21 @@ class ControlDB:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             with self._tx() as conn:
+                user_columns = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+                if "is_person" not in user_columns:
+                    conn.execute(
+                        "ALTER TABLE users ADD COLUMN is_person INTEGER NOT NULL DEFAULT 1 "
+                        "CHECK (is_person IN (0,1))"
+                    )
+                if "is_disposable" not in user_columns:
+                    conn.execute(
+                        "ALTER TABLE users ADD COLUMN is_disposable INTEGER NOT NULL DEFAULT 0 "
+                        "CHECK (is_disposable IN (0,1))"
+                    )
                 workspace_columns = {r[1] for r in conn.execute("PRAGMA table_info(workspaces)")}
+                if "slug" not in workspace_columns:
+                    conn.execute("ALTER TABLE workspaces ADD COLUMN slug TEXT")
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspace_slug ON workspaces(slug)")
                 if "initial_space_pending" not in workspace_columns:
                     conn.execute(
                         "ALTER TABLE workspaces ADD COLUMN initial_space_pending INTEGER "
@@ -304,7 +325,7 @@ class ControlDB:
                 """)
             # Losing ownership clears a stored cards:decide grant, so regaining
             # ownership never revives it without fresh consent. (Connections keep
-            # their membership row from being deleted, so demotion is the path.)
+            # their membership row unless the admin cleanup removes credentials.)
             self._conn.executescript(_DECIDE_DEMOTE_TRIGGER)
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
@@ -373,7 +394,15 @@ class ControlDB:
         return _Tx()
 
     # ── users ──
-    def create_user(self, email: str, name: str = "", *, is_admin: bool = False) -> str:
+    def create_user(
+        self,
+        email: str,
+        name: str = "",
+        *,
+        is_admin: bool = False,
+        is_person: bool = True,
+        is_disposable: bool = False,
+    ) -> str:
         email = email.strip()
         if "@" not in email or len(email) > 254:
             raise ControlError(f"not an email address: {email!r}")
@@ -381,8 +410,17 @@ class ControlDB:
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT INTO users(id, email, name, is_admin, created_at) VALUES (?,?,?,?,?)",
-                    (uid, email, name.strip(), int(is_admin), _iso(_now())),
+                    "INSERT INTO users(id, email, name, is_admin, is_person, is_disposable, created_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (
+                        uid,
+                        email,
+                        name.strip(),
+                        int(is_admin),
+                        int(is_person),
+                        int(is_disposable),
+                        _iso(_now()),
+                    ),
                 )
             except sqlite3.IntegrityError:
                 raise ControlError(f"user {email} already exists") from None
@@ -405,6 +443,233 @@ class ControlDB:
         with self._lock:
             return self._conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
 
+    def _cleanup_admin(self, actor: str):
+        user = self.user(actor)
+        if user["is_admin"] != 1 or user["disabled_at"]:
+            raise ControlError("active instance admin access required")
+        return user["id"]
+
+    @staticmethod
+    def _credential_cleanup(conn, user_id, workspace_id=None):
+        """An explicit credential allowlist; never walk or delete workspace content."""
+        present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        scope = "user_id = :uid"
+        params = {"uid": user_id}
+        if workspace_id is not None:
+            scope += " AND workspace_id = :wid"
+            params["wid"] = workspace_id
+        connection_scope = f"connection_id IN (SELECT id FROM connections WHERE {scope})"
+        plan = []
+        if "oauth_client_approvals" in present:
+            approval_scope = "approved_by = :uid"
+            if workspace_id is not None:
+                approval_scope += " AND workspace_id = :wid"
+            plan.append(("oauth_client_approvals", approval_scope, params))
+        for table in ("oauth_codes", "oauth_tokens", "runner_connections"):
+            if table in present:
+                plan.append((table, connection_scope, params))
+        for table in ("oauth_person_grants", "account_delete_checks", "account_delete_tokens"):
+            if table in present:
+                # Include stale person credentials even when their connection is gone.
+                plan.append((table, f"({connection_scope}) OR ({scope})", params))
+        for table in ("sessions", "login_links", "oauth_requests"):
+            if table in present:
+                plan.append((table, scope, params))
+        plan.append(("connections", scope, params))
+        return plan
+
+    @staticmethod
+    def _cleanup_counts(conn, plan):
+        return {
+            table: conn.execute(f"SELECT count(*) FROM {table} WHERE {where}", params).fetchone()[0]
+            for table, where, params in plan
+        }
+
+    @staticmethod
+    def _execute_cleanup(conn, plan):
+        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ControlError("cleanup requires foreign-key checks")
+        # Literal control-table statements keep the write boundary explicit.
+        # A plan can narrow these predicates, never choose a content table.
+        statements = {
+            "oauth_client_approvals": "DELETE FROM oauth_client_approvals WHERE ",
+            "oauth_codes": "DELETE FROM oauth_codes WHERE ",
+            "oauth_tokens": "DELETE FROM oauth_tokens WHERE ",
+            "runner_connections": "DELETE FROM runner_connections WHERE ",
+            "oauth_person_grants": "DELETE FROM oauth_person_grants WHERE ",
+            "account_delete_checks": "DELETE FROM account_delete_checks WHERE ",
+            "account_delete_tokens": "DELETE FROM account_delete_tokens WHERE ",
+            "sessions": "DELETE FROM sessions WHERE ",
+            "login_links": "DELETE FROM login_links WHERE ",
+            "oauth_requests": "DELETE FROM oauth_requests WHERE ",
+            "connections": "DELETE FROM connections WHERE ",
+            "memberships": "DELETE FROM memberships WHERE ",
+            "account_plans": "DELETE FROM account_plans WHERE ",
+            "transcription_usage": "DELETE FROM transcription_usage WHERE ",
+            "user_identities": "DELETE FROM user_identities WHERE ",
+            "ingest_cadence": "DELETE FROM ingest_cadence WHERE ",
+            "email_challenges": "DELETE FROM email_challenges WHERE ",
+            "users": "DELETE FROM users WHERE ",
+        }
+        if any(table not in statements for table, _, _ in plan):
+            raise ControlError("unsupported cleanup table")
+        for table, where, params in plan:
+            conn.execute(statements[table] + where, params)
+        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise ControlError("related records remain; use the account-deletion flow")
+
+    def remove_member(
+        self,
+        workspace_ref: str,
+        user_ref: str,
+        *,
+        actor: str,
+        reason: str = "",
+        force_owner: bool = False,
+        dry_run: bool = True,
+    ) -> dict:
+        """Remove access atomically while retaining the user's attributed workspace data."""
+        try:
+            with self._tx() as conn:
+                actor_id = self._cleanup_admin(actor)
+                wid = self.workspace(workspace_ref)["id"]
+                user = conn.execute(
+                    "SELECT * FROM users WHERE id=? OR email=?", (user_ref, user_ref)
+                ).fetchone()
+                if user is None or self.role(wid, user["id"]) is None:
+                    return {"state": "already absent"}
+                uid = user["id"]
+                if self.role(wid, uid) == "owner":
+                    other_owner = conn.execute(
+                        "SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id "
+                        "WHERE m.workspace_id=? AND m.user_id!=? AND m.role='owner' "
+                        "AND u.disabled_at IS NULL",
+                        (wid, uid),
+                    ).fetchone()
+                    if other_owner is None:
+                        raise ControlError("cannot remove the last owner of a workspace")
+                    if not force_owner:
+                        raise ControlError(
+                            "removing an owner requires --force-owner and a second owner"
+                        )
+                plan = self._credential_cleanup(conn, uid, wid)
+                plan.append(
+                    ("memberships", "workspace_id=:wid AND user_id=:uid", {"wid": wid, "uid": uid})
+                )
+                counts = self._cleanup_counts(conn, plan)
+                if not dry_run:
+                    self._execute_cleanup(conn, plan)
+                    self.audit(
+                        action="member.remove",
+                        decision="ok",
+                        workspace_id=wid,
+                        user_id=actor_id,
+                        auth="cli",
+                        reason=reason,
+                        target_ids=[uid],
+                    )
+                return {"state": "dry-run" if dry_run else "removed", "delete": counts}
+        except sqlite3.IntegrityError:
+            raise ControlError(
+                "related records prevent member removal; use the account-deletion flow"
+            ) from None
+
+    def delete_user(
+        self,
+        user_ref: str,
+        *,
+        actor: str,
+        reason: str = "",
+        dry_run: bool = True,
+    ) -> dict:
+        """Delete only unjoined disposable accounts, in one foreign-key-checked transaction."""
+        try:
+            with self._tx() as conn:
+                actor_id = self._cleanup_admin(actor)
+                user = conn.execute(
+                    "SELECT * FROM users WHERE id=? OR email=?", (user_ref, user_ref)
+                ).fetchone()
+                if user is None:
+                    return {"state": "already absent"}
+                uid = user["id"]
+                domain = user["email"].rsplit("@", 1)[-1].casefold()
+                if not user["is_disposable"] and domain not in {"example.invalid", "example.test"}:
+                    raise ControlError("account is not disposable; use the account-deletion flow")
+                if conn.execute(
+                    "SELECT 1 FROM workspaces w WHERE "
+                    "(w.personal_of=:uid OR EXISTS (SELECT 1 FROM memberships m "
+                    "WHERE m.workspace_id=w.id AND m.user_id=:uid AND m.role='owner')) "
+                    "AND EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=w.id "
+                    "AND m.user_id!=:uid)",
+                    {"uid": uid},
+                ).fetchone():
+                    raise ControlError(
+                        "account owns a workspace with other members; use the account-deletion flow"
+                    )
+                if conn.execute("SELECT 1 FROM memberships WHERE user_id=?", (uid,)).fetchone():
+                    raise ControlError(
+                        "account has remaining memberships; use member remove or the account-deletion flow"
+                    )
+                if (
+                    user["is_admin"]
+                    and conn.execute(
+                        "SELECT 1 FROM users WHERE id!=? AND is_admin=1 AND disabled_at IS NULL",
+                        (uid,),
+                    ).fetchone()
+                    is None
+                ):
+                    raise ControlError(
+                        "cannot delete the last instance admin; use the account-deletion flow"
+                    )
+                plan = self._credential_cleanup(conn, uid)
+                present = {
+                    r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                for table, column in (
+                    ("account_plans", "user_id"),
+                    ("transcription_usage", "user_id"),
+                    ("user_identities", "user_id"),
+                    ("ingest_cadence", "account_id"),
+                    ("email_challenges", "email"),
+                ):
+                    if table in present:
+                        # GitHub's permanent subject reservation is deliberately not removed.
+                        plan.append(
+                            (
+                                table,
+                                f"{column}=:value COLLATE NOCASE",
+                                {"value": user["email"] if column == "email" else uid},
+                            )
+                        )
+                plan.append(("users", "id=:uid", {"uid": uid}))
+                counts = self._cleanup_counts(conn, plan)
+                detached = conn.execute(
+                    "SELECT count(*) FROM workspaces WHERE personal_of=?", (uid,)
+                ).fetchone()[0]
+                if not dry_run:
+                    # An empty retained personal workspace keeps its data and loses only this pointer.
+                    conn.execute(
+                        "UPDATE workspaces SET personal_of=NULL WHERE personal_of=?", (uid,)
+                    )
+                    self._execute_cleanup(conn, plan)
+                    self.audit(
+                        action="user.delete",
+                        decision="ok",
+                        user_id=actor_id,
+                        auth="cli",
+                        reason=reason,
+                        target_ids=[uid],
+                    )
+                return {
+                    "state": "dry-run" if dry_run else "deleted",
+                    "delete": counts,
+                    "detach_personal_workspaces": detached,
+                }
+        except sqlite3.IntegrityError:
+            raise ControlError(
+                "related records prevent user deletion; use the account-deletion flow"
+            ) from None
+
     # ── workspaces and memberships ──
     def create_workspace(
         self,
@@ -413,6 +678,7 @@ class ControlDB:
         *,
         personal: bool = False,
         initial_space_pending: bool = False,
+        audit_reason: str = "",
         conn=None,
     ) -> str:
         owner = self.user(owner_ref)
@@ -420,19 +686,35 @@ class ControlDB:
         if not name:
             raise ControlError("workspace name is empty")
         wid = _new_id("ws")
+        stem = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+        stem = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")[:64].rstrip("-") or "workspace"
+        slug = f"{stem}-{wid[3:]}"
         now = _iso(_now())
         # A new workspace adds stores to the data tree: never during a backup cut.
         with GATE.creating(), self._lock, self._tx() if conn is None else nullcontext(conn) as conn:
             conn.execute(
-                "INSERT INTO workspaces(id, name, personal_of, initial_space_pending, created_at) "
-                "VALUES (?,?,?,?,?)",
-                (wid, name, owner["id"] if personal else None, int(initial_space_pending), now),
+                "INSERT INTO workspaces(id, name, slug, personal_of, initial_space_pending, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    wid,
+                    name,
+                    slug,
+                    owner["id"] if personal else None,
+                    int(initial_space_pending),
+                    now,
+                ),
             )
             conn.execute(
                 "INSERT INTO memberships(workspace_id, user_id, role, created_at) VALUES (?,?,?,?)",
                 (wid, owner["id"], "owner", now),
             )
-        self.audit(action="workspace.create", decision="ok", workspace_id=wid, user_id=owner["id"])
+        self.audit(
+            action="workspace.create",
+            decision="ok",
+            workspace_id=wid,
+            user_id=owner["id"],
+            reason=audit_reason,
+        )
         return wid
 
     def workspace(self, ref: str) -> sqlite3.Row:
@@ -527,10 +809,12 @@ class ControlDB:
             raise ControlError("only an owner's connection can hold the admin scope")
         if "private:read" in policy.scopes and role != "owner":
             raise ControlError("only an owner's connection can hold the private:read scope")
-        if PIPELINE_SCOPE in policy.scopes:
-            if policy.scopes != (PIPELINE_SCOPE,) or role != "owner" or parent is not None:
+        for feed in FEED_SCOPES:
+            if feed in policy.scopes and (
+                policy.scopes != (feed,) or role != "owner" or parent is not None
+            ):
                 raise ControlError(
-                    "a pipeline token holds only the pipeline:write scope, belongs to a "
+                    f"a {_FEED_NAMES[feed]} token holds only the {feed} scope, belongs to a "
                     "workspace owner and has no parent"
                 )
         if DECIDE_SCOPE in policy.scopes:
@@ -579,17 +863,19 @@ class ControlDB:
         now = _now()
         expires = _iso(now + timedelta(days=expires_days)) if expires_days else None
         with self._lock:
-            if (
-                PIPELINE_SCOPE in policy.scopes
-                and self._conn.execute(
-                    "SELECT 1 FROM connections WHERE workspace_id=? AND revoked_at IS NULL "
-                    "AND (expires_at IS NULL OR expires_at > ?) AND policy LIKE ?",
-                    (ws["id"], _iso(now), f'%"{PIPELINE_SCOPE}"%'),
-                ).fetchone()
-            ):
-                raise ControlError(
-                    "this workspace already has a pipeline token; revoke it before making another"
-                )
+            for feed in FEED_SCOPES:
+                if (
+                    feed in policy.scopes
+                    and self._conn.execute(
+                        "SELECT 1 FROM connections WHERE workspace_id=? AND revoked_at IS NULL "
+                        "AND (expires_at IS NULL OR expires_at > ?) AND policy LIKE ?",
+                        (ws["id"], _iso(now), f'%"{feed}"%'),
+                    ).fetchone()
+                ):
+                    raise ControlError(
+                        f"this workspace already has a {_FEED_NAMES[feed]} token; "
+                        "revoke it before making another"
+                    )
             if parent is not None and (not isinstance(parent, str) or not parent.strip()):
                 raise ControlError("parent must be a connection name or id")
             if parent == name:

@@ -1,0 +1,4 @@
+- **Owns:** `models.effective`, `effective_roles`, `default_choice` and `describe` (the model a role runs on and its source) and the `models_effective` field of the project view.
+- **Promises:** A role with no project or workspace choice runs on the first model of the project's list (`docs/system/role-model-default-and-needs-me.md`); the project view labels each role's model as project, workspace or default.
+- **How it fails:** With no choice and an empty list `effective` returns no model (`none`), so starts are refused as `model_unresolved` and the owner's one Needs me item asks for a model; a role outside the four slots counts as unset.
+- **Tests:** `tests/test_role_model_default.py` and the updated `tests/test_projects_models.py`.

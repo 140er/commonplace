@@ -1,0 +1,1640 @@
+"""Compute overview REST: every machine, runner and cloud workspace with honest status, health and usage."""
+
+import json
+
+import pytest
+
+from commonplace import sessions
+from commonplace.compute import overview, routes
+from commonplace.runner import registry
+from tests.compute_overview_helpers import (
+    ADDRESS,
+    FakeExecutor,
+    Fleet,
+    after,
+    revoke_machine,
+    workspace_body,
+)
+from tests.test_compute_api import API
+from tests.test_compute_control import compute_env  # noqa: F401 -- shared real-store fixture
+from tests.test_compute_workspaces import pat_headers
+
+BASE = "/overview"
+
+
+@pytest.fixture
+def api(compute_env, monkeypatch):  # noqa: F811
+    # Serve every request from the fixture's store so the test clock (``env.clock``) governs the API too.
+    monkeypatch.setattr(routes, "open_store", lambda gateway, workspace_id: compute_env.store)
+    return API(compute_env)
+
+
+@pytest.fixture
+def fleet(api):
+    return Fleet(api.env)
+
+
+def read(api, **kw):
+    status, result = api.request(path=BASE, **kw)
+    assert status == 200, result
+    return result
+
+
+def by_name(result):
+    return {item["name"]: item for item in result["items"]}
+
+
+def member(api):
+    cookie = sessions.start_session(api.env.db, api.env.member, api.env.workspace)
+    return lambda *args, **kw: api.request(*args, cookie=cookie, **kw)
+
+
+def workspace(api, **changes):
+    status, result = api.request("POST", "/workspaces", workspace_body(**changes))
+    assert status == 201, result
+    return result["workspace"]
+
+
+# empty and shape
+
+
+def test_empty_overview_is_honest_about_what_exists_and_what_cannot_happen_yet(api):
+    result = read(api)
+    assert result["items"] == [] and result["counts"]["total"] == 0
+    assert result["can_manage"] is True and result["hidden"] is None
+    assert result["refresh_seconds"] == overview.REFRESH_SECONDS == 30
+    # No threshold is served: the screen never decides a status from its own clock.
+    assert "thresholds" not in result and "drain_scope" not in result and "next_steps" not in result
+    assert result["executor"]["available"] is False
+    assert "not available in this version" in result["executor"]["text"]
+    assert result["truncated"] == {}
+
+
+def test_the_clock_is_the_servers_and_as_of_is_served(api):
+    assert read(api)["as_of"].endswith("Z")
+
+
+# runners
+
+
+def test_runner_status_follows_the_last_signal_and_never_says_online_without_one(api, fleet):
+    online = fleet.enroll("runner-online")
+    slow = fleet.enroll("runner-slow")
+    offline = fleet.enroll("runner-offline")
+    never = fleet.enroll("runner-never")
+    fleet.seen(online, 40)
+    fleet.seen(slow, 400)
+    fleet.seen(offline, 1500)
+    items = by_name(read(api))
+    assert items["runner-online"]["status"]["code"] == "online"
+    assert items["runner-online"]["status"]["tone"] == "ok"
+    assert items["runner-online"]["last_seen"]["label"] == "Last seen 40 seconds ago"
+    assert items["runner-slow"]["status"]["code"] == "slow"
+    assert items["runner-slow"]["status"]["label"] == "Slow to report"
+    assert items["runner-offline"]["status"]["code"] == "offline"
+    assert items["runner-offline"]["status"]["tone"] == "bad"
+    assert "heard from it for a long time" in items["runner-offline"]["status"]["detail"]
+    assert items["runner-never"]["status"]["code"] == "never_connected"
+    assert items["runner-never"]["last_seen"] is None
+    assert items["runner-never"]["health"]["state"] == "unknown"
+    # Offline and never-connected explain themselves and block new work.
+    assert any(b["code"] == "offline" for b in items["runner-offline"]["health"]["blockers"])
+    assert any(b["code"] == "never_connected" for b in items["runner-never"]["health"]["blockers"])
+    assert items["runner-online"]["health"]["blockers"] == []
+    assert fleet is not None and never is not None
+
+
+def test_a_runner_that_goes_quiet_turns_offline_as_the_clock_moves(api, fleet):
+    made = fleet.enroll("runner-clock")
+    fleet.seen(made, 10)
+    assert by_name(read(api))["runner-clock"]["status"]["code"] == "online"
+    after(api.env, 200)
+    assert by_name(read(api))["runner-clock"]["status"]["code"] == "slow"
+    after(api.env, 800)
+    stale = by_name(read(api))["runner-clock"]
+    assert stale["status"]["code"] == "offline"
+    assert stale["last_seen"]["age_s"] >= 1000
+
+
+def test_disabled_and_revoked_runners_say_so_and_never_look_online(api, fleet):
+    off = fleet.enroll("runner-off")
+    gone = fleet.enroll("runner-gone")
+    fleet.seen(off, 5)
+    fleet.seen(gone, 5)
+    registry.patch(api.env.db, api.env.principal, off["machine_id"], {"enabled": False})
+    revoke_machine(api.env, gone)
+    items = by_name(read(api))
+    assert items["runner-off"]["status"]["code"] == "disabled"
+    assert any(b["code"] == "disabled" for b in items["runner-off"]["health"]["blockers"])
+    assert items["runner-gone"]["status"]["code"] == "revoked"
+    assert items["runner-gone"]["status"]["tone"] == "bad"
+    assert [b["code"] for b in items["runner-gone"]["health"]["blockers"]] == ["revoked"]
+    assert items["runner-gone"]["actions"][0]["allowed"] is False
+
+
+def test_an_unapproved_runner_lists_what_blocks_it(api, fleet):
+    made = fleet.enroll("runner-unapproved", attest=False)
+    fleet.seen(made, 5)
+    blockers = by_name(read(api))["runner-unapproved"]["health"]["blockers"]
+    assert [b["code"] for b in blockers] == ["not_approved"]
+
+
+def test_busy_and_full_use_one_word_and_one_count_in_the_chip_the_sentence_and_the_blocker(
+    api, fleet
+):
+    some = fleet.enroll("runner-some", max_in_flight=2)
+    fleet.seen(some, 20)
+    fleet.job(some, "started", minutes_ago=3, task=fleet.work(some))
+    item = by_name(read(api))["runner-some"]
+    assert (item["status"]["code"], item["status"]["label"]) == ("busy", "Online · Busy")
+    assert item["status"]["detail"] == "1 of 2 runs at once is in use: 1 in progress."
+    assert item["health"]["blockers"] == []
+    all_of_them = fleet.enroll("runner-busy", max_in_flight=1)
+    fleet.seen(all_of_them, 20)
+    fleet.job(all_of_them, "started", minutes_ago=3, task=fleet.work(all_of_them))
+    fleet.job(all_of_them, "queued", task=2)
+    busy = by_name(read(api))["runner-busy"]
+    assert (busy["status"]["code"], busy["status"]["label"]) == ("full", "Online · Full")
+    assert busy["status"]["detail"] == "1 of 1 run at once is in use: 1 in progress. New runs wait."
+    assert busy["last_seen"]["label"] == "Last seen 20 seconds ago"
+    assert busy["usage"]["runs"]["running"] == 1 and busy["usage"]["runs"]["queued"] == 1
+    assert [(b["code"], b["text"]) for b in busy["health"]["blockers"]] == [
+        ("full", "Full: 1 of 1 run at once is in use: 1 in progress. New runs wait.")
+    ]
+
+
+def test_a_started_run_whose_end_was_never_reported_is_its_own_bucket_not_in_progress(api, fleet):
+    made = fleet.enroll("runner-old")
+    fleet.seen(made, 20)
+    fleet.job(made, "started", minutes_ago=60 * 8, task=1)  # no card is being worked on for it
+    runs = by_name(read(api))["runner-old"]["usage"]["runs"]
+    assert runs["running"] == 0 and runs["end_unreported"] == 1
+    assert "plus 1 run that started and never reported an end" in runs["text"]
+
+
+def test_a_finished_run_whose_card_is_still_doing_still_counts_and_says_what_to_do(api, fleet):
+    # The hub's rule, unchanged: a started run counts toward the machine's runs at once while its card is Doing, whether
+    # or not the machine reported its end (the job row stays "started"; only the ledger knows). The screen says the same,
+    # names the card and says the one action that clears it.
+    made = fleet.enroll("runner-finished", max_in_flight=1)
+    fleet.seen(made, 20)
+    card = fleet.work(made)
+    job = fleet.job(made, "started", minutes_ago=60, task=card)
+    fleet.end(job, minutes_ago=50)
+    item = by_name(read(api))["runner-finished"]
+    assert (item["status"]["code"], item["status"]["label"]) == ("full", "Online · Full")
+    assert item["status"]["detail"] == (
+        "1 of 1 run at once is in use: 1 finished run still counts until its card moves out of Doing. New runs wait."
+    )
+    assert item["status"]["next"] == (
+        f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
+        "to free its place."
+    )
+    runs = item["usage"]["runs"]
+    assert (runs["running"], runs["finished_holding"], runs["end_unreported"]) == (0, 1, 0)
+    full = [b for b in item["health"]["blockers"] if b["code"] == "full"]
+    assert full and full[0]["text"].startswith(
+        "Full: 1 of 1 run at once is in use: 1 finished run still counts"
+    )
+    assert "slot" not in json.dumps(item).lower().replace("slots", "")
+    # Moving the card out of Doing is what really clears it: the screen and the hub's lease both free the machine.
+    from commonplace.runner import jobs
+
+    epoch = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])["binding_epoch"]
+    fleet.job(made, "queued", task=800, project="other", binding_epoch=epoch)
+    machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+    assert jobs.lease(fleet.store(), machine) is None  # the hub refuses while the card is in Doing
+    fleet.move_out_of_doing(card)
+    cleared = by_name(read(api))["runner-finished"]
+    assert cleared["status"]["code"] == "online" and cleared["status"]["next"] is None
+    assert cleared["health"]["blockers"] == []
+    assert jobs.lease(fleet.store(), machine) is not None  # and now it leases
+    # Once the card moves on the slot is free, and the finished run is not counted anywhere.
+    other = fleet.enroll("runner-freed", max_in_flight=1)
+    fleet.seen(other, 20)
+    fleet.end(
+        fleet.job(other, "started", minutes_ago=60, task=7), minutes_ago=50
+    )  # no card is being worked on
+    freed = by_name(read(api))["runner-freed"]
+    assert freed["status"]["code"] == "online" and freed["status"]["detail"] == "Waiting for work."
+    assert freed["usage"]["runs"]["running"] == 0 and freed["usage"]["runs"]["end_unreported"] == 0
+    assert freed["health"]["blockers"] == []
+    # And a run not yet reported ended with its card still Doing is in progress.
+    working = fleet.enroll("runner-working", max_in_flight=1)
+    fleet.seen(working, 20)
+    fleet.job(working, "started", minutes_ago=60, task=fleet.work(working))
+    busy = by_name(read(api))["runner-working"]
+    assert busy["status"]["code"] == "full" and busy["usage"]["runs"]["running"] == 1
+
+
+def test_a_card_that_moved_on_without_an_end_report_is_not_in_progress(api, fleet):
+    made = fleet.enroll("runner-moved-on")
+    fleet.seen(made, 20)
+    fleet.job(
+        made, "started", minutes_ago=30, task=7
+    )  # a card nobody is working on: its end was never reported
+    item = by_name(read(api))["runner-moved-on"]
+    assert item["status"]["code"] == "online"
+    assert item["usage"]["runs"]["running"] == 0 and item["usage"]["runs"]["end_unreported"] == 1
+
+
+def test_a_drained_runner_with_an_old_open_run_never_claims_none_is_in_progress(api, fleet):
+    made = fleet.enroll("runner-old-drain")
+    fleet.seen(made, 20)
+    fleet.job(made, "started", minutes_ago=60 * 8, task=1)
+    status, _ = api.request(
+        "POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0}
+    )
+    assert status == 200
+    item = by_name(read(api))["runner-old-drain"]
+    assert item["status"]["code"] == "drained"
+    assert "None is known to be in progress" in item["status"]["detail"]
+    assert "started and never reported an end" in item["status"]["detail"]
+
+
+def test_an_item_beyond_the_cap_is_still_reachable_by_id(api, fleet, monkeypatch):
+    monkeypatch.setattr(overview, "MAX_ITEMS", 1)
+    runners = {fleet.enroll(name)["machine_id"]: name for name in ("runner-c", "runner-d")}
+    _, node = api.enrolled()
+    workspaces_made = {workspace(api, name=n, node_id=node["id"])["id"]: n for n in ("Aaa", "Bbb")}
+    listed = {(i["kind"], i["id"]) for i in read(api)["items"]}
+    assert len([k for k in listed if k[0] == "runner"]) == 1
+    assert len([k for k in listed if k[0] == "workspace"]) == 1
+    # Every id the capped list left out is still found directly, with its own data.
+    hidden_runners = [i for i in runners if ("runner", i) not in listed]
+    hidden_workspaces = [i for i in workspaces_made if ("workspace", i) not in listed]
+    assert len(hidden_runners) == 1 and len(hidden_workspaces) == 1
+    status, result = api.request(path=f"{BASE}/runner/{hidden_runners[0]}")
+    assert status == 200 and result["item"]["name"] == runners[hidden_runners[0]]
+    status, result = api.request(path=f"{BASE}/workspace/{hidden_workspaces[0]}")
+    assert status == 200 and result["item"]["name"] == workspaces_made[hidden_workspaces[0]]
+    assert result["item"]["status"]["code"] == "not_started"
+    status, result = api.request(path=f"{BASE}/workspace/{hidden_workspaces[0]}/preview/start")
+    assert status == 200 and result["allowed"] is True
+    status, result = api.request(path=f"{BASE}/runner/{hidden_runners[0]}/preview/drain")
+    assert status == 200 and result["allowed"] is True
+
+
+def test_has_started_reads_a_row_built_without_the_lifecycle_join(api):
+    from commonplace.compute import workspaces as ws
+
+    row = {"applied_revision": None, "state": "pending"}
+    assert ws.has_started(row) is False
+    assert ws.has_started({**row, "lifecycle_phase": "starting"}) is True
+
+
+def test_uncertain_runs_are_an_issue_that_needs_the_owner(api, fleet):
+    made = fleet.enroll("runner-uncertain")
+    fleet.seen(made, 20)
+    fleet.job(made, "uncertain", task=3)
+    item = by_name(read(api))["runner-uncertain"]
+    assert item["health"]["state"] == "attention"
+    assert "uncertain" in item["health"]["issues"][0] and "owner" in item["health"]["issues"][0]
+
+
+def test_unknown_usage_is_unknown_not_zero(api, fleet):
+    made = fleet.enroll("runner-unknown")
+    fleet.seen(made, 10)
+    usage = by_name(read(api))["runner-unknown"]["usage"]
+    assert usage["resources"] == {
+        "known": False,
+        "reason": "never_reported",
+        "text": "Not reported: this machine has not sent a resource report.",
+    }
+    assert usage["spend"]["known"] is True and usage["spend"]["totals"] == []
+    assert usage["spend"]["text"] == "No runs in the last 30 days."
+    assert "0.00" not in json.dumps(usage)
+
+
+def test_resource_reports_carry_their_age_and_stale_ones_are_unknown(api, fleet):
+    made = fleet.enroll("runner-resources")
+    fleet.seen(made, 10)
+    fleet.resources(made, seconds_ago=120, memory_mb=6144, cpu_free=3.5)
+    fresh = by_name(read(api))["runner-resources"]["usage"]["resources"]
+    assert fresh["known"] is True and fresh["age_s"] == 120 and fresh["stale"] is False
+    assert fresh["text"] == "6.0 GiB memory free, 3.5 CPU cores free, last reported 2 minutes ago"
+    after(api.env, 1000)
+    stale = by_name(read(api))["runner-resources"]["usage"]["resources"]
+    assert stale["known"] is False and stale["reason"] == "stale" and stale["stale"] is True
+    assert "stale, treat as unknown" in stale["text"]
+
+
+def test_spend_is_summed_per_currency_and_unknown_costs_are_counted_not_hidden(api, fleet):
+    made = fleet.enroll("runner-spend")
+    fleet.seen(made, 10)
+    fleet.spend(made, micros=1_500_000, currency="USD", job="a")
+    fleet.spend(made, micros=2_000_000, currency="USD", job="b")
+    fleet.spend(made, micros=900_000, currency="EUR", job="c")
+    spend = by_name(read(api))["runner-spend"]["usage"]["spend"]
+    assert {t["currency"]: t["text"] for t in spend["totals"]} == {
+        "EUR": "0.90 EUR",
+        "USD": "3.50 USD",
+    }
+    assert spend["known"] is True and spend["unknown_runs"] == 0
+    fleet.spend(made, unknown=True, job="d")
+    spend = by_name(read(api))["runner-spend"]["usage"]["spend"]
+    assert spend["known"] is False and spend["unknown_runs"] == 1
+    assert spend["text"].endswith("plus 1 run with unknown cost")
+
+
+def test_spend_outside_the_window_is_not_counted(api, fleet):
+    made = fleet.enroll("runner-window")
+    fleet.seen(made, 10)
+    fleet.spend(made, job="ancient", minutes_ago=60 * 24 * 40)
+    assert by_name(read(api))["runner-window"]["usage"]["spend"]["runs"] == 0
+
+
+# Target machines
+
+
+def test_target_machines_are_never_called_online(api):
+    _, node = api.enrolled()
+    machine = by_name(read(api))[node["name"]]
+    assert machine["kind"] == "machine"
+    assert machine["status"]["code"] == "not_verified"
+    assert "nothing new can start on it" in machine["status"]["detail"]
+    assert machine["last_seen"] is None
+    assert machine["usage"]["measured"]["known"] is False
+    assert machine["usage"]["measured"]["reason"] == "not_collected"
+    assert machine["actions"] == []
+    assert ADDRESS not in json.dumps(machine)  # no address even for the owner
+
+
+def test_a_verified_machine_says_it_is_an_enrollment_check_and_expires(api):
+    _, node = api.enrolled()
+    env = api.env
+    with env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+        conn.execute(
+            "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,receipt_digest,verified_at,expires_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (node["id"], "g", "e", "d" * 64, env.clock.now - 60, env.clock.now + 600),
+        )
+    machine = by_name(read(api))[node["name"]]
+    assert machine["status"]["code"] == "verified"
+    assert "not a live check" in machine["status"]["detail"]
+    after(env, 1200)
+    assert by_name(read(api))[node["name"]]["status"]["code"] == "verification_expired"
+
+
+def test_machine_lists_the_workspaces_placed_on_it(api):
+    _, node = api.enrolled()
+    workspace(api, name="One", node_id=node["id"])
+    workspace(api, name="Two", node_id=node["id"])
+    machine = by_name(read(api))[node["name"]]
+    assert machine["placement"]["workspaces"] == 2
+    assert "2 cloud workspaces placed here" in machine["usage"]["summary"]
+
+
+# workspaces
+
+
+def test_workspaces_show_limits_and_say_use_is_not_measured(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], cpu_cores=4, memory_mib=8192, storage_gib=50)
+    item = by_name(read(api))[ws["name"]]
+    assert item["usage"]["limits"]["text"] == "4 CPU cores, 8 GiB memory, 50 GiB storage (limits)"
+    assert item["usage"]["measured"] == {
+        "known": False,
+        "reason": "not_measured",
+        "text": "Not measured yet: Commonplace does not collect CPU, memory or disk use from cloud workspaces.",
+    }
+    assert item["placement"]["machine_name"] == node["name"]
+    assert item["last_seen"] is None and item["status"]["code"] == "not_started"
+
+
+def test_a_failed_workspace_explains_the_reason_and_what_to_do(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"])
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST",
+        f"{BASE}/workspace/{ws['id']}/start",
+        {"expected_seq": 0, "expected_version": 1},
+    )
+    claim = executor.claim()
+    executor.report(claim, "failed", reason="out_of_memory")
+    item = by_name(read(api))[ws["name"]]
+    assert item["status"]["code"] == "failed" and item["status"]["tone"] == "bad"
+    assert (
+        item["status"]["detail"]
+        == "It ran out of memory. Raise the memory limit in Change settings."
+    )
+    assert item["health"]["state"] == "attention"
+
+
+def test_counts_sort_and_summarise_every_kind(api, fleet):
+    _, node = api.enrolled()
+    workspace(api, node_id=node["id"])
+    made = fleet.enroll("runner-count")
+    fleet.seen(made, 10)
+    fleet.enroll("runner-never-count")
+    result = read(api)
+    assert result["counts"]["by_kind"] == {"machine": 1, "runner": 2, "workspace": 1}
+    assert result["counts"]["by_status"]["online"] == 1
+    assert [i["kind"] for i in result["items"]] == ["runner", "runner", "machine", "workspace"]
+
+
+def test_more_than_the_cap_is_counted_not_hidden(api, monkeypatch):
+    monkeypatch.setattr(overview, "MAX_ITEMS", 2)
+    for index in range(3):
+        workspace(api, name=f"W{index}")
+    result = read(api)
+    assert len([i for i in result["items"] if i["kind"] == "workspace"]) == 2
+    assert result["truncated"] == {"workspace": 3}
+
+
+# detail
+
+
+def test_detail_has_activity_facts_and_says_logs_are_not_collected(api):
+    ws = workspace(api)
+    api.request("POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "name": "Renamed"})
+    status, result = api.request(path=f"{BASE}/workspace/{ws['id']}")
+    assert status == 200
+    texts = [entry["text"] for entry in result["item"]["activity"]]
+    assert texts == ["Settings changed by the owner", "Created by the owner"]
+    facts = {fact["label"]: fact["value"] for fact in result["item"]["facts"]}
+    assert facts["Logs"].startswith("Not collected")
+    assert facts["Image"] == "ghcr.io/acme/tools:1.2"
+
+
+def test_runner_detail_lists_recent_runs_and_limits(api, fleet):
+    made = fleet.enroll("runner-detail")
+    fleet.seen(made, 10)
+    fleet.job(made, "started", task=7)
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    assert result["item"]["activity"][0]["text"].startswith("Started: demo card 7")
+    facts = {f["label"]: f["value"] for f in result["item"]["facts"]}
+    assert facts["Allowed to start card runs"] == "Yes" and facts["Logs"].startswith(
+        "Not collected"
+    )
+
+
+def test_not_approved_detail_hides_unused_capacity_figures(api, fleet):
+    made = fleet.enroll("runner-not-approved")
+    fleet.seen(made, 10)
+    registry.patch(api.env.db, api.env.principal, made["machine_id"], {"topics": ["review"]})
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    item = result["item"]
+    assert item["status"]["code"] == "not_approved"
+    facts = {fact["label"]: fact["value"] for fact in item["facts"]}
+    assert facts["Allowed to start card runs"].startswith("No:")
+    assert not {"Runs at once", "Starts per hour"} & facts.keys()
+
+
+def test_not_approved_developer_runner_keeps_recorded_usage(api, fleet):
+    made = fleet.enroll("runner-recorded-usage")
+    fleet.seen(made, 10)
+    card = fleet.work(made)
+    fleet.job(made, "started", task=card)
+    fleet.resources(made, seconds_ago=120, memory_mb=6144, cpu_free=3.5)
+    registry.patch(api.env.db, api.env.principal, made["machine_id"], {"topics": ["review"]})
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    for item in (by_name(read(api))["runner-recorded-usage"], result["item"]):
+        assert item["status"]["code"] == "not_approved"
+        usage = item["usage"]
+        assert usage["runs"]["running"] == 1
+        assert usage["runs"]["text"].startswith("1 of ")
+        assert usage["resources"]["known"] is True
+        assert usage["resources"]["memory_available_mb"] == 6144
+        assert "6.0 GiB memory free" in usage["summary"]
+        assert "Not used in this version" not in usage["summary"]
+    assert result["item"]["activity"][0]["text"].startswith(f"Started: demo card {card}")
+
+
+def test_unknown_ids_kinds_and_paths_are_refused_with_a_reason(api):
+    assert api.request(path=f"{BASE}/workspace/nothing") == (
+        404,
+        {"error": "not_found", "reason": "record"},
+    )
+    assert api.request(path=f"{BASE}/runner/mach_0000000000000000")[1]["reason"] == "record"
+    assert api.request(path=f"{BASE}/thing/x")[1] == {"error": "not_found", "reason": "route"}
+    assert api.request(path=f"{BASE}/workspace/bad id")[1]["reason"] in ("identifier", "route")
+    assert api.request(path=f"{BASE}?kind=runner") == (
+        400,
+        {"error": "invalid_request", "reason": "query"},
+    )
+    assert api.request("DELETE", BASE)[0] in (404, 405, 403)
+
+
+# members and tokens
+
+
+def test_a_member_sees_cloud_workspaces_only_with_no_machine_names_or_addresses(api, fleet):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Shared box")
+    made = fleet.enroll("secret-runner-label")
+    fleet.seen(made, 5)
+    fleet.spend(made)
+    ask = member(api)
+    status, result = ask(path=BASE)
+    assert status == 200
+    assert result["can_manage"] is False
+    assert [i["name"] for i in result["items"]] == ["Shared box"]
+    assert result["hidden"] == {
+        "kinds": ["machine", "runner"],
+        "text": "Runner machines in Admin and target machines are visible to the workspace owner.",
+    }
+    item = result["items"][0]
+    assert item["actions"] == [] and item["basis"] is None
+    assert item["placement"] == {"assigned": True, "machine_name": None, "machine_id": None}
+    text = json.dumps(result)
+    for secret in (
+        node["name"],
+        node["id"],
+        ADDRESS,
+        "secret-runner-label",
+        made["machine_id"],
+        "USD",
+        "build-runner",
+    ):
+        assert secret not in text, secret
+    # The member can open the workspace detail, with redacted facts, and nothing else.
+    status, detail = ask(path=f"{BASE}/workspace/{ws['id']}")
+    assert status == 200 and detail["can_manage"] is False
+    assert {f["label"]: f["value"] for f in detail["item"]["facts"]}[
+        "Machine"
+    ] == "A machine is assigned"
+    assert node["name"] not in json.dumps(detail)
+    for kind, ident in (("runner", made["machine_id"]), ("machine", node["id"])):
+        assert ask(path=f"{BASE}/{kind}/{ident}") == (
+            403,
+            {"error": "owner_required", "reason": "member"},
+        )
+    assert ask(path=f"{BASE}/workspace/{ws['id']}/preview/start") == (
+        403,
+        {"error": "owner_required", "reason": "member"},
+    )
+
+
+def test_a_member_cannot_act_and_nothing_changes(api, fleet):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"])
+    made = fleet.enroll("runner-guarded")
+    ask = member(api)
+    for path, body in (
+        (f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}),
+        (f"{BASE}/workspace/{ws['id']}/withdraw", {"expected_seq": 0, "expected_version": 1}),
+        (f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0}),
+        (f"{BASE}/workspace/{ws['id']}/start", {"nonsense": True}),
+    ):
+        assert ask("POST", path, body) == (403, {"error": "owner_required", "reason": "member"}), (
+            path
+        )
+    assert by_name(read(api))[ws["name"]]["status"]["code"] == "not_started"
+    assert by_name(read(api))["runner-guarded"]["draining"] is False
+
+
+def test_a_personal_access_token_never_reaches_the_overview_even_with_the_owner_cookie(api, fleet):
+    ws = workspace(api)
+    made = fleet.enroll("runner-pat")
+    headers = pat_headers(api)
+    for method, path, payload in (
+        ("GET", BASE, None),
+        ("GET", f"{BASE}/workspace/{ws['id']}", None),
+        ("GET", f"{BASE}/workspace/{ws['id']}/preview/start", None),
+        ("POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}),
+        ("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0}),
+    ):
+        assert api.request(method, path, payload, headers=headers) == (
+            403,
+            {"error": "owner_required", "reason": "member"},
+        ), (method, path)
+        status, result = api.request(method, path, payload, headers=headers, cookie=False)
+        assert status in (401, 403) and "items" not in result
+    assert by_name(read(api))[ws["name"]]["request"] is None
+
+
+def test_signed_out_and_foreign_callers_get_reasons_and_no_data(api):
+    ws = workspace(api)
+    assert api.request(path=BASE, cookie=False) == (401, {"error": "sign_in", "reason": "session"})
+    foreign = sessions.start_session(api.env.db, api.env.foreign, api.env.other_workspace)
+    # Another workspace's person reads their own (empty) overview and cannot reach this one's ids.
+    status, result = api.request(path=BASE, cookie=foreign)
+    assert status in (200, 403, 404) and "Build box" not in json.dumps(result)
+    status, result = api.request(path=f"{BASE}/workspace/{ws['id']}", cookie=foreign)
+    assert status in (403, 404) and ws["name"] not in json.dumps(result)
+
+
+def test_no_secret_shaped_field_is_ever_served(api, fleet):
+    _, node = api.enrolled()
+    workspace(api, node_id=node["id"])
+    made = fleet.enroll("runner-leak-check")
+    fleet.seen(made, 5)
+    text = json.dumps(read(api)).lower()
+    for needle in (
+        "token",
+        "password",
+        "secret",
+        "private_key",
+        "host_key",
+        "credential",
+        "lease_token",
+    ):
+        assert needle not in text, needle
+    assert made["machine_token"] not in text and made["worker_token"] not in text
+
+
+def test_a_workspace_on_an_unverified_machine_lists_that_as_what_stops_it(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"])
+    blockers = {b["code"] for b in by_name(read(api))[ws["name"]]["health"]["blockers"]}
+    assert "machine_not_verified" in blockers
+    with api.env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+    blockers = {b["code"] for b in by_name(read(api))[ws["name"]]["health"]["blockers"]}
+    assert "machine_not_verified" not in blockers
+
+
+def test_a_running_workspace_is_not_blocked_by_the_state_of_its_machine(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Running box")
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor = FakeExecutor(api.env)
+    executor.run(executor.claim(), "running")
+    item = by_name(read(api))["Running box"]
+    assert item["status"]["code"] == "running"
+    assert "machine_not_verified" not in {b["code"] for b in item["health"]["blockers"]}
+    assert "nothing can start on it" not in json.dumps(item)
+
+
+def test_the_draining_blocker_uses_the_word_of_the_chip_and_resuming_is_said_once(api, fleet):
+    running = fleet.enroll("runner-word-running")
+    fleet.seen(running, 5)
+    fleet.job(running, "started", task=fleet.work(running))
+    idle = fleet.enroll("runner-word-idle")
+    fleet.seen(idle, 5)
+    for made in (running, idle):
+        api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    items = by_name(read(api))
+
+    def words(name):
+        item = items[name]
+        blocker = {b["code"]: b["text"] for b in item["health"]["blockers"]}["draining"]
+        return item["status"], blocker
+
+    status, blocker = words("runner-word-running")
+    assert status["code"] == "draining" and blocker == f"Draining: {overview.DRAIN_SCOPE}"
+    status, blocker = words("runner-word-idle")
+    assert status["code"] == "drained" and blocker == f"Drained: {overview.DRAIN_SCOPE}"
+    assert overview.NO_RESUME == "Resuming is not available in this version."
+    assert "no button" not in json.dumps(items)
+    assert status["detail"].endswith(overview.NO_RESUME) and overview.NO_RESUME not in blocker
+
+
+def test_no_sentence_points_at_a_restart_or_a_start_that_this_version_does_not_have(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Settings box")
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor = FakeExecutor(api.env)
+    executor.run(executor.claim(), "running", revision=1)
+    api.request("POST", f"/workspaces/{ws['id']}", {"expected_revision": 1, "cpu_cores": 4})
+    detail = by_name(read(api))["Settings box"]["status"]["detail"]
+    assert detail == (
+        "It runs with the settings from before your last change. Restarting is not available in this "
+        "version, so the change applies the next time it starts."
+    )
+    assert "restart it" not in detail.lower()
+
+
+def test_the_action_route_checks_the_owner_before_it_looks_at_a_record(api):
+    ws = workspace(api)
+    ask = member(api)
+    for path in (f"{BASE}/workspace/{ws['id']}/start", f"{BASE}/workspace/nothing/start"):
+        assert ask("POST", path, {"expected_seq": 0, "expected_version": 1}) == (
+            403,
+            {"error": "owner_required", "reason": "member"},
+        )
+
+
+# round 1 of the #615 review: copy that matches what the screen can do, honest machine blockers, one bad row
+
+
+def _all_text(value):
+    """Every string in a served answer, to check a phrase appears nowhere."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for inner in value.values():
+            yield from _all_text(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            yield from _all_text(inner)
+
+
+def test_an_unverified_or_expired_machine_names_what_it_blocks(api):
+    _, node = api.enrolled()
+    machine = by_name(read(api))[node["name"]]
+    assert [b["code"] for b in machine["health"]["blockers"]] == ["not_verified"]
+    assert machine["health"]["blockers"][0]["text"] == (
+        "Not verified: cloud workspaces placed here cannot start until it is verified."
+    )
+    # No control verifies a machine in this version: there is no step, and the sentence says what is true.
+    assert machine["status"]["next"] is None
+    assert machine["status"]["detail"].endswith(
+        "Verification is not available in this version of the app."
+    )
+    assert "Advanced" not in machine["status"]["detail"]
+    assert machine["health"]["state"] == "idle", (
+        "nobody can act on it, so it is not an attention state"
+    )
+    env = api.env
+    with env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+        conn.execute(
+            "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,receipt_digest,verified_at,expires_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (node["id"], "g", "e", "d" * 64, env.clock.now - 60, env.clock.now + 600),
+        )
+    assert by_name(read(api))[node["name"]]["health"]["blockers"] == []
+    after(env, 1200)
+    expired = by_name(read(api))[node["name"]]
+    assert [b["code"] for b in expired["health"]["blockers"]] == ["verification_expired"]
+    assert "verified again" in expired["health"]["blockers"][0]["text"]
+
+
+def test_one_unreadable_machine_row_does_not_fail_the_whole_overview(api, fleet):
+    _, node = api.enrolled()
+    fleet.enroll("runner-still-listed")
+    with api.env.store._journal() as conn:
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", ("{not json", node["id"]))
+    result = read(api)
+    items = by_name(result)
+    assert items["Machine"]["status"]["code"] == "not_verified"
+    assert "runner-still-listed" in items
+
+
+def test_no_sentence_promises_a_control_the_screen_does_not_have(api, fleet):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Queued box")
+    made = fleet.enroll("runner-copy", max_in_flight=1)
+    fleet.seen(made, 5)
+    fleet.job(made, "uncertain", task=3)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    result = read(api)
+    queued = by_name(result)["Queued box"]
+    assert queued["status"]["code"] == "start_requested"
+    assert queued["status"]["detail"].endswith(
+        "It expires after 24 hours if no machine picks it up; there is nothing to do meanwhile."
+    )
+    texts = list(_all_text(result))
+    texts += list(_all_text(api.request(path=f"{BASE}/runner/{made['machine_id']}")[1]))
+    for forbidden in (
+        "You can withdraw",
+        "Resume to use it again",
+        "until you resume",
+        "wait for the owner to resolve",
+        "Ask again",
+        "no new runs start",
+        "No new runs start",
+    ):
+        assert not [t for t in texts if forbidden in t], forbidden
+    runner_item = by_name(result)["runner-copy"]
+    assert runner_item["status"]["detail"].startswith("Draining. " + overview.DRAIN_SCOPE)
+    assert overview.DRAIN_SCOPE == (
+        "No new card runs start here. Chat and Coworker sessions can still start here."
+    )
+    assert overview.NO_RESUME in runner_item["status"]["detail"]
+
+
+def test_an_offline_runner_does_not_say_zero_runs_and_has_one_next_step(api, fleet):
+    made = fleet.enroll("runner-quiet")
+    fleet.seen(made, 4000)
+    item = by_name(read(api))["runner-quiet"]
+    assert item["status"]["code"] == "offline"
+    assert item["usage"]["runs"]["text"].startswith(
+        "0 runs recorded in progress; more may be running while it is offline"
+    )
+    assert "0 runs in progress" not in item["usage"]["summary"]
+    assert item["status"]["next"].startswith("Check that the machine is on")
+    slow = fleet.enroll("runner-slowish")
+    fleet.seen(slow, 400)
+    assert by_name(read(api))["runner-slowish"]["status"]["next"].startswith("Wait a little")
+
+
+def test_a_removed_runner_is_not_shown_as_seen_now(api, fleet):
+    made = fleet.enroll("runner-gone")
+    fleet.seen(made, 21)
+    revoke_machine(api.env, made)
+    item = by_name(read(api))["runner-gone"]
+    assert item["status"]["code"] == "revoked"
+    assert item["last_seen"]["label"] == "Last contact 21 seconds ago, before it was removed"
+    assert (item["last_seen"]["prefix"], item["last_seen"]["suffix"]) == (
+        "Last contact",
+        ", before it was removed",
+    )
+
+
+def test_a_stale_resource_report_is_called_stale_in_the_row_and_the_offline_limit_is_the_configured_one(
+    api, fleet, monkeypatch
+):
+    made = fleet.enroll("runner-stale-res")
+    fleet.seen(made, 4000)
+    fleet.resources(made, seconds_ago=1200)
+    item = by_name(read(api))["runner-stale-res"]
+    assert "Resources last reported 20 minutes ago (stale)" in item["usage"]["summary"]
+    monkeypatch.setenv("COMMONPLACE_TOPOLOGY_RED_S", "7200")
+    fleet.seen(made, 9000)
+    blockers = by_name(read(api))["runner-stale-res"]["health"]["blockers"]
+    text = [b["text"] for b in blockers if b["code"] == "offline"]
+    assert text and "for over 2 hours" in text[0]
+
+
+# round 1 of the #615 review, UI vocabulary: the overview and the workspaces list describe one record one way
+
+
+def test_a_workspace_without_a_machine_is_saved_not_started_and_never_needs_attention(api):
+    ws = workspace(api, name="Machine-less", node_id=None)
+    result = read(api)
+    item = by_name(result)["Machine-less"]
+    assert (item["status"]["code"], item["status"]["label"], item["status"]["tone"]) == (
+        "not_started",
+        "Saved, not started",
+        "quiet",
+    )
+    assert item["health"]["state"] == "idle" and result["counts"]["attention"] == 0
+    # No machine exists at all: no instruction that cannot be followed.
+    assert item["status"]["detail"] == overview.NO_MACHINES_SENTENCE
+    assert [b["text"] for b in item["health"]["blockers"] if b["code"] == "no_machine"] == [
+        "No machine is set up yet; starting will need one, which is not available yet."
+    ]
+    assert "No machine chosen" not in json.dumps(result)
+    # A machine exists, none is chosen: the instruction is real now.
+    api.enrolled()
+    item = by_name(read(api))["Machine-less"]
+    assert item["status"]["detail"].endswith("Choose a machine for it with Change settings.")
+    assert any(
+        b["text"] == "Machine: not chosen yet. Choose one with Change settings."
+        for b in item["health"]["blockers"]
+    )
+    # A member is told who can choose, with no machine named.
+    status, shown = member(api)(path=BASE)
+    detail = shown["items"][0]["status"]["detail"]
+    assert detail.endswith("The workspace owner can choose a machine.") and ws["id"]
+
+
+def test_a_started_nothing_workspace_with_a_machine_uses_the_same_label(api):
+    _, node = api.enrolled()
+    workspace(api, name="With machine", node_id=node["id"])
+    status = by_name(read(api))["With machine"]["status"]
+    assert (status["code"], status["label"]) == ("not_started", "Saved, not started")
+    assert status["detail"] == overview.NOT_STARTED_NOTE
+
+
+def test_an_unreadable_image_is_an_attention_state_and_a_named_one(api):
+    ws = workspace(api, name="Odd image")
+    with api.env.store._journal() as conn:
+        conn.execute(
+            "UPDATE cloud_workspaces SET image_reference=? WHERE id=?",
+            ("::not an image::", ws["id"]),
+        )
+    result = read(api)
+    item = by_name(result)["Odd image"]
+    assert item["status"]["code"] == "image_unreadable" and item["health"]["state"] == "attention"
+    assert result["counts"]["attention"] == 1
+
+
+def test_the_overview_uses_the_words_of_the_workspaces_list():
+    from pathlib import Path
+
+    script = (
+        Path(overview.__file__).parents[1] / "web" / "static" / "compute-workspaces.js"
+    ).read_text()
+    for text in (overview.NOT_STARTED_NOTE, overview.NO_MACHINES_SENTENCE, overview.SAVED_LABEL):
+        assert text in script, text
+
+
+# round 2 of the #615 review
+
+
+def test_the_expired_verification_step_does_not_point_at_a_control_either(api):
+    _, node = api.enrolled()
+    env = api.env
+    with env.store._journal() as conn:
+        meta = json.loads(
+            conn.execute("SELECT metadata FROM nodes WHERE id=?", (node["id"],)).fetchone()[0]
+        )
+        meta["state"] = "verified"
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", (json.dumps(meta), node["id"]))
+        conn.execute(
+            "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,receipt_digest,verified_at,expires_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (node["id"], "g", "e", "d" * 64, env.clock.now - 60, env.clock.now + 600),
+        )
+    after(env, 1200)
+    status = by_name(read(api))[node["name"]]["status"]
+    assert status["code"] == "verification_expired"
+    assert status["next"] is None
+    assert (
+        "Advanced" not in status["detail"] and "not available in this version" in status["detail"]
+    )
+
+
+def test_a_member_is_never_told_to_use_a_control_only_the_owner_has(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Failing box")
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    claim = executor.claim()
+    executor.report(claim, "failed", reason="out_of_memory")
+    owner = by_name(read(api))["Failing box"]["status"]["detail"]
+    assert "Raise the memory limit in Change settings" in owner
+    status, shown = member(api)(path=BASE)
+    detail = shown["items"][0]["status"]["detail"]
+    assert detail == "It ran out of memory. Ask the workspace owner to raise the memory limit."
+    assert "Change settings" not in json.dumps(shown)
+
+
+def test_a_workspace_the_clock_made_unknown_tells_a_member_to_ask_the_owner(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Quiet box")
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor.run(executor.claim(), "running")
+    after(api.env, 1000)
+    owner = by_name(read(api))["Quiet box"]["status"]
+    assert owner["code"] == "unknown"
+    assert owner["next"] == "Nothing to do yet; this clears when the machine reports again."
+    _, shown = member(api)(path=BASE)
+    assert (
+        shown["items"][0]["status"]["next"]
+        == "Nothing to do yet; this clears when the machine reports again."
+    )
+
+
+def test_blockers_name_themselves_and_a_drained_runner_is_called_drained(api, fleet):
+    offline = fleet.enroll("runner-off")
+    fleet.seen(offline, 4000)
+    fleet.enroll("runner-never")
+    drained = fleet.enroll("runner-drained")
+    fleet.seen(drained, 10)
+    api.request("POST", f"{BASE}/runner/{drained['machine_id']}/drain", {"expected_seq": 0})
+    items = by_name(read(api))
+    text = {
+        name: {b["code"]: b["text"] for b in item["health"]["blockers"]}
+        for name, item in items.items()
+    }
+    assert text["runner-off"]["offline"].startswith("Offline: nothing heard for over 15 minutes")
+    assert text["runner-never"]["never_connected"].startswith("Never connected:")
+    assert items["runner-drained"]["status"]["label"] == "Drained"
+    assert text["runner-drained"]["draining"].startswith(f"Drained: {overview.DRAIN_SCOPE}")
+
+
+def test_a_removed_runner_is_informational_not_something_that_needs_attention(api, fleet):
+    made = fleet.enroll("runner-removed")
+    fleet.seen(made, 30)
+    revoke_machine(api.env, made)
+    result = read(api)
+    item = by_name(result)["runner-removed"]
+    assert item["status"]["code"] == "revoked" and item["health"]["state"] == "idle"
+    assert result["counts"]["attention"] == 0
+    assert item["health"]["blockers"][0]["text"].startswith("Removed:")
+
+
+def test_an_expired_request_is_not_carried_out_and_says_there_is_nothing_to_do(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Lapsed box")
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    after(api.env, 25 * 3600)
+    health = by_name(read(api))["Lapsed box"]["health"]
+    assert health["issue_label"] == "Not carried out"
+    assert health["issues"][0].endswith(
+        "Starting is not available in this version, so there is nothing to do yet."
+    )
+
+
+def test_the_page_says_once_that_starting_is_not_available_and_mentions_no_requests(api):
+    result = read(api)
+    assert result["executor"]["text"] == (
+        "Starting and stopping cloud workspaces on a machine is not available in this version."
+    )
+    _, node = api.enrolled()
+    workspace(api, node_id=node["id"], name="Boxed")
+    blockers = by_name(read(api))["Boxed"]["health"]["blockers"]
+    assert [b["text"] for b in blockers if b["code"] == "not_available"] == [
+        "No machine can carry out a start yet."
+    ]
+
+
+def test_one_unreadable_machine_row_does_not_fail_a_list_that_has_a_workspace_on_it(api):
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="On the bad row")
+    with api.env.store._journal() as conn:
+        conn.execute("UPDATE nodes SET metadata=? WHERE id=?", ("{not json", node["id"]))
+    result = read(api)
+    row = by_name(result)["On the bad row"]
+    assert row["placement"]["machine_name"] is None and row["placement"]["assigned"] is True
+    status, listed = api.request(path="/workspaces")
+    assert status == 200 and [w["id"] for w in listed["workspaces"]] == [ws["id"]]
+    status, detail = api.request(path=f"{BASE}/workspace/{ws['id']}")
+    assert status == 200 and detail["item"]["name"] == "On the bad row"
+
+
+def test_a_locked_runner_registry_is_not_an_empty_runner_list(api, fleet, monkeypatch):
+    import sqlite3
+
+    fleet.enroll("runner-registry")
+    real = registry.machines
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(registry, "machines", locked)
+    assert api.request(path=BASE) == (
+        503,
+        {"error": "authority_unavailable", "reason": "busy"},
+    )
+
+    # A hub where the runner was never installed has no runner machines: that is the one empty answer.
+    def absent(*args, **kwargs):
+        raise sqlite3.OperationalError("no such table: runner_machines")
+
+    monkeypatch.setattr(registry, "machines", absent)
+    assert read(api)["items"] == []
+    monkeypatch.setattr(registry, "machines", real)
+
+
+def test_the_audit_and_the_poll_read_by_index(api):
+    with api.env.store._journal() as conn:
+        plan = " ".join(
+            row[3]
+            for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT action,user_id,created_at FROM audit WHERE object_id=? "
+                "ORDER BY id DESC LIMIT 10",
+                ("x",),
+            )
+        )
+    assert "SEARCH" in plan and "audit_object" in plan and "SCAN" not in plan, plan
+
+
+def test_a_locked_compute_database_is_busy_not_a_server_error(api):
+    import sqlite3
+
+    holder = sqlite3.connect(str(api.env.path), isolation_level=None, timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        status, result = api.request(path=BASE)
+        assert (status, result) == (503, {"error": "authority_unavailable", "reason": "busy"})
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert read(api)["items"] == []
+
+
+def test_a_machine_with_more_workspaces_than_names_says_and_n_more(api):
+    _, node = api.enrolled()
+    for n in range(7):
+        workspace(api, name=f"Box {n}", node_id=node["id"])
+    status, detail = api.request(path=f"{BASE}/machine/{node['id']}")
+    assert status == 200
+    value = {f["label"]: f["value"] for f in detail["item"]["facts"]}[
+        "Cloud workspaces placed here"
+    ]
+    assert value.endswith(" and 2 more") and value.count(",") == 4
+
+
+def test_the_verified_machine_has_nothing_known_to_block_and_an_unverified_one_is_not_attention(
+    api,
+):
+    _, node = api.enrolled()
+    unverified = by_name(read(api))[node["name"]]
+    assert unverified["health"]["state"] == "idle" and unverified["status"]["next"] is None
+
+
+def test_slow_and_unknown_only_wait_so_they_are_not_attention_states(api, fleet):
+    slow = fleet.enroll("runner-slow-2")
+    fleet.seen(slow, 400)
+    offline = fleet.enroll("runner-offline-2")
+    fleet.seen(offline, 4000)
+    result = read(api)
+    items = by_name(result)
+    assert items["runner-slow-2"]["health"]["state"] == "ok"
+    assert items["runner-offline-2"]["health"]["state"] == "attention"
+    assert items["runner-slow-2"]["usage"]["runs"]["text"].startswith(
+        "0 runs recorded in progress; more may be running while it is slow to report"
+    )
+    assert result["counts"]["attention"] == 1
+    # An unknown workspace report waits for the machine to report again: nothing to act on.
+    _, node = api.enrolled()
+    ws = workspace(api, node_id=node["id"], name="Waiting box")
+    executor = FakeExecutor(api.env)
+    api.request(
+        "POST", f"{BASE}/workspace/{ws['id']}/start", {"expected_seq": 0, "expected_version": 1}
+    )
+    executor.run(executor.claim(), "running")
+    after(api.env, 1000)
+    waiting = by_name(read(api))["Waiting box"]
+    assert waiting["status"]["code"] == "unknown" and waiting["health"]["state"] == "idle"
+
+
+def test_a_queued_request_says_there_is_nothing_to_do_and_one_sentence_covers_no_machine(api):
+    assert overview.NO_MACHINES_SENTENCE == (
+        "No machine is set up yet. Starting will need one, which is not available yet."
+    )
+    assert "Choose later" not in overview.NO_MACHINES_SENTENCE
+
+
+def test_allowed_to_start_runs_follows_the_drain_and_the_approval(api, fleet):
+    made = fleet.enroll("runner-allowed")
+    fleet.seen(made, 5)
+
+    def allowed():
+        status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+        assert status == 200
+        return {f["label"]: f["value"] for f in result["item"]["facts"]}[
+            "Allowed to start card runs"
+        ]
+
+    assert allowed() == "Yes"
+    api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    assert allowed() == "No: it is drained"  # drained: nothing is running
+    loose = fleet.enroll("runner-loose", attest=False)
+    status, result = api.request(path=f"{BASE}/runner/{loose['machine_id']}")
+    assert {f["label"]: f["value"] for f in result["item"]["facts"]}[
+        "Allowed to start card runs"
+    ] == ("No: it is not set up and approved yet")
+
+
+def _allowed(api, made):
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200
+    item = result["item"]
+    return item["status"]["code"], {f["label"]: f["value"] for f in item["facts"]}[
+        "Allowed to start card runs"
+    ]
+
+
+def test_allowed_to_start_runs_follows_the_status_the_chip_shows_one_case_per_status(api, fleet):
+    # online and busy
+    online = fleet.enroll("allowed-online")
+    fleet.seen(online, 5)
+    assert _allowed(api, online) == ("online", "Yes")
+    busy = fleet.enroll("allowed-busy", max_in_flight=2)
+    fleet.seen(busy, 5)
+    fleet.job(busy, "started", task=fleet.work(busy))
+    assert _allowed(api, busy) == ("busy", "Yes")
+    full = fleet.enroll("allowed-full", max_in_flight=1)
+    fleet.seen(full, 5)
+    fleet.job(full, "started", task=fleet.work(full))
+    assert _allowed(api, full) == ("full", "Yes, once a run finishes")
+    # slow to report still takes work when it comes back
+    slow = fleet.enroll("allowed-slow")
+    fleet.seen(slow, 400)
+    assert _allowed(api, slow) == ("slow", "Yes")
+    # offline and never connected: yes, once it reports
+    offline = fleet.enroll("allowed-offline")
+    fleet.seen(offline, 4000)
+    assert _allowed(api, offline) == ("offline", "Yes, once it reports")
+    never = fleet.enroll("allowed-never")
+    assert _allowed(api, never) == ("never_connected", "Yes, once it reports")
+    # draining and drained
+    draining = fleet.enroll("allowed-draining", max_in_flight=2)
+    fleet.seen(draining, 5)
+    fleet.job(draining, "started", task=fleet.work(draining))
+    api.request("POST", f"{BASE}/runner/{draining['machine_id']}/drain", {"expected_seq": 0})
+    assert _allowed(api, draining) == ("draining", "No: it is draining")
+    drained = fleet.enroll("allowed-drained")
+    fleet.seen(drained, 5)
+    api.request("POST", f"{BASE}/runner/{drained['machine_id']}/drain", {"expected_seq": 0})
+    assert _allowed(api, drained) == ("drained", "No: it is drained")
+    # a draining runner that is also offline is still not allowed
+    both = fleet.enroll("allowed-drain-offline")
+    fleet.seen(both, 4000)
+    api.request("POST", f"{BASE}/runner/{both['machine_id']}/drain", {"expected_seq": 0})
+    assert _allowed(api, both) == (
+        "offline",
+        "No: it is drained",
+    )  # none is in progress: the blocker's word too
+    # the hourly start limit: finishing a run does not clear it, so it is never "once a run finishes"
+    for index, (name, running, seen_ago, chip) in enumerate(
+        (
+            ("allowed-cap-idle", False, 5, "limit_reached"),
+            ("allowed-cap-full", True, 5, "limit_reached"),
+            ("allowed-cap-offline", False, 4000, "offline"),
+        )
+    ):
+        capped = fleet.enroll(name, max_in_flight=1, max_starts_per_hour=2)
+        fleet.seen(capped, seen_ago)
+        ago = (
+            40 if seen_ago > 900 else 30
+        )  # an offline runner's runs are older than its quiet window
+        for start in range(1 if running else 2):  # finished starts whose cards are long gone
+            job = fleet.job(capped, "started", minutes_ago=ago, task=6000 + index * 10 + start)
+            fleet.end(job, minutes_ago=ago - 5)
+        if running:
+            fleet.job(capped, "started", minutes_ago=1, task=fleet.work(capped))
+        assert _allowed(api, capped) == (chip, "Not right now: hourly limit reached"), name
+    # turned off and removed
+    off = fleet.enroll("allowed-off")
+    fleet.seen(off, 5)
+    fleet.disable(off)
+    assert _allowed(api, off) == ("disabled", "No: it is turned off")
+    gone = fleet.enroll("allowed-gone")
+    fleet.seen(gone, 5)
+    revoke_machine(api.env, gone)
+    assert _allowed(api, gone) == ("revoked", "No: it was removed")
+    # not approved yet
+    loose = fleet.enroll("allowed-loose", attest=False)
+    fleet.seen(loose, 5)
+    assert _allowed(api, loose)[1] == "No: it is not set up and approved yet"
+
+
+HOURLY = 3  # the matrix runners' limit of starts per hour
+
+
+def _matrix_cases():
+    """Every combination that can exist: liveness x load x drain x enrollment x hourly limit. A draining runner has a run
+    in progress and a drained one none; removed, turned off and not approved runners are tried with every load but not
+    with every drain."""
+    cases = []
+    for enrollment in ("ok", "disabled", "revoked", "not_approved"):
+        for liveness in ("online", "offline", "never"):
+            for load in ("idle", "busy", "full", "held", "held_full"):
+                for drain in ("none", "draining", "drained"):
+                    if drain != "none" and (enrollment != "ok" or liveness == "never"):
+                        continue
+                    running = load in ("busy", "full")
+                    if drain == "draining" and not running:
+                        continue
+                    if drain == "drained" and load != "idle":
+                        continue
+                    for cap in ("under", "at"):
+                        if liveness == "never" and (load != "idle" or cap == "at"):
+                            continue  # a runner that never connected has no runs
+                        cases.append((enrollment, liveness, load, drain, cap))
+    return cases
+
+
+def _expected_reasons(enrollment, liveness, load, drain, cap):
+    """What the hub's lease reads, written out independently of the overview: the reasons it cannot take new work."""
+    if enrollment == "revoked":
+        return ["revoked"]
+    codes = []
+    if enrollment == "disabled":
+        codes.append("disabled")
+    if enrollment == "not_approved":
+        codes.append("not_approved")
+    if drain != "none":
+        codes.append("draining")
+    if enrollment != "disabled":  # a turned-off runner is one reason, not also quiet
+        codes += {"offline": ["offline"], "never": ["never_connected"]}.get(liveness, [])
+    used = {"idle": 0, "busy": 1, "full": 1, "held": 1, "held_full": 1}[load]
+    slots = {"idle": 2, "busy": 2, "full": 1, "held": 2, "held_full": 1}[load]
+    if used >= slots and drain == "none":
+        codes.append("full")
+    if cap == "at" and drain == "none":
+        codes.append("hourly_cap")
+    return codes
+
+
+def test_can_it_take_new_work_never_disagrees_between_status_blocker_and_allowed_and_the_hub_agrees(
+    api, fleet
+):
+    """The matrix: for every combination, the chip, the sentence, the blockers and "Allowed to start card runs" come from one
+    answer, and the hub's own lease (the oracle) refuses exactly when that answer says it cannot start now."""
+    from commonplace.runner import jobs
+
+    problems, checked = [], 0
+    for number, spec in enumerate(_matrix_cases()):
+        enrollment, liveness, load, drain, cap = spec
+        slots = {"idle": 2, "busy": 2, "full": 1, "held": 2, "held_full": 1}[load]
+        made = fleet.enroll(
+            f"m{number}",
+            attest=enrollment != "not_approved",
+            max_in_flight=slots,
+            max_starts_per_hour=HOURLY,
+        )
+        if liveness != "never":
+            fleet.seen(made, 5 if liveness == "online" else 4000)
+        cards = []
+        if load in ("busy", "full"):
+            cards.append(fleet.work(made))
+            fleet.job(
+                made, "started", minutes_ago=40 if liveness == "offline" else 1, task=cards[-1]
+            )
+        if load in ("held", "held_full"):
+            cards.append(fleet.work(made))
+            # A run's own activity counts as a signal, so a quiet machine's runs are older than the offline window.
+            old = 50 if liveness == "offline" else 30
+            fleet.end(
+                fleet.job(made, "started", minutes_ago=old, task=cards[-1]), minutes_ago=old - 10
+            )
+        if cap == "at":
+            extra = HOURLY - len(cards)
+            for index in range(extra):  # started in the last hour, finished, their cards long gone
+                fleet.end(
+                    fleet.job(made, "started", minutes_ago=40, task=20000 + number * 10 + index),
+                    minutes_ago=35,
+                )
+        if drain != "none":
+            api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+        if enrollment == "disabled":
+            fleet.disable(made)
+        if enrollment == "revoked":
+            revoke_machine(api.env, made)
+        status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+        assert status == 200, (spec, result)
+        item = result["item"]
+        code, detail = item["status"]["code"], item["status"]["detail"]
+        allowed = item["intake"]["allowed"]
+        blockers = [(b["code"], b["text"]) for b in item["health"]["blockers"]]
+        facts = {f["label"]: f["value"] for f in item["facts"]}
+        wanted = _expected_reasons(*spec)
+        where = f"{spec}: chip {code!r}, allowed {allowed!r}, blockers {[c for c, _ in blockers]}"
+        # 1. The blockers are exactly the reasons the hub's inputs give, in one order, and Allowed is the one fact the
+        #    screen shows (detail and item agree).
+        if [c for c, _ in blockers] != wanted or item["intake"]["reasons"] != wanted:
+            problems.append(f"blockers: {where} wanted {wanted}")
+        if facts["Allowed to start card runs"] != allowed:
+            problems.append(f"fact: {where}")
+        # 2. The words of the answer: the chip never says it can take work when a blocker says it cannot.
+        refuses_now = allowed.startswith(("No", "Not right now"))
+        if code in ("online", "busy") and allowed != "Yes":
+            problems.append(f"chip says it works, allowed does not: {where}")
+        holders = {
+            "Yes, once a run finishes",
+            "Yes, once the finished card leaves Doing",
+            "Yes, once the uncertain run is resolved on its card",
+        }
+        if code == "full" and (allowed not in holders or "full" not in wanted):
+            problems.append(f"full: {where}")
+        if code == "limit_reached" and not (
+            allowed == "Not right now: hourly limit reached"
+            and "hourly_cap" in wanted
+            and "more than an hour old" in detail
+        ):
+            problems.append(f"limit: {where}")
+        if code in ("draining", "drained") and not (
+            allowed == f"No: it is {code}"
+            and dict(blockers)["draining"].startswith(code.capitalize() + ":")
+            and detail.startswith(code.capitalize() + ". ")
+        ):
+            problems.append(f"drain words: {where}")
+        if code in ("revoked", "disabled", "not_approved") and not allowed.startswith("No: "):
+            problems.append(f"enrollment: {where}")
+        if refuses_now and "Waiting for work" in detail:
+            problems.append(f"sentence: {where}")
+        if "hourly_cap" in wanted and allowed.startswith("Yes"):
+            problems.append(f"a limit time clears is reported as Yes: {where}")
+        # 3. The oracle. A queued run is offered to the hub's lease: it refuses exactly when the answer says nothing can
+        #    start now, and an answer of "Yes" or "once it reports" or "once a run finishes" is honoured by it.
+        machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+        epoch = machine["binding_epoch"]
+        fleet.job(made, "queued", task=10000 + number, project="other", binding_epoch=epoch)
+        leased = jobs.lease(fleet.store(), machine)
+        grants = allowed in ("Yes", "Yes, once it reports")
+        if grants != (leased is not None):
+            problems.append(f"lease {'granted' if leased else 'refused'}: {where}")
+        if allowed.startswith("Yes, once") and (
+            "a run finishes" in allowed or "leaves Doing" in allowed or "uncertain" in allowed
+        ):
+            if leased is not None:
+                problems.append(f"full but leased: {where}")
+            else:
+                for card in cards:
+                    fleet.move_out_of_doing(card)
+                if jobs.lease(fleet.store(), machine) is None:
+                    problems.append(f"freeing the card did not lease: {where}")
+        checked += 1
+    assert checked >= 90, checked
+    assert problems == [], "\n".join(problems)
+
+
+def test_an_idle_runner_at_its_hourly_limit_says_so_in_the_chip_the_sentence_and_allowed(
+    api, fleet
+):
+    made = fleet.enroll("runner-cap", max_starts_per_hour=2)
+    fleet.seen(made, 5)
+    for index in range(2):
+        fleet.end(fleet.job(made, "started", minutes_ago=30, task=700 + index), minutes_ago=25)
+    item = by_name(read(api))["runner-cap"]
+    assert (item["status"]["code"], item["status"]["label"], item["status"]["tone"]) == (
+        "limit_reached",
+        "Online · Limit reached",
+        "wait",
+    )
+    assert item["status"]["detail"] == (
+        "It has started 2 runs in the last hour, its limit. "
+        "New runs wait until an earlier start is more than an hour old."
+    )
+    assert item["intake"]["allowed"] == "Not right now: hourly limit reached"
+    blocker = {b["code"]: b["text"] for b in item["health"]["blockers"]}["hourly_cap"]
+    assert blocker == "Hourly limit: " + item["status"]["detail"]
+    assert "Waiting for work" not in json.dumps(item)
+    # An earlier start that is more than an hour old no longer counts: the limit clears with time alone.
+    after(api.env, 3600)
+    fleet.seen(made, 5)
+    cleared = by_name(read(api))["runner-cap"]
+    assert cleared["status"]["code"] == "online" and cleared["intake"]["allowed"] == "Yes"
+
+
+def test_a_finished_card_in_doing_needs_attention_and_the_row_count_includes_it(api, fleet):
+    made = fleet.enroll("runner-holds", max_in_flight=3)
+    fleet.seen(made, 5)
+    card = fleet.work(made)
+    fleet.end(fleet.job(made, "started", minutes_ago=60, task=card), minutes_ago=50)
+    fleet.job(made, "started", minutes_ago=5, task=fleet.work(made))
+    result = read(api)
+    item = by_name(result)["runner-holds"]
+    assert item["health"]["state"] == "attention" and result["counts"]["attention"] == 1
+    assert item["usage"]["summary"].startswith(
+        "2 of 3 runs at once in use"
+    )  # the finished run is in the count
+    assert "up to 3 at once" not in item["usage"]["summary"] + item["usage"]["runs"]["text"]
+
+
+def test_a_draining_or_drained_runner_holding_a_finished_card_names_the_card_and_the_action(
+    api, fleet
+):
+    made = fleet.enroll("runner-drain-holds", max_in_flight=2)
+    fleet.seen(made, 5)
+    card = fleet.work(made)
+    fleet.end(fleet.job(made, "started", minutes_ago=60, task=card), minutes_ago=50)
+    api.request("POST", f"{BASE}/runner/{made['machine_id']}/drain", {"expected_seq": 0})
+    status = by_name(read(api))["runner-drain-holds"]["status"]
+    assert status["code"] == "drained" and status["detail"].startswith("Drained. ")
+    assert status["next"] == (
+        f"demo card {card} has finished but is still in Doing. Move it out of Doing (to Done, Review or Todo) "
+        "to free its place."
+    )
+
+
+def _machine(attested=True, cap=1):
+    return {
+        "id": "m",
+        "label": "m",
+        "binding_state": "owner_attested" if attested else "unbound",
+        "max_in_flight": cap,
+        "max_starts_per_hour": 6,
+        "enabled": 1,
+        "revoked_at": None,
+    }
+
+
+def _allowed_for(**facts):
+    base = overview.blank_facts()
+    base.update(facts)
+    record = {"reason": "heartbeat", "status": "up"}
+    reasons = overview.can_take_new_work(_machine(), record, base)
+    return overview._allowed_to_start(reasons)
+
+
+def test_allowed_names_what_really_holds_the_place():
+    assert _allowed_for(running=1) == "Yes, once a run finishes"
+    assert (
+        _allowed_for(running=1, uncertain=1)
+        == "Yes, once the uncertain run is resolved on its card"
+    )
+    assert _allowed_for(running=0, finished_holding=1) == "Yes, once the finished card leaves Doing"
+
+
+def test_a_machine_that_is_not_approved_names_one_step_in_one_place():
+    record = {"reason": "heartbeat", "status": "up"}
+    facts = overview.blank_facts()
+    reasons = overview.can_take_new_work(_machine(attested=False), record, facts)
+    (reason,) = [r for r in reasons if r["code"] == "not_approved"]
+    for text in (reason["blocker"], reason["detail"], reason["next"]):
+        assert "Admin > Runner machines" in text and "Needs me" not in text
+    status = overview.runner_status(_machine(attested=False), record, facts, 0, reasons)
+    assert status["code"] == "not_approved" and status["next"] == reason["next"]
+    # It is something a person acts on, so the overview counts it as needing attention.
+    item = overview.runner_item(
+        _machine(attested=False),
+        {**record, "last_signal_at": None, "age_s": None, "last_signal_source": None},
+        facts,
+        0,
+    )
+    assert item["health"]["state"] == "attention"
+
+
+GUIDED = {
+    "connected": (
+        "waiting_approval",
+        "Waiting for your approval",
+        "It connected and waits for your approval in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
+        "No: not approved yet",
+    ),
+    "failed": (
+        "not_finished",
+        "Not finished",
+        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
+        "No: setup not finished",
+    ),
+    "stalled": (
+        "not_finished",
+        "Not finished",
+        "This setup has not finished. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
+        "No: setup not finished",
+    ),
+}
+
+
+@pytest.mark.parametrize("state", sorted(GUIDED))
+@pytest.mark.parametrize("seen", [None, 5])
+def test_a_guided_machine_waiting_for_approval_reads_the_same_as_add_a_machine_and_the_hub_agrees(
+    api, fleet, state, seen
+):
+    """A machine added through the setup guide is switched off until the owner approves it. The overview says what Add a
+    machine says (waiting for approval, or not finished), never "turned off" or "never contacted", and the hub's lease
+    (the oracle) refuses it."""
+    from commonplace.runner import jobs
+
+    made = fleet.enroll(f"guided-{state}", attest=False)
+    if seen is not None:
+        fleet.seen(made, seen)
+    fleet.guided(made, state)
+    code, label, sentence, allowed = GUIDED[state]
+    status, result = api.request(path=f"{BASE}/runner/{made['machine_id']}")
+    assert status == 200, result
+    item = result["item"]
+    assert (item["status"]["code"], item["status"]["label"]) == (code, label)
+    assert item["status"]["detail"] == sentence
+    assert "Add a machine in Cloud workspaces" in item["status"]["next"]
+    assert item["intake"] == {"allowed": allowed, "reasons": [code]}
+    blocker = item["health"]["blockers"][0]["text"]
+    assert "Add a machine in Cloud workspaces" in blocker
+    assert blocker.count("not finished") + blocker.count("has not finished") <= 0, (
+        "the fact is said once, not three times"
+    )
+    assert (
+        "Not used in this version" in item["usage"]["summary"]
+        and "of 1 run" not in item["usage"]["summary"]
+    )
+    if state == "connected":
+        assert "finished its setup and printed its fingerprint" in item["status"]["next"]
+    assert [b["code"] for b in item["health"]["blockers"]] == [code]
+    assert item["health"]["state"] == "attention", "it is something the owner acts on"
+    assert item["last_seen"] is not None, "it connected: the row says when, not 'never contacted'"
+    text = json.dumps(item)
+    for claim in (
+        "turned this runner off",
+        "Turned off",
+        "turn it on again",
+        "never contacted",
+        "Disabled",
+    ):
+        assert claim not in text, claim
+    machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+    fleet.job(made, "queued", task=31000, project="other", binding_epoch=machine["binding_epoch"])
+    assert jobs.lease(fleet.store(), machine) is None
+    # The list counts it as needing attention too.
+    listed = by_name(read(api))[f"guided-{state}"]
+    assert listed["health"]["state"] == "attention"
+    assert listed["status"]["code"] == code
+
+
+def test_a_machine_the_owner_turned_off_is_still_disabled_when_no_setup_is_open(api, fleet):
+    made = fleet.enroll("owner-off")
+    fleet.seen(made, 5)
+    fleet.disable(made)
+    item = by_name(read(api))["owner-off"]
+    assert (
+        item["status"]["code"] == "disabled" and item["intake"]["allowed"] == "No: it is turned off"
+    )
+
+
+def test_an_attested_unfinished_setup_is_never_leased_work_and_the_overview_says_why(api, fleet):
+    """An older accepted setup with only prerequisites reported is still finishing, even when enabled and attested.
+    Approval does not invent completed checks, and the hub's lease still refuses it."""
+    from commonplace.runner import jobs
+
+    made = fleet.enroll("guided-attested")
+    fleet.seen(made, 5)
+    fleet.guided(made, "connected", accepted=True)
+    item = by_name(read(api))["guided-attested"]
+    assert (item["status"]["code"], item["status"]["label"]) == ("finishing_setup", "Approved")
+    assert item["intake"]["allowed"] == "No: setup not finished"
+    assert "Coworkers do not run on it in this version" in item["status"]["detail"]
+    machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
+    assert machine["enabled"] == 1 and machine["binding_state"] == "owner_attested"
+    fleet.job(made, "queued", task=32000, project="other", binding_epoch=machine["binding_epoch"])
+    assert jobs.lease(fleet.store(), machine) is None

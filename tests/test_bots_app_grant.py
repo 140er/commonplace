@@ -592,13 +592,17 @@ def oauth_app(
     hub, *, email="owner@example.com", scope=f"memory:read memory:write {CHAT} {CONFIRM}", ticks=()
 ):
     client = Client(hub.hub)
-    client.login(email)
     client_id = client.register(client_name="My Phone")
+    if email != "owner@example.com":
+        client.approve(client_id)
+    client.login(email)
     path = client.authorize_path(client_id, scope=scope)
     status, _, page = client.request("GET", path)
     assert status == 200, page
     request = unescape(re.search(r'name="request" value="([^"]+)"', page)[1])
     data = {"request": request, "decision": "allow", **{t: "1" for t in ticks}}
+    if 'name="approve_client"' in page:
+        data["approve_client"] = "1"
     status, headers, _ = client.request("POST", path, data)
     assert status == 303
     query = parse_qs(urlsplit(headers["Location"]).query)

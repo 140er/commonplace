@@ -1,0 +1,2 @@
+- **Owns:**
+  - `docs/sealed-memory-store.md` defines the inert envelope/store API, Linux/native-SQLite secure-open requirements, private-directory trust assumptions, cursor refusals, printed-only metadata and compatibility limits. It retains all nine full-card obligations as OPEN and claims no companion, crypto, export or activation.

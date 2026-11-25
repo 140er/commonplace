@@ -26,6 +26,7 @@ class Plan:
     transcription_seconds: Optional[int]
     sync_interval_seconds: int
     load_throttle: bool
+    owned_workspaces: Optional[int] = None
 
 
 FREE = Plan(
@@ -34,6 +35,7 @@ FREE = Plan(
     10 * 60,
     sync_interval_seconds=15 * 60,
     load_throttle=False,
+    owned_workspaces=5,
 )
 PAID = Plan("paid", None, None, sync_interval_seconds=0, load_throttle=True)
 PLANS = {plan.name: plan for plan in (FREE, PAID)}
@@ -71,6 +73,26 @@ def get_plan(db, user_id: str) -> Optional[Plan]:
 
 def workspace_account(db, workspace_id: str) -> Optional[str]:
     return db.workspace(workspace_id)["personal_of"]
+
+
+def owned_workspace_count(db, user_id: str) -> int:
+    """Ownership, including CLI workspaces; membership alone consumes no allowance."""
+    with db._lock:
+        return db._conn.execute(
+            "SELECT count(*) FROM memberships WHERE user_id=? AND role='owner'", (user_id,)
+        ).fetchone()[0]
+
+
+def check_workspace_creation(db, user_id: str) -> None:
+    """Additional workspaces use the account's existing plan, without changing it."""
+    if not enabled():
+        return
+    plan = get_plan(db, user_id) or FREE
+    if (
+        plan.owned_workspaces is not None
+        and owned_workspace_count(db, user_id) >= plan.owned_workspaces
+    ):
+        raise LimitReached(f"Your plan allows {plan.owned_workspaces} owned workspaces.")
 
 
 def set_plan(db, user_id: str, name: str, *, actor: str) -> None:
@@ -153,15 +175,21 @@ class StorageMeter:
 
     @staticmethod
     def _walk(path) -> int:
+        from mempalace.deadline import remaining
+
+        # Check only an ambient display deadline. Without one, remaining()
+        # returns its argument unchanged, so synchronous admission is unchanged.
         total = 0
         pending = [path]
         while pending:
+            remaining(3.0)
             directory = pending.pop()
             try:
                 if not stat.S_ISDIR(os.stat(directory, follow_symlinks=False).st_mode):
                     continue
                 with os.scandir(directory) as entries:
                     for entry in entries:
+                        remaining(3.0)
                         try:
                             info = entry.stat(follow_symlinks=False)
                         except FileNotFoundError:

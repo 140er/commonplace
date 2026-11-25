@@ -44,6 +44,21 @@ class ModelChoice:
 
 
 @dataclass(frozen=True)
+class Effective:
+    """The model a role runs on and why: ``source`` is project, workspace, default or none."""
+
+    choice: ModelChoice | None
+    source: str
+
+    def public(self) -> dict:
+        return {
+            "provider": self.choice.provider if self.choice else None,
+            "model": self.choice.model if self.choice else None,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True)
 class MainView:
     role: str
     name: str

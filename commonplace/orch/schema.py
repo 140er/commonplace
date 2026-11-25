@@ -887,13 +887,15 @@ def _mcp_dict(mcp: Mcp) -> dict[str, Any]:
     return out
 
 
-def _role_lines(role: Role) -> list[str]:
+def _role_lines(role: Role, effective: dict[str, str] | None = None) -> list[str]:
     facts = [
         f"{key}: `{value}`"
         for key in ("parent", "harness", "topic", "model_role", "workflow", "area")
         if (value := getattr(role, key)) is not None
     ]
     lines = [f"- {', '.join(facts)}"] if facts else []
+    if effective is not None and role.model_role in effective:
+        lines.append(f"- effective model: {effective[role.model_role]}")
     if role.skills:
         lines.append("- skills: " + ", ".join(f"`{s.id}@{s.version}`" for s in role.skills))
     if role.mcps:
@@ -903,8 +905,11 @@ def _role_lines(role: Role) -> list[str]:
     return lines
 
 
-def render(config: Config) -> str:
-    """Markdown bundle of the whole config for advisory sessions and ``orch render``."""
+def render(config: Config, effective: dict[str, str] | None = None) -> str:
+    """Markdown bundle of the whole config for advisory sessions and ``orch render``.
+
+    ``effective`` maps a ``model_role`` to the words for the model it runs on (chosen or
+    default, labelled); the config itself never holds a model, so the caller reads it."""
     lines = [f"# Coworker config `{config.project}`", "", f"- schema: `{config.schema}`"]
     if config.sha256:
         lines.append(f"- sha256: `{config.sha256}`")
@@ -926,7 +931,7 @@ def render(config: Config) -> str:
             f"agent_cards {f.agent_cards}"
         )
     for role in config.roles.values():
-        lines += ["", f"## Role `{role.name}` ({role.kind})", "", *_role_lines(role)]
+        lines += ["", f"## Role `{role.name}` ({role.kind})", "", *_role_lines(role, effective)]
         text = role_instructions(config, role.name)
         if text:
             lines += ["", text]

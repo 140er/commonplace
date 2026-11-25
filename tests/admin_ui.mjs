@@ -4,7 +4,8 @@ import { createNeedLedger } from '../commonplace/web/static/deck-home-today.js';
 
 let raw = ''; for await (const part of process.stdin) raw += part;
 const sources = JSON.parse(raw);
-const url = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+if (sources.admin) sources.admin = sources.admin.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href);
+const url = source => `data:text/javascript;base64,${Buffer.from(source.replaceAll("./request-deadline.js", new URL("../commonplace/web/static/request-deadline.js", import.meta.url).href)).toString('base64')}`;
 const apiURL = url(sources.api);
 const load = async name => import(url(sources[name].replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL))));
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
@@ -51,7 +52,7 @@ async function main() {
       const nodes={'#content':f.mount,'#card-panel':{hidden:true},'#shell-dialog':{close(){}}};
       f.mount.children=[];
       let shared=0;
-      const context={deckNeedsLedger:createNeedLedger(),state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:f.ui,createAdmin,api(){shared++;return new Promise(()=>{});},e:escapeHTML,title(){},navigation(){},currentBoard:()=>null,consoleScreen(){}};
+      const context={prepareRoute:async()=>{},deckNeedsLedger:createNeedLedger(),state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:f.ui,createAdmin,api(){shared++;return new Promise(()=>{});},e:escapeHTML,title(){},navigation(){},currentBoard:()=>null,consoleScreen(){}};
       // adminScreen is production shell glue; use the real controller with the same mount.
       // Execute the complete refresh dependency contract, including the production roster helper.
       runInNewContext(appSlice('function rememberDeckBots(', 'function setBotsWaiting(')+appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
@@ -76,10 +77,10 @@ async function main() {
     const nodes={'#content':f.mount,'#card-panel':panel,'#shell-dialog':{close(){}}};
     f.mount.children=[];
     let stops=0, shows=0;
-    const context={deckNeedsLedger:createNeedLedger(),state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},restore(){},capture:()=>()=>{},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(x){if(x) errors.push(x);},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,
+    const context={prepareRoute:async()=>{},deckNeedsLedger:createNeedLedger(),state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},restore(){},capture:()=>()=>{},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(x){if(x) errors.push(x);},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,
       adminUI:{show(){shows++;f.ui.show();},stop(){stops++;f.ui.stop();}},createAdmin,e:escapeHTML,enc:encodeURIComponent,title(){},navigation(){},currentBoard:()=>null,placeLifecycle(){},consoleScreen(){},needsView(){},boardsView(){},boardView(){},mountWorkbenchChat(){},callTree:()=>'',needsCards:()=>[],
       createDetails:({mount})=>({show(card){mount.innerHTML=`Card ${card.number}: ${card.title}`;},stop(){}}),
-      api(path,options={}){calls.push({path,options}); if(path==='/api/boards') return Promise.resolve({boards:[]}); if(path==='/api/cards/5') return Promise.resolve({number:5,title:'Requested card',board:'demo'}); return Promise.resolve({});}};
+      api(path,options={}){calls.push({path,options}); if(path==='/api/boards' || path==='/api/boards?view=shell') return Promise.resolve({boards:[]}); if(path==='/api/cards/5') return Promise.resolve({number:5,title:'Requested card',board:'demo'}); return Promise.resolve({});}};
     // Execute the complete refresh dependency contract, including the production roster helper.
     runInNewContext(appSlice('function rememberDeckBots(', 'function setBotsWaiting(')+appSlice('async function cardPanel(', 'function newCardForm(')+appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
     await context.route(); await flush();

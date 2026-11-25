@@ -5,7 +5,9 @@ import json
 import logging
 import secrets
 import sqlite3
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from commonplace import control_db, redact, sessions
 from commonplace.boards.service import BoardService
@@ -13,9 +15,9 @@ from commonplace.chat import front, store
 from commonplace.chat.types import MAX_REPLY_CHARS
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
-from commonplace.projects import models
+from commonplace.projects import model_modes, models
 
-from . import chat_context
+from . import budgets, chat_context, chat_ledger, costs, jobs, registry
 from .registry import CHAT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ RELAY_CODES = (
     "bad_output",
     "no_access",
     "daily_limit",
+    "budget_exceeded",
 )
 RUNNER_FAIL_CODES = ("cli_failed", "cli_timeout", "cli_not_configured", "bad_output")
 
@@ -66,6 +69,7 @@ def ensure_schema(db) -> None:
                 user_id TEXT NOT NULL,
                 cli TEXT,
                 model TEXT,
+                account_snapshot TEXT,
                 state TEXT NOT NULL CHECK (state IN ('queued','leased','done','failed','expired','skipped')),
                 code TEXT NOT NULL DEFAULT '',
                 machine_id TEXT,
@@ -86,6 +90,10 @@ def ensure_schema(db) -> None:
                 seen_at TEXT NOT NULL
             );
         """)
+        if "account_snapshot" not in {
+            row[1] for row in db._conn.execute("PRAGMA table_info(chat_runner_jobs)")
+        }:
+            db._conn.execute("ALTER TABLE chat_runner_jobs ADD COLUMN account_snapshot TEXT")
 
 
 def _stamp(now: float) -> str:
@@ -97,6 +105,80 @@ def _day(now: float) -> tuple[str, str]:
         hour=0, minute=0, second=0, microsecond=0
     )
     return control_db._iso(start), control_db._iso(start + timedelta(days=1))
+
+
+def _ts(now: float) -> str:
+    return datetime.fromtimestamp(now, timezone.utc).strftime(costs.TS)
+
+
+def _store(gateway, workspace_id: str):
+    """The workspace's runner store when it exists (no budget can be set before it does)."""
+    if not (Path(gateway.workspace_dir(workspace_id)) / "runner.sqlite3").is_file():
+        return None
+    return jobs.open_store(gateway, workspace_id)
+
+
+def _refusal_text(stop: dict) -> str:
+    return (
+        "This message was not sent to your runner: the %s budget (%s) is spent for the window "
+        "%s to %s. Answers already running finish. The workspace owner can raise or clear "
+        "the budget."
+        % (
+            budgets.label(stop["scope_kind"], stop["scope_key"]),
+            stop["budget"],
+            stop["window_start"],
+            stop["window_end"],
+        )
+    )
+
+
+def _refuse(gateway, workspace_id: str, board: str, message_id: int, user_id: str, stop) -> None:
+    """Tell the person in the chat why their message got no runner answer."""
+    try:
+        store.open_replies(gateway, workspace_id).add(
+            board=board,
+            message_id=message_id,
+            for_user=user_id,
+            kind="answer",
+            code="budget_exceeded",
+            text=_refusal_text(stop),
+            redacted=(),
+            model=None,
+        )
+    except (OSError, sqlite3.Error, TimeoutError) as exc:
+        log_failure(logger, "chat budget refusal reply failed", exc)
+
+
+def _settle(db, rconn, now: float) -> None:
+    """End the ledger rows of chat jobs that are no longer leased (an expired lease may or may
+    not have run, so it ends as uncertain with an unknown cost)."""
+    for row in rconn.execute(
+        "SELECT job_id FROM run_ledger WHERE source='chat' AND ended_at IS NULL"
+    ).fetchall():
+        with db._lock:
+            job = db._conn.execute(
+                "SELECT state FROM chat_runner_jobs WHERE id=?", (row["job_id"],)
+            ).fetchone()
+        if job is None or job["state"] != "leased":
+            chat_ledger.finish(rconn, {"id": row["job_id"]}, None, "uncertain", _ts(now))
+
+
+def _report(gateway, row, machine, status, now, *, provider, model, usage=None) -> None:
+    """Append the chat job's one cost event. A failure is logged; the answer still stands."""
+    try:
+        with jobs.open_store(gateway, row["workspace_id"]).transaction() as rconn:
+            chat_ledger.finish(
+                rconn,
+                row,
+                machine,
+                status,
+                _ts(now),
+                provider=provider,
+                model=model,
+                usage=usage,
+            )
+    except Exception as exc:
+        log_failure(logger, "chat cost report failed", exc)
 
 
 def _used_today(conn, workspace_id, user_id, now):
@@ -122,7 +204,18 @@ def sweep(db, now: float) -> None:
         )
 
 
-def online(db, workspace_id: str, user_id: str, now: float, cli: str | None = None) -> list[dict]:
+def online(
+    db,
+    workspace_id: str,
+    user_id: str,
+    now: float,
+    cli: str | None = None,
+    allowed: frozenset | None = None,
+    excluded: frozenset = frozenset(),
+) -> list[dict]:
+    """The poster's own machines that polled recently. ``allowed`` (a person's account: only the
+    machines behind their connections) and ``excluded`` (the org account: no private machine)
+    come from the model mode; with neither, today's rule."""
     with db._lock:
         rows = db._conn.execute(
             "SELECT s.machine_id,s.relay_always,s.clis FROM chat_runners_seen s "
@@ -135,7 +228,9 @@ def online(db, workspace_id: str, user_id: str, now: float, cli: str | None = No
     return [
         {"machine_id": row["machine_id"], "relay_always": bool(row["relay_always"])}
         for row in rows
-        if cli is None or cli in json.loads(row["clis"])
+        if (cli is None or cli in json.loads(row["clis"]))
+        and (allowed is None or row["machine_id"] in allowed)
+        and row["machine_id"] not in excluded
     ]
 
 
@@ -153,23 +248,162 @@ def main_active(gateway, principal, board: str, now: float) -> bool:
     )
 
 
-def enqueue(gateway, principal, board: str, message_id: int, now: float) -> bool:
+def decision_for(gateway, principal, board: str):
+    """The model mode's decision for this person's chat message (``None``: it cannot be read)."""
+    choice = models.resolve(gateway.db, principal.workspace_id, board, "main")
+    try:
+        return model_modes.resolve_account(
+            gateway.db,
+            principal.workspace_id,
+            board,
+            person=principal.user_id,
+            provider=choice.provider if choice else None,
+        )
+    except model_modes.ModeUnavailable as exc:
+        log_failure(logger, "chat model mode unreadable", exc)
+        return None
+
+
+def _refuse_account(gateway, workspace_id, board, message_id, user_id, code, text) -> None:
+    """Tell the person in the chat why their message got no answer (never silent)."""
+    try:
+        store.open_replies(gateway, workspace_id).add(
+            board=board,
+            message_id=message_id,
+            for_user=user_id,
+            kind="answer",
+            code=code,
+            text=text,
+            redacted=(),
+            model=None,
+        )
+    except (OSError, sqlite3.Error, TimeoutError) as exc:
+        log_failure(logger, "chat account refusal reply failed", exc)
+
+
+def _account_snapshot(db, workspace_id, account, machine):
+    connection = model_modes.connection_of_machine(db._conn, workspace_id, machine["id"])
+    return {
+        "account": account.record(),
+        "connection": connection["id"] if connection is not None else None,
+    }
+
+
+def enqueue(gateway, principal, board: str, message_id: int, now: float, decision=None) -> bool:
     db = gateway.db
     sweep(db, now)
     ws, user = principal.workspace_id, principal.user_id
     choice = models.resolve(db, ws, board, "main")
     cli, model = (choice.provider, choice.model) if choice else (None, None)
-    eligible = online(db, ws, user, now, cli)
+    decision = decision or decision_for(gateway, principal, board)
+    if decision is None:
+        _refuse_account(
+            gateway,
+            ws,
+            board,
+            message_id,
+            user,
+            "mode_unavailable",
+            "The model mode cannot be read right now, so this message was not sent. Try again shortly.",
+        )
+        return False
+    if decision.refusal is not None:
+        if decision.refusal.code == "connection_missing":
+            try:
+                model_modes.note_missing(db, ws, user, board, cli)
+            except (OSError, sqlite3.Error, TimeoutError) as exc:
+                log_failure(logger, "chat missing connection note failed", exc)
+        _refuse_account(
+            gateway, ws, board, message_id, user, decision.refusal.code, decision.refusal.message
+        )
+        return False
+    eligible = online(
+        db,
+        ws,
+        user,
+        now,
+        cli,
+        allowed=frozenset(decision.machine_ids) if decision.kind == "person" else None,
+        excluded=model_modes.private_machine_ids(db, ws)
+        if decision.exclude_private
+        else frozenset(),
+    )
     if not eligible:
+        if decision.kind == "person" and not main_active(gateway, principal, board, now):
+            _refuse_account(
+                gateway,
+                ws,
+                board,
+                message_id,
+                user,
+                "no_runner",
+                "Your own account has no available chat runner. Start your runner with the "
+                "selected provider enabled, then send this message again.",
+            )
         return False
     if main_active(gateway, principal, board, now) and not any(m["relay_always"] for m in eligible):
         return False
+    accounts, agents = {}, []
+    try:
+        with db._lock:
+            for candidate in eligible:
+                machine = registry.get_machine(db, ws, candidate["machine_id"])
+                if machine is None:
+                    continue
+                account = model_modes.resolve_account(
+                    db, ws, board, person=user, provider=cli, machine=machine
+                )
+                if account.refusal is None:
+                    accounts[machine["id"]] = _account_snapshot(db, ws, account, machine)
+                    agents.append(machine["worker_connection_id"])
+    except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
+        log_failure(logger, "chat model mode unreadable at queue", exc)
+        _refuse_account(
+            gateway,
+            ws,
+            board,
+            message_id,
+            user,
+            "mode_unavailable",
+            "The model mode cannot be read right now, so this message was not sent. Try again shortly.",
+        )
+        return False
+    if not accounts:
+        _refuse_account(
+            gateway,
+            ws,
+            board,
+            message_id,
+            user,
+            "account_changed",
+            "The account for this message changed. Send it again to use the current account.",
+        )
+        return False
+    runner = _store(gateway, ws)
+    # The budget check and the insert share one runner write transaction, like a card start.
+    with runner.transaction() if runner is not None else nullcontext() as rconn:
+        stop = None
+        if rconn is not None:
+            _settle(db, rconn, now)
+            stops = [
+                budgets.stop_reason(rconn, _ts(now), agent=agent, project=board, task_number=None)
+                for agent in agents
+            ]
+            stop = stops[0] if stops and all(stops) else None
+        capped, inserted = _insert(db, ws, board, message_id, user, cli, model, stop, now, accounts)
+    if stop is not None and inserted:
+        _refuse(gateway, ws, board, message_id, user, stop)
+    return bool(inserted and not capped and stop is None)
+
+
+def _insert(db, ws, board, message_id, user, cli, model, stop, now, accounts):
     with db._lock, db._tx() as conn:
-        capped = _used_today(conn, ws, user, now) >= DAILY_CAP
+        capped = stop is None and _used_today(conn, ws, user, now) >= DAILY_CAP
+        skipped = capped or stop is not None
         inserted = conn.execute(
             "INSERT OR IGNORE INTO chat_runner_jobs "
-            "(id,workspace_id,board,message_id,user_id,cli,model,state,code,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "(id,workspace_id,board,message_id,user_id,cli,model,state,code,created_at,updated_at,account_snapshot) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 "chat_" + secrets.token_hex(8),
                 ws,
@@ -178,13 +412,14 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float) -> bool
                 user,
                 cli,
                 model,
-                "skipped" if capped else "queued",
-                "daily_limit" if capped else "",
+                "skipped" if skipped else "queued",
+                "budget_exceeded" if stop is not None else "daily_limit" if capped else "",
                 _stamp(now),
                 _stamp(now),
+                json.dumps(accounts, sort_keys=True),
             ),
         ).rowcount
-    return bool(inserted and not capped)
+    return capped, inserted
 
 
 def _poster(gateway, row):
@@ -257,6 +492,14 @@ def lease(
         for row in rows:
             if row["cli"] is not None and row["cli"] not in clis:
                 continue
+            try:
+                saved = json.loads(row["account_snapshot"] or "{}")
+            except (TypeError, ValueError):
+                saved = {}
+            # An excluded poller must leave this message for its admitted machines. Rows
+            # without a usable snapshot are still claimed to refuse their unknown account.
+            if isinstance(saved, dict) and saved and machine["id"] not in saved:
+                continue
             if conn.execute(
                 "UPDATE chat_runner_jobs SET state='leased',machine_id=?,lease_hash=?,"
                 "lease_until=?,updated_at=? WHERE id=? AND state='queued'",
@@ -283,6 +526,88 @@ def lease(
         except Exception as exc:
             log_failure(logger, "chat relay finish failed", exc)
         return None
+    try:
+        with db._lock:
+            account = model_modes.resolve_account(
+                db,
+                claimed["workspace_id"],
+                claimed["board"],
+                person=claimed["user_id"],
+                provider=claimed["cli"],
+                machine=machine,
+            )
+            current = _account_snapshot(db, claimed["workspace_id"], account, machine)
+    except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
+        log_failure(logger, "chat model mode unreadable at lease", exc)
+        account = None
+    changed = account is not None and (
+        not isinstance(saved, dict) or saved.get(machine["id"]) != current
+    )
+    if account is None or account.refusal is not None or changed:
+        # The mode or the connection changed since the message was queued: never run it on a
+        # different account, and tell the person.
+        code = (
+            "mode_unavailable"
+            if account is None
+            else account.refusal.code
+            if account.refusal is not None
+            else "account_changed"
+        )
+        text = (
+            "The model mode cannot be read right now; try again shortly."
+            if account is None
+            else account.refusal.message
+            if account.refusal is not None
+            else "The account for this message changed. Send it again to use the current account."
+        )
+        with db._lock:
+            _finish(
+                db._conn,
+                claimed,
+                "skipped",
+                code,
+                now,
+            )
+        _refuse_account(
+            gateway,
+            claimed["workspace_id"],
+            claimed["board"],
+            claimed["message_id"],
+            claimed["user_id"],
+            code,
+            text,
+        )
+        return None
+    try:
+        with jobs.open_store(gateway, claimed["workspace_id"]).transaction() as rconn:
+            _settle(db, rconn, now)
+            stop = budgets.stop_reason(
+                rconn,
+                _ts(now),
+                agent=machine["worker_connection_id"],
+                project=claimed["board"],
+                task_number=None,
+            )
+            if stop is None:
+                chat_ledger.start(rconn, claimed, machine, _ts(now), account.record())
+    except Exception as exc:
+        log_failure(logger, "chat lease admission failed", exc)
+        with db._lock:
+            _finish(db._conn, claimed, "failed", "bad_output", now)
+        return None
+    if stop is not None:
+        # Queued, not running: a spent budget skips it. Running work is never touched.
+        with db._lock:
+            _finish(db._conn, claimed, "skipped", "budget_exceeded", now)
+        _refuse(
+            gateway,
+            claimed["workspace_id"],
+            claimed["board"],
+            claimed["message_id"],
+            claimed["user_id"],
+            stop,
+        )
+        return None
     return {
         "job": claimed["id"],
         "lease_token": token,
@@ -308,7 +633,15 @@ def _fenced(conn, machine, job, lease_token, now):
 
 
 def answer(
-    gateway, machine: dict, job: str, lease_token: str, text: str, cli: str, model: str, now: float
+    gateway,
+    machine: dict,
+    job: str,
+    lease_token: str,
+    text: str,
+    cli: str,
+    model: str,
+    now: float,
+    usage: dict | None = None,
 ) -> dict:
     machine = dict(machine)
     db = gateway.db
@@ -351,12 +684,30 @@ def answer(
             except (OSError, sqlite3.Error):
                 raise ReplyBusy() from None
             _finish(conn, row, "done", "ok", now)
+    _report(
+        gateway,
+        row,
+        machine,
+        "errored" if poster is None else "completed",
+        now,
+        provider=cli,
+        model=model,
+        usage=usage,
+    )
     if poster is None:
         raise Fenced()
     return {"job": job, "state": "done"}
 
 
-def fail(gateway, machine: dict, job: str, lease_token: str, code: str, now: float) -> dict:
+def fail(
+    gateway,
+    machine: dict,
+    job: str,
+    lease_token: str,
+    code: str,
+    now: float,
+    usage: dict | None = None,
+) -> dict:
     machine = dict(machine)
     db = gateway.db
     with db._lock, db._tx() as conn:
@@ -364,6 +715,9 @@ def fail(gateway, machine: dict, job: str, lease_token: str, code: str, now: flo
         if code not in RUNNER_FAIL_CODES:
             raise InvalidReply("Invalid runner failure code")
         _finish(conn, row, "failed", code, now)
+    _report(
+        gateway, row, machine, "errored", now, provider=row["cli"], model=row["model"], usage=usage
+    )
     return {"job": job, "state": "failed", "code": code}
 
 

@@ -83,7 +83,7 @@ import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from commonplace.boards.priority import name as priority_name
+from commonplace.boards.priority import name as priority_name, source as priority_source
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
@@ -1815,6 +1815,31 @@ def unstarted_todo(ctx, st, board_row) -> list[dict]:
     return listed
 
 
+def rankable_cards(ctx, board_row) -> list[dict]:
+    """Todo and backlog cards no person has ranked, for the Coworker's ranking pass.
+
+    Each carries its current ``priority`` and ``priority_source`` (``default``: never ranked,
+    ``coworker``: ranked before, open to a refresh). A card a person ranked is never listed:
+    that priority always wins. Most urgent first, then card number."""
+    with BoardStore(ctx.workspace_dir()).connection() as conn:
+        rows = conn.execute(
+            "SELECT t.id, t.title, t.status, t.priority, t.priority_by FROM tasks t "
+            "WHERE t.board_id=? AND t.status IN ('todo','backlog') AND t.priority_by!='person' "
+            "AND NOT " + snooze.snoozed_sql("t") + " ORDER BY t.priority, t.id LIMIT ?",
+            (board_row["id"], snooze.now_stamp(), MAX_LIST),
+        ).fetchall()
+    return [
+        {
+            "card": row["id"],
+            "title": row["title"],
+            "status": row["status"],
+            "priority": priority_name(row["priority"]),
+            "priority_source": priority_source(row["priority_by"]),
+        }
+        for row in rows
+    ]
+
+
 def _misses(conn, board):
     if not conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_misses'"
@@ -2052,6 +2077,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         "inbox_findings": inbox_findings,
         "cards": cards,
         "unstarted": unstarted_todo(ctx, st, board_row)[:MAX_LIST],
+        "rankable": rankable_cards(ctx, board_row),
     }
 
 

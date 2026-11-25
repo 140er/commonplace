@@ -1,0 +1,1 @@
+- **Owns:** the shell's focus restore (`app.js` `focusKey`) also knows the Previews section's `data-preview-*` keys, so focus returns to the same control after a card redraw; `workbench.css` gives the section 44 px controls and 16 px inputs on touch screens and below 1000 px and wraps long names at 320 px.

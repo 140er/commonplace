@@ -136,7 +136,17 @@ def on_event(gateway, event: dict) -> None:
                 db, workspace_id, board, message_id, user_id, page["coordinator"], time.time()
             )
         front = settings.front(db, workspace_id, board)
-        if front.applies and front.enabled and front.provider != "none":
+        # Model modes (card #617): a person's own account never falls back to the hosted front's
+        # operator key, so a message that must run on their account goes to their runner instead.
+        decision, own_account = None, False
+        if getattr(gateway, "runner_installed", False):
+            from commonplace.runner import chat_relay
+
+            decision = chat_relay.decision_for(gateway, principal, board)
+            own_account = (
+                decision is None or decision.kind == "person" or decision.refusal is not None
+            )
+        if front.applies and front.enabled and front.provider != "none" and not own_account:
             wake = store.enqueue(db, workspace_id, board, message_id, user_id) or wake
         if wake:
             gateway.chat_worker.wake()
@@ -152,12 +162,10 @@ def on_event(gateway, event: dict) -> None:
         )
         if (
             front.enabled
-            and front.provider == "none"
+            and (front.provider == "none" or own_account)
             and getattr(gateway, "runner_installed", False)
         ):
-            from commonplace.runner import chat_relay
-
-            chat_relay.enqueue(gateway, principal, board, message_id, time.time())
+            chat_relay.enqueue(gateway, principal, board, message_id, time.time(), decision)
 
     except Exception as exc:
         log_failure(logger, "chat front event failed", exc)

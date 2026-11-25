@@ -1,0 +1,1 @@
+- **Promises:** `docs/handoff.md` has a "From the app" section that says how to open a saved thread and its chain from Memory, which history a new agent would use, and what the handoff review shows before anything starts.

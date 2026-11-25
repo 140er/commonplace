@@ -28,7 +28,7 @@ const nodes = {};
 for (const selector of ['#content', '#card-panel', '#title', '#head-actions', '.shell']) nodes[selector] = node();
 const root = { querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {} };
 let titleActions = '';
-const context = { root, state, e, placeLifecycle: () => {}, mountProjectPanel: async () => {}, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
+const context = { prepareRoute: async () => {}, loadRouteModule: async () => {}, root, state, e, placeLifecycle: () => {}, mountProjectPanel: async () => {}, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
   matchMedia: () => ({ matches: false }), remember: () => ({}), restore() {}, markOpenCard() {}, title(_text, actions) { titleActions = actions; }, voice: { stop() {} }, showError() {}, message: (text) => text, showLoading: (host, text) => { host.innerHTML = text; } };
 const run = (s) => runInNewContext(s, context);
 // The shell's board helpers (child cards, phone width); a shell without them only lists state.cards.
@@ -87,7 +87,7 @@ if (which === 'details-button') {
   await run('cardPanel(5, 0)');
   assert.equal(hide.focused, 1); assert.equal(state.detailsSheet, false);
 } else if (which === 'row-src') {
-  const body = slice('onCard(number, row) {', '\n    const dock = createDock(').replace(/\}\);\s*$/, '');
+  const body = slice('onCard(number, row) {', '\n    let chatLoading').replace(/\};\s*$/, '');
   helpers();
   run(`var callbacks = { ${body} };`);
   assert.equal(typeof context.callbacks.onCard, 'function');
@@ -154,9 +154,11 @@ if (which === 'details-button') {
     injected: async (host, options) => mounted.push(options) });
   run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));
   run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injected, settingsOptions})'));
-  const click = (dataset) => handlers.click({ target: { closest: (s) => s.includes('.chat-recovery') ? null : { dataset } } });
+  let prevented = 0;
+  const click = (dataset) => handlers.click({ preventDefault() { prevented++; }, target: { closest: (s) => s.includes('.chat-recovery') ? null : { dataset } } });
   await click({ action: 'coordinator', board: 'alpha' });
   assert.equal(paused, true);
+  assert.equal(prevented, 1, 'settings links prevent navigation before the async import');
   assert.equal(mounted.length, 1); assert.equal(typeof mounted[0].onBack, 'function');
   assert.equal(mounted[0].focus, undefined, 'the coordinator button opens settings without a focus target');
   // "Set the model" on a Needs me row opens that board's settings on that role's picker.

@@ -44,9 +44,12 @@ def test_admin_owner_cold_reload_retry_and_responsive_navigation(hub, chromium, 
 
         page.route("**/api/admin/**/connections", connections)
         page.goto(origin + "/app/#/admin", wait_until="domcontentloaded")
-        expect(
-            page.get_by_role("heading", name="Workspace administration", exact=True)
-        ).to_be_visible()
+        if width >= 700:
+            expect(
+                page.get_by_role("heading", name="Workspace administration", exact=True)
+            ).to_be_visible()
+        else:
+            expect(page.locator(".admin")).to_be_visible()
         expect(
             page.locator('[data-admin-section="users"]').get_by_text(
                 "owner@example.com", exact=True
@@ -61,8 +64,10 @@ def test_admin_owner_cold_reload_retry_and_responsive_navigation(hub, chromium, 
         expect(page.get_by_text("Running commit unknown", exact=True)).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         if width < 700:
-            page.get_by_role("button", name="Project: Projects. Switch project", exact=True).click()
-            expect(page.get_by_role("option", name="Admin", exact=True)).to_be_visible()
+            page.locator(".deck-tab-more").click()
+            expect(
+                page.locator("#deck-more").get_by_role("link", name="Admin", exact=True)
+            ).to_be_visible()
             page.keyboard.press("Escape")
         else:
             page.locator(".user-menu summary").click()
@@ -101,8 +106,9 @@ def test_admin_member_direct_route_sends_no_inventory_requests(hub, chromium):
             page.get_by_text("a signed-in workspace owner is required", exact=True)
         ).to_be_visible()
         assert page.locator('a[href="#/admin"]').count() == 0
-        page.get_by_role("button", name="Project: Projects. Switch project", exact=True).click()
-        assert page.get_by_role("option", name="Admin", exact=True).count() == 0
+        page.locator(".deck-tab-more").click()
+        expect(page.locator("#deck-more")).to_be_visible()
+        assert page.locator("#deck-more").get_by_role("link", name="Admin", exact=True).count() == 0
         assert reads == []
     finally:
         context.close()

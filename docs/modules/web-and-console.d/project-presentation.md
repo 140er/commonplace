@@ -1,0 +1,4 @@
+- **Owns:** `project-presentation.js` and its two Project settings sections: the panel editor and the coordinator replacement with an effect preview and explicit confirm.
+- **Promises:** The coordinator section says it does not change models or tokens, shows who stops and starts coordinating and what that does to open asks and cards before Confirm, and writes only through the existing panel and board settings routes; people who may not edit see read-only text with the reason.
+- **How it fails:** Each failure shows a plain message, keeps the typed panel text and the old coordinator, and re-reads the server state; an unreadable coordinator shows a message and Try again, never an empty box. Names and panel text are escaped, never placed through string replacement.
+- **Tests:** `tests/test_project_presentation_browser.py` runs owner and non-owner journeys at 1280 and 390 with synthetic HTTP, including failed writes.

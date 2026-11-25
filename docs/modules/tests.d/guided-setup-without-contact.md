@@ -1,0 +1,4 @@
+- **Owns:** Regressions for authoritative checked-guided state without connection telemetry.
+- **Promises:** Matching list and detail requests use real isolated registry and pairing state. Credential-rotation coverage calls the owner rotation path; developer controls preserve their independent state and recorded resources.
+- **How it fails:** Generic never-connected advice or apparent runnable capacity on a checked guided machine fails a behavioral endpoint assertion.
+- **Tests:** tests/test_compute_guided_telemetry.py runs alongside existing Compute overview and pairing coverage.

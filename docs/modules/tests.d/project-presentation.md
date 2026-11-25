@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_project_presentation.py` and `tests/test_project_presentation_browser.py`.
+- **Promises:** The server file fails on plain develop without `can_edit_panel` and the coordinator effect counts; the browser file fails without the two settings sections. Both include non-owner denial.
+- **How it fails:** The browser file skips without Playwright; it uses synthetic responses and changes no real project, panel or coordinator.
+- **Tests:** Run both files, the coordinator settings and panel suites, the project view and settings Node checks, and the documentation guards.

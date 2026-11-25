@@ -113,11 +113,11 @@ def test_signup_assigns_once_and_never_overwrites(hub, monkeypatch):
 
 
 def test_plan_schema_rejects_unknown_plans_and_users(hub):
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(sqlite3.IntegrityError), hub.db._tx():
         hub.db._conn.execute(
             "INSERT INTO account_plans VALUES (?, 'other', 'admin', 'now')", (hub.admin,)
         )
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(sqlite3.IntegrityError), hub.db._tx():
         hub.db._conn.execute("INSERT INTO account_plans VALUES ('missing', 'free', 'admin', 'now')")
     with pytest.raises(ControlError):
         assign(hub, "other")
@@ -126,6 +126,7 @@ def test_plan_schema_rejects_unknown_plans_and_users(hub):
 def test_under_storage_limit_allows_worker_local_and_rest_writes(hub, monkeypatch):
     monkeypatch.setenv("COMMONPLACE_PLANS", "on")
     assign(hub)
+    assert plans.FREE.storage_bytes is not None
     fill(hub, plans.FREE.storage_bytes - 1)
     token = hub.owner_token()
     result = tool(
@@ -199,6 +200,7 @@ def test_full_storage_allows_logout_and_ends_session(hub, monkeypatch):
     cookie, _, _ = login(hub)
     monkeypatch.setenv("COMMONPLACE_PLANS", "on")
     assign(hub)
+    assert plans.FREE.storage_bytes is not None
     fill(hub, plans.FREE.storage_bytes + 1)
     status, _, _ = request(
         hub, "/app/logout", "POST", headers={**cookie, "Content-Type": "application/json"}
@@ -214,6 +216,7 @@ def test_full_storage_allows_oauth_consent(hub, monkeypatch):
     client.login(email=hub.db.user(hub.admin)["email"])
     monkeypatch.setenv("COMMONPLACE_PLANS", "on")
     assign(hub)
+    assert plans.FREE.storage_bytes is not None
     fill(hub, plans.FREE.storage_bytes + 1)
     assert client.consent(client_id)
     assert not audits(hub, "plan.limit")
@@ -224,6 +227,7 @@ def test_full_storage_allows_signed_in_provider_callback(hub, monkeypatch):
     monkeypatch.setitem(hub.gateway.sign_in.providers, "apple", SimpleNamespace(id="apple"))
     monkeypatch.setenv("COMMONPLACE_PLANS", "on")
     assign(hub)
+    assert plans.FREE.storage_bytes is not None
     fill(hub, plans.FREE.storage_bytes + 1)
     status, headers, _ = request(
         hub,
@@ -287,6 +291,7 @@ def test_unlimited_accounts_are_not_storage_limited(hub, monkeypatch, name):
     monkeypatch.setenv("COMMONPLACE_PLANS", "on")
     monkeypatch.setattr(plans, "load_ratio", lambda: 0)
     assign(hub, name)
+    assert plans.FREE.storage_bytes is not None
     fill(hub, plans.FREE.storage_bytes + 1)
     result = tool(hub, hub.owner_token(), "board_add", slug="work", wing="shared")
     assert not result["result"].get("isError")
@@ -406,7 +411,7 @@ def test_load_ratio_uses_cpu_count_and_handles_unavailable(monkeypatch):
 def test_gateway_sleeps_only_for_paid_account_mcp_and_api(hub, monkeypatch, switch, name):
     monkeypatch.setenv("COMMONPLACE_PLANS", switch)
     assign(hub, name)
-    delays = []
+    delays: list[float] = []
     monkeypatch.setattr(plans, "load_ratio", lambda: 0.8)
     monkeypatch.setattr("commonplace.gateway.sleep", delays.append)
     token = hub.owner_token()
@@ -431,17 +436,33 @@ def test_plan_api_payload_for_tokens_and_people(hub, monkeypatch, name):
     fill(hub, 12)
     if name == "free":
         plans.use_transcription(hub.db, hub.admin, 123)
+    storage = {
+        "used": 12,
+        "limit": plans.FREE.storage_bytes if name == "free" else None,
+        "state": "ready",
+    }
     expected = {
         "enabled": True,
         "plan": name if name != "none" else None,
-        "storage": {"used": 12, "limit": plans.FREE.storage_bytes if name == "free" else None},
+        "storage": storage,
         "transcription": {
             "used_today": 123 if name == "free" else 0,
             "limit": 600 if name == "free" else None,
         },
         "sync": {"interval_seconds": 900 if name == "free" else 0},
     }
-    assert api(hub, hub.owner_token(), "GET", "/api/plan") == (200, expected)
+    # The initial snapshot may still be loading. Join its bounded refresh,
+    # then check the exact counters without polling or a timing assumption.
+    token = hub.owner_token()
+    api(hub, token, "GET", "/api/plan")
+    from commonplace.web.startup import snapshots
+
+    cache = snapshots(hub.gateway)
+    assert cache.slots.acquire(timeout=2)
+    assert cache.slots.acquire(timeout=2)
+    cache.slots.release()
+    cache.slots.release()
+    assert api(hub, token, "GET", "/api/plan") == (200, expected)
     cookie, _, _ = login(hub)
     assert api(hub, cookie, "GET", "/api/plan") == (200, expected)
     assert api(hub, None, "GET", "/api/plan")[0] == 401

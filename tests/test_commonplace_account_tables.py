@@ -101,6 +101,8 @@ def test_secret_columns():
 REVIEWED_PLAIN = {
     "auth",
     "authorize_path",
+    "binding_scope_sha256",
+    "grant_scope_sha256",
     "idempotency_key",
     "key",
     "key_ref",

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import stat
 import subprocess
 import sys
@@ -23,7 +24,13 @@ HOOK = ROOT / "backup-hook.sh"
 
 def test_image_installs_repo_and_runs_as_nonroot():
     text = DOCKERFILE.read_text()
-    assert text.startswith("FROM python:3.12-slim\n")
+    # Build tools stay in their stage; the runtime keeps the original Python base.
+    assert text.startswith("FROM node:22.14.0-bookworm-slim AS web-assets\n")
+    assert "\nFROM python:3.12-slim\n" in text
+    assert "COPY scripts/web-build/*.mjs ./scripts/web-build/\n" in text
+    assert "npm " not in text
+    assert "RUN node scripts/web-build/build.mjs\n" in text
+    assert "COPY --from=web-assets /build/commonplace/web/static/build/" in text
     assert 'RUN pip install ".[commonplace]"\n' in text
     users = re.findall(r"^USER (.+)$", text, re.MULTILINE)
     assert users == ["10001:10001"]
@@ -87,6 +94,7 @@ def test_caddy_preserves_api_paths_and_has_exclusive_static_fallback():
         "/mcp",
         "/health",
         "/healthz",
+        "/p/*",
         "/s/*",
         "/oauth/*",
         "/.well-known/*",
@@ -647,14 +655,32 @@ fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")).replace(
     env.update(fakes.get("env", {}))
     for key in fakes.get("unset", []):
         env.pop(key, None)
-    result = subprocess.run(
-        [str(bin_dir / "bash"), str(DEPLOY_SH), *fakes.get("args", [])],
+    command = [str(bin_dir / "bash"), str(DEPLOY_SH), *fakes.get("args", [])]
+    # A runner may ignore SIGINT. Bash cannot trap a signal ignored on entry;
+    # reset it in a child before exec, without changing the runner's handler.
+    launcher = (
+        "import os, signal, sys; "
+        "signal.signal(signal.SIGINT, signal.SIG_DFL); "
+        "os.execv(sys.argv[1], sys.argv[1:])"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", launcher, *command],
         env=env,
         stdin=subprocess.DEVNULL,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=30,
-    )
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate()
+        finally:
+            # Only this fixture's private group, also when the test is interrupted.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     calls = (
         [json.loads(line) for line in calls_file.read_text().splitlines()[previous_calls:]]
         if calls_file.exists()
@@ -734,10 +760,20 @@ def test_deploy_sh_holds_invocation_proof(tmp_path, scenario):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
-@pytest.mark.parametrize("signal", ["HUP", "INT", "TERM"])
-def test_deploy_sh_releases_reference_on_signal(tmp_path, signal):
-    result, calls = run_deploy(tmp_path, gc=True, hold_signal=f'kill -{signal} "$PPID"')
-    assert result.returncode == {"HUP": 129, "INT": 130, "TERM": 143}[signal]
+@pytest.mark.parametrize("inherited_sigint", ["default", "ignored"])
+@pytest.mark.parametrize("signal_name", ["HUP", "INT", "TERM"])
+def test_deploy_sh_releases_reference_on_signal(tmp_path, signal_name, inherited_sigint):
+    previous = signal.signal(
+        signal.SIGINT, signal.SIG_IGN if inherited_sigint == "ignored" else signal.SIG_DFL
+    )
+    try:
+        result, calls = run_deploy(tmp_path, gc=True, hold_signal=f'kill -{signal_name} "$PPID"')
+        assert signal.getsignal(signal.SIGINT) == (
+            signal.SIG_IGN if inherited_sigint == "ignored" else signal.SIG_DFL
+        )
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert result.returncode == {"HUP": 129, "INT": 130, "TERM": 143}[signal_name]
     assert not (tmp_path / "reference").exists()
     assert any(call[:2] == ["systemctl", "stop"] for call in calls)
     assert not any(call[0] == "docker" for call in calls)
@@ -1384,3 +1420,40 @@ def test_stage_archive_records_the_archived_commit(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert not (bare / ".release-commit").exists()
+
+
+def test_public_template_routes_preview_addresses_to_the_gateway_on_the_app_host_only():
+    text = (DEPLOY / "commonplace-public.caddy.example").read_text()
+    app = re.search(r"@app path (.+)", text)[1].split()
+    agent = re.search(r"@agent path (.+)", text)[1].split()
+    assert "/p/*" in app
+    assert "/p/*" not in agent
+    assert "/p/*" in (DEPLOY / "commonplace" / "DEPLOY.md").read_text()
+
+
+def test_templates_keep_x_frame_options_deny_everywhere_except_preview_addresses():
+    """The gateway sets the frame policy of /p/* itself (the viewer page is never framed, a
+    preview's files are framed by the viewer only), so the proxy must not add a second header
+    there; every other page keeps DENY, the OAuth pages on the apex included."""
+    private = "\n".join(line for line in CADDY.read_text().splitlines() if not line.startswith("#"))
+    public = (DEPLOY / "commonplace-public.caddy.example").read_text()
+    for text in (private, public):
+        site_wide = re.search(r"\(commonplace_headers\) \{(.*?)\n\}", text, re.S) or re.search(
+            r"hub.example.com \{.*?header \{(.*?)\}", text, re.S
+        )
+        assert "X-Frame-Options" not in site_wide[1]
+        assert "@notpreview not path /p/*" in text
+    assert (
+        "header @notpreview X-Frame-Options DENY"
+        in private.split("handle @backend {")[1].split("reverse_proxy")[0]
+    )
+    assert "header X-Frame-Options DENY" in private.split("\n\thandle {", 1)[1]
+    app = public.split("app.cmmn.dev {", 1)[1].split("\n}\n", 1)[0]
+    assert "header @notpreview X-Frame-Options DENY" in app.split("handle @app {")[1].split("}")[0]
+    apex = public.split("\ncmmn.dev {", 1)[1].split("\n}\n", 1)[0]
+    website = public.split("commonplace.run, www.commonplace.run {", 1)[1].split("\n}\n", 1)[0]
+    for host in (apex, website):
+        assert "import commonplace_frame_deny" in host
+    assert "(commonplace_frame_deny) {\n\theader X-Frame-Options DENY\n}" in public
+    text = (DEPLOY / "commonplace" / "DEPLOY.md").read_text()
+    assert "X-Frame-Options: SAMEORIGIN" in text and "must therefore not" in text

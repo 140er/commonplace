@@ -32,6 +32,7 @@ MODULES = (
     "commonplace.boards",
     "commonplace.rules",
     "commonplace.memory_tools",
+    "commonplace.memory_organise",
     "commonplace.skills",
     "commonplace.session",
     "commonplace.account",
@@ -63,6 +64,8 @@ MODULES = (
     "commonplace.topology.extension",
     "commonplace.pipeline",
     "commonplace.person_actions",
+    "commonplace.previews",
+    "commonplace.pr_review",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})

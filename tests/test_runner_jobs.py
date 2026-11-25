@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mempalace.sqlite_crypto import connect
+from mempalace.sqlite_crypto import connect, row_factory
 from tests.runner_harness import (
     attest,
     card,
@@ -251,15 +251,21 @@ def test_l4_concurrent_leases(signup_hub, owners):  # noqa: F811
 def started_capacity(tmp_path, monkeypatch):
     from threading import RLock
 
-    from commonplace.projects import orchestration
+    from commonplace.projects import model_modes, orchestration
     from commonplace.runner import jobs, registry
 
     monkeypatch.setattr(orchestration, "enabled", lambda db, ws: False)
     monkeypatch.setattr(jobs, "_sweep", lambda store: None)
+    control = connect(str(tmp_path / "control.sqlite3"), isolation_level=None)
+    control.row_factory = row_factory
     gw = SimpleNamespace(
         workspace_dir=lambda ws: str(tmp_path),
-        db=SimpleNamespace(_lock=RLock(), connection=lambda ref, ws: {"name": "worker"}),
+        db=SimpleNamespace(
+            _lock=RLock(), _conn=control, connection=lambda ref, ws: {"name": "worker"}
+        ),
     )
+    # Shared jobs still need authoritative proof that the machine is not personal.
+    model_modes.ensure_schema(gw.db)
     store = jobs.JobStore(gw, "ws")
     boards = connect(str(tmp_path / "boards.sqlite3"), isolation_level=None)
     boards.executescript(
@@ -304,6 +310,7 @@ def started_capacity(tmp_path, monkeypatch):
         yield store, machine, first, boards
     finally:
         boards.close()
+        control.close()
 
 
 @pytest.mark.parametrize("max_in_flight", [1, 2])

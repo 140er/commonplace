@@ -209,3 +209,21 @@ def redact_value(obj) -> tuple[object, list[str]]:
             kinds.update(found)
         return clean, [kind for kind in KINDS if kind in kinds]
     return redact(obj)
+
+
+def find_kinds(text, kinds) -> list[str]:
+    """Which of ``kinds`` occur in ``text`` of any length; nothing is changed or truncated.
+
+    For callers that must refuse a file holding a credential-shaped value (a published bundle)
+    but must not rewrite it, and that choose only the high-confidence kinds: the broad ones
+    (``assignment``, ``random_token``) match ordinary build output."""
+    if not isinstance(text, str):
+        return []
+    wanted = set(kinds)
+    found = []
+    if "private_key" in wanted and _BEGIN_KEY.search(text):
+        found.append("private_key")
+    found.extend(
+        kind for kind, pattern in _PATTERNS if kind in wanted and pattern.search(text) is not None
+    )
+    return found

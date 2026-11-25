@@ -245,7 +245,7 @@ def test_work_status_review_blocked_and_needs_you():
         "status": "doing",
         "waiting": {"code": "blocked_by", "blockers": [{"number": 4, "title": "Fix"}]},
     }
-    assert blocks.work_status(blockers) == ("blocked", "Waiting on #4: Fix")
+    assert blocks.work_status(blockers) == ("blocked", "Waiting for #4: Fix")
     assert blocks.work_status({"status": "doing"}) == ("working", "")
 
 

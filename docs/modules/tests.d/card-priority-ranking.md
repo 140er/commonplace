@@ -1,0 +1,4 @@
+- **Owns:** Acceptance for card priority ranking and priority-ordered starts.
+- **Promises:** `tests/test_card_priority_ranking.py` covers priority-ordered starts and retries with one free slot, equal priorities keeping their order, the agent limit and `blocked_by` holding, a new card getting a default priority, the Coworker ranking with a reason in the card history, the owner's priority winning (even when equal to the default), a revisited event never starting a second job, a pre-existing non-default priority surviving the migration as the owner's, the checkpoint ranking list, and the task line and REST card showing who ranked.
+- **How it fails:** The ordering cases fail on the base because starts follow event order there; the ranking cases fail because only the owner could set a priority.
+- **Tests:** `tests/test_card_priority_ranking.py`; `tests/test_commonplace_boards.py` pins the card key set, which now includes `priority_source`.

@@ -75,6 +75,9 @@ import { pathToFileURL } from "node:url";
 const agents = await import(pathToFileURL("commonplace/web/static/agents.js"));
 const connection = { id: "conn-one", name: "Agent <one>", auth: "pat", client: "codex", read_wings: ["project_a"] };
 const html = agents.agentsView({ connections: [connection], wings: ["project_a", "project_b"] });
+const pending = agents.agentsView({ connections: [connection], wings: null, wings_state: "loading" });
+assert.ok(pending.includes("Agent &lt;one&gt;"), "Unknown wings must preserve the agent list");
+assert.ok(!pending.includes('data-action="agent-wings"'), "Unknown wings must not offer a fabricated access list");
 assert.ok(html.includes('data-action="agent-wings"'), "Existing agents need a read access action");
 assert.ok(html.includes('value="project_b"'), "Owner must be able to pick a project wing");
 assert.match(html, /value="project_a"[^>]*checked/);
@@ -95,6 +98,10 @@ assert.equal(requests[0].options.method, "PATCH");
 assert.deepEqual(JSON.parse(requests[0].options.body), { read_wings: ["project_a", "project_b"] });
 assert.ok(list.innerHTML.includes('value="project_b" checked'));
 assert.equal(section.dataset.busy, undefined);
+globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ connections: [connection], wings: null, wings_state: "loading" }) });
+await agents.agentAction(button);
+assert.ok(list.innerHTML.includes("Agent &lt;one&gt;"), "Mutation refresh also accepts unknown wings");
+assert.ok(!list.innerHTML.includes('data-action="agent-wings"'));
 """
     result = subprocess.run(
         [shutil.which("node"), "--input-type=module", "-e", script],
@@ -179,6 +186,15 @@ def test_agent_listing_offers_only_existing_nonprivate_wings(hub, fresh):
     seed_memory(fresh, "LIST_CANARY", "project_a")
     seed_memory(fresh, "PRIVATE_CANARY", "private.notes")
     created = create(hub, fresh, read_wings=["project_a"])
+    status, _, payload = http(hub, "GET", cookie=fresh.cookie)
+    assert status == 200
+    from commonplace.web.startup import snapshots
+
+    cache = snapshots(hub.gateway)
+    assert cache.slots.acquire(timeout=2)
+    assert cache.slots.acquire(timeout=2)
+    cache.slots.release()
+    cache.slots.release()
     status, _, payload = http(hub, "GET", cookie=fresh.cookie)
     assert status == 200
     assert "project_a" in payload.get("wings", [])

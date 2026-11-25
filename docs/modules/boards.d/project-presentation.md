@@ -1,0 +1,4 @@
+- **Owns:** The `effect` block of the owner-only coordinator read in `commonplace/boards/service.py`: open card count and open asks addressed to the current coordinator.
+- **Promises:** The counts are read-only and given only to the workspace owner, in the same response as the eligible agents; `board_set` rules and its grant clearing are unchanged.
+- **How it fails:** Non-owners are refused as before and receive no counts; a board without a coordinator reports zero waiting asks.
+- **Tests:** `tests/test_project_presentation.py` and `tests/test_commonplace_board_coordinator_settings.py` check the counts, the candidate list and the refusals.

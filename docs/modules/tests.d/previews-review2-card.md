@@ -1,0 +1,1 @@
+- **Owns:** `tests/cardpreviews.mjs` covers the stop-rule form kept through list repaints, panel redraws and a refused Save, real focus, status said before a request, the key and static note and the publisher and version words; `tests/test_card_previews_browser.py` has a real-browser case that opens the rule, types, delivers a feed event and checks open state, value and focus.

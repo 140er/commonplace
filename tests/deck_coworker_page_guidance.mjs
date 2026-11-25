@@ -130,7 +130,7 @@ test('mounted: a running job is shown on the page with its card link', async () 
   h.ui.stop();
 });
 test('mounted: a missing chat model is explained on the page for owners and members', async () => {
-  for (const [can, text, link] of [[true, /Chat answers/, /Open settings/], [false, /Ask the workspace owner/, null]]) {
+  for (const [can, text, link] of [[true, /Needs a model.*Chat answers/, /Project settings/], [false, /Ask the workspace owner/, null]]) {
     const h = page(path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas' }], model: { ready: false, code: 'needs_configuration' }, can_configure: can } : path === '/api/coworkers' ? { bots: [], conversations: [conversation] } : path.endsWith('/room') ? { conversation } : { models: {} });
     await settle();
     const setup = /class="cb-setup" role="status">([^]*?)<\/p>/.exec(h.body.innerHTML)?.[1] || '';
@@ -138,3 +138,20 @@ test('mounted: a missing chat model is explained on the page for owners and memb
     h.ui.stop();
   }
 });
+
+for (const canConfigure of [true, false]) {
+  test(`mounted: unknown model code keeps setup guidance for ${canConfigure ? 'owner' : 'member'}`, async () => {
+    const code = 'future_model_status';
+    const h = page(path => path === '/api/bots'
+      ? { bots: [{ id: 'bot', name: 'Helper' }], model: { ready: false, code }, can_configure: canConfigure }
+      : path === '/api/coworkers' ? { bots: [], conversations: [conversation] }
+      : path.endsWith('/room') ? { conversation } : { models: {} });
+    try {
+      await settle();
+      const banner = /class="cb-setup" role="status">([^]*?)<\/p>/.exec(h.body.innerHTML)?.[1] || '';
+      assert.ok(banner.includes(e(setupText(code, canConfigure))), 'Unknown codes retain the existing escaped setup text');
+      if (canConfigure) assert.match(banner, /<a href="#\/settings">Open settings<\/a>/);
+      else assert.doesNotMatch(banner, /<a /);
+    } finally { h.ui.stop(); }
+  });
+}

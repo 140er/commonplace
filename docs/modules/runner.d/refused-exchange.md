@@ -1,0 +1,4 @@
+- **Owns:** `installer.EnrollmentRefused`, raised by `Transport.post` when the site answers an enrollment call with an HTTP error, so a refusal (spent, expired or cancelled code) is told apart from a connection that never answered.
+- **Promises:** The message stays fixed and secret-free; a connection failure keeps its existing "delivery unavailable" error. Nothing else about the transport changes (HTTPS only, no redirects, no proxies).
+- **How it fails:** A caller that only knows `InstallError` sees the same type as before.
+- **Tests:** `tests/test_machine_setup.py` (refused exchange, expired between check and exchange, dead network) with the production transport's own error types.

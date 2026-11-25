@@ -96,16 +96,21 @@ def fork_id(user_id, stream_id) -> str:
     return f"{FORK_PREFIX}{user_id}:{digest}"
 
 
+def is_archive_start(message) -> bool:
+    """Whether a message opens an archive segment of the original bytes."""
+    return (
+        message.role == "system"
+        and message.kind == "other"
+        and (
+            message.name in ("import.raw", "capture.raw") or message.seq == 0 and message.name == ""
+        )
+    )
+
+
 def archive_segments(messages) -> list[Segment]:
     """Read snapshots, multipart imports and capture archives without read views."""
     rows = list(messages)
-    starts = [
-        i
-        for i, m in enumerate(rows)
-        if m.role == "system"
-        and m.kind == "other"
-        and (m.name in ("import.raw", "capture.raw") or m.seq == 0 and m.name == "")
-    ]
+    starts = [i for i, m in enumerate(rows) if is_archive_start(m)]
     return [
         Segment(
             rows[start].seq,

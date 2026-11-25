@@ -1,0 +1,4 @@
+- **Owns:** The decision record for guiding Compute credential setup in the management forms, and the operator step for creating a credential in `docs/compute/RUNNING.md`.
+- **Promises:** `docs/system/compute-credential-guide.md` states that the form lists references only, never handles a secret, and shows the one documented step.
+- **How it fails:** The documented step drifting from what the form shows or from the custody API fails `tests/test_compute_credential_list.py` and the `credentials` case of `tests/compute_ui.mjs`.
+- **Tests:** `tests/test_compute_credential_list.py::test_doc_provisioning_step_runs_and_its_result_is_listed`.

@@ -60,17 +60,23 @@ def _boards_of(conn, board_id) -> set:
     }
 
 
-def _pick(conn, candidates, family):
-    """The card for one PR among visible candidates, or ``None`` (see the module note)."""
+def pick_with_reason(conn, candidates, family):
+    """``(row, ambiguous)``: the card for one PR among visible candidates (see the module note),
+    or ``(None, True)`` when more than one fits and ``(None, False)`` when none does."""
     matches = [row for row in candidates if _normal(row["pr_repo"]) in family]
     if matches:
-        return matches[0] if len(matches) == 1 else None
+        return (matches[0], False) if len(matches) == 1 else (None, True)
     matches = [
         row
         for row in candidates
         if not row["pr_repo"] and _boards_of(conn, row["board_id"]) & family
     ]
-    return matches[0] if len(matches) == 1 else None
+    return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
+
+
+def _pick(conn, candidates, family):
+    """The card for one PR among visible candidates, or ``None`` (see the module note)."""
+    return pick_with_reason(conn, candidates, family)[0]
 
 
 def cards_for(gateway, principal, keys) -> dict:

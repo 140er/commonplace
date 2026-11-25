@@ -1,0 +1,4 @@
+- **Owns:** Ready-to-start renderer, projection and browser fixtures in `tests/ready_to_start.mjs`, `tests/test_ready_to_start.py`, `tests/test_ready_to_start_states.py` and `tests/test_ready_to_start_browser.py`.
+- **Promises:** The harness fails on plain develop without a checklist; head fixtures cover missing model, missing or disallowed key, no machine, untrusted machine, unused connection and ready state, plus owner/member actions and phone wrapping.
+- **How it fails:** Baseline capture mode records earlier strings without asserting the new checklist; normal mode asserts production controllers. Synthetic machines and model configuration do not claim a real external start.
+- **Tests:** Run the new state and renderer files, browser cases at 1280 and 390, affected project/Bots/Coworker/Compute setup checks, shell Node wrapper groups and documentation guards.

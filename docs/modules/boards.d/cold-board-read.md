@@ -1,0 +1,4 @@
+- **Owns:** The per-card cost of the board card read in `commonplace/boards/service.py` and `commonplace/boards/store.py`: one Coworker-setting read per card list, the snooze lookup shared with the waiting reason, and cheap exits before the plan-label check.
+- **Promises:** Every card keeps the same fields, waiting reason, snooze and approval answers as before; only repeated reads inside one list are removed. The setting is cached for that one projection and never between calls, so a toggled setting shows on the next read.
+- **How it fails:** A failed setting read is not kept and reads as off for that card, as before; admission and every write still read the setting themselves, so a read value never authorizes a write.
+- **Tests:** `tests/test_board_cold_read.py` checks the single setting read per list, the waiting and snooze answers against the single-card read, and the plan-label exits against the previous implementation.

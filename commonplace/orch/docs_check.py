@@ -230,13 +230,14 @@ def system_fragment_problems(entry: str, text: str) -> list[str]:
 # ---------------------------------------------------------------- git
 
 
-def _git(repo, *args, check=True) -> subprocess.CompletedProcess:
+def _git(repo, *args, check=True, input: bytes | None = None) -> subprocess.CompletedProcess:
     env = {key: value for key, value in os.environ.items() if key not in _GIT_ENV_DROP}
     try:
         result = subprocess.run(
             ["git", "-C", str(repo), *args],
             capture_output=True,
             env=env,
+            input=input,
             timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -268,7 +269,7 @@ def show(repo, commit: str, path: str) -> str | None:
     return _git(repo, "show", f"{commit}:{path}").stdout.decode("utf-8", "replace")
 
 
-def _ls(repo, commit: str, tree: str = "") -> list[str]:
+def _ls_objects(repo, commit: str, tree: str = "") -> list[tuple[str, str, str]]:
     spec = f"{commit}:{tree}" if tree else commit
     out = _git(repo, "ls-tree", "-z", spec).stdout.decode("utf-8", "replace")
     entries = []
@@ -276,9 +277,48 @@ def _ls(repo, commit: str, tree: str = "") -> list[str]:
         if not item:
             continue
         meta, _tab, name = item.partition("\t")
-        kind = meta.split()[1]
-        entries.append(f"{tree}{name}" + ("/" if kind == "tree" else ""))
+        _mode, kind, oid = meta.split()
+        entries.append((f"{tree}{name}" + ("/" if kind == "tree" else ""), kind, oid))
     return entries
+
+
+def _ls(repo, commit: str, tree: str = "") -> list[str]:
+    return [entry for entry, _kind, _oid in _ls_objects(repo, commit, tree)]
+
+
+def _blobs(repo, oids: list[str]) -> dict[str, str]:
+    """Read immutable blobs in one invocation; reject incomplete or malformed replies."""
+    oids = list(dict.fromkeys(oids))
+    if not oids:
+        return {}
+    data = _git(
+        repo, "cat-file", "--batch", input="".join(f"{oid}\n" for oid in oids).encode()
+    ).stdout
+    texts = {}
+    offset = 0
+    for oid in oids:
+        end = data.find(b"\n", offset)
+        header = data[offset:end].split() if end != -1 else []
+        if (
+            len(header) != 3
+            or header[0] != oid.encode()
+            or header[1] != b"blob"
+            or not header[2].isdigit()
+        ):
+            raise DocsCheckError("git cat-file returned malformed blob data")
+        try:
+            size = int(header[2])
+        except ValueError:
+            raise DocsCheckError("git cat-file returned malformed blob size") from None
+        start = end + 1
+        end = start + size
+        if data[end : end + 1] != b"\n":
+            raise DocsCheckError("git cat-file returned incomplete blob data")
+        texts[oid] = data[start:end].decode("utf-8", "replace")
+        offset = end + 1
+    if offset != len(data):
+        raise DocsCheckError("git cat-file returned unexpected blob data")
+    return texts
 
 
 def required_entries(repo, commit: str) -> list[str]:
@@ -296,10 +336,18 @@ def _fragments(repo, commit: str, directory: str) -> list[tuple[str, str]]:
     """``(entry, text)`` of every entry of ``directory`` at ``commit``, sorted by name."""
     if _git(repo, "cat-file", "-e", f"{commit}:{directory}", check=False).returncode != 0:
         return []
-    return [
-        (entry, "" if entry.endswith("/") else show(repo, commit, entry) or "")
-        for entry in sorted(_ls(repo, commit, directory))
-    ]
+    entries = sorted(_ls_objects(repo, commit, directory))
+    texts = _blobs(repo, [oid for _entry, kind, oid in entries if kind == "blob"])
+    found = []
+    for entry, kind, oid in entries:
+        if kind == "tree":
+            text = ""
+        elif kind == "blob":
+            text = texts[oid]
+        else:
+            text = show(repo, commit, entry) or ""
+        found.append((entry, text))
+    return found
 
 
 def _module_files(repo, commit: str) -> list[tuple[str, str]]:

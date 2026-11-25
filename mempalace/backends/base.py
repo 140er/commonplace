@@ -15,7 +15,7 @@ conformance suite land in follow-up PRs.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, Protocol, runtime_checkable
+from typing import ClassVar, Optional, Protocol, Sequence, runtime_checkable
 
 from ..timeutil import recency_key
 
@@ -366,7 +366,7 @@ class QueryResult(_DictCompatMixin):
         requested via ``include=`` carry the outer shape even when empty). When
         False, ``embeddings`` stays ``None`` to signal the field was not requested.
         """
-        empty_outer = [[] for _ in range(num_queries)]
+        empty_outer: list[list[list[float]]] = [[] for _ in range(num_queries)]
         return cls(
             ids=[[] for _ in range(num_queries)],
             documents=[[] for _ in range(num_queries)],
@@ -382,7 +382,7 @@ class GetResult(_DictCompatMixin):
 
     ids: list[str]
     documents: list[str]
-    metadatas: list[dict]
+    metadatas: Sequence[Optional[dict]]
     embeddings: Optional[list[list[float]]] = None
 
     @classmethod
@@ -424,7 +424,7 @@ def recency_sort_key(meta: Optional[dict], order_field: str = "filed_at") -> tup
     return recency_key((meta or {}).get(order_field))
 
 
-def _recency_order(metadatas: list[dict], order_field: str) -> list[int]:
+def _recency_order(metadatas: Sequence[Optional[dict]], order_field: str) -> list[int]:
     """Indices into ``metadatas``, newest first, missing timestamps last."""
     return sorted(
         range(len(metadatas)),
@@ -592,7 +592,7 @@ class BaseCollection(ABC):
         """
         return None
 
-    def get_all_metadata(self, where: Optional[dict] = None) -> list[dict]:
+    def get_all_metadata(self, where: Optional[dict] = None) -> Sequence[Optional[dict]]:
         """Return every matching record's metadata in one logical pass.
 
         Default implementation pages through :meth:`get` using
@@ -608,7 +608,7 @@ class BaseCollection(ABC):
         entire collection just to discard everything outside the requested
         slice.
         """
-        all_meta: list[dict] = []
+        all_meta: list[Optional[dict]] = []
         offset = 0
         page_size = 1000
         while True:
@@ -730,7 +730,7 @@ class BaseCollection(ABC):
 
         ids: list[str] = []
         documents: list[str] = []
-        metadatas: list[dict] = []
+        metadatas: list[Optional[dict]] = []
         offset = 0
         fetched = 0
         page_size = min(500, limit)
@@ -869,13 +869,16 @@ class BaseCollection(ABC):
             return
         # One upsert, so the batch lands whole or not at all. If any row came
         # back without a stored vector, the backend re-embeds the whole batch.
-        if any(vector is None for vector in out_embeddings):
-            out_embeddings = None
+        complete_embeddings = (
+            None
+            if any(vector is None for vector in out_embeddings)
+            else [vector for vector in out_embeddings if vector is not None]
+        )
         self.upsert(
             documents=out_docs,
             ids=out_ids,
             metadatas=out_metas,
-            embeddings=out_embeddings,
+            embeddings=complete_embeddings,
         )
 
 

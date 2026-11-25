@@ -11,6 +11,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
+from typing import TypedDict
 from urllib.parse import urlparse
 
 from commonplace import decide_grant, events, privacy, sessions
@@ -55,6 +56,22 @@ from .store import (
 
 logger = logging.getLogger(__name__)
 _UNSET = object()
+
+
+class _ApprovalItem(TypedDict):
+    number: int
+    approval_kind: str
+
+
+class _ApprovalPage(TypedDict):
+    items: list[_ApprovalItem]
+    truncated: bool
+    more: bool
+
+
+class _ApprovalResult(_ApprovalPage, total=False):
+    role_checks: int
+    elapsed_ms: float
 
 
 def open_store(workspace_dir, *, legacy_origin=None, db=None, workspace_id=None) -> BoardStore:
@@ -317,9 +334,15 @@ def _waiting_on_person(row):
 
 
 def _plan_waiting(row):
+    # Cheap exits first (a card list asks once per card): only an open card with the plan label can be waiting.
+    if row["status"] not in ("todo", "doing"):
+        return False
+    raw = row["labels"] if "labels" in row.keys() else None
+    labels = json.loads(raw or "[]") if isinstance(raw, str) else raw
+    if "plan" not in (labels or ()):
+        return False
     data = dict(row)
-    if isinstance(data.get("labels"), str):
-        data["labels"] = json.loads(data["labels"] or "[]")
+    data["labels"] = labels
     return plan_waiting(data)
 
 
@@ -372,6 +395,8 @@ def needs_me(
     reviewing=False,
 ) -> dict:
     """Decision queue: asks, done_review, backlog_from_agents, ready_to_merge, stale, count."""
+    from commonplace.snooze import store as snooze
+
     owner_queue = True
     try:
         _owner(principal, trusted_read=True)
@@ -379,7 +404,7 @@ def needs_me(
         if not coordinated and not release_boards and not reviewing:
             raise
         owner_queue = False
-    result = {
+    result: dict[str, list[dict[str, object]]] = {
         key: []
         for key in (
             "asks",
@@ -401,10 +426,18 @@ def needs_me(
         rows = conn.execute(
             "SELECT t.*,b.slug AS board,b.wing AS board_wing,b.coordinator AS board_coordinator "
             "FROM tasks t JOIN boards b ON b.id=t.board_id "
-            "WHERE t.status!='done' ORDER BY t.created_at,t.id"
+            "WHERE t.status!='done' AND NOT "
+            + snooze.snoozed_sql("t")
+            + " ORDER BY t.created_at,t.id",
+            (snooze.now_stamp(),),
         ).fetchall()
+        # Authority is evaluated once per wing in this request, never cached
+        # across principals or requests. A project can contain thousands of cards.
+        readable = {
+            wing: principal.policy.can_read_wing(wing) for wing in {r["board_wing"] for r in rows}
+        }
         for row in rows:
-            if not principal.policy.can_read_wing(row["board_wing"]):
+            if not readable[row["board_wing"]]:
                 continue
             own_ask = (
                 bool(coordinated)
@@ -441,7 +474,7 @@ def needs_me(
                 and (release is None or release(row))
             ):
                 kind = "backlog_from_agents"
-            routes = ()
+            routes: tuple[tuple[str, str], ...] = ()
             if _stuck(row, cutoff):
                 routes = supervisors(row) if supervisors is not None else ()
             if (
@@ -539,8 +572,10 @@ def needs_me(
                 ]
             item.update(why=why, actions=actions if principal.person or own_ask else [])
             result[kind].append(item)
-    result["count"] = len({c["number"] for bucket in result.values() for c in bucket})
-    return result
+    return {
+        **result,
+        "count": len({c["number"] for bucket in result.values() for c in bucket}),
+    }
 
 
 class BoardService(lifecycle.LifecycleMixin):
@@ -558,6 +593,11 @@ class BoardService(lifecycle.LifecycleMixin):
             else None
         )
         self.pending = []
+
+    def _require_store(self) -> BoardStore:
+        if self.store is None:
+            raise RuntimeError("board operation requires a store")
+        return self.store
 
     @contextmanager
     def _projection(self):
@@ -643,7 +683,7 @@ class BoardService(lifecycle.LifecycleMixin):
         """Boards whose live ask recipient is this connection, using current policy."""
         if self.principal.person:
             return ()
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return tuple(
                 b["id"]
                 for b in conn.execute(
@@ -767,7 +807,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if p.person:
             return ()
         leased = self._leased_boards()
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return tuple(
                 b["id"]
                 for b in conn.execute("SELECT * FROM boards WHERE archived=0")
@@ -794,13 +834,13 @@ class BoardService(lifecycle.LifecycleMixin):
             return True
         return not self._live_approvers(row)
 
-    def approvals_for_me(self, conn=None, *, limit=10, budget="tools"):
+    def approvals_for_me(self, conn=None, *, limit=10, budget="tools") -> _ApprovalResult:
         """Bound role checks after SQL and visibility filtering, without a row cap."""
         if conn is None:
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 return self.approvals_for_me(conn, limit=limit, budget=budget)
         p = self.principal
-        result = dict(items=[], truncated=False, more=False)
+        result: _ApprovalResult = dict(items=[], truncated=False, more=False)
         if (
             not p.policy.has_scope("memory:read")
             or not p.policy.has_scope("memory:write")
@@ -955,7 +995,7 @@ class BoardService(lifecycle.LifecycleMixin):
         leased = self._lease_coordinator(row)
         if leased is not None:
             candidates.append((leased.actor[5:], "board coordinator"))
-        routes = {}
+        routes: dict[str, str] = {}
         for ref, role in candidates:
             try:
                 q = self._live_connection(ref)
@@ -987,7 +1027,8 @@ class BoardService(lifecycle.LifecycleMixin):
             )
             from commonplace.snooze import store as snooze
 
-            if snoozed := snooze.active(conn, row["id"]):
+            snoozed = snooze.active(conn, row["id"])
+            if snoozed:
                 result["snoozed"] = snoozed
             result.update(lifecycle.card_fields(conn, row, q))
             if self._restricted_origin(row):
@@ -1014,20 +1055,27 @@ class BoardService(lifecycle.LifecycleMixin):
                             (row["id"], row["board_id"]),
                         )
                     ],
-                    waiting=self._waiting(conn, row, usage=usage, runner=runner),
+                    waiting=self._waiting(conn, row, usage=usage, runner=runner, snoozed=snoozed),
                 )
             return result
 
     def _feature_on(self):
         from commonplace.projects import orchestration as orch
 
+        # One settings read per projection (a card list asks once, not once per card); a failed read is not kept.
+        cache = getattr(self, "_projection_cache", None)
+        if cache is not None and "feature" in cache:
+            return cache["feature"]
         try:
-            return orch.enabled(self.ctx.db, self.principal.workspace_id)
+            on = orch.enabled(self.ctx.db, self.principal.workspace_id)
         except orch.SettingsUnavailable:
             # Projection stays usable; admission still raises the captured failure.
             return False
+        if cache is not None:
+            cache["feature"] = on
+        return on
 
-    def _waiting(self, conn, row, usage=None, *, runner=_UNSET):
+    def _waiting(self, conn, row, usage=None, *, runner=_UNSET, snoozed=_UNSET):
         from commonplace.boards import why
         from commonplace.boards.store import active_blockers
         from commonplace.projects import split
@@ -1036,7 +1084,7 @@ class BoardService(lifecycle.LifecycleMixin):
             runner = getattr(self, "_admission_conn", None)
             if runner is None:
                 with split.runner_read(self.ctx.workspace_dir()) as reader:
-                    return self._waiting(conn, row, usage=usage, runner=reader)
+                    return self._waiting(conn, row, usage=usage, runner=reader, snoozed=snoozed)
         usage = usage or self._usage(conn, runner, row)
         stuck = split.stuck(runner, row["id"])
         marked = conn.execute("SELECT 1 FROM card_splits WHERE task_id=?", (row["id"],)).fetchone()
@@ -1054,7 +1102,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
         return why.waiting(
             {**dict(row), "split_stuck": stuck, "release_by": release_by},
-            snoozed=snooze.active(conn, row["id"]),
+            snoozed=snooze.active(conn, row["id"]) if snoozed is _UNSET else snoozed,
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
@@ -1151,7 +1199,7 @@ class BoardService(lifecycle.LifecycleMixin):
         """The workspace's orchestration facts one request reads, taken before its board connection."""
         from commonplace.projects import orchestration as orch, reports
 
-        self._claim_grace = claim_grace(Path(self.store.path).parent)
+        self._claim_grace = claim_grace(Path(self._require_store().path).parent)
         try:
             self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
             self._orchestration_on = self._report_snapshot.enabled
@@ -1180,7 +1228,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.projects import orchestration as orch
 
         self.pending = []
-        self._auto_release = []
+        self._auto_release: list[int] = []
         conflict = None
         self._request_state()
         # Commit/rollback boards before releasing the admission lock.
@@ -1189,7 +1237,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 self._admission_conn = self._admissions.enter_context(
                     orch.admission(self.ctx.gateway, self.principal.workspace_id)
                 )
-            with self.store.transaction() as conn:
+            with self._require_store().transaction() as conn:
                 self._report_existing_boards = {r[0] for r in conn.execute("SELECT id FROM boards")}
                 try:
                     yield conn
@@ -1225,7 +1273,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.projects import seats
 
         try:
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 row = task_row(conn, number)
             state, coordinator = self._origin_authority(row)
             if state != "coordinator" or not seats.held_by(
@@ -1543,7 +1591,7 @@ class BoardService(lifecycle.LifecycleMixin):
             created = self.ctx.db.connection(name, self.principal.workspace_id)["created_at"]
         except (ControlError, ValueError, TypeError):
             return False
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM task_events WHERE task_id=? AND kind='decide' "
@@ -2047,6 +2095,51 @@ class BoardService(lifecycle.LifecycleMixin):
         ):
             raise ToolError("no: take this card before editing it")
 
+    def board_directory(self, *, names_only=False):
+        """Current visible project names, without expiry or runner projections.
+
+        Only display counts are cached. Authority, names and wing visibility are
+        read on every request; the regular board_list remains the full projection.
+        """
+        from commonplace.web.startup import snapshots, viewer_key
+
+        with self._require_store().connection() as conn:
+            boards = self._visible_boards(conn)
+        if names_only:
+            return [dict(board) for board in boards]
+
+        def counts():
+            from commonplace.rules.checks import connection
+
+            with connection(self._require_store().path, timeout=0.1) as conn:
+                return {
+                    row["board_id"]: dict(row)
+                    for row in conn.execute(
+                        "SELECT board_id, "
+                        + ", ".join(f"sum(status='{status}') AS {status}" for status in STATUSES)
+                        + " FROM tasks WHERE parent_number IS NULL "
+                        "AND id NOT IN (SELECT task_id FROM card_archive WHERE archived=1) "
+                        "GROUP BY board_id"
+                    )
+                }
+
+        totals, state = snapshots(self.ctx.gateway).read(
+            ("board-counts", *viewer_key(self.principal)), counts
+        )
+        return [
+            {
+                **{key: board[key] for key in ("slug", "name", "wing", "coordinator")},
+                "can_configure": self.principal.role == "owner",
+                "counts": (
+                    {status: (totals.get(board["id"], {}).get(status) or 0) for status in STATUSES}
+                    if totals is not None
+                    else None
+                ),
+                "counts_state": state,
+            }
+            for board in boards
+        ]
+
     def board_list(self, *, top_level=False):
         from commonplace.projects import limits
 
@@ -2157,7 +2250,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def space_metadata(self, slug):
         """Exact active workspace row and counts, without write/expiry machinery."""
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             board = conn.execute(
                 "SELECT * FROM boards WHERE slug=? AND archived=0", (slug,)
             ).fetchone()
@@ -2313,7 +2406,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def board_coordinator(self, board):
         _owner(self.principal)
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             b = self._board(conn, board)
             return {
                 "board": b["slug"],
@@ -2326,13 +2419,30 @@ class BoardService(lifecycle.LifecycleMixin):
                     }
                     for p in self._coordinator_candidates(b["wing"])
                 ],
+                "effect": self._coordinator_effect(conn, b),
             }
+
+    @staticmethod
+    def _coordinator_effect(conn, board):
+        """What replacing or clearing the coordinator touches: open cards and asks addressed to it."""
+        open_cards = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE board_id=? AND status IN ('backlog','todo','doing','review')",
+            (board["id"],),
+        ).fetchone()[0]
+        waiting = 0
+        if board["coordinator"]:
+            waiting = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE board_id=? AND status='review' "
+                "AND review_kind='decision' AND ask_to=?",
+                (board["id"], board["coordinator"]),
+            ).fetchone()[0]
+        return {"open_cards": open_cards, "waiting_asks": waiting}
 
     def _coordinator_waiting(self):
         if not self.principal.person or self.principal.role != "owner":
             return []
-        waiting = {}
-        with self.store.connection() as conn, self._projection():
+        waiting: dict[str, list[int]] = {}
+        with self._require_store().connection() as conn, self._projection():
             rows = conn.execute(
                 "SELECT t.*,b.slug AS board,b.wing AS board_wing,"
                 "b.coordinator AS board_coordinator FROM tasks t JOIN boards b ON b.id=t.board_id "
@@ -2359,9 +2469,11 @@ class BoardService(lifecycle.LifecycleMixin):
         ]
 
     def _missing_model_roles(self):
-        """One item per board and model role the board's accepted config uses with no model set.
+        """One item per board whose accepted config has a start role with no usable model.
 
-        Owner-only. The item clears itself once the role resolves to a model."""
+        A role with no choice runs on the default (the first model of the project's list), so
+        this appears only when there is nothing to start on. Owner-only, one item per board
+        (plus one for a role that names no model_role); it clears itself once a model exists."""
         if not self.principal.person or self.principal.role != "owner":
             return []
         from commonplace.orch import schema as orch_schema, store as orch_store
@@ -2376,7 +2488,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 ).fetchone()
             ):
                 return []
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 boards = conn.execute(
                     "SELECT slug,name,wing FROM boards WHERE archived=0 ORDER BY slug"
                 ).fetchall()
@@ -2393,37 +2505,54 @@ class BoardService(lifecycle.LifecycleMixin):
                 if not config.has_runner:
                     continue
                 name = board["name"] or board["slug"]
-                for gap in models.missing_roles(
+                gaps = models.missing_roles(
                     self.ctx.db, self.principal.workspace_id, board["slug"], config
-                ):
-                    role, uses = gap["role"], ", ".join(gap["config_roles"])
-                    if role is None:
-                        message = (
-                            f"Starts that use the {uses} role on {name} cannot run: the role "
-                            "names no model_role. Add one to that role in the board's "
-                            "Coworker config; there is no setting for it here."
-                        )
-                        action = None
-                    else:
-                        message = (
-                            f"Starts that use the {role} role ({uses}) on {name} cannot run: no "
-                            "model is set for it. Choose one in the project's Agent models."
-                        )
-                        action = {
-                            "label": "Set the model",
-                            "type": "project_models",
-                            "board": board["slug"],
-                            "role": role,
-                        }
+                )
+                # A role with no choice runs on the default, so every settable slot is missing
+                # at once (the project's model list is empty): one item for the board names
+                # them all, and adding one model clears it.
+                settable = [gap for gap in gaps if gap["role"] is not None]
+                for gap in (g for g in gaps if g["role"] is None):
                     items.append(
                         {
                             "kind": "model_role",
                             "board": board["slug"],
                             "board_name": name,
-                            "role": role,
+                            "role": None,
                             "config_roles": gap["config_roles"],
-                            "message": message,
-                            "action": action,
+                            "message": (
+                                f"Starts that use the {', '.join(gap['config_roles'])} role on "
+                                f"{name} cannot run: the role names no model_role. Add one to "
+                                "that role in the board's Coworker config; there is no setting "
+                                "for it here."
+                            ),
+                            "action": None,
+                        }
+                    )
+                if settable:
+                    roles = [gap["role"] for gap in settable]
+                    uses = ", ".join(n for gap in settable for n in gap["config_roles"])
+                    items.append(
+                        {
+                            "kind": "model_role",
+                            "board": board["slug"],
+                            "board_name": name,
+                            "role": roles[0],
+                            "roles": roles,
+                            "config_roles": [n for gap in settable for n in gap["config_roles"]],
+                            "message": (
+                                f"Starts that use the {', '.join(roles)} "
+                                f"role{'s' if len(roles) > 1 else ''} ({uses}) on {name} cannot "
+                                "run: no model is set and the project's model list is empty, so "
+                                "there is no default to start on. Add a model to the list and "
+                                "choose it in the project's Agent models."
+                            ),
+                            "action": {
+                                "label": "Set the model",
+                                "type": "project_models",
+                                "board": board["slug"],
+                                "role": roles[0],
+                            },
                         }
                     )
         return items
@@ -2510,7 +2639,7 @@ class BoardService(lifecycle.LifecycleMixin):
             raise ToolError("no: last must be between 1 and 100")
         if after is not None and (last is not None or before is not None):
             raise ToolError("no: after cannot be combined with last or before")
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             b = self._board(conn, board)
             backward = last is not None or before is not None
             boundary = before if before is not None else 2**63 - 1
@@ -2613,13 +2742,14 @@ class BoardService(lifecycle.LifecycleMixin):
                     if runner is not _UNSET
                     else None
                 )
-                for row in conn.execute(
-                    "SELECT id FROM tasks WHERE board_id=? "
-                    + ("AND parent_number IS NULL " if top_level else "")
-                    + "ORDER BY priority,position,id",
+                for task in conn.execute(
+                    "SELECT t.*,b.slug AS board,b.wing AS board_wing,"
+                    "b.claim_minutes,b.done_needs_review,b.coordinator AS board_coordinator FROM tasks t "
+                    "JOIN boards b ON b.id=t.board_id WHERE t.board_id=? "
+                    + ("AND t.parent_number IS NULL " if top_level else "")
+                    + "ORDER BY t.priority,t.position,t.id",
                     (b["id"],),
                 ):
-                    task = task_row(conn, row["id"])
                     if not shown and snooze.active(conn, task["id"]):
                         continue
                     if (task["id"] in hidden) != archived:
@@ -2702,7 +2832,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.snooze import store as snooze
 
         self._request_state()
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             conn.execute("BEGIN")
             try:
                 conn.execute("PRAGMA query_only=ON")
@@ -2722,8 +2852,8 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def _shown(self, conn, row):
         result = self._card(conn, row, self.principal)
-        hidden = self.store.hidden_link_targets(conn, row["id"], self.principal)
-        linked = self.store.links(conn, row["id"], self.principal)
+        hidden = self._require_store().hidden_link_targets(conn, row["id"], self.principal)
+        linked = self._require_store().links(conn, row["id"], self.principal)
         visibility = {memory_id: False for memory_id in hidden}
         visibility.update({link["drawer_id"]: True for link in linked})
         result["events"] = [
@@ -2900,7 +3030,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 elif worker.actor != card["assignee"]:
                     reason = "assignee_not_runner_worker"
                 else:
-                    with self.store.connection() as conn:
+                    with self._require_store().connection() as conn:
                         row = task_row(conn, card["number"])
                         board = conn.execute(
                             "SELECT * FROM boards WHERE id=?", (row["board_id"],)
@@ -3107,7 +3237,7 @@ class BoardService(lifecycle.LifecycleMixin):
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_session=?,claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=?,ask_blocks=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=?,priority=?,priority_by=?,reviewer=?,ask_blocks=? WHERE id=?",
             (
                 self.ctx.extra.get("claim_session", "") if until and assignee == p.actor else "",
                 until,
@@ -3118,6 +3248,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 "decision" if ask is not None else None,
                 label,
                 rank,
+                priorities.BY_DEFAULT if priority is priorities.UNSET else priorities.BY_PERSON,
                 reviewer,
                 blocks if ask is not None else None,
                 number,
@@ -3279,7 +3410,7 @@ class BoardService(lifecycle.LifecycleMixin):
             raise runner_bridge.StartRefused("orchestration_disabled")
 
         def card_snapshot():
-            with self.store.connection() as conn:
+            with self._require_store().connection() as conn:
                 row = task_row(conn, task)
                 found = conn.execute(
                     "SELECT * FROM boards WHERE id=?", (row["board_id"],)
@@ -3294,7 +3425,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 self._write(found, row=row)
                 return dict(row), dict(found)
 
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             origin = conn.execute(
                 "SELECT task_id FROM chat_task_origins WHERE actor=? AND origin_key=?",
                 (self.principal.actor, origin_key),
@@ -3477,7 +3608,7 @@ class BoardService(lifecycle.LifecycleMixin):
                     from commonplace.orch import plan_check
 
                     plan_check.require_plan(row["body"], what="the plan")
-            changes = {"escalated_to": None} if owner else {}
+            changes: dict[str, str | None] = {"escalated_to": None} if owner else {}
             if plan:
                 if approve:
                     changes["labels"] = json.dumps(
@@ -3992,7 +4123,8 @@ class BoardService(lifecycle.LifecycleMixin):
             previous["labels"] = json.loads(row["labels"] or "[]")
         if set(args) & {"link", "unlink"}:
             previous["links"] = [
-                link["drawer_id"] for link in self.store.links(conn, row["id"], self.principal)
+                link["drawer_id"]
+                for link in self._require_store().links(conn, row["id"], self.principal)
             ]
         return json.dumps(previous, ensure_ascii=False) if previous else None
 
@@ -4111,7 +4243,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if args.get("status") != "doing":
             return None, None
         # Resolve control identity before taking the board write transaction.
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             prospective = task_row(conn, task)
             require_visible(prospective, self.principal)
             actor = self._update_acquisition_actor(prospective, args)
@@ -4171,20 +4303,57 @@ class BoardService(lifecycle.LifecycleMixin):
                 raise refusal
         return update
 
-    def _priority_rank(self, args):
-        """The owner's requested rank, or None when the update does not set one."""
+    @staticmethod
+    def _priority_value(args):
+        """The requested priority name, or None when the update does not set one."""
         if "priority" not in args:
+            if "priority_reason" in args:
+                raise ToolError("no: priority_reason needs a priority")
             return None
-        return priorities.rank(priorities.owner_value(self.principal, args["priority"]))
+        return priorities.validate(args["priority"])
+
+    def _may_rank(self, row):
+        """Whether this caller is the card board's Coworker (its coordinator or lease holder)."""
+        q = self.principal
+        try:
+            return (
+                not q.person
+                and (row["board_coordinator"] == q.actor or self._holds_lease(q, row))
+                and _can_coordinate(q, row["board_wing"])
+            )
+        except (ControlError, ValueError, TypeError):
+            return False
+
+    def _priority_change(self, row, value, args):
+        """The update that sets a priority: the owner's, or the Coworker's with its reason.
+
+        A person's priority is never replaced by a Coworker's, and the Coworker gives a
+        one-line reason that lands in the card history."""
+        if value is None:
+            return {}
+        by = priorities.setter(self.principal, self._may_rank(row))
+        rank = priorities.rank(value)
+        if by == priorities.BY_PERSON:
+            if "priority_reason" in args:
+                raise ToolError("no: priority_reason is for the Coworker; a person needs none")
+        else:
+            if row["priority_by"] == priorities.BY_PERSON:
+                raise ToolError(
+                    "no: a person set this priority; it stays. Raise a disagreement as a "
+                    "question to the owner only if it really matters"
+                )
+            priorities.reason(args.get("priority_reason"))
+        if rank == row["priority"] and by == row["priority_by"]:
+            return {}
+        return {"priority": rank, "priority_by": by}
 
     @staticmethod
-    def _priority_change(row, rank):
-        return {} if rank is None or rank == row["priority"] else {"priority": rank}
-
-    @staticmethod
-    def _priority_note(ask, updates):
-        if "priority" in updates and ask["text"] is None:
-            return {**ask, "text": "Priority set to " + priorities.name(updates["priority"])}
+    def _priority_note(row, ask, updates, args):
+        if "priority_by" in updates and ask["text"] is None:
+            text = "Priority set to " + priorities.name(updates.get("priority", row["priority"]))
+            if updates["priority_by"] == priorities.BY_COWORKER:
+                text += " by the Coworker: " + args["priority_reason"].strip()
+            return {**ask, "text": text}
         return ask
 
     def _done_needs_review(self, board, row, updates):
@@ -4228,7 +4397,7 @@ class BoardService(lifecycle.LifecycleMixin):
         p = self.principal
         if not p.person or p.role == "owner":
             return False
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM tasks WHERE status='review' AND review_kind='completion' "
@@ -4264,8 +4433,9 @@ class BoardService(lifecycle.LifecycleMixin):
             if key == "task_type"
         }
         prospective_actor, type_holder = self._update_type_holder(task, args)
-        priority_update = self._priority_rank(args)
+        priority_value = self._priority_value(args)
         permitted = {
+            "priority_reason",
             "task_type",
             "priority",
             "reviewer",
@@ -4365,7 +4535,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status", row["status"]) != "done":
                 raise ToolError("no: a lesson requires status done")
-            updates = {**type_updates, **self._priority_change(row, priority_update)}
+            updates = {
+                **type_updates,
+                **self._priority_change(row, priority_value, args),
+            }
             self._reviewer_change(conn, row, args, updates)
             self._update_waiting(conn, row, args)
             if "labels" in args:
@@ -4495,7 +4668,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 if updates.get("ask") is not None
                 else {"text": review_edit_text}
             )
-            ask = self._priority_note(ask, updates)
+            ask = self._priority_note(row, ask, updates, args)
             ask = self._reviewer_note(ask, row, updates)
             self._record_review_withdrawal(conn, row, status, reason)
             self._log(
@@ -4671,7 +4844,7 @@ class BoardService(lifecycle.LifecycleMixin):
             )
 
     def decide(self, task, choice=None, reply=None, then="return", version=None):
-        audited = []
+        audited: list[tuple[int, str]] = []
         try:
             return self._decide(task, choice, reply, then, version, audited)
         except BaseException:
@@ -4864,7 +5037,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
     def coordinator_actors(self):
         """Every board coordinator actor in this workspace (archived boards included)."""
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             return frozenset(
                 r[0]
                 for r in conn.execute(
@@ -4889,7 +5062,7 @@ class BoardService(lifecycle.LifecycleMixin):
             raise ToolError("no: format must be list or digest")
         with self._projection():
             groups = needs_me(
-                self.store,
+                self._require_store(),
                 self.principal,
                 release=self._needs_person_release,
                 names=lambda text: people(self.ctx, text),
@@ -4950,6 +5123,18 @@ class BoardService(lifecycle.LifecycleMixin):
                 ):  # absent until a budget is set and crossed: a clean workspace is unchanged
                     groups["budget_warnings"] = spent
                     groups["count"] += len(spent)
+        if self.principal.person and getattr(self.ctx.gateway, "runner_installed", False):
+            from commonplace.projects import model_modes
+
+            # Model modes (card #617): the person's own missing connections; absent when none, and
+            # never shown to the owner for anyone else.
+            try:
+                lacking = model_modes.needs(self.ctx.db, self.principal)
+            except (sqlite3.Error, model_modes.ModeUnavailable):
+                lacking = []
+            if lacking:
+                groups["model_connections"] = lacking
+                groups["count"] += len(lacking)
         return groups
 
     def _budget_warnings(self):
@@ -4987,7 +5172,7 @@ class BoardService(lifecycle.LifecycleMixin):
         ]
 
     def _visible_board_slug(self, slug):
-        with self.store.connection() as conn:
+        with self._require_store().connection() as conn:
             row = conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()
         return row is not None and self.principal.policy.can_read_wing(row["wing"])
 

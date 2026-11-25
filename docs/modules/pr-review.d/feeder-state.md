@@ -1,0 +1,4 @@
+- **Owns:** `feeder._save` publishes synchronized private cache bytes; `ReviewStore.comments(actionable=True)` selects new/working comments before limiting the start context.
+- **Promises:** A failed flush/publication keeps the previous cache; a long resolved history cannot hide the next 25 actionable comments. Default comment-list semantics and review authority stay unchanged.
+- **How it fails:** Storage errors propagate to the existing feeder error boundary; only the current attempt's temporary file is removed.
+- **Tests:** `tests/test_pr_review_feeder_state.py`, `tests/test_pr_review.py` and `tests/test_pr_review_loop.py`.

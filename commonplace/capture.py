@@ -24,6 +24,8 @@ SOURCES = ("claude-code", "codex", agent_log.SOURCE)
 PRIVATE_WING = "private_chats"
 RAW_NAME = "capture.raw"
 MAX_CAPTURE_BYTES = 64 * 1024 * 1024
+# An upload this large leaves freed pages behind in the allocator; hand them back when it is done.
+TRIM_AFTER_BYTES = 4 * 1024 * 1024
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 
@@ -288,6 +290,25 @@ def _unavailable(error):
     return 500, {"error": "Capture unavailable; retry the same chunk"}
 
 
+def _trim_after_large(route):
+    """Hand freed allocator pages back once a large upload's request has fully returned."""
+
+    def trimmed(handler):
+        try:
+            declared = int(handler.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            declared = 0
+        try:
+            return route(handler)
+        finally:
+            if declared >= TRIM_AFTER_BYTES:
+                from mempalace.worker_memory import trim_heap
+
+                trim_heap()
+
+    return trimmed
+
+
 def register(ctx):
     from . import continuity, sync_feed
 
@@ -459,6 +480,7 @@ def register(ctx):
         handler.close_connection = True
         handler._send_json(status, result, {"Connection": "close", "Cache-Control": "no-store"})
 
+    route = _trim_after_large(route)
     for method in ("GET", "POST"):
         ctx.gateway.add_route(method, "/api/settings/capture", route)
         ctx.gateway.add_route(method, "/api/capture", route)

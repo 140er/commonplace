@@ -1,0 +1,4 @@
+- **Owns:** The owner-only Needs me `model_roles` item for a board whose start roles have no usable model.
+- **Promises:** At most one item per board names every missing model role and opens Agent models; a role that names no `model_role` keeps its own item. The item appears only when no choice and no listed model exist, and clears when a model is added.
+- **How it fails:** Members and agents get no item; a board whose accepted config cannot be read adds none.
+- **Tests:** `tests/test_role_model_default.py` and the #404 cases in `tests/test_orch_runner.py`.

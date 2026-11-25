@@ -1,0 +1,4 @@
+- **Owns:** `capture._trim_after_large`: the wrapper around the capture routes that gives freed allocator pages back after a large upload.
+- **Promises:** A request that declares at least 4 MiB (`TRIM_AFTER_BYTES`) is followed, once its handler has returned and its text is released, by one `malloc_trim`. Smaller requests and the settings route cost nothing extra. Nothing about the request or its answer changes.
+- **How it fails:** A missing or malformed `Content-Length` counts as small. A failing route still trims, and its error is passed on untouched; where glibc trimming is unavailable the call does nothing.
+- **Tests:** `tests/test_long_thread_push_memory.py::test_a_large_capture_hands_freed_pages_back_after_it_returns` covers the threshold, a bad header and a failing route.

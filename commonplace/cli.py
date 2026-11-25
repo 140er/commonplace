@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import plans
-from .backup import BackupError, data_lock
+from .backup import BackupError, data_lock, fence_lock
 from .backup_supervisor import cli_fence
 from .control_db import ControlDB, ControlError
 from .extensions import ToolError
@@ -62,7 +62,7 @@ def cmd_init(args) -> int:
 
 def cmd_user_add(args) -> int:
     db = _db(args)
-    uid = db.create_user(args.email, args.name or "")
+    uid = db.create_user(args.email, args.name or "", is_disposable=args.disposable)
     print(uid)
     if not args.no_workspace:
         print(db.create_workspace(args.email, uid, personal=True))
@@ -73,6 +73,47 @@ def cmd_user_list(args) -> int:
     for u in _db(args).users():
         print(f"{u['id']}  {u['email']}{'  admin' if u['is_admin'] else ''}")
     return 0
+
+
+def cmd_user_delete(args) -> int:
+    from .backup_pause import answering
+
+    data = _data_dir(args).resolve()
+    status = answering(timeout=2.0)
+    if status and Path(status.get("data_dir", "")).resolve() == data and status.get("busy"):
+        raise BackupError("a backup/pause is in progress; try again when it has finished")
+    db = _db(args)
+    try:
+        print(
+            json.dumps(
+                db.delete_user(args.user, actor=args.by, reason=args.reason, dry_run=not args.yes),
+                sort_keys=True,
+            )
+        )
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_member_remove(args) -> int:
+    db = _db(args)
+    try:
+        print(
+            json.dumps(
+                db.remove_member(
+                    args.workspace,
+                    args.user,
+                    actor=args.by,
+                    reason=args.reason,
+                    force_owner=args.force_owner,
+                    dry_run=not args.yes,
+                ),
+                sort_keys=True,
+            )
+        )
+        return 0
+    finally:
+        db.close()
 
 
 def cmd_plan_set(args) -> int:
@@ -161,8 +202,24 @@ def cmd_plan_show(args) -> int:
 
 
 def cmd_workspace_add(args) -> int:
-    print(_db(args).create_workspace(args.name, args.owner))
-    return 0
+    from types import SimpleNamespace
+
+    from .social.accounts import initialize_workspace
+    from .workers import WorkerSupervisor
+
+    db = _db(args)
+    try:
+        owner = db.user(args.owner)["id"]
+        wid = db.create_workspace(args.name, owner, initial_space_pending=True)
+        supervisor = WorkerSupervisor(str(_data_dir(args)))
+        gateway = SimpleNamespace(
+            db=db, supervisor=supervisor, workspace_dir=lambda ws: str(supervisor.workspace_dir(ws))
+        )
+        initialize_workspace(gateway, owner, wid)
+        print(wid)
+        return 0
+    finally:
+        db.close()
 
 
 def _meetings(command, args) -> int:
@@ -1084,6 +1141,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     add_webhook_commands(sub)
     _client_parsers(sub)
+    from .pr_review.feeder import add_parser as add_pr_review_parser
+
+    add_pr_review_parser(sub)
 
     runner = sub.add_parser("runner").add_subparsers(dest="action", required=True)
     from .runner.install_cli import add_parsers as add_runner_install_parsers
@@ -1121,8 +1181,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("email")
     s.add_argument("--name")
     s.add_argument("--no-workspace", action="store_true")
+    s.add_argument(
+        "--disposable",
+        action="store_true",
+        help="mark a test account as eligible for admin deletion",
+    )
     s.set_defaults(func=cmd_user_add)
     users.add_parser("list").set_defaults(func=cmd_user_list)
+    s = users.add_parser(
+        "delete", help="delete an unjoined disposable account; dry-run unless --yes"
+    )
+    s.add_argument("user", help="email or user id")
+    s.add_argument("--by", required=True, help="active instance admin email or id")
+    s.add_argument(
+        "--reason", default="", help="audit reason; do not include content or credentials"
+    )
+    s.add_argument("--yes", action="store_true", help="execute the deletion")
+    s.set_defaults(func=cmd_user_delete)
 
     plan = sub.add_parser("plan").add_subparsers(dest="action", required=True)
     s = plan.add_parser("set")
@@ -1192,6 +1267,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--role", choices=["owner", "member"], default="member")
     s.add_argument("--by")
     s.set_defaults(func=cmd_member_add)
+    s = member.add_parser("remove", help="remove workspace access; dry-run unless --yes")
+    s.add_argument("workspace")
+    s.add_argument("user", help="email or user id")
+    s.add_argument("--by", required=True, help="active instance admin email or id")
+    s.add_argument(
+        "--reason", default="", help="audit reason; do not include content or credentials"
+    )
+    s.add_argument(
+        "--force-owner",
+        action="store_true",
+        help="allow removal of an owner when another active owner remains",
+    )
+    s.add_argument("--yes", action="store_true", help="execute the removal")
+    s.set_defaults(func=cmd_member_remove)
 
     tok = sub.add_parser("token").add_subparsers(dest="action", required=True)
     s = tok.add_parser("add", help="create a connection; prints its token once")
@@ -1329,8 +1418,9 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _check_backup_args(parser, args)
-    if args.command == "runner" or orch_cli.repo_only(args):
-        # Repository checks and the runner client never open the data directory.
+    if args.command in ("runner", "pr-review") or orch_cli.repo_only(args):
+        # Repository checks, the runner client and the review-comment feeder never open the
+        # data directory: they run on other machines than the hub.
         return args.func(args)
     if args.command in {"onboard", "remember", "rule", "check", "sync", "review-rules"}:
         from .client import ClientError
@@ -1367,7 +1457,16 @@ def main(argv=None) -> int:
             # Serve never takes the backup fence; an online backup runs beside it.
             with data_lock(_data_dir(args)):
                 return args.func(args)
-        with cli_fence(_data_dir(args)), data_lock(_data_dir(args)):
+        fence = (
+            fence_lock(
+                _data_dir(args),
+                wait_s=0,
+                busy_message="a backup is running; try again when it has finished",
+            )
+            if args.func in {cmd_user_delete, cmd_member_remove}
+            else cli_fence(_data_dir(args))
+        )
+        with fence, data_lock(_data_dir(args)):
             return args.func(args)
     except errors as exc:
         print(f"commonplace: {exc}", file=sys.stderr)

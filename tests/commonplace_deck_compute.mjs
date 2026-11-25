@@ -646,7 +646,7 @@ test('when the topology appears later the screen switches to it', async () => {
 
 test('real screen: title, shell header handling, cleanup', async () => {
   const f = harness(); await flush();
-  assert.match(f.root.html, /<h1>Compute<\/h1>/);
+  assert.match(f.root.html, /<h1>Cloud workspaces<\/h1>/);
   assert.equal(f.header.hidden, true); assert.equal(f.phoneBar.hidden, true); assert.equal(f.phoneTabs.style.position, 'fixed');
   f.ui.stop(); f.ui.stop();
   assert.equal(f.handlers.size, 0); assert.equal(f.header.hidden, false); assert.equal(f.classes.size, 0);
@@ -670,7 +670,7 @@ test('empty workspace keeps just the hub, and an unavailable general bot hides o
   assert.deepEqual(f.nodes(), ['commonplace-hub']);
   assert.match(f.root.html, /No machines yet/);
   assert.equal(f.regions.get('empty').hidden, false);
-  assert.equal(f.regions.get('summary').textContent, '0 of 0 machines ready.');
+  assert.equal(f.regions.get('summary').textContent, '');
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add a machine/);
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-site">Add site/);
   assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
@@ -764,18 +764,21 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
   assert.deepEqual(files.filter(name => /^(?:deck-)?topology.*\.(?:js|css)$/.test(name)).sort(), ['topology-detail.css', 'topology-detail.js', 'topology-icons.js', 'topology-layout.js', 'topology-map.js', 'topology-route.js', 'topology-text.js', 'topology.css']);
   const users = [];
   for (const name of files.filter(name => name.endsWith('.js'))) if (/import\s*\{[^}]*\bcreateTopologyMap\b[^}]*\}\s*from ['"]\.\/topology-map\.js['"]/.test(await readFile(new URL(name, STATIC), 'utf8'))) users.push(name);
-  assert.deepEqual(users.sort(), ['app.js', 'deck-compute.js', 'topology-detail.js'].filter(name => name !== 'topology-detail.js'));
+  assert.deepEqual(users.sort(), ['deck-compute.js']);
+  assert.match(await readFile(new URL('app.js', STATIC), 'utf8'), /createTopologyMap \} = await import\("\.\/topology-map\.js"\)/);
   assert.match(await readFile(new URL('deck-compute.js', STATIC), 'utf8'), /createTopologyMap/);
   assert.ok(MAP_PATH && mapModel(EMPTY));
 });
 
 test('Add a machine navigates to the existing enrollment screen without a discovery write', async () => {
   const f = harness(); await flush();
-  const before = f.calls.length;
+  // Read-only map hydration may still settle; only a write would start discovery.
+  const writes = () => f.calls.filter(([, options]) => options?.method && options.method !== 'GET').length;
+  const before = writes();
   f.click({ computeAction: 'add-machine' }); await flush();
   assert.deepEqual(f.nav, ['#/admin']);
   // Enrollment moved to Admin: replace the old discovery POST expectation with no writes or form here.
-  assert.equal(f.calls.length, before);
+  assert.equal(writes(), before);
   assert.doesNotMatch(f.root.html, /<form|<input/);
   f.ui.stop();
 });

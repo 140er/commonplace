@@ -467,3 +467,11 @@ def test_legacy_boards_projects_and_verbatim_chat(env, http):
     assert text in json.dumps(response[1], ensure_ascii=False).replace("\\n", "\n").replace(
         '\\"', '"'
     )
+
+
+def test_account_workspace_creation_is_deliberately_separate_from_spaces(env, http):
+    # A Space is a board inside one workspace. Provisioning another account
+    # workspace stays on its explicit person-only route, outside tool scopes.
+    assert env.gateway.find_route("POST", "/api/workspaces") is not None
+    assert not any(r.path == "/api/workspaces" for r in enforce.REST_ROUTES)
+    assert http("POST", "/api/workspaces", {"name": "Another"})[0] == 403

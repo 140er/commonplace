@@ -1,5 +1,12 @@
 /* Existing Workbench palette and type. Two equal columns plus 16px = canvas;
    one column below 1000px. No independent shell or decorative status totals. */
+/* --control-line is the edge of a form control (input, select, secondary button). It is its own token (defined for
+   Deck in deck-capy.css; Classic falls back to --line-strong) so the global --line-strong, which the rest of the app
+   uses for dividers and rules, stays as it was in both looks. In Deck the controls need 3:1 against their surface
+   (WCAG 1.4.11). --ws-bar-h and --ws-tab-h are the two phone offsets: the sticky action bar's height, and the height
+   of the tab bar that sits under the page scroller (none in Deck, where the scroller ends above the bar). */
+:root { --ws-bar-h: 68px; --ws-tab-h: calc(57px + max(14px, env(safe-area-inset-bottom))); }
+:root[data-ui="deck"] { --ws-tab-h: 0px; }
 .compute { color: var(--text); display: grid; gap: 16px; min-width: 0; }
 .compute h2 { font-size: 16px; line-height: 24px; letter-spacing: 0; font-weight: 600; }
 .compute p { line-height: 1.5; overflow-wrap: anywhere; }
@@ -28,20 +35,21 @@
 .compute-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .compute label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
 .compute label small { line-height: 1.5; }
-.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
+.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--control-line, var(--line-strong)); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
+.compute ::placeholder { color: var(--text-2); opacity: 1; }
 .compute input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0; flex: none; accent-color: var(--accent); }
 .compute .compute-check { flex-direction: row; align-items: start; gap: 10px; }
 .compute-wide { grid-column: 1 / -1; }
 .compute-snapshot { padding: 12px; background: var(--pane); }
 .compute-capabilities > div { display: flex; align-items: baseline; gap: 12px; margin-top: 12px; }
 .compute-capabilities p { font-size: 13px; color: var(--text-2); flex: 1; }
-.compute button:disabled { cursor: default; }
+.compute button:disabled, .compute [aria-disabled="true"] { opacity: .55; cursor: default; }
+.compute [aria-disabled="true"] { cursor: progress; }
 .compute :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 999px) { .compute-inventories { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 599px) {
+@media (max-width: 699px) {
   .compute-fields { grid-template-columns: minmax(0, 1fr); }
   .compute-inventory, .compute-editor, .compute-capabilities { padding: 12px; }
-  .compute .btn, .compute summary, .compute input, .compute select { min-height: 44px; }
   .compute-capabilities > div { align-items: start; flex-direction: column; gap: 6px; }
 }
 .compute-advanced { min-width: 0; }
@@ -49,3 +57,250 @@
 .compute-advanced > .compute-quiet { margin-top: 8px; }
 .compute-advanced > .compute-inventories { margin-top: 16px; }
 .compute-plain { margin-top: 8px; font-size: 13px; color: var(--text-2); }
+.compute-credential { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--well); min-width: 0; }
+.compute-credential h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.compute-credential-status { font-size: 13px; margin: 0; }
+.compute-credential-status[data-tone="warn"] { color: var(--wait); }
+.compute-credential-status[data-tone="ok"] { color: var(--text); }
+.compute-credential-next { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; }
+.compute-credential-next p { margin: 0; }
+.compute-credential-next pre { max-height: 220px; background: var(--surface); }
+.compute-verification { font-size: 13px; color: var(--text-2); margin: 0; }
+.compute-credential-state { margin: 6px 0; font-size: 13px; color: var(--text-2); }
+.compute-credential-state[data-credential="unbound"], .compute-credential-state[data-credential="unknown"] { color: var(--wait); }
+/* Cloud workspaces (compute-workspaces.js): reuse the inventory/editor cards; only the new pieces are styled here. */
+.compute-ws { --ws-warn: var(--wait); }
+:root[data-ui="deck"] .compute-ws { --ws-warn: var(--amber, #f59e0b); }
+.compute select:disabled { opacity: .55; cursor: not-allowed; }
+.compute-ws [data-ws-top] > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+.compute-ws-list { max-height: none; overflow: visible; }
+.compute-ws-name { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
+.compute-ws-status[data-tone="ok"] { color: var(--text); }
+.compute-ws-status[data-tone="wait"] { color: var(--ws-warn); font-weight: 600; }
+.compute-ws-status[data-tone="bad"] { color: var(--block); font-weight: 600; }
+.compute-ws-statusline { margin: 12px 0 0; font-size: 14px; }
+/* Programmatic focus (after opening a panel, saving, a failed submit) draws the same ring as keyboard focus. */
+.compute-ws :is(h2, h3, h4, [data-ws-summary])[tabindex="-1"]:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+.compute-field { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.compute .compute-field > label, .compute .compute-label { display: block; font-size: 13px; font-weight: 600; }
+.compute-req { color: var(--block); }
+/* An invalid field: red edge on the input or select (this beats the generic control rule above), red message with an
+   icon. An empty message slot stays in the accessibility tree (it is a live region) but takes no room. */
+.compute .compute-ws input[aria-invalid="true"], .compute .compute-ws select[aria-invalid="true"] { border-color: var(--block); box-shadow: inset 0 0 0 1px var(--block); }
+.compute .compute-ws .compute-ws-error { color: var(--block); font-size: 13px; font-weight: 600; }
+.compute .compute-ws .compute-ws-error:not(:empty)::before { content: "!" / ""; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-right: 6px; border-radius: 50%; background: var(--block); color: var(--surface); font-size: 11px; font-weight: 800; line-height: 1; vertical-align: 1px; }
+.compute .compute-ws .compute-ws-error:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.compute-ws-summary { margin: 12px 0 0; padding: 12px; border: 1px solid var(--block); border-radius: var(--r); background: var(--block-bg, transparent); color: var(--text); }
+.compute-ws-summary:empty { display: none; }
+.compute-ws-summary p { margin: 0 0 4px; font-weight: 600; color: var(--block); }
+.compute-ws-summary ul { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 0; }
+.compute-ws-summary li a { display: block; padding: 5px 0; color: var(--block); text-decoration: underline; text-underline-offset: 3px; }
+.compute-ws-summary .compute-actions { margin-top: 8px; }
+.compute-ws-typed li { color: var(--text); }
+.compute-ws-notice { margin-top: 12px; color: var(--text); }
+.compute-ws-notice:empty { display: block; margin: 0; min-height: 0; }
+.compute-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.compute-ws .compute-preset { flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding-block: 8px; text-align: left; }
+.compute-ws .compute-preset[aria-current="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.compute-field[hidden] { display: none; }
+.compute-ws-legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; padding: 0; }
+.compute-ws-help { margin-top: 4px; font-size: 13px; }
+.compute-ws-help summary { cursor: pointer; min-height: 28px; }
+.compute-ws-reapply { margin: 12px 0 0; padding: 12px; border: 1px solid var(--control-line, var(--line-strong)); border-radius: var(--r); }
+.compute-ws-reapply p { margin: 0 0 4px; font-weight: 600; }
+.compute-ws-row .compute-ws-discard { margin: 12px 0 0; background: var(--well); border-color: var(--control-line, var(--line-strong)); }
+.compute-ws-discard h4 { margin: 0 0 8px; font-size: 14px; line-height: 22px; font-weight: 600; }
+.compute-ws-reason { margin: 6px 0; font-size: 13px; color: var(--block); }
+.compute-preset-size { font-size: 12px; font-weight: 400; color: var(--text-2); }
+.compute-ws-preview { margin-top: 4px; padding: 12px; background: var(--well); border-radius: var(--r); }
+.compute-ws-preview p { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.compute-ws-review, .compute-ws-typed { margin: 12px 0; padding: 0 0 0 20px; list-style: disc; }
+.compute-ws-review li + li, .compute-ws-typed li + li { margin-top: 4px; }
+.compute-ws-detail { margin: 12px 0 0; }
+.compute-ws-detail > header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.compute-ws-warn { color: var(--ws-warn); font-weight: 600; }
+.compute .compute-ws .compute-ws-problem:empty { margin: 0; padding: 0; min-height: 0; }
+.compute-ws-detail dd { overflow-wrap: anywhere; }
+.compute-ws-editor { margin: 12px 0 0; }
+.compute-ws .compute-actions .compute-ws-apart { margin-inline-start: auto; }
+.compute-ws-leave-text { flex: 1 1 100%; margin: 0; }
+/* Deck's danger button has a fill that is barely different from the card (1.07:1), so it gets an edge in the danger
+   colour; its label never wraps, so "Discard workspace" stays one line. */
+:root[data-ui="deck"] .compute .btn:not(.primary):not(.danger) { border: 1px solid var(--control-line, var(--line-strong)); }
+:root[data-ui="deck"] .compute .btn.danger { border: 1px solid var(--block); color: var(--block); }
+.compute-ws .btn.danger { white-space: nowrap; }
+.compute-ws-discard .compute-actions { flex-wrap: wrap; }
+.compute-ws-discard .compute-actions .btn { flex: 1 1 auto; justify-content: center; }
+/* Touch targets and text sizes follow the pointer, not only the width: a tablet (700px and up) held in the hand
+   gets the same 44px targets, 16px inputs and 14px text as a phone. */
+@media (pointer: coarse), (max-width: 699px) {
+  .compute .btn, .compute summary, .compute input:not([type="checkbox"]), .compute select, :root[data-ui="deck"] .compute .btn { min-height: 44px; }
+  /* Body text in the overview is 14px where the pointer is coarse (rows, hints, lists), never 13px. */
+  .compute-ov .compute-quiet, .compute-ov-row p, .compute-ov-list, .compute-ov-list li, .compute-ov dl,
+  .compute-ov .compute-plain, .compute-ov .compute-empty, .compute-ov .compute-ov-status-filter, .compute-ov-chip,
+  .compute-ov-eyebrow, .compute-ov .compute-ov-showing, .compute .compute-notice { font-size: 14px; }
+  /* A long action label wraps (and may fill the width) instead of running past the edge of a 320px screen. */
+  .compute-ov .btn { white-space: normal; height: auto; text-align: center; line-height: 1.25; padding-block: 8px; }
+  .compute-ov-panel .compute-actions .btn { width: 100%; justify-content: center; }
+  /* Every text control on the screen (the Advanced settings included) is 16px where the pointer is coarse, so a phone does not zoom in. */
+  .compute input:not([type="checkbox"]), .compute textarea, .compute select { font-size: 16px; }
+  .compute-ws small, .compute-ws .compute-quiet, .compute .compute-ws .compute-ws-error, .compute-ws .compute-plain, .compute .compute-ws .compute-field > label, .compute-ws .compute-preset-size { font-size: 14px; }
+  .compute-ws-summary li a { display: flex; align-items: center; min-height: 44px; }
+}
+/* Phone (Classic and Deck share the 699px breakpoint): the page scroller is the document in Classic and #content in
+   Deck. The action bar is one 44px row (Review and Cancel side by side) that sticks to the bottom of that scroller,
+   just above the tab bar in Classic and flush with the scroller's end in Deck. Controls scroll clear of the bar. */
+@media (max-width: 699px) {
+  .compute-ws .compute-ws-actions { position: sticky; bottom: var(--ws-tab-h); z-index: 2; flex-wrap: nowrap; align-items: center; min-height: var(--ws-bar-h); margin: 12px -12px 0; padding: 12px; background: var(--s1-solid, var(--surface)); border-top: 1px solid var(--line); }
+  .compute-ws .compute-ws-actions .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+  /* The stale and leave rows carry long labels: they wrap onto further 44px rows (down to one button per row at 320px)
+     instead of clipping, and a label wraps rather than being cut. */
+  .compute-ws .compute-ws-actions.compute-ws-wrap { flex-wrap: wrap; row-gap: 8px; }
+  .compute-ws .compute-ws-actions.compute-ws-wrap .btn { flex: 1 1 140px; height: auto; min-height: 44px; padding-block: 8px; white-space: normal; text-align: center; line-height: 1.25; }
+  .compute-ws-discard .compute-ws-actions { position: static; min-height: 0; margin: 12px 0 0; padding: 0; background: none; border: 0; box-shadow: none; flex-wrap: wrap; }
+  .compute-ws .compute-preset { flex: 1 1 100%; flex-direction: row; align-items: center; justify-content: space-between; }
+  /* Classic: the document scrolls, so #content must not be a scroll container of its own (a sticky bar would stick to
+     it, and it never scrolls). Deck: #content is the scroller and keeps touch scrolling; its own bottom padding is
+     moved onto the page so the bar can sit flush with the end of the scroller. */
+  :root:not([data-ui="deck"]) #content.deck-workspace:has(.compute-ws) { overflow: visible; }
+  :root[data-ui="deck"] #content.deck-workspace:has(.compute-ws) { padding-bottom: 0; }
+  .compute:has(.compute-ws) { padding-bottom: 24px; }
+  :root:not([data-ui="deck"]):has(.compute-ws) { scroll-padding-bottom: calc(var(--ws-tab-h) + var(--ws-bar-h) + 16px); }
+  :root[data-ui="deck"] #content.deck-workspace:has(.compute-ws) { scroll-padding-bottom: calc(var(--ws-bar-h) + 16px); }
+  .compute-ws :is(input, select, .compute-presets) { scroll-margin-bottom: calc(var(--ws-bar-h) + 96px); }
+}
+
+/* Compute overview (compute-overview.js). Scoped: nothing here changes a global or Deck token. Status colours reuse the
+   existing --ok, --wait and --block tokens and are never the only signal (every chip carries its label). The phone
+   offsets follow the Deck breakpoint (699px) and the 44px touch rule of the rest of this file. */
+.compute-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.compute-ov { --ov-warn: var(--wait); display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.compute-ov > * { min-width: 0; }
+:root[data-ui="deck"] .compute-ov { --ov-warn: var(--amber, #f59e0b); }
+.compute-ov [data-ov-top] > header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.compute-ov-meta { margin: 0; }
+.compute-ov-fold > summary { font-size: 15px; font-weight: 600; cursor: pointer; padding: 6px 0; }
+.compute-ov-fold > :not(summary) { margin-top: 12px; }
+.compute-ov-fold > summary + * { margin-top: 4px; }
+.compute-ov-headline { font-size: 15px; font-weight: 600; margin: 0; padding: 6px 0; }
+.compute-ov [data-ov-slot] { display: grid; gap: 12px; }
+.compute-ov [data-ov-slot]:empty, .compute-ov [data-ov-stale][hidden] { display: none; }
+.compute-ov-next { font-size: 14px; margin: 4px 0; }
+.compute-ov-showing { margin: 0; }
+.compute-ov-eyebrow { margin: 0; font-size: 13px; color: var(--text-2); }
+.compute-ov-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.compute-ov-kinds { display: flex; gap: 8px; flex-wrap: wrap; }
+.compute-ov .compute-ov-kind[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--well)); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+.compute-ov-select { display: flex; align-items: center; gap: 8px; }
+.compute-ov .compute-ov-status-filter { font-size: 13px; color: var(--text-2); }
+.compute-ov-group h3 { font-size: 14px; line-height: 20px; margin: 12px 0 0; font-weight: 600; }
+.compute-ov-group .compute-list { max-height: none; overflow: visible; margin-top: 4px; }
+.compute-ov-row .compute-ov-name { font-size: 15px; line-height: 22px; font-weight: 600; margin: 0; letter-spacing: 0; }
+.compute-ov-row p { margin: 4px 0; }
+@media (min-width: 700px) {
+  .compute-ov-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
+  .compute-ov-row > header, .compute-ov-row > p { grid-column: 1; }
+  .compute-ov-row > .compute-actions { grid-column: 2; grid-row: 2 / span 3; align-self: center; margin: 0; }
+}
+.compute-ov-row .compute-ov-sentence { font-size: 14px; }
+.compute-ov-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; color: var(--text); background: var(--well); }
+.compute-ov-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); flex: none; }
+.compute-ov-chip[data-tone="ok"]::before { background: var(--ok); }
+.compute-ov-chip[data-tone="wait"]::before { background: var(--ov-warn); border-radius: 2px; transform: rotate(45deg); }
+.compute-ov-chip[data-tone="bad"]::before { background: var(--block); border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.compute-ov-chip[data-tone="quiet"]::before { background: transparent; border: 2px solid var(--text-2); }
+.compute-ov-chip[data-tone="wait"] { border-color: var(--ov-warn); }
+.compute-ov-chip[data-tone="bad"] { border-color: var(--block); }
+.compute-ov-stale { margin: 0; padding: 8px 10px; border: 1px solid var(--block); border-radius: var(--r); }
+.compute-ov-stale.compute-quiet { border-color: var(--line-strong); }
+.compute-ov-panel .compute-ov-sub-h { font-size: 14px; margin: 16px 0 0; font-weight: 600; }
+.compute-ov-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; list-style: disc; }
+.compute-ov-list li { margin: 3px 0; }
+.compute-ov-panel dl { margin: 6px 0 0; }
+@media (max-width: 699px) {
+  .compute-ov-filters { align-items: stretch; }
+  .compute-ov-kinds { width: 100%; }
+  .compute-ov-kinds .btn { flex: 1 1 auto; }
+  .compute-ov-select { width: 100%; }
+  .compute-ov-select select { flex: 1; font-size: 16px; }
+  .compute-ov-row .compute-actions .btn { flex: 1; }
+}
+/* The status list is 16px wherever the pointer is coarse (a tablet is wider than the phone breakpoint). */
+@media (pointer: coarse) { .compute-ov-select select { font-size: 16px; } }
+.compute-ov [data-ov-top] > header .btn { flex: 0 0 auto; width: auto; }
+.compute-ov h2[tabindex="-1"]:focus-visible, .compute-ov h3[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.compute-ov-panel > header { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.compute-ov-panel-title { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.compute-ov-panel-title h3 { margin: 0; }
+/* Add a machine (compute-pairing.js). Reuses the inventory/editor cards and the cloud workspace form pieces; only the new
+   parts are styled here. No sticky bars: on a phone the actions sit in the flow, under the last field, and wrap. */
+.compute-pr { --pr-warn: var(--ws-warn, var(--wait)); }
+:root[data-ui="deck"] .compute-pr { --pr-warn: var(--amber, #f59e0b); }
+.compute-pr > [data-pr-top] > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+/* Programmatic focus (after opening a panel) draws the ring only when the browser says the focus came from the keyboard. */
+.compute-pr :is(h2, h3, h4, [data-pr-summary], fieldset)[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.compute-pr :is(h2, h3, h4, [data-pr-summary], fieldset)[tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
+.compute-pr-list { max-height: none; overflow: visible; }
+.compute-pr-state[data-tone="ok"] { color: var(--text); }
+.compute-pr-state[data-tone="wait"] { color: var(--pr-warn); font-weight: 600; }
+.compute-pr-state[data-tone="bad"] { color: var(--block); font-weight: 600; }
+.compute-pr-detail { margin: 12px 0 0; }
+.compute-pr-detail > header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.compute-pr-detail h3, .compute-pr-form h3 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
+.compute-pr-detail h4 { margin: 16px 0 8px; font-size: 14px; line-height: 22px; font-weight: 600; }
+.compute-pr-sentence { margin: 8px 0 0; font-size: 14px; }
+.compute-pr-next { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
+.compute-pr-command pre { max-height: none; overflow: visible; font-size: 13px; overflow-wrap: anywhere; word-break: normal; user-select: all; }
+.compute-pr-run { list-style: decimal; margin: 8px 0 12px; padding-left: 22px; font-size: 14px; line-height: 1.5; }
+.compute-pr-run li + li { margin-top: 4px; }
+.compute-pr-grants { margin: 12px 0 0; }
+.compute-pr-gone { margin: 12px 0 0; padding: 12px; background: var(--well); border-radius: var(--r); font-size: 14px; }
+.compute-pr-steps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 0; }
+.compute-pr-steps li { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.compute-pr-steps li:last-child { border-bottom: 1px solid var(--line); }
+.compute-pr-steps [data-state="ok"] .compute-pr-step-state { color: var(--text); }
+.compute-pr-steps :is([data-state="pending"], [data-state="not_run"]) .compute-pr-step-state { color: var(--text-2); }
+.compute-pr-steps [data-state="failed"] .compute-pr-step-state { color: var(--block); font-weight: 600; }
+.compute-pr-steps [data-state="ok"] .compute-pr-step-state::before { content: "✓ "; }
+.compute-pr-steps [data-state="failed"] .compute-pr-step-state::before { content: "✕ "; }
+.compute-pr-cause { margin: 12px 0 0; padding: 12px; border: 1px solid var(--block); border-radius: var(--r); font-size: 14px; }
+.compute-pr-cause p { margin: 0; }
+.compute-pr-cause p + p { margin-top: 4px; }
+.compute-pr-sheet { margin: 8px 0 0; }
+.compute-pr-sheet dd small { display: block; margin-top: 4px; }
+.compute-pr-fingerprint { font: 13px/1.6 var(--mono); overflow-wrap: anywhere; word-spacing: .3em; }
+.compute-pr-kinds { display: grid; gap: 12px; margin: 12px 0 0; }
+.compute-pr-kinds .compute-check small { display: block; margin-top: 2px; }
+.compute-pr-kinds input[disabled] + span small { color: var(--text); }
+.compute-pr-form .compute-fields { margin-top: 12px; }
+.compute-pr input[type="radio"] { width: 18px; height: 18px; margin: 2px 0; flex: none; accent-color: var(--accent); }
+/* The shared input rules give every input a minimum height (32px, 44px on touch); a tick box is sized by its own width and height and its label carries the target. */
+.compute .compute-pr input[type="checkbox"], .compute .compute-pr input[type="radio"] { min-height: 0; }
+.compute-pr-wings { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; margin: 0; padding: 0; min-width: 0; }
+.compute-pr-wings > legend { grid-column: 1 / -1; padding: 0; }
+.compute-pr-wings > :is(small, .compute-pr-error, p) { grid-column: 1 / -1; }
+.compute-pr-wings .compute-check { align-items: center; }
+.compute .compute-pr .compute-pr-error { color: var(--block); font-size: 13px; font-weight: 600; }
+.compute .compute-pr .compute-pr-error:not(:empty)::before { content: "!" / ""; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-right: 6px; border-radius: 50%; background: var(--block); color: var(--surface); font-size: 11px; line-height: 1; }
+.compute .compute-pr .compute-pr-error:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.compute .compute-pr input[aria-invalid="true"], .compute .compute-pr select[aria-invalid="true"] { border-color: var(--block); box-shadow: inset 0 0 0 1px var(--block); }
+.compute-pr-actions { margin-top: 16px; }
+.compute-pr-confirm { margin: 16px 0 0; padding: 12px; background: var(--well); border: 1px solid var(--control-line, var(--line-strong)); border-radius: var(--r); }
+.compute-pr-confirm h4 { margin: 0 0 8px; }
+.compute-pr-confirm .compute-actions .btn { flex: 1 1 auto; justify-content: center; }
+.compute-pr .btn.danger { white-space: normal; }
+.compute-pr [data-pr-warning]:not(:empty) { color: var(--pr-warn); font-weight: 600; }
+@media (pointer: coarse), (max-width: 699px) {
+  .compute-pr input:not([type="checkbox"]):not([type="radio"]), .compute-pr select { font-size: 16px; }
+  .compute-pr .compute-check { min-height: 44px; align-items: center; }
+  .compute-pr small, .compute-pr .compute-plain, .compute-pr .compute-quiet, .compute .compute-pr .compute-pr-error, .compute-pr .compute-state, .compute-pr .compute-row p { font-size: 14px; }
+  .compute-pr input[type="checkbox"], .compute-pr input[type="radio"] { width: 24px; height: 24px; }
+}
+@media (max-width: 699px) {
+  /* A long label wraps instead of running past the edge of a 320px screen (as the overview's buttons do). */
+  .compute-pr .btn { white-space: normal; height: auto; min-height: 44px; padding-block: 8px; text-align: center; line-height: 1.25; }
+  .compute-pr-actions { gap: 16px; }
+  .compute-pr-detail, .compute-pr-form { scroll-margin-bottom: var(--ws-tab-h); }
+  .compute-pr-actions .btn, .compute-pr-command .compute-actions .btn { flex: 1 1 100%; justify-content: center; }
+  .compute-pr-steps li { flex-direction: column; gap: 2px; }
+}

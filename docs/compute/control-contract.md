@@ -47,11 +47,15 @@ existing control DB; not a boolean authority claim. Document public methods.
   not proof that an individual target is ready; dispatch rechecks authority,
   credentials and verified bindings.
 - GET `/gateways`, `/nodes`, `/scopes`, `/executions`: named array.
-- POST `/gateways`: `{board,name,address,port,account,host_key:{algorithm,key},credential_id,credential_version,pin_confirmed:true}` -> `{gateway}`.
+- GET `/credentials`: `{credentials:[{id,purpose,account,version,state,expires_at}],status}`; status is `ready`, `unprovisioned` or `unavailable`. Owner-only and read-only; reads only the plaintext reference columns of the separate custody file (no wrapping key, encrypted or public key, owner or binding IDs), so the contract's "avoid opening custody" still holds for key material.
+- POST `/gateways`: `{board,name,address,port,account,host_key:{algorithm,key},credential_id?,credential_version?,pin_confirmed:true}` -> `{gateway}`.
+  `credential_id` and `credential_version` are given together or both left out; half a reference is `invalid_request`. Without them the record is saved unbound (`credential_id` and `credential_version` null, `credential_bound` false).
   `key` is base64 full public SSH host-key bytes, not an unchecked display hash.
   Numeric management endpoint only. `pin_confirmed` records explicit owner
   confirmation, not a successful connection. New state `pending_verification`.
-- POST `/nodes`: `{gateway_id,name,address,port,interface,account,host_key:{algorithm,key},credential_id,credential_version,pin_confirmed:true}` -> `{node}`.
+- POST `/gateways/<id>/credential` and `/nodes/<id>/credential`: `{credential_id,credential_version}` -> `{gateway}` / `{node}`. Binds a reference, once, to a record saved without one (same owner boundary as the other writes; foreign IDs are `not_found`). A record that already has a reference is `409 credential_already_bound` and is never changed. Nothing is opened or verified.
+  An unbound gateway or target is refused for verification, proposals, scripts and passive collection with `409 credential_not_bound`, enforced where the binding is built, not in the browser.
+- POST `/nodes`: `{gateway_id,name,address,port,interface,account,host_key:{algorithm,key},credential_id?,credential_version?,pin_confirmed:true}` -> `{node}`.
   Exact existing gateway/project, private numeric destination per existing
   protocol validation; no observation auto-enrolls. State pending_verification.
 - POST `/scopes`: `{gateway_id,task_number,agent_id?,cidrs:[],interfaces:[],methods:[],expires_at,limits:{hosts,concurrency,rate_per_second,duration_seconds,results}}` -> `{scope}`.
@@ -82,7 +86,7 @@ existing control DB; not a boolean authority claim. Document public methods.
 
 Responses explicitly project metadata (no sessions, key material, credentials,
 callback objects). Gateway includes id/name/board/address/port/account/host_key/
-credential_id/credential_version/epoch/state/created_at. Node adds gateway_id and
+credential_id/credential_version/credential_bound/epoch/state/created_at. Node adds gateway_id and
 interface. Scope includes id/context/cidrs/interfaces/methods/expires_at/limits/
 revoked. Execution includes id/node_id/gateway_id/board/task_number/operation/
 arguments/digest/state/reason/created_at/updated_at and bounded limits. Audit may

@@ -1,0 +1,1 @@
+- **Owns:** `tests/test_commonplace_account_export.py` expects the `deleted_at` column of a published revision (null), and `tests/test_commonplace_public_surface.py` classifies `DELETE /api/previews/` as authenticated.

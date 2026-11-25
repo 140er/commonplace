@@ -1,0 +1,1 @@
+- **Owns:** `_public_route` lets `GET /p/` through without a session so that the preview route can answer a signed-out browser with a sign-in page; the route checks the session (or a preview page link) itself on every request.

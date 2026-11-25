@@ -5,8 +5,13 @@ import { runInNewContext } from 'node:vm';
 const source = name => readFileSync(new URL(`../commonplace/web/static/${name}.js`, import.meta.url), 'utf8');
 const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;
 const apiURL = moduleURL(source('api'));
-const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL))));
-const { createCompute, computePayload, computeExecutionHTML } = await load('compute');
+const workspacesURL = moduleURL(source('compute-workspaces').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
+const overviewURL = moduleURL(source('compute-overview').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
+// Add a machine is part of the same controller: its module (and the label helper it imports) is loaded like the other sections.
+const wingURL = moduleURL(source('wing-label'));
+const pairingURL = moduleURL(source('compute-pairing').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/wing-label\.js\1/g, JSON.stringify(wingURL)));
+const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/compute-workspaces\.js\1/g, JSON.stringify(workspacesURL)).replace(/(['"])\.\/compute-overview\.js\1/g, JSON.stringify(overviewURL)).replace(/(['"])\.\/compute-pairing\.js\1/g, JSON.stringify(pairingURL))));
+const { createCompute, computePayload, computeExecutionHTML, provisionCommand } = await load('compute');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const clock = 1800000000;
 // All endpoints and key bytes here are synthetic. No fixture opens a socket.
@@ -23,9 +28,9 @@ const failure = (status, code) => Object.assign(new Error(code), { status, paylo
 
 // This intentionally narrow DOM fake runs the production controller. Requests
 // ignore AbortSignal to prove the response fences independently of cancellation.
-function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], currentTime = clock } = {}) {
+function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], credentials = { credentials: [], status: 'ready' }, currentTime = clock, copyImpl } = {}) {
   let html = '', user = { workspace: 'w-one', actor: 'user:u-one', can_admin: true }, hash = '#/compute', sequence = 0;
-  const listeners = new Map(), requests = [], boardsSeen = [];
+  const listeners = new Map(), requests = [], boardsSeen = [], copied = [], reads = [];
   const doc = new EventTarget(), events = new EventTarget(), confirmation = { checked: true };
   const host = {
     get innerHTML() { return html; }, set innerHTML(value) { html = value; },
@@ -34,13 +39,15 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
   };
   const api = (path, options = {}) => {
     if (path === "/api/compute/scripts" && !options.method) return Promise.resolve({ scripts: structuredClone(scripts) });
+    if (path === "/api/compute/credentials") reads.push(options);
+    if (path === "/api/compute/credentials" && !options.method) return credentials instanceof Error ? Promise.reject(credentials) : Promise.resolve(structuredClone(credentials));
     if (path === "/api/compute/discoveries" && !options.method) return Promise.resolve(structuredClone(passive));
     let yes, no;
     const promise = new Promise((resolve, reject) => { yes = resolve; no = reject; });
     const request = { path, options, settled: false, resolve(value) { request.settled = true; yes(structuredClone(value)); }, reject(error) { request.settled = true; no(error); } };
     requests.push(request); return promise;
   };
-  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}` });
+  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}`, copy: copyImpl || (text => { copied.push(text); return Promise.resolve(); }) });
   const take = (path, method = 'GET') => {
     const request = requests.find(item => !item.taken && !item.settled && item.path === path && (item.options.method || 'GET') === method);
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
@@ -49,21 +56,21 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
   const toggleAdvanced = () => listeners.get('click')?.({ target: { closest: selector => selector === '[data-compute-advanced] > summary' ? {} : null } });
   const submit = (kind, values) => {
     const form = { dataset: { computeForm: kind }, entries: Object.entries(values) };
-    listeners.get('submit')?.({ target: { closest: () => form }, preventDefault() {}, stopPropagation() {} });
+    listeners.get('submit')?.({ target: { closest: selector => selector === '[data-compute-form]' ? form : null }, preventDefault() {}, stopPropagation() {} });
   };
   const input = (name, value, type = 'text') => listeners.get('input')?.({ target: { name, type, value, checked: value } });
   const respond = async (data = inventory(), boards = [{ slug: 'demo', name: 'Fixture project' }]) => {
     take('/api/compute').resolve(data); take('/api/boards').resolve({ boards }); await flush();
   };
   const open = async (data, boards) => { ui.show(); await respond(data, boards); };
-  return { ui, host, doc, events, requests, listeners, boardsSeen, confirmation, take, click, toggleAdvanced, submit, input, open, respond, setUser(value) { user = value; }, setRoute(value) { hash = value; } };
+  return { ui, host, doc, events, requests, copied, reads, listeners, boardsSeen, confirmation, take, click, toggleAdvanced, submit, input, open, respond, setUser(value) { user = value; }, setRoute(value) { hash = value; } };
 }
 
 const cases = {
   async presentation() {
     const f = fixture();
     await f.open(inventory({ nodes: [{ ...node, board: undefined, interface: undefined, address: '192.0.2.20' }], scopes: [], executions: [] }));
-    assert.match(f.host.innerHTML, /The machines agents can reach, what they may look at, and tasks waiting for your approval\./);
+    assert.match(f.host.innerHTML, /Where your Coworkers run: an overview of everything first, then Add a machine, then cloud workspaces, then \(for the workspace owner\) the technical settings of target machines under Advanced\. A runner machine's own settings are in Admin, under Runner machines\./);
     assert.match(f.host.innerHTML, /No scripts saved yet\./);
     assert.doesNotMatch(f.host.innerHTML, /Set up pinned gateways|No immutable script bundles saved/);
     assert.match(f.host.innerHTML, /<p>192\.0\.2\.20:22<\/p>/);
@@ -81,8 +88,11 @@ const cases = {
     // The three technical sections sit inside one closed "Advanced" disclosure, each with a plain one-line explanation.
     assert.match(html, /<details class="compute-advanced compute-wide" data-compute-advanced><summary class="compute-advanced-summary">Advanced<\/summary>/);
     assert.ok(at('data-compute-advanced') < at('id="compute-gateways"') && at('id="compute-gateways"') < at('id="compute-nodes"') && at('id="compute-nodes"') < at('id="compute-scopes"'));
-    assert.match(html, /<\/div><\/details><section class="compute-inventory" aria-labelledby="compute-scripts"/, 'scripts, observations and proposals stay outside');
-    for (const sentence of ['A gateway is the door into one project’s network; agents reach your machines through it.', 'A target is one machine behind a gateway that agents may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
+    // Scripts, passive observations and execution proposals are technical too: they sit inside the same disclosure, after the other three.
+    assert.ok(at('id="compute-scopes"') < at('id="compute-scripts"') && at('id="compute-scripts"') < at('id="compute-discoveries"') && at('id="compute-discoveries"') < at('id="compute-executions"') && at('id="compute-executions"') < at('</details></div><details class="compute-capabilities"'), 'scripts, observations and proposals are inside Advanced');
+    assert.match(html, /<h2 id="compute-scripts">Scripts<\/h2>/, 'the script section is called Scripts, the word docs/compute/RUNNING.md uses');
+    assert.doesNotMatch(html, /Workspace scripts/);
+    for (const sentence of ['A gateway is the door into one project’s network; Coworkers reach your machines through it.', 'A target is one machine behind a gateway that Coworkers may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
     assert.match(html, /Most people never need these\./);
     // What the person chose survives a re-render: open stays open, and it starts closed again on a fresh screen.
     f.toggleAdvanced(); f.click('refresh'); f.take('/api/compute').resolve(inventory({ executions: [] })); f.take('/api/boards').resolve({ boards: [{ slug: 'demo', name: 'Fixture project' }] }); await flush();
@@ -114,6 +124,164 @@ const cases = {
     f.click('gateway'); assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     f.click('approve', 'e-one'); assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     f.ui.stop();
+  },
+
+  async credentials() {
+    const refs = [
+      { id: 'cc_' + 'a'.repeat(32), purpose: 'gateway', account: 'fixture', version: 1, state: 'active', expires_at: clock + 9000 },
+      { id: 'cc_' + 'b'.repeat(32), purpose: 'gateway', account: 'fixture', version: 2, state: 'revoked', expires_at: clock + 9000 },
+      { id: 'cc_' + 'c'.repeat(32), purpose: 'target', account: 'worker', version: 1, state: 'pending', expires_at: clock + 9000 },
+      { id: 'cc_' + 'd'.repeat(32), purpose: 'gateway', account: 'other', version: 3, state: 'expired', expires_at: clock - 5 },
+    ];
+    const text = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    const doc = readFileSync(new URL('../docs/compute/RUNNING.md', import.meta.url), 'utf8');
+    const documented = doc.match(/```sh\n(uv run python - <<'PY'\n[\s\S]*?\nPY)\n```/)?.[1];
+    assert.ok(documented, 'the documented provisioning step exists');
+    // 1. A person SELECTS an existing reference; only the matching kind is offered, with plain labels.
+    const f = fixture({ credentials: { credentials: refs, status: 'ready' } }); await f.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] }));
+    assert.ok(f.reads.length === 1 && !f.reads[0].method && !f.reads[0].body, 'the list is one plain read');
+    f.click('gateway'); let html = f.host.innerHTML;
+    assert.match(html, /<select name="credential_choice"/);
+    assert.ok(html.includes(refs[0].id) && html.includes(refs[1].id) && html.includes(refs[3].id), 'gateway form offers gateway references');
+    assert.ok(!html.includes(refs[2].id), 'a target reference is not offered for a gateway');
+    assert.match(text(html), /version 1 · account fixture · Active/); assert.match(text(html), /Revoked/); assert.match(text(html), /Expired/);
+    assert.match(html, /name="credential_id"[^>]*>/, 'manual reference entry stays'); assert.match(html, /name="credential_version"/);
+    assert.doesNotMatch(html, /ssh-ed25519 AAAA|PRIVATE|type="password"|name="private_key"/);
+    // 2. Choosing fills the reference and version and withdraws the host-key acknowledgement.
+    f.input('credential_choice', refs[0].id);
+    html = f.host.innerHTML;
+    assert.match(html, new RegExp(`name="credential_id" type="text" value="${refs[0].id}"`)); assert.match(html, /name="credential_version" type="number" value="1"/);
+    assert.match(text(html), /is active and ready for verification/);
+    assert.doesNotMatch(html, /data-compute-provision/, 'a good choice needs no extra steps');
+    // 3. Verification is explained in plain words before the explicit consent, which is kept.
+    const at = needle => html.indexOf(needle);
+    assert.ok(at('does not connect to the machine') > 0 && at('does not connect to the machine') < at('name="pin_confirmed"'));
+    assert.match(text(html), /A separate verification step later checks/); assert.match(html, /name="pin_confirmed"[^>]*required/);
+    // 4. Missing / unusable references are named in plain words and offer the copyable next step.
+    f.input('credential_id', 'my-typed-key'); html = f.host.innerHTML;
+    assert.match(text(html), /No credential named my-typed-key exists in this workspace/); assert.match(html, /data-compute-provision/);
+    f.input('credential_id', refs[1].id); assert.match(text(f.host.innerHTML), /was revoked and can no longer be used/);
+    f.input('credential_id', refs[3].id); assert.match(text(f.host.innerHTML), /expired/);
+    f.input('credential_id', refs[2].id); assert.match(text(f.host.innerHTML), /is for a target, not a gateway/);
+    f.input('credential_id', refs[0].id); f.input('account', 'someone-else'); assert.match(text(f.host.innerHTML), /is for the account fixture, but this form uses someone-else/);
+    // 5. Manual entry still submits exactly the same payload as before.
+    f.input('credential_id', 'my-typed-key'); f.input('credential_version', '7');
+    const values = { ...gatewayValues(), credential_id: 'my-typed-key', credential_version: '7' };
+    f.submit('gateway', values); const create = f.take('/api/compute/gateways', 'POST');
+    assert.deepEqual(create.options.body, computePayload('gateway', values, { now: clock })); assert.equal(create.options.body.credential_id, 'my-typed-key');
+    f.ui.stop();
+    // 6. A target form offers target references only.
+    const t = fixture({ credentials: { credentials: refs, status: 'ready' } }); await t.open(inventory({ executions: [] })); t.click('node');
+    assert.ok(t.host.innerHTML.includes(refs[2].id) && !t.host.innerHTML.includes(refs[0].id)); t.ui.stop();
+    // 7. None exist: say so plainly and show a copyable step that is the documented one, with this form's values filled in.
+    const none = fixture({ credentials: { credentials: [], status: 'unprovisioned' } }); await none.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); none.click('gateway');
+    html = none.host.innerHTML; assert.match(text(html), /No credentials exist in this workspace yet/); assert.doesNotMatch(html, /<select name="credential_choice"/);
+    assert.match(html, /data-compute-provision/); assert.match(text(html), /not created in the browser, so no secret passes through this page/);
+    assert.match(html, /name="credential_id"/, 'manual entry remains when the list is empty');
+    none.input('account', 'fixture'); none.input('credential_version', '4');
+    const step = html.match(/data-compute-provision[^>]*>([\s\S]*?)<\/pre>/)?.[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    assert.equal(provisionCommand({ workspace: 'w-one' }), documented.replace('"WORKSPACE_ID"', '"w-one"'));
+    assert.equal(provisionCommand({}), documented, 'the unfilled step is the documented one, word for word');
+    assert.ok(step && step.includes('initialize_wrapping_key') && step.includes('"w-one"'), 'filled from this session');
+    none.click('copy-provision'); await flush(); assert.equal(none.copied.length, 1); assert.match(none.copied[0], /^uv run python - <<'PY'/); assert.match(none.copied[0], /\nPY$/);
+    assert.match(text(none.host.innerHTML), /Copied/);
+    const filled = provisionCommand({ workspace: 'w-one', purpose: 'target', account: 'fixture', version: '4', gateway: 'g-one' });
+    assert.ok(filled.includes('"fixture", "target", 4') && filled.includes('"g-one"') && filled.includes('NODE_ID = "TARGET_NODE_ID"'));
+    // Unsafe typed values never reach the copyable text.
+    const unsafe = provisionCommand({ workspace: 'w-one', account: 'x"; import os #', version: '1; boom', gateway: '"; exit()' });
+    assert.ok(!unsafe.includes('import os') && !unsafe.includes('boom') && !unsafe.includes('exit()') && unsafe.includes('"ACCOUNT"'));
+    assert.doesNotMatch(none.host.innerHTML, /ssh-ed25519 AAAA|PRIVATE|type="password"/); none.ui.stop();
+    // 8. A list that cannot be read, or a failed request, says so; saving by hand still works.
+    for (const down of [{ credentials: [], status: 'unavailable' }, Object.assign(new Error('x'), { status: 500, payload: { error: 'x' } })]) {
+      const g = fixture({ credentials: down }); await g.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); g.click('gateway');
+      assert.match(text(g.host.innerHTML), /The list of credentials could not be read/); assert.match(g.host.innerHTML, /name="credential_id"/); assert.match(g.host.innerHTML, /data-compute-provision/);
+      g.submit('gateway', gatewayValues()); assert.ok(g.take('/api/compute/gateways', 'POST')); g.ui.stop();
+    }
+    // 9. The list is advisory: a 403 on it is the same owner boundary as the rest.
+    const own = fixture({ credentials: Object.assign(new Error('x'), { status: 403, payload: { error: 'owner_required' } }) }); await own.open(inventory());
+    assert.match(own.host.innerHTML, /Only its owner can change them/); own.ui.stop();
+  },
+
+  async unbound() {
+    const text = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    const refs = [
+      { id: 'cc_' + 'a'.repeat(32), purpose: 'gateway', account: 'fixture', version: 2, state: 'active', expires_at: clock + 9000 },
+      { id: 'cc_' + 'c'.repeat(32), purpose: 'target', account: 'worker', version: 1, state: 'active', expires_at: clock + 9000 },
+    ];
+    const unboundGateway = { ...gateway, credential_id: null, credential_version: null, credential_bound: false };
+    const unboundNode = { ...node, credential_id: null, credential_version: null, credential_bound: false };
+    const env = { now: clock, requestId: 'request-fixed' };
+    // 1. The payload carries a reference only when one is given, and never half of one.
+    const bare = { ...gatewayValues(), credential_id: '', credential_version: '' };
+    const sent = computePayload('gateway', bare, env);
+    assert.ok(!('credential_id' in sent) && !('credential_version' in sent));
+    assert.throws(() => computePayload('gateway', { ...bare, credential_id: 'only-an-id' }, env), Error);
+    assert.throws(() => computePayload('gateway', { ...bare, credential_version: '1' }, env), Error);
+    assert.deepEqual(computePayload('bind', { credential_id: 'ref', credential_version: '3' }, env), { credential_id: 'ref', credential_version: 3 });
+    assert.throws(() => computePayload('bind', { credential_id: '', credential_version: '3' }, env), Error);
+    assert.throws(() => computePayload('bind', { credential_id: 'ref', credential_version: '' }, env), Error);
+    // 2. The form says in plain words that the credential is bound after the record exists.
+    const f = fixture({ credentials: { credentials: refs, status: 'ready' } });
+    await f.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); f.click('gateway');
+    let html = f.host.innerHTML;
+    assert.match(text(html), /You can save without a credential/); assert.match(text(html), /bound to this record’s ID, which Commonplace assigns when you save/);
+    assert.match(text(html), /No credential bound yet/); assert.match(text(html), /cannot be verified or used until one is bound/);
+    assert.doesNotMatch(html, /name="credential_id"[^>]*required/); assert.doesNotMatch(html, /name="credential_version"[^>]*required/);
+    assert.match(html, /name="credential_id"/, 'manual reference entry stays');
+    // 3. Saving with no credential sends none, and the same screen then offers to bind it.
+    f.submit('gateway', bare); const create = f.take('/api/compute/gateways', 'POST');
+    assert.ok(!('credential_id' in create.options.body) && !('credential_version' in create.options.body));
+    create.resolve({ gateway: unboundGateway }); await flush(); html = f.host.innerHTML;
+    assert.match(text(html), /Saved without a credential/); assert.match(html, /data-compute-form="bind"/);
+    assert.match(text(html), /Bind a credential to Fixture gateway/); assert.match(html, /<select name="credential_choice"/);
+    assert.ok(html.includes(refs[0].id) && !html.includes(refs[1].id), 'only gateway credentials are offered');
+    const step = html.match(/data-compute-provision[^>]*>([\s\S]*?)<\/pre>/)?.[1];
+    assert.ok(step && step.includes('&quot;g-one&quot;') && step.includes('&quot;fixture&quot;') && step.includes('&quot;gateway&quot;'), 'the step is filled with the new record’s ID and account');
+    assert.doesNotMatch(html, /ssh-ed25519 AAAA|PRIVATE|type="password"/);
+    // 4. The list and the detail say it plainly.
+    assert.match(text(html), /No credential bound yet/); assert.match(html, /data-credential="unbound"/);
+    assert.match(text(html), /Not usable for runs or verification until a credential is bound/);
+    assert.doesNotMatch(html, /null|undefined|version null/);
+    // 5. Choosing from the list and binding flips the record to bound.
+    f.input('credential_choice', refs[0].id);
+    f.submit('bind', { credential_id: refs[0].id, credential_version: '2' });
+    const bound = f.take('/api/compute/gateways/g-one/credential', 'POST');
+    assert.deepEqual(bound.options.body, { credential_id: refs[0].id, credential_version: 2 });
+    bound.resolve({ gateway: { ...gateway, credential_id: refs[0].id, credential_version: 2, credential_bound: true } }); await flush(); html = f.host.innerHTML;
+    assert.match(text(html), /Credential bound/); assert.match(html, /data-credential="bound"/); assert.doesNotMatch(html, /data-credential="unbound"|data-compute-form="bind"/);
+    assert.ok(html.includes(refs[0].id)); f.ui.stop();
+    // 6. A target saved without one can be bound from its row; the step carries its gateway and its own ID.
+    const t = fixture({ credentials: { credentials: refs, status: 'ready' } });
+    await t.open(inventory({ gateways: [gateway], nodes: [unboundNode], scopes: [], executions: [] }));
+    html = t.host.innerHTML; assert.match(html, /data-credential="unbound"/); assert.match(text(html), /No credential bound yet/);
+    t.click('bind-node', unboundNode.id); html = t.host.innerHTML;
+    assert.match(html, /data-compute-form="bind"/); assert.ok(html.includes(refs[1].id) && !html.includes(refs[0].id), 'only target credentials');
+    const targetStep = html.match(/data-compute-provision[^>]*>([\s\S]*?)<\/pre>/)?.[1] || '';
+    assert.ok(targetStep.includes('&quot;g-one&quot;') && targetStep.includes('NODE_ID = &quot;n-one&quot;') && targetStep.includes('&quot;target&quot;'));
+    t.input('credential_choice', refs[1].id); t.submit('bind', { credential_id: refs[1].id, credential_version: '1' });
+    assert.ok(t.take('/api/compute/nodes/n-one/credential', 'POST')); t.ui.stop();
+    // 7. The server's refusal reasons are shown in plain words, never an empty message.
+    const r = fixture({ credentials: { credentials: refs, status: 'ready' } });
+    await r.open(inventory({ gateways: [gateway], nodes: [unboundNode], scopes: [], executions: [] })); r.click('bind-node', unboundNode.id);
+    r.submit('bind', { credential_id: 'ref', credential_version: '1' });
+    r.take('/api/compute/nodes/n-one/credential', 'POST').reject(failure(409, 'credential_already_bound')); await flush();
+    assert.match(text(r.host.innerHTML), /already has a credential/);
+    r.ui.stop();
+    const p = fixture(); await p.open(inventory({ nodes: [unboundNode], scopes: [], executions: [] })); p.click('proposal');
+    p.submit('proposal', proposalValues()); p.take('/api/compute/executions', 'POST').reject(failure(409, 'credential_not_bound')); await flush();
+    assert.match(text(p.host.innerHTML), /No credential is bound to this target or its gateway yet/); p.ui.stop();
+    // 8. A record whose credential state is neither a reference nor null is never rendered blank, and existing bound records are unchanged.
+    const u = fixture(); await u.open(inventory({ gateways: [{ ...gateway, credential_id: undefined, credential_version: undefined }], nodes: [], scopes: [], executions: [] }));
+    assert.match(text(u.host.innerHTML), /Credential state unavailable/); assert.doesNotMatch(u.host.innerHTML, /data-credential="unbound"|undefined|null/); u.ui.stop();
+    const old = fixture(); await old.open(inventory());
+    assert.match(old.host.innerHTML, /data-credential="bound"/); assert.doesNotMatch(old.host.innerHTML, /data-credential="unbound"|data-compute-action="bind-/);
+    assert.ok(old.host.innerHTML.includes('fixture-gateway-key')); old.ui.stop();
+    // 9. Copy: a missing clipboard or a non-promise is a failed copy, never "Copied.".
+    for (const copyImpl of [() => undefined, () => true, () => { throw new Error('no clipboard'); }, () => Promise.reject(new Error('denied'))]) {
+      const c = fixture({ credentials: { credentials: [], status: 'ready' }, copyImpl });
+      await c.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); c.click('gateway'); c.click('copy-provision'); await flush();
+      assert.doesNotMatch(text(c.host.innerHTML), /Copied/); assert.match(text(c.host.innerHTML), /Copying is not available here/); c.ui.stop();
+    }
   },
 
   async payloads() {
@@ -243,7 +411,7 @@ const cases = {
     late.setUser({ workspace: 'w-two', actor: 'user:u-two' }); late.ui.show(); await late.respond();
     late.click('gateway'); oldPost.reject(failure(403, 'owner_required')); await flush();
     assert.match(late.host.innerHTML, /data-compute-form="gateway"/, 'An old action refusal cannot clear a newer session');
-    assert.doesNotMatch(late.host.innerHTML, /requires the current workspace owner/); late.ui.stop();
+    assert.doesNotMatch(late.host.innerHTML, /Only its owner can change them/); late.ui.stop();
   },
 
   async lifecycle() {
@@ -265,7 +433,7 @@ const cases = {
 
   async failures() {
     const member = fixture(); await member.open(inventory({ can_manage: false }));
-    assert.match(member.host.innerHTML, /requires the current workspace owner/); member.click('gateway'); member.submit('gateway', gatewayValues());
+    assert.match(member.host.innerHTML, /Only its owner can change them/); member.click('gateway'); member.submit('gateway', gatewayValues());
     assert.equal(member.requests.filter(row => row.options.method === 'POST').length, 0); member.ui.stop();
     for (const status of [401, 403, 404]) {
       const f = fixture(); await f.open(); f.click('approve', 'e-one'); f.submit('approve', { expected_digest: execution().digest, expires_minutes: '1' });
@@ -276,7 +444,7 @@ const cases = {
     const posts = () => f.requests.filter(row => row.options.method === 'POST').length;
     f.submit('gateway', gatewayValues()); assert.equal(posts(), 1, 'An ambiguous non-idempotent create is not replayed');
     f.click('close'); f.click('gateway'); f.click('cancel', 'e-one'); assert.equal(posts(), 1);
-    assert.match(f.host.innerHTML, /Reload inventory/); f.click('refresh'); await f.respond(); f.click('gateway'); assert.match(f.host.innerHTML, /data-compute-form="gateway"/); f.ui.stop();
+    assert.match(f.host.innerHTML, /Refresh/); f.click('refresh'); await f.respond(); f.click('gateway'); assert.match(f.host.innerHTML, /data-compute-form="gateway"/); f.ui.stop();
 
     const partial = fixture(); partial.ui.show(); partial.take('/api/compute').resolve(inventory()); partial.take('/api/boards').reject(failure(503, 'unavailable')); await flush();
     assert.match(partial.host.innerHTML, /Fixture target/); assert.match(partial.host.innerHTML, /Projects could not be loaded/);

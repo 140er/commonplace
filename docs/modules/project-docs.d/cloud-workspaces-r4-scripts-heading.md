@@ -1,0 +1,4 @@
+- **Owns:** The operator text in `docs/compute/RUNNING.md` now uses the on-screen name for the script section ("Scripts") in its heading as well, and `commonplace/web/static/compute.js` no longer says "Workspace scripts" anywhere.
+- **Promises:** The words an operator is told to look for are the words on the screen.
+- **How it fails:** `tests/compute_ui.mjs` fails if the Scripts section heading or the "Workspace scripts" wording drifts back.
+- **Tests:** `tests/compute_ui.mjs`.

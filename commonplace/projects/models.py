@@ -7,6 +7,7 @@ from commonplace.projects.types import (
     MODEL,
     MODEL_ROLES,
     PROVIDER,
+    Effective,
     ModelChoice,
     ProjectDenied,
 )
@@ -77,7 +78,10 @@ def catalog_add(db, principal, board: str, choice: dict) -> list[ModelChoice]:
 
 
 def missing_roles(db, workspace_id: str, board: str, config) -> list[dict]:
-    """Roles a start of this config runs that cannot get a model, in slot order.
+    """Roles a start of this config runs that cannot get any model, in slot order.
+
+    A role with no choice runs on the default (``effective``), so a slot is missing only when
+    the project's model list is empty too.
 
     One entry per model role: ``role`` (``None`` when a config role names no ``model_role``,
     which no setting can fix) and the ``config_roles`` that use it. The roles are the ones
@@ -94,9 +98,10 @@ def missing_roles(db, workspace_id: str, board: str, config) -> list[dict]:
 
 
 def _unresolved(db, workspace_id: str, board: str, role: str) -> bool:
-    """A role outside the configurable slots has no model to resolve: it counts as unset."""
+    """A role with no choice, no default and no listed model is unusable; a role outside the
+    configurable slots has no model to resolve and counts as unset."""
     try:
-        return resolve(db, workspace_id, board, role) is None
+        return effective(db, workspace_id, board, role).choice is None
     except ValueError:
         return True
 
@@ -193,15 +198,65 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
         return get(db, principal.workspace_id, board)
 
 
-def resolve(db, workspace_id: str, board: str, role: str) -> ModelChoice | None:
-    """Use the project choice, then the workspace choice, then the runner default."""
+def _chosen(db, workspace_id: str, board: str, role: str) -> tuple[ModelChoice, str] | None:
+    """The owner's own choice for a role: the project's, else the workspace's, with its source."""
     if role not in MODEL_ROLES:
         raise ValueError("Invalid project model role")
     with db._lock:
         row = db._conn.execute(
-            "SELECT provider, model FROM chat_model_settings "
+            "SELECT provider, model, scope FROM chat_model_settings "
             "WHERE workspace_id=? AND scope IN (?, '*') AND role=? "
             "ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END LIMIT 1",
             (workspace_id, board, role, board),
         ).fetchone()
-    return ModelChoice(row["provider"], row["model"]) if row is not None else None
+    if row is None:
+        return None
+    return ModelChoice(row["provider"], row["model"]), "project" if row["scope"] == board else (
+        "workspace"
+    )
+
+
+def resolve(db, workspace_id: str, board: str, role: str) -> ModelChoice | None:
+    """The owner's own choice for a role (project, then workspace); ``None`` when none is set.
+
+    A start never calls this alone: ``effective`` adds the documented default."""
+    chosen = _chosen(db, workspace_id, board, role)
+    return chosen[0] if chosen is not None else None
+
+
+def default_choice(db, workspace_id: str, board: str) -> ModelChoice | None:
+    """The documented default for a role with no choice: the first model of the project's list.
+
+    The list is the project's own models plus the workspace's, in provider then model order
+    (``catalog``). ``None`` only when the list is empty."""
+    listed = catalog(db, workspace_id, board)
+    return listed[0] if listed else None
+
+
+def effective(db, workspace_id: str, board: str, role: str) -> Effective:
+    """The model a start of ``role`` runs on and where it came from.
+
+    ``project`` or ``workspace`` for the owner's choice, ``default`` for the first listed model,
+    ``none`` when there is no usable model at all (a start is then refused and Needs me asks)."""
+    chosen = _chosen(db, workspace_id, board, role)
+    if chosen is not None:
+        return Effective(chosen[0], chosen[1])
+    fallback = default_choice(db, workspace_id, board)
+    return Effective(fallback, "default" if fallback is not None else "none")
+
+
+def effective_roles(db, workspace_id: str, board: str) -> dict[str, Effective]:
+    """``effective`` for each configurable slot, in slot order."""
+    return {role: effective(db, workspace_id, board, role) for role in MODEL_ROLES}
+
+
+def describe(item: Effective) -> str:
+    """One labelled line for what a role runs on: chosen (project or workspace), default or none."""
+    if item.choice is None:
+        return "none (no model is set and the project's model list is empty; see Needs me)"
+    name = f"`{item.choice.provider}/{item.choice.model}`"
+    return {
+        "project": f"{name} (chosen for this project)",
+        "workspace": f"{name} (chosen for the workspace)",
+        "default": f"{name} (default: the first model in the project's list; none was chosen)",
+    }[item.source]

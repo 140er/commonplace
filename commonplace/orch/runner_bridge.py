@@ -36,16 +36,22 @@ import hashlib
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from commonplace.boards import contracts
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import BoardStore, task_row
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
-from commonplace.projects import escalation, limits as project_limits, models
+from commonplace.projects import escalation, limits as project_limits, model_modes, models
 from commonplace.runner import jobs, registry
-from commonplace.runner.predicate import Refused, grant_values, requester_ok, startable
+from commonplace.runner.predicate import (
+    Refused,
+    grant_values,
+    requester_ok,
+    setup_only_refusal,
+    startable,
+)
 
 from . import durable, schema, start_retry, store as orch_store
 
@@ -78,6 +84,8 @@ _STATUS = {
     "board_not_found": 404,
     "card_not_found": 404,
     "unknown_role": 404,
+    "mode_unavailable": 503,
+    "machine_not_found": 404,
 }
 
 
@@ -91,6 +99,15 @@ class StartRefused(ToolError):
         self.status = status or _STATUS.get(code, 409)
         self.details = details
         super().__init__(f"no: {message or code.replace('_', ' ')}")
+
+
+@dataclass(frozen=True)
+class MachineAuthority:
+    """A candidate machine and its start fences from the control snapshot."""
+
+    machine: dict | None
+    refusal: str | None
+    requester_allowed: bool
 
 
 @dataclass(frozen=True)
@@ -118,6 +135,11 @@ class Plan:
     escalation: escalation.Rule | None = None  # the project's rule, read with the snapshot
     labels: tuple = ()  # the card's labels
     model_reason: str | None = None  # why ``model`` is the escalation model
+    model_source: str | None = None  # project, workspace, default or escalation
+    account: model_modes.Decision | None = None  # the mode and account (card #617)
+    account_snapshot: model_modes.AccountSnapshot | None = None
+    machine_authorities: dict = field(default_factory=dict)
+    requester_allowed: bool = True
 
     @property
     def role(self) -> schema.Role:
@@ -134,6 +156,10 @@ class Plan:
             "model": self.model.model if self.model else None,
         }
 
+    def account_record(self) -> dict | None:
+        """``jobs.ACCOUNT_COLUMNS`` of the job this plan inserts."""
+        return self.account.record() if self.account is not None else None
+
 
 @dataclass(frozen=True)
 class TriggerRef:
@@ -145,6 +171,7 @@ class TriggerRef:
     actor: str | None = None
     retry: int = 0  # split reconciliation attempt (``orch_misses`` rows with a negative event)
     redo: int = 0  # transient-refusal retry number of the event (``start_retry``)
+    advance: int | None = None  # cursor value after this start; default the event itself
 
 
 @dataclass
@@ -165,7 +192,7 @@ def ensure_schema(conn) -> None:
     for statement in MISSES_SCHEMA:
         conn.execute(statement)
     columns = {r[1] for r in conn.execute("PRAGMA table_info(runner_jobs)")}
-    for name in ("launch_role", "model_reason", "request_base_hash"):
+    for name in ("launch_role", "model_reason", "request_base_hash", "model_source"):
         if name not in columns:
             conn.execute(f"ALTER TABLE runner_jobs ADD COLUMN {name} TEXT")
 
@@ -223,6 +250,9 @@ def _labels(row) -> list:
 
 def card_refusal(gateway, machine, card_row, board_row, principal, config) -> str | None:
     """Machine, card and grant refusals for a new start, as codes."""
+    guided = None if machine is None else setup_only_refusal(gateway, machine)
+    if guided:
+        return guided
     if (
         machine is None
         or not machine["enabled"]
@@ -283,9 +313,27 @@ def prepare(
         raise StartRefused("not_configured", "the board has no Coworker runner config")
     machine = registry.get_machine(gateway.db, workspace_id, config.runner.machine)
     try:
-        model = models.resolve(gateway.db, workspace_id, board_row["slug"], role.model_role)
-    except ValueError:
-        model = None
+        picked = models.effective(gateway.db, workspace_id, board_row["slug"], role.model_role)
+    except ValueError:  # a role with no model_role has no slot
+        picked = models.Effective(None, "none")
+    model = picked.choice
+    account_snapshot = _account_snapshot(
+        gateway, workspace_id, board_row["slug"], requested_by, version, machine
+    )
+    candidates = {c["machine_id"] for c in account_snapshot.own}
+    if machine is not None:
+        candidates.add(machine["id"])
+    authorities = {}
+    for machine_id in candidates:
+        candidate = registry.get_machine(gateway.db, workspace_id, machine_id)
+        authorities[machine_id] = MachineAuthority(
+            dict(candidate) if candidate is not None else None,
+            None
+            if principal is None
+            else card_refusal(gateway, candidate, card_row, board_row, principal, config),
+            candidate is not None and requester_ok(gateway, principal, candidate),
+        )
+    initial = authorities.get(machine["id"] if machine is not None else None)
     with BoardStore(gateway.workspace_dir(workspace_id)).connection() as conn:
         limit = project_limits.get(conn, board_row["id"])["max_agents"]
         doing = frozenset(
@@ -324,12 +372,14 @@ def prepare(
         config=config,
         machine=dict(machine) if machine is not None else None,
         model=model,
+        model_source=picked.source,
+        account_snapshot=account_snapshot,
+        machine_authorities=authorities,
+        requester_allowed=initial.requester_allowed if initial else False,
         cap=cap,
         doing=doing,
         plan_label="plan" in _labels(card_row),
-        refusal=None
-        if principal is None  # trigger with an unrebuildable actor: its refusal wins
-        else card_refusal(gateway, machine, card_row, board_row, principal, config),
+        refusal=initial.refusal if initial else "machine_unavailable",
         requested_by=requested_by,
         person=person,
         orchestration_on=on,
@@ -340,6 +390,66 @@ def prepare(
         escalation=escalation.get(gateway.db, workspace_id, board_row["slug"]),
         labels=tuple(str(x) for x in _labels(card_row)),
     )
+
+
+def _account_snapshot(gateway, workspace_id, board, requested_by, version, machine):
+    """The account authority of this start. The requesting person is the one who started it; a
+    start with no person (a trigger, a config step) belongs to the person who accepted the config
+    version. A person with no connection is told once, in their own Needs me."""
+    person = next(
+        (
+            ref[len("user:") :]
+            for ref in (requested_by, version.decided_by)
+            if isinstance(ref, str) and ref.startswith("user:")
+        ),
+        None,
+    )
+    try:
+        return model_modes.snapshot_account(
+            gateway.db,
+            workspace_id,
+            board,
+            person=person,
+            machine=machine,
+        )
+    except model_modes.ModeUnavailable:
+        raise StartRefused(
+            "mode_unavailable", "the model mode cannot be read right now; retry shortly"
+        ) from None
+
+
+def _account_plan(plan):
+    """Resolve the final provider against the saved control authority, without more I/O."""
+    if plan.account_snapshot is None:
+        return plan
+    account = plan.account_snapshot.resolve(
+        provider=plan.model.provider if plan.model else None, substitute=True
+    )
+    if account.machine_id is None:
+        return replace(plan, account=account)
+    authority = plan.machine_authorities[account.machine_id]
+    return replace(
+        plan,
+        account=account,
+        machine=authority.machine,
+        refusal=authority.refusal,
+        requester_allowed=authority.requester_allowed,
+    )
+
+
+def _note_missing_account(store, plan, refusal):
+    account = plan.account
+    if refusal.code == "connection_missing" and account is not None and account.person:
+        try:
+            model_modes.note_missing(
+                store.gateway.db,
+                store.workspace_id,
+                account.person,
+                plan.board,
+                plan.model.provider if plan.model else None,
+            )
+        except (OSError, sqlite3.Error, TimeoutError) as exc:
+            log_failure(logger, "card start missing connection note failed", exc)
 
 
 def _escalated(conn, plan: Plan) -> Plan:
@@ -359,7 +469,12 @@ def _escalated(conn, plan: Plan) -> Plan:
     model, reason = escalation.pick(
         rule, plan.role.model_role, plan.model, failed=failed, labels=plan.labels
     )
-    return replace(plan, model=model, model_reason=reason)
+    return replace(
+        plan,
+        model=model,
+        model_reason=reason,
+        model_source="escalation" if reason else plan.model_source,
+    )
 
 
 def request_hash(plan: Plan, role: str) -> str:
@@ -563,8 +678,9 @@ def model_unresolved(plan: Plan) -> StartRefused:
         )
     else:  # config validation accepts only the four slots, so project settings can set it
         message = (
-            f"no model is set for the {role.model_role} role of board {plan.board}; "
-            "an owner sets it in the board's project settings under Agent models"
+            f"no model is set for the {role.model_role} role of board {plan.board} and the "
+            "project's model list is empty, so there is no default to start on; an owner adds "
+            "a model and picks it in the board's project settings under Agent models"
         )
     return StartRefused(
         "model_unresolved", message, role=role.model_role, config_role=role.name, board=plan.board
@@ -597,11 +713,24 @@ def base_digest(base: Plan) -> str:
 
 
 def _fenced(
-    conn, plan, *, path, role, step_key, epoch, token, request_key, now, clock, fresh_reason=None
+    conn,
+    plan,
+    *,
+    base,
+    path,
+    role,
+    step_key,
+    epoch,
+    token,
+    request_key,
+    now,
+    clock,
+    fresh_reason=None,
 ):
     # 0. resolve: the model is pinned from the snapshot (or the project's escalation
     # rule); the hash covers it.
-    base, plan = plan, _escalated(conn, plan)
+    if path == "orch" and not plan.requester_allowed:
+        raise StartRefused("not_allowed", "requester not allowed")
     if plan.model is None:
         raise model_unresolved(plan)
     digest = request_hash(plan, role)
@@ -657,6 +786,8 @@ def _fenced(
             )
     if plan.refusal is not None:
         raise StartRefused(plan.refusal, f"card is not startable: {plan.refusal}")
+    if plan.account is not None and plan.account.refusal is not None:
+        raise StartRefused(plan.account.refusal.code, plan.account.refusal.message)
     # 3. path contracts: no two running cards own the same files.
     overlap = contract_refusal(
         conn,
@@ -706,6 +837,7 @@ def _fenced(
             request_key=request_key,
             person=plan.person and path == "person",
             config=record,
+            account=plan.account_record(),
         )
     except jobs.Conflict as exc:
         raise StartRefused(jobs.conflict_code(exc), str(exc)) from None
@@ -716,9 +848,10 @@ def _fenced(
         row = _job(conn, row["id"])
     if status == 201:
         conn.execute(
-            "UPDATE runner_jobs SET model_reason=?, request_base_hash=? WHERE id=?",
+            "UPDATE runner_jobs SET model_reason=?, model_source=?, request_base_hash=? WHERE id=?",
             (
                 plan.model_reason,
+                plan.model_source,
                 request_hash(base, role) if path == "orch" else base_digest(base),
                 row["id"],
             ),
@@ -793,11 +926,17 @@ def _fresh_reason(conn, plan, requested, now):
     return requested or "agent_full"
 
 
+def _advance_to(trigger) -> int:
+    """Where this start leaves the cursor. A sweep that starts cards out of event order
+    (most urgent first) names the highest event whose predecessors are all handled."""
+    return trigger.event if trigger.advance is None else trigger.advance
+
+
 def _advance(conn, plan, trigger) -> None:
     # Same transaction as the job or miss; the in-lock re-check made the pair current.
     conn.execute(
         "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
-        (trigger.event, plan.board, trigger.gen, trigger.cursor),
+        (_advance_to(trigger), plan.board, trigger.gen, trigger.cursor),
     )
 
 
@@ -835,7 +974,7 @@ def trigger_miss(store, board: str, card: int, trigger: TriggerRef, code: str, *
         elif not trigger.retry:
             conn.execute(
                 "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
-                (trigger.event, board, trigger.gen, trigger.cursor),
+                (_advance_to(trigger), board, trigger.gen, trigger.cursor),
             )
     return True
 
@@ -880,6 +1019,7 @@ def fenced_start(
     from commonplace.projects import orchestration as orch
 
     refusal = None
+    base = plan
     with (
         orch.admission(store.gateway, store.workspace_id, store=store)
         if plan.orchestration_on
@@ -918,9 +1058,11 @@ def fenced_start(
         try:
             if actor_refusal is not None:
                 raise StartRefused(actor_refusal)
+            plan = _account_plan(_escalated(conn, plan))
             outcome = _fenced(
                 conn,
                 plan,
+                base=base,
                 path=path,
                 role=role,
                 step_key=step_key,
@@ -963,8 +1105,10 @@ def fenced_start(
                     retry=trigger.redo,
                     job=outcome.job,
                 )
-    if refusal is not None and trigger is None:
-        raise refusal
+    if refusal is not None:
+        _note_missing_account(store, plan, refusal)
+        if trigger is None:
+            raise refusal
     return outcome
 
 
@@ -1010,6 +1154,11 @@ def launch_reply(plan: Plan, outcome: Outcome) -> dict:
             "model": job.get("model", plan.model.model if plan.model else None),
         },
         "model_reason": job.get("model_reason", plan.model_reason),
+        "model_source": job.get("model_source", plan.model_source),
+        # The launch reply goes to a Coworker, never the label of a person's own account.
+        "account": model_modes.run_view(
+            job if job.get("mode") is not None else plan.account_record() or {"mode": None}, None
+        ),
     }
 
 
@@ -1066,8 +1215,6 @@ def orch_card_start(
         requested_by=jobs.requester_ref(principal),
         person=False,
     )
-    if plan.machine is None or not requester_ok(ctx.gateway, principal, plan.machine):
-        raise StartRefused("not_allowed", "requester not allowed")
     outcome = fenced_start(
         store,
         plan,

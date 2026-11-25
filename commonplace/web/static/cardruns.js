@@ -29,7 +29,7 @@ export const OUTCOME_WORDS = {
   t3_missing: "The machine could not find its coding tool",
   busy: "The machine had reached its hourly limit",
   machine_revoked: "The machine was switched off or removed",
-  binding_not_attested: "The machine is no longer vouched for by an owner",
+  binding_not_attested: "The machine is no longer attested by an owner",
   binding_epoch_changed: "The machine's setup changed after the request",
   restart_unknown: "The runner restarted while starting",
   spawn_ambiguous: "The runner lost track while starting",
@@ -49,14 +49,17 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent. An owner can add one and vouch for it in Workspace settings, under Runner machines.",
-  machine_unavailable: "The machine this project starts agents on is switched off, removed or not vouched for. Check it in Workspace settings, under Runner machines.",
-  binding_not_attested: "The machine is not vouched for by an owner yet. Vouch for it in Workspace settings, under Runner machines.",
+  no_machine: "No machine is ready to run an agent yet. Add one under Add a machine in Cloud workspaces. In this version a machine only checks itself. Coworkers do not run on it in this version.",
+  machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
+  binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
+  setup_waiting: "The machine you added connected and waits for your approval. Coworkers do not run on it in this version.",
+  setup_unfinished: "The machine you added is not finished. Coworkers do not run on it in this version.",
+  setup_only: "The machine you added only checks itself in this version. Coworkers do not run on it in this version.",
   origin_not_released: "This card came from outside the workspace and has not been released for agents. Release it first, then start an agent.",
-  not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
-  outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Workspace settings, under Runner machines.",
+  not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
+  outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
   task_type_not_allowed: "The machine's worker may not take this type of card.",
-  worker_unavailable: "The machine's worker connection is not available. Check the machine in Workspace settings, under Runner machines.",
+  worker_unavailable: "The machine's worker connection is not available. Check the machine in Admin > Runner machines.",
   project_not_allowed: "The machine is not set up for the project this project's config names. Change the config or the machine's projects.",
   topic_not_allowed: "The machine is not allowed to work on the topic this project's config names. Change the config or the machine's topics.",
   mode_not_allowed: "The machine does not allow the permission mode this project's config names.",
@@ -71,6 +74,9 @@ const START_REFUSALS = {
   use_orch_card_start: "This project starts agents from its Coworker config. Only a signed-in workspace owner can start one from the card.",
   not_configured: "This project has no Coworker config. Choose a machine, project and topic.",
 };
+// Where the person goes for the one working next step of a refusal.
+const ADD_LINK = ["#/compute", "Open Add a machine"], ADMIN_LINK = ["#/admin", "Open Admin > Runner machines"];
+const START_LINKS = { no_machine: ["#/compute", "Open Cloud workspaces"], setup_waiting: ADD_LINK, setup_unfinished: ADD_LINK, setup_only: ADD_LINK, machine_unavailable: ADMIN_LINK, binding_not_attested: ADMIN_LINK, not_writable: ADMIN_LINK, outside_worker_wing: ADMIN_LINK, worker_unavailable: ADMIN_LINK };
 // The card cannot be started whatever the setup: show no Start control and no complaint.
 export const NOT_CLAIMABLE = ["not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by"];
 const TEXT_CODES = { "card already has an active start": "active_start", "card was started recently": "started_recently" };
@@ -87,8 +93,11 @@ const choices = (list, picked) => list.map((item) => `<option value="${e(item)}"
 // The Start control for what the options route answered; empty when nothing should show.
 function startHTML(start, jobs) {
   if (!start || NOT_CLAIMABLE.includes(start.refusal)) return "";
-  const why = (text) => `<p class="run-start-why" data-run-start-why>${e(text)}</p>`;
-  if (start.refusal) return why(START_REFUSALS[start.refusal] || "An agent cannot be started on this card right now.");
+  const why = (text, link) => {
+    const href = link?.[0] === '#/compute' && globalThis.document?.documentElement?.dataset?.ui === 'deck' ? '#/compute/management' : link?.[0];
+    return `<p class="run-start-why" data-run-start-why>${e(text)}${link ? ` <a href="${e(href)}" data-run-start-link>${e(link[1])}</a>` : ""}</p>`;
+  };
+  if (start.refusal) return why(START_REFUSALS[start.refusal] || "An agent cannot be started on this card right now.", START_LINKS[start.refusal]);
   if (jobs.some((job) => ACTIVE.includes(job.state))) return why(START_REFUSALS.active_start);
   const button = `<button class="btn sm" type="submit">Start agent</button>`;
   if (start.configured) {

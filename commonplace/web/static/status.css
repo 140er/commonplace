@@ -1,0 +1,23 @@
+/* A document-style page that shares the application tokens. */
+body.status-page { height: auto; min-height: 100%; overflow: auto; font-size: 14px; line-height: 1.6; }
+.status-page .status-nav, .status-page main { max-width: 860px; margin: 0 auto; padding: 24px; }
+.status-page .status-nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-bottom: 0; }
+.status-page a { color: var(--strong); text-underline-offset: 4px; }
+.status-page h1 { font-size: 24px; line-height: 1.3; margin: 0 0 8px; }
+.status-page h2 { font-size: 16px; line-height: 1.5; margin: 0 0 8px; }
+.status-page h3 { font-size: 14px; margin: 16px 0 4px; }
+.status-page p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.status-page .status-section { margin-top: 24px; padding: 16px 20px; border: 1px solid var(--line); background: var(--surface); }
+.status-page .status-section[data-state="error"] { border-color: var(--line-2); }
+.status-page .status-meta { color: var(--muted); font-size: 13px; }
+.status-page .status-name { font-weight: 600; margin: 0; }
+.status-page .status-name small { font-weight: 400; color: var(--muted); }
+.status-page .status-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.status-page .status-row { padding: 10px 0; border-top: 1px solid var(--line); }
+.status-page .status-row:first-child { border-top: 0; }
+.status-page button { font: inherit; font-weight: 600; min-height: 44px; padding: 8px 16px; border: 1px solid var(--line-2); background: transparent; color: var(--strong); cursor: pointer; }
+.status-page :focus-visible { outline: 2px solid var(--strong); outline-offset: 3px; }
+@media (max-width: 480px) {
+  .status-page .status-nav, .status-page main { padding: 16px; }
+  .status-page .status-section { padding: 14px 16px; }
+}

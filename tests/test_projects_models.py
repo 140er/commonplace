@@ -235,16 +235,10 @@ def test_404_reviewer_and_gate_are_slots_reported_in_slot_order(projects_hub):
         ("gate", ["release"]),
         (None, ["loose"]),
     ]
+    # One listed model is the default of every slot (#419); only a role with no slot stays missing.
     assert h.models(h.owner, "alpha", {"main": CHOICES["main"]}, declare=True)[0] == 200
     assert [item["role"] for item in models.missing_roles(h.db, h.workspace, "alpha", config)] == [
-        "reviewer",
-        "gate",
-        None,
-    ]
-    assert h.models(h.owner, "alpha", {"gate": CHOICES["main"]}, declare=True)[0] == 200
-    assert [item["role"] for item in models.missing_roles(h.db, h.workspace, "alpha", config)] == [
-        "reviewer",
-        None,
+        None
     ]
     assert tuple(types.MODEL_ROLES) == ("main", "worker", "reviewer", "gate")
     assert set(types.MODEL_ROLES) <= set(types.CATALOG_ROLES)

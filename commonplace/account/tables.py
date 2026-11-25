@@ -68,6 +68,10 @@ RULES = {
     # Read marks name their reader as an actor ref (``user:<id>``), like card history.
     "chat_live_reads": Rule(workspace=_W),
     "chat_model_settings": Rule(workspace=_W),
+    "model_mode_settings": Rule(workspace=_W),
+    "model_connections": Rule(user=_U, workspace=_W),
+    "model_person_prefs": Rule(user=_U, workspace=_W),
+    "model_connection_needs": Rule(user=_U, workspace=_W),
     "chat_runner_jobs": Rule(user=_U, workspace=_W),
     "chat_runners_seen": Rule(user=_U, workspace=_W),
     "connections": Rule(user=_U, workspace=_W),
@@ -88,8 +92,11 @@ RULES = {
     "ingest_cadence": Rule(user=("account_id",)),
     "ingest_requests": Rule(user=("account_id",), connection=_C),
     "login_links": Rule(user=_U),
+    "machine_pairing_steps": Rule(parent=("pairing_id", "machine_pairings", "id")),
+    "machine_pairings": Rule(workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")),
     "memberships": Rule(user=_U, workspace=_W),
     "meta": Rule(),
+    "oauth_client_approvals": Rule(user=("approved_by",), workspace=_W),
     "oauth_clients": Rule(),
     "oauth_codes": Rule(connection=_C, credential=True),
     "oauth_person_grants": Rule(user=_U, workspace=_W, connection=_C, credential=True),
@@ -101,6 +108,14 @@ RULES = {
     ),
     "phone_push_state": Rule(parent=("subscription_id", "phone_push_subscriptions", "id")),
     "phone_push_subscriptions": Rule(user=_U, workspace=_W),
+    # Previews belong to a workspace and stay when a person leaves it, like the card history
+    # they are noted in; the people named on them are actor labels, not user columns.
+    "preview_events": Rule(workspace=_W),
+    # Short-lived page links of one person for one preview: they go with the person.
+    "preview_links": Rule(user=_U, workspace=_W),
+    "preview_revisions": Rule(parent=("preview_id", "previews", "id")),
+    "preview_rules": Rule(workspace=_W),
+    "previews": Rule(workspace=_W),
     "project_model_catalog": Rule(workspace=_W),
     "project_model_escalation": Rule(workspace=_W),
     "project_orchestrators": Rule(workspace=_W, connection=_C),
@@ -171,8 +186,19 @@ RULES = {
 
 # A purge handles these itself: tombstones, the append-only audit log and the
 # rows that must go last because others point at them.
+# ``preview_events`` is append-only like the audit log (a trigger refuses every delete), holds
+# ids, actor labels and fixed reason codes but no content, and so stays when a workspace goes;
+# the preview rows and the files go with the workspace.
 KEPT = frozenset(
-    {"account_deletions", "audit_log", "connections", "memberships", "users", "workspaces"}
+    {
+        "account_deletions",
+        "audit_log",
+        "connections",
+        "memberships",
+        "preview_events",
+        "users",
+        "workspaces",
+    }
 )
 
 # Credentials and their digests are never exported, also not to their owner.

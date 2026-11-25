@@ -1,7 +1,4 @@
-- **Promises:**
-
-  - When two personal workspaces have the same creation second, sign-in keeps the first provisioned workspace as the home. Additional workspaces retain their association with the creator's existing account plan.
-
-- **Tests:**
-
-  - The workspace creation regression fixes the creation clock and chooses a lower-sorting new id to prove that sign-in home does not change on timestamp ties.
+- **Owns:** The workspace-specific session csrf token and shared signup default-board initializer.
+- **Promises:** The purpose-bound csrf digest follows the existing browser consent pattern and changes with the session cookie. Signup and additional workspaces share default-board initialization; signup keeps its marker until session issuance commits.
+- **How it fails:** Missing, wrong or another session's csrf token refuses creation. Interrupted initialization can be retried without duplicating the default board.
+- **Tests:** tests/test_workspace_creation_safety.py checks token binding and authority. tests/test_commonplace_signup_space.py and tests/test_commonplace_social.py preserve signup behavior.

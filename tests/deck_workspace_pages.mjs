@@ -69,7 +69,7 @@ test('Management uses the existing controller and restores the shell and phone d
     const ui = mount({ root: f.root, route: '#/compute/management', me: { workspace: 'w', actor: 'u' }, api: () => new Promise(() => {}) });
     assert.deepEqual(hrefs(f.root.innerHTML), [deck ? '#/compute' : '#/compute-map', '#/compute/management']);
     assert.match(f.regions.get('content').innerHTML, /Loading Compute inventory/);
-    assert.match(f.regions.get('content').innerHTML, /<h1>Compute<\/h1>/);
+    assert.match(f.regions.get('content').innerHTML, /<h1>Cloud workspaces<\/h1>/);
     assert.doesNotMatch(f.root.innerHTML, /<p>Management<\/p>/);
     assert.doesNotMatch(f.root.innerHTML + f.regions.get('content').innerHTML, /orchestrator/i);
     assert.equal(header.hidden, true); assert.equal(phone.hidden, !deck); assert.equal(tabs.style.position, 'fixed');
@@ -77,6 +77,23 @@ test('Management uses the existing controller and restores the shell and phone d
     assert.equal(header.hidden, false); assert.equal(phone.hidden, false); assert.equal(tabs.style.position, 'relative');
     assert.equal(f.root.innerHTML, '');
   }
+});
+test('a member gets the read-only cloud workspaces page without a tab bar, an owner gets Map and Management', () => {
+  const run = (me, route) => {
+    const f = hostFixture();
+    f.root.ownerDocument = { documentElement: { dataset: { ui: 'deck' } }, addEventListener() {}, removeEventListener() {} };
+    f.root.parentElement = { querySelector: () => ({ hidden: false, style: {} }) };
+    const ui = mount({ root: f.root, route, me, api: () => new Promise(() => {}) });
+    const html = f.root.innerHTML, content = f.regions.get('content').innerHTML;
+    ui.stop();
+    return { html, content };
+  };
+  const member = run({ workspace: 'w', actor: 'u', role: 'member' }, '#/compute');
+  assert.doesNotMatch(member.html, /dw-tabs|Management/, 'no tab bar for a member');
+  assert.match(member.content, /<h1>Cloud workspaces<\/h1>/, 'the member lands on the page that is theirs, even from the map address');
+  const owner = run({ workspace: 'w', actor: 'u', role: 'owner' }, '#/compute/management');
+  assert.match(owner.html, /aria-label="Cloud workspaces views"[^>]*><a href="#\/compute">Map<\/a><a href="#\/compute\/management" aria-current="page">Management<\/a>/);
+  assert.doesNotMatch(owner.html, /data-compute-routes/, 'the route card is not on the Management tab');
 });
 test('Coworkers puts the parent scope switch and conversation action in its title row', () => {
   for (const bot of ['bot-1', '-']) {
@@ -117,7 +134,7 @@ test('the real shell accepts every nested page and tears down the previous contr
     const state = { me: {}, base: '#/bots/b1', route: '#/bots/b1', screen: 1, boards: [], chatVisible: new Set(), deck: createDeck({ storage: { getItem: () => deck ? 'deck' : 'classic' }, doc: {} }) };
     const leave = state.deck.leave; state.deck.leave = () => { left++; leave(); };
     const panel = {}, content = { children: [], innerHTML: '' };
-    const context = { state, location: { hash: '' }, history: { state: null, replaceState(_state, _title, hash) { context.location.hash = hash; } }, localStorage: { getItem() {} }, root: { querySelector: s => s === '#content' ? content : s === '#card-panel' ? panel : null }, resolveRoute, boardRoute() {}, boardPreference() {}, decideStart() {}, remember() {}, clearAgentSecret() {}, voice: { stop() {} }, speech: { stop() {} }, botsUI: { stop() { stopped++; } }, boardDispose: null, detailsUI: null, markOpenCard() {}, showError() {}, message: s => s, showLoading: (host, text) => { host.innerHTML = text; }, refresh() { refreshed++; } };
+    const context = {prepareRoute: async () => {}, state, location: { hash: '' }, history: { state: null, replaceState(_state, _title, hash) { context.location.hash = hash; } }, localStorage: { getItem() {} }, root: { querySelector: s => s === '#content' ? content : s === '#card-panel' ? panel : null }, resolveRoute, boardRoute() {}, boardPreference() {}, decideStart() {}, remember() {}, clearAgentSecret() {}, voice: { stop() {} }, speech: { stop() {} }, botsUI: { stop() { stopped++; } }, boardDispose: null, detailsUI: null, markOpenCard() {}, showError() {}, message: s => s, showLoading: (host, text) => { host.innerHTML = text; }, refresh() { refreshed++; } };
     runInNewContext(source, context);
     for (const hash of ['#/compute', '#/compute/management', '#/coworkers', '#/coworkers/c1?message=m1', '#/bots/b1/coworkers', '#/bots/-/coworkers/conversations']) {
       context.location.hash = hash; await context.route();
@@ -138,9 +155,10 @@ test('nested pages belong to their existing Deck section and keep four destinati
     }
   }
 });
-test('classic rail and phone tabs remain exactly Bots and Memory, with the same owner map menu', () => {
-  assert.deepEqual(hrefs(renderRail().split('rail-foot')[0]), ['#/bots', '#/memory']);
-  assert.deepEqual(hrefs(renderPhoneTabs()), ['#/bots', '#/memory']);
+test('classic rail and phone tabs are Bots, Memory and Cloud workspaces, with the same owner map menu', () => {
+  // Cloud workspaces (#614) is a deliberate third first-level entry: the usability review found Compute was not reachable at a glance in Classic.
+  assert.deepEqual(hrefs(renderRail().split('rail-foot')[0]), ['#/bots', '#/memory', '#/compute']);
+  assert.deepEqual(hrefs(renderPhoneTabs()), ['#/bots', '#/memory', '#/compute']);
   for (const render of [renderRail, renderPhoneBar]) {
     assert.equal(hrefs(render({ can_admin: true })).filter(href => href === '#/compute-map').length, 1);
     assert.ok(!hrefs(render({ can_admin: false })).includes('#/compute-map'));

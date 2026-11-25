@@ -1,3 +1,4 @@
+import { wingLabel } from "./wing-label.js";
 /** Owner screen for runner machines: enroll, attest, edit wings and revoke. Tokens live only in the reveal panel. */
 const MODES = ['approval-required', 'auto-accept-edits', 'auto', 'full-access'];
 const SETUP_NOTE = 'Setup: put the machine token in the environment variable the runner config names as token_env, and the worker token in the Commonplace MCP entry of the worker\'s provider instance. Set hub_url to this site\'s address, then run "python -m commonplace runner check --config <file>" before starting the runner. See docs/runner.md.';
@@ -40,12 +41,19 @@ export function grantBody(values) {
   return { projects: parseList(values.projects), max_runtime_mode: values.max_runtime_mode };
 }
 
-export function attestBody(values) {
-  return {
+// What the hub already knows of the machine's provider instance id: the attested one, else the one the machine reported.
+export const providerGuess = machine => machine?.binding_provider_instance_id || machine?.scope?.record?.provider_instance_id || '';
+export const PROVIDER_HINT = 'The name of the coding tool on the machine: the one entry under providerInstances in its T3 settings (~/.t3/userdata/settings.json). It is filled in when the machine has reported it.';
+
+export function attestBody(values, machine = null) {
+  const body = {
     topics: parseList(values.topics),
     provider_instance_id: String(values.provider_instance_id || '').trim(),
     worker_connection_id: String(values.worker_connection_id || '').trim(),
   };
+  // A machine that reported its grant scope is confirmed against that report (the server refuses a bare confirm).
+  if (machine?.scope?.sha256) Object.assign(body, { grant_scope_sha256: machine.scope.sha256, expected_scope_epoch: machine.scope_epoch });
+  return body;
 }
 
 export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.clipboard.writeText(text) }) {
@@ -58,11 +66,11 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
   const wingBoxes = selected => {
     if (wingsPending) return '<p>Loading wings…</p>';
     const all = [...new Set([...wings, ...selected])].sort();
-    const boxes = all.length ? `<fieldset><legend>Wings</legend>${all.map(w => `<label><input type="checkbox" name="wings" value="${e(w)}"${selected.includes(w) ? ' checked' : ''}>${e(w)}</label>`).join('')}</fieldset>` : '';
+    const boxes = all.length ? `<fieldset><legend>Wings</legend>${all.map(w => `<label><input type="checkbox" name="wings" value="${e(w)}"${selected.includes(w) ? ' checked' : ''}>${e(wingLabel(w))}</label>`).join('')}</fieldset>` : '';
     if (wingsError) return `${boxes}<p>The wing list could not be loaded. Type a wing name to add it, or reload to try again.</p><label>Add wings (comma separated)<input name="typed_wings" autocomplete="off"></label>`;
     return boxes || '<p>No readable wings yet.</p>';
   };
-  const enrollForm = () => `<form class="agent-form" data-runner-form="enroll"><h3>Add runner</h3>
+  const enrollForm = () => `<form class="agent-form" data-runner-form="enroll"><h3>Add a runner agent (developer route, with tokens)</h3>
     <label>Label<input name="label" required maxlength="40" pattern="[a-z0-9][a-z0-9._-]*" autocomplete="off"></label>
     <label>Projects (comma separated)<input name="projects" required autocomplete="off"></label>
     <label>Topics (comma separated)<input name="topics" required autocomplete="off"></label>
@@ -78,13 +86,27 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       <button type="button" class="btn" data-runner-action="revoke-confirm" data-runner-id="${id}" aria-label="Confirm revoking ${e(m.label)}">Revoke machine</button>
       <button type="button" class="btn" data-runner-action="revoke-cancel" data-runner-id="${id}">Keep machine</button></div>`;
   };
+  // A machine added through Add a machine: the pairing's own state in the pairing's own words (the same as Add a machine
+  // and the overview), no enabled/disabled/unbound, and no forms that guided setup cannot fill (Attest needs a provider
+  // id it never reports; the grant and wings edits change nothing for a machine that takes no work).
+  const guidedView = m => {
+    const g = m.guided;
+    const href = globalThis.document?.documentElement?.dataset?.ui === 'deck' ? '#/compute/management' : '#/compute';
+    const limitation = 'Coworkers do not run on it in this version.';
+    const notice = `${g.sentence} ${g.next}`.includes(limitation) ? '' : `<p>${limitation}</p>`;
+    return `<article class="runner-machine runner-guided" aria-label="${e(m.label)}" data-guided="${e(g.state)}"><h3>${e(m.label)}</h3>
+      <p class="runner-guided-state"><strong>${e(g.label)}</strong></p><p>${e(g.sentence)}</p><p>${e(g.next)}</p>${notice}
+      <p><a class="btn" href="${href}" data-runner-guided-link>Open Add a machine</a></p></article>`;
+  };
   const machineView = m => {
+    if (m.guided && !m.revoked_at) return guidedView(m);
     const id = e(m.machine_id), live = !m.revoked_at;
     const state = m.revoked_at ? 'revoked' : m.enabled ? 'enabled' : 'disabled';
     const forms = live ? `<form class="agent-form" data-runner-form="attest" data-runner-id="${id}"><h4>Attest</h4>
       <p>Records your statement that this worker is set up for these topics. It is not verified.</p>
       <label>Topics (comma separated)<input name="topics" required value="${e(m.topics.join(', '))}" autocomplete="off"></label>
-      <label>Provider instance id<input name="provider_instance_id" required value="${e(m.binding_provider_instance_id || '')}" autocomplete="off"></label>
+      <label>Provider instance id<input name="provider_instance_id" required value="${e(providerGuess(m))}" aria-describedby="provider-hint-${id}" autocomplete="off"></label>
+      <small id="provider-hint-${id}">${e(PROVIDER_HINT)}</small>
       <label>Worker connection id<input name="worker_connection_id" required value="${e(m.worker_connection_id)}" autocomplete="off"></label>
       <button type="submit" class="btn">Attest</button></form>
       <form class="agent-form" data-runner-form="grant" data-runner-id="${id}"><h4>Edit projects and runtime</h4>
@@ -94,9 +116,9 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       <form class="agent-form" data-runner-form="wings" data-runner-id="${id}"><h4>Edit wings</h4>${wingBoxes(m.wings)}
       <p>${e(RESET_NOTE)}</p><button type="submit" class="btn">Save wings</button></form>${revokeControl(m)}` : '';
     return `<article class="runner-machine" aria-label="${e(m.label)}"><h3>${e(m.label)}</h3>
-      <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · ${e(m.max_in_flight)} in flight</p>
+      <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · Limit: ${e(m.max_in_flight)} run${m.max_in_flight === 1 ? '' : 's'} at once</p>
       ${m.lifecycle ? `<p role="status">${e(m.lifecycle.service)} · Host verification: ${e(m.lifecycle.host_verification)}</p>` : ''}
-      <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.join(', '))}</p>${forms}</article>`;
+      <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.map(wing => wingLabel(wing)).join(', '))}</p>${forms}</article>`;
   };
   const renderList = resetForm => {
     const node = region('list');
@@ -142,7 +164,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
         reveal(result);
         status('Runner added. Copy the tokens below; they are not shown again.');
       } else if (kind === 'attest') {
-        await api(`/api/runners/${encodeURIComponent(id)}/attest`, { method: 'POST', body: attestBody(values) });
+        await api(`/api/runners/${encodeURIComponent(id)}/attest`, { method: 'POST', body: attestBody(values, machines.find(m => m.machine_id === id)) });
         if (mine !== epoch) return;
         status('Attested. This is your statement; Commonplace does not verify it.');
       } else if (kind === 'grant') {
@@ -213,7 +235,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
     stop();
     host = container;
     host.innerHTML = `<section class="settings-section runner-block" aria-labelledby="runner-heading"><h2 id="runner-heading">Runner machines</h2>
-      <p>Enroll a machine so one worker can start and work cards on every wing you grant it. The worker can write only to those wings. Attestation is your own statement and is not verified.</p>
+      <p>A machine added with Add a machine in Cloud workspaces is listed here with the state shown there. Runner agents enrolled with tokens are the developer route: the worker of one can write only to the wings you grant it, and attestation is your own statement and is not verified.</p>
       <div data-runner-reveal></div><p role="status" aria-live="polite" data-runner-status></p>
       <div data-runner-enroll-slot></div><div data-runner-list><p>Loading runner machines…</p></div></section>`;
     host.addEventListener('submit', onSubmit);

@@ -1,0 +1,1 @@
+- **Promises:** The REST write inventory lists `POST /api/handoff/start` as a checked `handoff_start` write: the preview and the confirmed start both need a current rules sequence, like the tool they mirror.

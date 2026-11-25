@@ -187,6 +187,7 @@ def test_inventory_pending_enrollment_and_reopen_preserve_exact_public_records(c
         "host_key",
         "credential_id",
         "credential_version",
+        "credential_bound",
         "epoch",
         "state",
         "created_at",

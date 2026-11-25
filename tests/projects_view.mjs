@@ -96,3 +96,31 @@ test("model fields cover the four roles and the escalation rule picks from the w
   assert.equal(ui.escalationBody(read({ after_failures: "2" })), null);
   assert.equal(ui.escalationBody(read({ escalation_model: "p m" })), null);
 });
+
+test("each role shows the model it runs on, labelled, and an unknown state is never blank", async () => {
+  const ui = await load("projects");
+  const model = { provider: "p", model: "m<x>" };
+  const owner = {
+    ...project,
+    can_configure: true,
+    models: { worker: model },
+    model_catalog: [model],
+    models_effective: {
+      main: { ...model, source: "default" },
+      worker: { ...model, source: "project" },
+      reviewer: { ...model, source: "workspace" },
+      gate: { provider: null, model: null, source: "none" },
+    },
+  };
+  const html = ui.modelsHTML(owner, e);
+  assert.match(html, /data-model-effective="main">p\/m&lt;x&gt; \(default, nothing chosen\)</);
+  assert.match(html, /data-model-effective="worker">p\/m&lt;x&gt; \(chosen for this project\)</);
+  assert.match(html, /data-model-effective="reviewer">p\/m&lt;x&gt; \(chosen for the workspace\)</);
+  assert.match(html, /data-model-effective="gate">No usable model: add one to the list below</);
+  assert.doesNotMatch(html, /m<x>/);
+  assert.match(html, /<option value="" selected?>Default<\/option>|<option value="">Default<\/option>/);
+  // A project payload without the field still says something for every role.
+  const bare = ui.modelsHTML({ ...project, models_effective: undefined }, e);
+  assert.equal((bare.match(/data-model-effective="[a-z]+">Not known yet</g) || []).length, 4);
+  assert.equal(ui.effectiveWords({ models_effective: { main: { provider: "p", model: "m", source: "odd" } } }, "main"), "p/m (source not known)");
+});

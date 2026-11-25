@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlsplit
 
 from commonplace import control_db, redact
+from commonplace.compute import pairing
 from commonplace.console.authority import status
 from commonplace.http_util import log_failure, path_parts, require_principal, send_json
 from commonplace.policy import Policy
@@ -537,6 +538,7 @@ def machines(conn, workspace_id, context, *, active_only=False):
         + "ORDER BY m.created_at,m.id",
         (workspace_id,),
     ).fetchall()
+    guided = pairing.guided_state_on_connection(conn, workspace_id)
     result = []
     for row in rows:
         context.remaining()
@@ -545,6 +547,7 @@ def machines(conn, workspace_id, context, *, active_only=False):
                 "id": identifier(row["id"], r"mach_[a-f0-9]{16}"),
                 "label": display(row["label"]),
                 "enabled": bool(row["enabled"]),
+                "guided": guided.get(row["id"]),
                 "revoked_at": timestamp(row["revoked_at"]),
                 "binding_state": row["binding_state"]
                 if row["binding_state"] in ("unbound", "owner_attested")

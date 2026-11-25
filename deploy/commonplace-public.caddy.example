@@ -5,11 +5,17 @@
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
-		X-Frame-Options DENY
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=31536000"
 		-Server
 	}
+}
+
+# Every site except the app host's /p/* answers with X-Frame-Options DENY from here. /p/* sets
+# its own frame policy in the gateway's answers (the viewer page is never framed; a preview's
+# files may be framed by the viewer only): a second header from the proxy would be sent twice.
+(commonplace_frame_deny) {
+	header X-Frame-Options DENY
 }
 
 (commonplace_gateway) {
@@ -32,6 +38,7 @@
 commonplace.run, www.commonplace.run {
 	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
+	import commonplace_frame_deny
 	@www host www.commonplace.run
 	redir @www https://commonplace.run{uri} 308
 	import commonplace_legal
@@ -44,11 +51,14 @@ commonplace.run, www.commonplace.run {
 app.cmmn.dev {
 	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
-	@app path /app /app/* /api/* /health /healthz
+	@app path /app /app/* /api/* /health /healthz /p/*
 	handle @app {
+		@notpreview not path /p/*
+		header @notpreview X-Frame-Options DENY
 		import commonplace_gateway
 	}
 	handle {
+		import commonplace_frame_deny
 		redir https://app.cmmn.dev/app/ 302
 	}
 }
@@ -57,6 +67,7 @@ app.cmmn.dev {
 cmmn.dev {
 	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
+	import commonplace_frame_deny
 	import commonplace_legal
 	@agent path /mcp /oauth/* /.well-known/* /s/* /health /healthz
 	handle @agent {

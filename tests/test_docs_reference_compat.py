@@ -173,3 +173,54 @@ def test_token_check_keeps_config_sections_keys_and_commands():
         ("```sh\ncommonplace orch render\n```", "```sh\ncommonplace coworker render\n```"),
     ]:
         assert technical_tokens(old) != technical_tokens(new)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "POST /api/workspaces",
+        "GET /api/workspaces",
+        "POST /api/workspaces/switch",
+        "COMMONPLACE_WORKSPACE_LIMIT",
+        "COMMONPLACE_WORKSPACE_CREATIONS_PER_HOUR",
+        "COMMONPLACE_WORKSPACE_CREATIONS_PER_DAY",
+        "MEMPALACE_MIN_FREE_BYTES",
+        "users.is_person=0",
+        "COMMONPLACE_SIGNUP=open",
+        "COMMONPLACE_SIGNUP_ALLOW_EMAILS",
+        "users.is_admin=1",
+        "signup open",
+        "instance admin",
+        "allowlist",
+        "This instance is closed to new workspaces.",
+        "request_id",
+        "csrf",
+    ],
+)
+def test_workspace_creation_contract_names_are_deliberate(token):
+    assert token in (ROOT / "docs/system/person-workspace-creation.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "commonplace member remove",
+        "commonplace user delete",
+        "commonplace user add",
+        "--disposable",
+        "--force-owner",
+        "--by",
+        "--reason",
+        "--yes",
+        "users.is_disposable",
+        "users.is_admin",
+        "member.remove",
+        "user.delete",
+        "audit_log",
+        "target_ids",
+        "example.invalid",
+        "example.test",
+    ],
+)
+def test_admin_cleanup_contract_names_are_deliberate(token):
+    assert token in (ROOT / "docs/system/admin-account-cleanup.md").read_text()

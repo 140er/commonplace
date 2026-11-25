@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { renderDeckBar, renderDeckTop, renderDeckTabs, renderDeckMore, deckSections, deckSection } from '../commonplace/web/static/deck.js';
 
-const entries = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
+const entries = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['settings', 'Settings']];
 const links = html => [...html.matchAll(/href="([^"]+)" data-nav="([^"]+)"/g)].map(m => [m[2], m[1]]);
 const data = {
   bots: [{ id: 'personal', name: 'Personal bot', private: true, section: 'Operations', unread: 2, state: 'working', coworkers: [{ id: 'job', name: 'Release', state: 'waiting', conversation_id: 'release' }] }],
@@ -184,16 +184,16 @@ test('the More button opens and closes the sheet, any tap inside closes it, Esca
   const attrs = {}, focused = [];
   const sheet = { hidden: true, querySelector: () => ({ focus: () => focused.push('first') }), setAttribute(key, value) { attrs.role = value; }, removeAttribute(key) { delete attrs[key]; } };
   const opener = { setAttribute: (key, value) => { attrs[key] = value; }, focus: () => focused.push('opener') };
-  const nodes = { '#phone-tabs .deck-more': sheet, '.deck-tab-more': opener }, events = {};
-  const shell = createDeckShell({ root: { querySelector: key => nodes[key], addEventListener: (name, cb) => { events[name] = cb; } }, context: () => ({}), on: () => true });
+  const nodes = { '#phone-tabs .deck-more': sheet, '.deck-tab-more': opener }, events = {}, documentEvents = {};
+  const shell = createDeckShell({ root: { ownerDocument: {addEventListener(name, cb) {documentEvents[name] = cb;}}, querySelector: key => nodes[key], addEventListener: (name, cb) => { events[name] = cb; } }, context: () => ({}), on: () => true });
   const tap = action => events.click({ target: { closest: () => ({ dataset: { deckShellAction: action } }) }, preventDefault() {} });
   tap('more');
   assert.equal(sheet.hidden, false); assert.equal(attrs.role, 'dialog'); assert.equal(attrs['aria-expanded'], 'true'); assert.deepEqual(focused, ['first']);
   tap('more-close');
   assert.equal(sheet.hidden, true); assert.equal(attrs.role, undefined); assert.equal(attrs['aria-expanded'], 'false');
-  tap('more'); events.keydown({ key: 'Escape' });
+  tap('more'); documentEvents.keydown({ key: 'Escape', target: {tagName:'BODY'} });
   assert.equal(sheet.hidden, true); assert.equal(focused.at(-1), 'opener');
-  tap('more'); events.keydown({ key: 'a' }); assert.equal(sheet.hidden, false);
+  tap('more'); documentEvents.keydown({ key: 'a' }); assert.equal(sheet.hidden, false);
   tap('more-close'); tap('more');
   assert.equal(shell.options().moreOpen, true, 'a refresh redraws the sheet open');
   globalThis.location = { hash: '#/memory' };

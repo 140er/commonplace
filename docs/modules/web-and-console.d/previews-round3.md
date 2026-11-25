@@ -1,0 +1,4 @@
+- **Owns:** `workbench.css` keeps preview row text and controls readable on phones and touch screens, gives invalid rule fields a visible boundary, and scrolls a phone card's content above its comment footer in both looks.
+- **Promises:** preview controls stay at least 44 px on coarse pointers and below 1000 px; phone text is at least 14 px and long names wrap at 320 px. The comment footer never covers a deletion confirmation.
+- **How it fails:** a later look override can shrink controls or text, and a narrow view can overflow if a row cannot wrap.
+- **Tests:** `tests/test_card_previews_browser.py` measures controls, text and reflow at desktop, 390 px, 320 px and 768 px touch widths; `tests/test_previews_classic_round3_browser.py` hit-tests Cancel above the phone comment footer at 320 and 390 px.

@@ -79,7 +79,7 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 page.goto(origin + "/app/?ui=deck#/bots/-/coworkers/conversations")
                 page.get_by_role("button", name="Create bot", exact=True).click()
                 page.get_by_label("Name", exact=True).fill("Fixture bot")
-                page.get_by_label("Instructions", exact=True).fill("Be concise.")
+                page.get_by_label("How to work", exact=True).fill("Be concise.")
                 page.locator('[data-cw-form="bot"] button.primary').click()
                 page.locator('.cw-bot [data-cw-action="start-dm"]').click()
                 page.get_by_label("Title (optional)").fill("Private first room")

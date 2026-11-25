@@ -1,0 +1,4 @@
+- **Owns:** Shared Ready to start? markup in `ready-to-start.js` using `coworker-setup.js` recovery wording, project and bot controller placement, and responsive rules in `app.css`.
+- **Promises:** Each prerequisite has a state, reason and one owner action; members get read-only states and ask-the-owner text. Both interfaces use the existing Coworker recovery copy and setup routes.
+- **How it fails:** Unknown codes retain escaped guidance, absent projections retain the earlier setup status, and phone rows wrap without losing action links. The bot checklist scrolls independently of the composer.
+- **Tests:** `tests/ready_to_start.mjs`, `tests/test_ready_to_start.py` and `tests/test_ready_to_start_browser.py` assert row states, links, role views and both interfaces at 1280 and 390.

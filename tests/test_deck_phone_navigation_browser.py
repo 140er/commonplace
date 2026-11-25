@@ -52,7 +52,7 @@ async def assert_tabs(page):
       return {labels:[...e.querySelectorAll('a')].map(a=>a.textContent),
         bottom:e.getBoundingClientRect().bottom, width:document.documentElement.scrollWidth};
     }""")
-    assert metrics["labels"] == ["Today", "Bots", "Compute", "Settings"]
+    assert metrics["labels"] == ["Today", "Bots", "Workspaces", "Settings"]
     assert metrics["bottom"] == pytest.approx(844)
     assert metrics["width"] == 390
 

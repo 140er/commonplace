@@ -20,7 +20,10 @@ GIB = 1024**3
 STUBS = {
     "lvs": r"""
         echo "lvs $*" >> "$CALLS"
-        name="${@: -1}"; name="${name#*/}"
+        name="${@: -1}"
+        case "$name" in */*) ;; *) for f in "$STATE"/lv-*; do [ -e "$f" ] && echo "  ${f##*/lv-}"; done; exit 0;; esac
+        name="${name#*/}"
+        [ -z "${LVS_TRANSIENT:-}" ] || { echo "  Cannot process volume group" >&2; exit 3; }
         [ -e "$STATE/lv-$name" ] || exit 5
         case "$*" in *origin*) echo "  $(cat "$STATE/lv-$name")";; esac
     """,
@@ -72,7 +75,13 @@ STUBS = {
         case "$1" in
             snapshots)
                 if [ -e "$STATE/backup-done" ]; then echo '[{"id":"deadbeefcafe"}]'; else echo '[]'; fi;;
-            check) exit "${STUB_CHECK_RC:-0}";;
+            list) [ -s "$STATE/locks" ] && awk '{print $1}' "$STATE/locks"; exit 0;;
+            unlock) [ -s "$STATE/locks" ] && { grep -v ' stale$' "$STATE/locks" > "$STATE/locks.new"; mv "$STATE/locks.new" "$STATE/locks"; }; exit 0;;
+            check)
+                n=$(cat "$STATE/check-count" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$STATE/check-count"
+                [ -z "${LOCK_CLEARS_AFTER:-}" ] || [ "$n" -le "$LOCK_CLEARS_AFTER" ] || : > "$STATE/locks"
+                if [ -s "$STATE/locks" ]; then echo "repository is already locked" >&2; exit 11; fi
+                exit "${STUB_CHECK_RC:-0}";;
         esac
     """,
     "hook": r"""
@@ -91,7 +100,7 @@ def host(tmp_path):
         stub = bin_dir / name
         stub.write_text("#!/bin/bash\n" + textwrap.dedent(body).strip() + "\n")
         stub.chmod(0o755)
-    for sub in ("state", "mapper", "mnt", "srv/commonplace/backups"):
+    for sub in ("state", "mapper", "mnt", "proc", "srv/commonplace/backups"):
         (tmp_path / sub).mkdir(parents=True)
     (tmp_path / "restic-env").write_text("RESTIC_REPOSITORY=rest:https://repo.invalid/x\n")
     (tmp_path / "rest-password").write_text("not-a-real-password\n")
@@ -112,6 +121,9 @@ def host(tmp_path):
         "BACKUP_HOOK": str(bin_dir / "hook"),
         "BACKUP_CLOSE_RETRY_SLEEP_S": "0",
         "BACKUP_LVREMOVE_RETRY_SLEEP_S": "0",
+        "BACKUP_LATE_RETRY_SLEEP_S": "0",
+        "BACKUP_CHECK_LOCK_SLEEP_S": "0",
+        "BACKUP_PROC_DIR": str(tmp_path / "proc"),
         "BACKUP_RESTIC_HOST": "testhost",
         "BACKUP_HOOK_LOCK_NAME": ".hook-backup.lock",
         "VG_FREE_BYTES": str(200 * GIB),
@@ -145,6 +157,30 @@ def host(tmp_path):
 
         def open_mapper(self, name):
             (tmp_path / "mapper" / name).touch()
+
+        def add_lock(self, lock_id, kind):
+            with (tmp_path / "state" / "locks").open("a") as fh:
+                fh.write(f"{lock_id} {kind}\n")
+
+        def locks(self):
+            path = tmp_path / "state" / "locks"
+            return path.read_text() if path.exists() else ""
+
+        def add_holder(self, pid, mountinfo, comm, cmdline):
+            proc = tmp_path / "proc" / str(pid)
+            proc.mkdir(parents=True)
+            (proc / "mountinfo").write_text(mountinfo + "\n")
+            (proc / "comm").write_text(comm + "\n")
+            (proc / "cmdline").write_bytes(cmdline.replace(" ", "\0").encode() + b"\0")
+
+        def log_text(self):
+            return "".join(p.read_text() for p in sorted((tmp_path / "log").glob("lvm-snap-*.log")))
+
+        def proof(self):
+            return json.loads((tmp_path / "log" / "lvm-proof.json").read_text())
+
+        def result(self):
+            return (tmp_path / "log" / "result").read_text()
 
     return Host()
 
@@ -397,7 +433,7 @@ def test_snapshot_route_runs_restic_from_snapshot_and_cleans_up(host):
     ):
         assert needle in unshare
     restic = [c.split()[1] for c in host.calls_for("restic")]
-    assert restic == ["snapshots", "snapshots", "check"]
+    assert restic == ["snapshots", "snapshots", "list", "unlock", "check"]
     assert host.calls_for("lvremove")[0].startswith("lvremove -y data/nightlysnap")
     assert not any(host.lv_exists(p.name[3:]) for p in host.path.glob("state/lv-*"))
     assert (host.path / "log" / "result").read_text().startswith("PASS")
@@ -464,3 +500,215 @@ def test_held_lock_fails_without_running_the_hook(host):
         holder.wait()
     assert result.returncode == 1
     assert host.hook_runs() == [] and host.calls_for("fsfreeze") == []
+
+
+# ---- restic locks before the check ----
+
+
+def test_stale_lock_is_unlocked_before_the_check(host):
+    host.add_lock("aa11", "stale")
+    result = host.run()
+    assert result.returncode == 0, result.stderr
+    assert [c.split()[1] for c in host.calls_for("restic")] == [
+        "snapshots",
+        "snapshots",
+        "list",
+        "unlock",
+        "check",
+    ]
+    assert "restic list locks --no-lock" in host.calls()
+    assert "restic unlock" in host.calls()
+    assert host.locks() == ""
+    assert host.result().startswith("PASS")
+
+
+def test_live_lock_is_waited_out_with_a_bounded_retry(host):
+    host.add_lock("bb22", "live")
+    result = host.run(LOCK_CLEARS_AFTER="2", BACKUP_CHECK_LOCK_ATTEMPTS="5")
+    assert result.returncode == 0, result.stderr
+    restic = [c.split()[1] for c in host.calls_for("restic")]
+    assert restic.count("check") == 3 and restic.count("unlock") == 3
+    assert host.result().startswith("PASS")
+    assert host.hook_runs() == []
+
+
+def test_restic_calls_never_remove_all_locks_forget_or_prune(host):
+    host.add_lock("aa11", "stale")
+    host.add_lock("bb22", "live")
+    host.run(LOCK_CLEARS_AFTER="1", BACKUP_CHECK_LOCK_ATTEMPTS="3")
+    restic = " ".join(host.calls_for("restic"))
+    assert "unlock" in restic
+    for banned in ("--remove-all", "forget", "prune"):
+        assert banned not in restic
+    assert host.calls_for("restic")  # the run reached restic at all
+
+
+def test_lock_that_never_clears_is_check_pending_not_a_failed_backup(host):
+    host.add_lock("bb22", "live")
+    result = host.run(BACKUP_CHECK_LOCK_ATTEMPTS="3")
+    assert result.returncode == 0, result.stderr
+    assert [c.split()[1] for c in host.calls_for("restic")].count("check") == 3
+    text = host.result()
+    assert text.startswith("CHECK-PENDING") and "deadbeefcafe" in text
+    proof = host.proof()
+    assert proof["check_pending"] == 1 and proof["restic_check_rc"] == 11
+    assert proof["restic_snapshot_id"] == "deadbeefcafe" and proof["fail_reason"] == ""
+    assert proof["cleanup_ok"] == 1 and len(host.calls_for("lvremove")) == 1
+    assert "bb22" in host.locks()  # a live lock is never removed
+    assert host.hook_runs() == []
+
+
+def test_retry_check_finishes_a_pending_run_without_a_new_backup(host):
+    host.add_lock("bb22", "live")
+    host.run(BACKUP_CHECK_LOCK_ATTEMPTS="1")
+    assert host.result().startswith("CHECK-PENDING")
+    (host.path / "state" / "locks").write_text("")
+    before = len(host.calls())
+    result = host.run(args=("--retry-check",))
+    assert result.returncode == 0, result.stderr
+    new = host.calls()[before:]
+    assert [c.split()[0] + " " + c.split()[1] for c in new] == [
+        "restic list",
+        "restic unlock",
+        "restic check",
+    ]
+    assert host.result().startswith("PASS") and "check_rc=0" in host.result()
+    proof = host.proof()
+    assert proof["check_pending"] == 0 and proof["restic_check_rc"] == 0
+    assert proof["restic_snapshot_id"] == "deadbeefcafe"
+
+
+def test_retry_check_that_is_still_locked_stays_pending(host):
+    host.add_lock("bb22", "live")
+    host.run(BACKUP_CHECK_LOCK_ATTEMPTS="1")
+    result = host.run(args=("--retry-check",), BACKUP_CHECK_LOCK_ATTEMPTS="2")
+    assert result.returncode == 3
+    assert host.result().startswith("CHECK-PENDING")
+    assert host.proof()["check_pending"] == 1
+
+
+def test_retry_check_without_a_pending_result_does_nothing(host):
+    result = host.run(args=("--retry-check",))
+    assert result.returncode == 2
+    assert host.calls() == []
+
+
+# ---- busy snapshot at cleanup ----
+
+
+def test_cleanup_logs_the_processes_that_hold_the_snapshot(host):
+    host.add_lv("nightlysnap1")
+    host.open_mapper("nightlysnap1")
+    host.add_holder(
+        4242,
+        "51 29 253:7 / /mnt/nightlysnap1 ro,relatime - ext4 /dev/mapper/nightlysnap1 ro",
+        "unshare",
+        "unshare --mount sh -c job",
+    )
+    host.add_holder(77, "52 29 8:1 / /boot rw - ext4 /dev/sda1 rw", "sshd", "sshd")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=$SNAP_NAME; UNLOCKED=1; CLOSE_ATTEMPTS=2\n"
+        "mkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap; echo rc=$?; cat $LOG",
+        CLOSE_FAILS="99",
+    )
+    assert "rc=1" in result.stdout, result.stderr
+    assert "holder pid=4242 comm=unshare" in result.stdout
+    assert "pid=77" not in result.stdout
+    assert host.calls_for("lvremove") == []
+
+
+def test_cleanup_keeps_retrying_late_until_the_holder_lets_go(host):
+    result = host.run(BACKUP_CLOSE_ATTEMPTS="2", BACKUP_LATE_RETRY_ATTEMPTS="3", CLOSE_FAILS="4")
+    assert result.returncode == 0, result.stderr
+    assert len(host.calls_for("cryptsetup")) == 5
+    assert host.result().startswith("PASS")
+    assert host.proof()["cleanup_ok"] == 1 and len(host.calls_for("lvremove")) == 1
+    assert not list(host.path.glob("state/lv-nightlysnap*"))
+
+
+def test_snapshot_left_behind_is_an_alert_with_a_failing_exit(host):
+    result = host.run(BACKUP_CLOSE_ATTEMPTS="2", BACKUP_LATE_RETRY_ATTEMPTS="2", CLOSE_FAILS="99")
+    assert result.returncode == 1
+    # bounded: 2 attempts + 2 late rounds, then one try each in finish_run and the exit trap
+    assert len(host.calls_for("cryptsetup")) == 2 + 2 + 1 + 1
+    assert host.calls_for("lvremove") == []  # mapper still open: never forced
+    assert len(list(host.path.glob("state/lv-nightlysnap*"))) == 1
+    assert host.result().startswith("FAIL ALERT")
+    proof = host.proof()
+    assert proof["snapshot_left"] == 1 and proof["cleanup_ok"] == 0
+    assert "ALERT" in host.log_text() and "ALERT" in result.stderr
+
+
+def test_fallback_with_a_leftover_snapshot_still_runs_the_hook_but_alerts(host):
+    result = host.run(
+        CLEVIS_MODE="passphrase",
+        LVREMOVE_FAILS="999",
+        BACKUP_LVREMOVE_ATTEMPTS="2",
+        BACKUP_LATE_RETRY_ATTEMPTS="1",
+    )
+    assert host.hook_runs() == ["hook "]
+    assert result.returncode == 1
+    assert host.result().startswith("FAIL ALERT")
+    assert host.proof()["snapshot_left"] == 1
+
+
+# ---- an earlier run's snapshot blocks a new backup ----
+
+
+def test_refuses_to_start_while_an_earlier_snapshot_exists(host):
+    host.add_lv("nightlysnap20250101000000")
+    result = host.run()
+    assert result.returncode == 1
+    assert "ALERT" in result.stderr
+    assert host.result().startswith("FAIL ALERT") and "nightlysnap20250101000000" in host.result()
+    assert host.hook_runs() == []
+    for tool in ("fsfreeze", "lvcreate", "clevis", "restic", "lvremove"):
+        assert host.calls_for(tool) == []
+    assert host.lv_exists("nightlysnap20250101000000")  # never deleted by the guard
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["srv", "nightlysnap", "nightlysnapshot1", "other20250101000000", "nightlysnap2025010100000x"],
+)
+def test_unrelated_logical_volumes_do_not_block_a_backup(host, name):
+    host.add_lv(name)
+    result = host.run()
+    assert result.returncode == 0, result.stderr
+    assert host.result().startswith("PASS")
+    assert host.lv_exists(name)
+
+
+# ---- a failing lvs is never read as "the snapshot is gone" ----
+
+SNAPSHOT_PRESENT = "init_run; SNAP_NAME=nightlysnap1; if snapshot_present; then echo present=yes; else echo present=no; fi"
+
+
+def test_snapshot_present_is_false_only_when_lvs_says_the_volume_is_absent(host):
+    result = host.run(SNAPSHOT_PRESENT)
+    assert "present=no" in result.stdout, result.stderr
+
+
+def test_snapshot_present_stays_true_while_the_volume_exists(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(SNAPSHOT_PRESENT)
+    assert "present=yes" in result.stdout, result.stderr
+
+
+def test_snapshot_present_fails_closed_when_lvs_errors_for_another_reason(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(SNAPSHOT_PRESENT, LVS_TRANSIENT="1")
+    assert "present=yes" in result.stdout, result.stderr
+
+
+def test_a_transiently_failing_lvs_cannot_hide_a_left_behind_snapshot(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=none\nmkdir -p $LOG_DIR; : >> $LOG\nfinish_run PASS; echo rc=$?",
+        LVS_TRANSIENT="1",
+    )
+    assert host.result().startswith("FAIL ALERT"), result.stderr
+    assert host.proof()["snapshot_left"] == 1
+    assert "ALERT" in host.log_text()
+    assert host.calls_for("lvremove") == []  # origin could not be verified: nothing is removed
+    assert host.lv_exists("nightlysnap1")

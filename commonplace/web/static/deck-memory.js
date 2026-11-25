@@ -1,9 +1,11 @@
 // Memory presentation uses only readable source data; authority stays in memory.js.
 import { escape as e, actor } from "./api.js";
+import { wingLabel } from "./wing-label.js";
 import { artHTML } from "./deck-art.js";
 
 export function roomName(board) {
   if (!board) return "Saved memory";
+  if (board.wing) return wingLabel(board.wing, board.name);
   if (board.name && board.name !== board.slug) return board.name;
   const words = String(board.name || board.slug || "Saved memory").replace(/[-_]+/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -103,7 +105,7 @@ export function renderDeckMemory(state, { highlighted }) {
     <header class="memory-heading"><div><h1>Memory</h1><p>Your exact words, and which bot saved them.</p></div>${artHTML("header")}</header>
     <form class="memory-toolbar" data-memory-search><div class="search-big" role="search">${searchIcon}<label class="sr" for="mq">Search saved memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search saved memory"></div>
     ${state.restoredQuery ? '<p class="memory-restored" role="status">Kept from last time</p>' : ""}
-    <div class="memory-filterbar"><div class="memory-chip-scroll">${roomChips(state)}<details class="memory-filters"${state.filtersOpen ? " open" : ""}><summary>More filters</summary><div class="filters"><label>Room<select name="project">${options([["", "All"], ...boards.map(board => [board.slug, roomName(board)])], filters.project)}</select></label><label>Source<select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label>Saved by<select name="from">${options([["", "Anyone"], ...authors], filters.from)}</select></label><label>When<select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label></div></details></div><span class="memory-status" role="status">${e(status)}</span><button type="button" class="btn memory-map-launch" data-memory-action="map">Map</button></div></form>
+    <div class="memory-filterbar"><div class="memory-chip-scroll">${roomChips(state)}<details class="memory-filters"${state.filtersOpen ? " open" : ""}><summary>More filters</summary><div class="filters"><label>Room<select name="project">${options([["", "All"], ...boards.map(board => [board.slug, roomName(board)])], filters.project)}</select></label><label>Source<select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label>Saved by<select name="from">${options([["", "Anyone"], ...authors], filters.from)}</select></label><label>When<select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label></div></details></div><span class="memory-status" role="status">${e(status)}</span><button type="button" class="btn memory-map-launch" data-memory-action="map">Map</button><a class="btn memory-history-launch" href="/app/history.html">Saved threads</a><a class="btn memory-organise-launch" href="/app/organise.html">Organise memory</a></div></form>
     ${state.truncated ? '<p class="memory-warning">More matches are available; narrow your search.</p>' : ""}
     ${state.error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(state.error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
     ${state.errors?.length && !state.error && !busy ? sourcesWarning(state.errors, boards) : ""}
@@ -125,6 +127,7 @@ export function queryHistory(me, storage) {
   };
 }
 export function memoryStyles(doc) {
+  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-memory.css')) return;
   if (!doc?.head || doc.querySelector('link[data-memory-style]')) return;
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-memory.css', import.meta.url).href;

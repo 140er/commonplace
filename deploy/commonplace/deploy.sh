@@ -95,7 +95,7 @@ main() {
             [[ $line =~ ^[A-Z_][A-Z0-9_]*= ]] || continue
             key=${line%%=*}
             case $key in
-                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_BUILD_COMMIT|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
+                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|DEPLOY_RETENTION|DEPLOY_RETENTION_IMAGES|DEPLOY_RETENTION_RELEASES|DEPLOY_RELEASES_DIR|DEPLOY_BUILDER_PRUNE_UNTIL|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_BUILD_COMMIT|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
                 *) continue ;;
             esac
             value=${line#*=}
@@ -229,6 +229,23 @@ main() {
     running=$("${compose[@]}" exec -T commonplace python -c "from importlib.resources import files; from urllib.request import urlopen; response = urlopen('http://127.0.0.1:8765/healthz', timeout=10); assert response.status == 200; print(files('commonplace.web').joinpath('_build_commit.txt').read_text(encoding='ascii').strip())") || die release 'cannot attest running package'
     [[ $running == "$requested" ]] || die release 'running package differs from requested commit'
     printf '[deploy] verified release: %s\n' "$running"
+    run_retention
+}
+
+# Opt-in post-deploy retention (DEPLOY_RETENTION=1), only after a verified
+# healthy release, under the deploy lock this script already holds. It never
+# fails the deploy; see retention.sh for what it keeps.
+run_retention() {
+    [[ ${DEPLOY_RETENTION:-0} == 1 ]] || return 0
+    local script
+    script="$(dirname -- "${BASH_SOURCE[0]}")/retention.sh"
+    if [[ ! -x $script ]]; then
+        printf '[deploy] WARNING: retention: %s is missing\n' "$script" >&2
+        return 0
+    fi
+    COMMONPLACE_DEPLOY_LOCK_HELD=1 COMMONPLACE_ROOT=$COMMONPLACE_ROOT COMPOSE_FILE=$COMPOSE_FILE \
+        "$script" || printf '[deploy] WARNING: retention: exited non-zero\n' >&2
+    return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

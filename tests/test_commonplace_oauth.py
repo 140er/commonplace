@@ -21,6 +21,11 @@ REDIRECT = "https://client.example/callback?fixed=1"
 VERIFIER = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH_~.-"
 
 
+def client_approval(page):
+    """Explicit owner consent for fixtures exercising an approved client."""
+    return {"approve_client": "1"} if 'name="approve_client"' in page else {}
+
+
 class Client:
     def __init__(self, hub):
         self.hub = hub
@@ -91,14 +96,21 @@ class Client:
         assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
         request = re.search(r'name="request" value="([^"]+)"', text)[1]
         status, headers, text = self.request(
-            "POST", path, {"request": request, "decision": "allow"}
+            "POST", path, {"request": request, "decision": "allow", **client_approval(text)}
         )
         assert status == 303, text
         result = parse_qs(urlsplit(headers["Location"]).query)
-        assert result["fixed"] == ["1"]
+        expected = parse_qs(urlsplit(overrides.get("redirect_uri", REDIRECT)).query)
+        assert result.get("fixed") == expected.get("fixed")
         assert result["state"] == [overrides.get("state", "opaque + state & = / ✨")]
         assert result["iss"] == [urls.AGENT_URL]
         return result["code"][0]
+
+    def approve(self, client_id, **overrides):
+        """An owner approves before a member's independent authorization."""
+        owner = Client(self.hub)
+        owner.login()
+        owner.consent(client_id, **overrides)
 
     def exchange(self, client_id, code, **overrides):
         return self.request(
@@ -972,6 +984,7 @@ def test_consent_chromium_cross_origin_submit(client, flow, host, pytestconfig):
                 page.evaluate("""document.addEventListener('securitypolicyviolation', e => {
                     window.recordViolation(e.effectiveDirective);
                 });""")
+                page.locator('input[name="approve_client"]').check()
                 page.get_by_role("button", name="Allow", exact=True).click(no_wait_after=True)
                 arrived = callback_arrived.wait(timeout=5)
                 # Dispatch queued console/binding events after the server-side wait.
@@ -1085,6 +1098,7 @@ def test_consent_chromium_explicit_default_port_navigation(client, pytestconfig)
 
             page.on("request", navigation)
             page.goto(origin + client.authorize_path(cid, redirect_uri=uri))
+            page.locator('input[name="approve_client"]').check()
             shown = (
                 page.locator("main > p")
                 .all_text_contents()
@@ -1155,7 +1169,9 @@ def test_native_redirect_completes_with_pkce_and_its_csp_names_the_scheme(client
     assert "form-action 'self' cmmn:;" in headers["Content-Security-Policy"]
     assert f"Code destination: {NATIVE}" in page
     request = re.search(r'name="request" value="([^"]+)"', page)[1]
-    status, headers, text = client.request("POST", path, {"request": request, "decision": "allow"})
+    status, headers, text = client.request(
+        "POST", path, {"request": request, "decision": "allow", **client_approval(page)}
+    )
     assert status == 303, text
     location = urlsplit(headers["Location"])
     assert f"{location.scheme}://{location.netloc}{location.path}" == NATIVE

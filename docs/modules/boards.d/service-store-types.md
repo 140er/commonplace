@@ -1,0 +1,4 @@
+- **Owns:** Local static types for board decision buckets, approval pages, supervisor routes, approval updates and rollback audit pairs.
+- **Promises:** `BoardService(store=False)` keeps no owned store. Helpers that receive an existing connection preserve board visibility, write authority and approval projections without opening `BoardStore`.
+- **How it fails:** A storage operation on a no-store service raises `RuntimeError("board operation requires a store")` rather than an incidental missing-attribute error. It never opens storage to satisfy the operation.
+- **Tests:** `tests/test_board_service_store_contract.py` separately exercises valid explicit-connection helpers, the parent's approval projection, missing-store refusals and reuse of the existing store.

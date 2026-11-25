@@ -1,12 +1,14 @@
+import { wingLabel } from "./wing-label.js";
 import { mountMap } from "./map.js";
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
 import { createMemoryImport } from "./memory-import.js";
+import { createNote, renderNote } from "./memory-note.js";
 import { resultWords, sourcesWarning, renderDeckMemory, retryLine, retryText, savedMarkup, rememberRoomCounts, memoryRoom, memoryDetails, queryHistory, memoryStyles } from "./deck-memory.js";
 
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
-const name = (board) => board.name || board.slug;
+const name = (board) => board.wing ? wingLabel(board.wing, board.name) : board.name || board.slug;
 const key = (row) => JSON.stringify([row.board, row.kind, row.id, row.field]);
 
 /** Local, readable time for a stored ISO stamp: "today, 16:12", "Wed 28 Oct 2026, 16:12",
@@ -92,14 +94,17 @@ export async function searchMemory({ api = request, boards, query, project = "",
   const why = (error) => timedOut ? "timeout" : error?.status === 503 ? (error.payload?.warming_up === true ? "warming" : "busy") : [401, 403].includes(error?.status) ? "denied" : "failed";
   const wings = new Map();
   for (const board of selected) if (board.wing && !wings.has(board.wing)) wings.set(board.wing, board);
-  if ((!source || source === "note") && wings.size) {
+  if ((!source || source === "note") && (!project || wings.size)) {
     tasks.push(async () => {
       try {
         const found = new URLSearchParams({ q: query, limit: String(limit) });
         if (project) found.set("theme", selected[0].wing);
         const page = await call(`/api/memory/search?${found}`);
         for (const row of page.results) {
-          const board = wings.get(row.theme);
+          if (!row.theme) continue;
+          // The default workspace wing needs no project, even after a reload.
+          // Other wings retain the readable room/destination inventory boundary.
+          const board = wings.get(row.theme) || (!project && row.theme === "shared" ? { slug: "notes:shared", wing: "shared", notesOnly: true } : null);
           if (!board || (from && row.author !== from) || (since && !(Date.parse(row.at) >= Date.parse(since)))) continue;
           const note = { ...row, actor: row.author, kind: "note", board: board.slug, wing: row.theme };
           results.push({ ...note, author: memoryAuthor(note, board), sourceLabel: sourceLabel(note, board) });
@@ -168,12 +173,14 @@ export async function linkMemory({ result, destination, card, api = request }) {
 }
 
 export function renderMemory(state) {
-  if (state.look === "deck") return renderDeckMemory(state, { highlighted });
+  const note = `${state.deletedNotice ? `<p role="status">${e(state.deletedNotice)}</p>` : ""}<div class="memory-note-entry"><button class="btn" data-memory-action="note" aria-expanded="${Boolean(state.note?.open)}">Add a note</button></div>${renderNote(state.note)}`;
+  if (state.look === "deck") return renderDeckMemory(state, { highlighted }).replace('<form class="memory-toolbar"', () => `${note}<form class="memory-toolbar"`);
   const { boards = [], results = [], filters = {}, selected, busy, error, searched } = state;
   const options = (rows, selected) => rows.map(([value, label]) => `<option value="${e(value)}"${value === (selected || "") ? " selected" : ""}>${e(label)}</option>`).join("");
   const status = busy ? `Searching…${searched ? ` showing results for “${state.completedQuery}” until done` : ""}` : searched ? `${results.length} results${state.truncated ? " · more matches available; narrow your search" : ""}` : "";
   return `<section class="memory-search" aria-label="Memory">
     <div class="memory-import-entry"><button class="btn" data-memory-action="map">Map</button><button class="btn" data-memory-action="import">Import</button></div>
+    ${note}
     <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
     <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} Coworker`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
@@ -183,7 +190,7 @@ export function renderMemory(state) {
     <div class="keys"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open source</span><span><kbd>Y</kbd> copy exact words</span>${memoryActions(selected, state.destination).link ? '<span><kbd>L</kbd> link to a card</span>' : ""}</div></section>`;
 }
 
-export function renderMemoryPanel({ result, destination, source, cards = [], me, neighbours = [], loading, panelError, notice, linking, chatOpen, look, people = {}, boards = [] }) {
+export function renderMemoryPanel({ result, destination, source, cards = [], me, neighbours = [], loading, panelError, notice, linking, chatOpen, look, people = {}, boards = [], confirmDelete, deleting, deleteError }) {
   if (!result) return "";
   const deck = look === "deck";
   const label = (card) => deck ? card.title || "Selected card" : cardId(destination, card.number);
@@ -193,11 +200,12 @@ export function renderMemoryPanel({ result, destination, source, cards = [], me,
   const linkCards = cards.filter((card) => card.board === destination?.slug && !card.restricted);
   return `<section class="memory-panel" aria-label="Memory source"><header class="ctx-head"><h2>Memory</h2><button class="btn ghost" data-memory-action="hide">Hide <kbd>]</kbd></button></header><div class="ctx-body"><div class="detail-h"><span class="verbatim">Exact words, as saved.${["chat", "reply"].includes(result.kind) ? " Shown with the messages around it." : ""}</span><div class="src">${deck ? savedMarkup(result, { people, boards, viewer: me }) : `<b>${e(result.sourceLabel)}</b>`}${deck ? "" : `<time>${e(result.at)}</time>`}</div></div>
     ${deck ? memoryDetails(result) : ""}
+    ${confirmDelete === result.id && result.delete_note ? `<dialog data-note-delete aria-labelledby="note-delete-title"><h2 id="note-delete-title">Delete this note? This cannot be undone.</h2><p>This removes the note from Memory.</p><pre class="msg-b">${exact(result.text.split("\n").slice(0, 3).join("\n").slice(0, 600))}</pre>${deleteError ? `<p role="alert">${e(deleteError)}</p>` : ""}<button class="btn" data-memory-action="delete-cancel"${deleting ? " disabled" : ""}>Cancel</button><button class="btn" data-memory-action="delete-confirm"${deleting ? " disabled" : ""}>${deleting ? "Deleting…" : "Delete"}</button></dialog>` : ""}
     ${loading ? '<p role="status">Loading source…</p>' : ""}${panelError ? `<p role="alert">${e(panelError)}</p><button class="btn" data-memory-action="source-retry">Try again</button>` : ""}
     <div class="thread">${thread.map((row) => { const msg = message(row); return `<article class="msg ${row.hit ? "hit" : "ctxmsg"}"><div class="msg-h">${deck ? savedMarkup(msg, { people, boards, viewer: me }) : `<b>${e(msg.author)}</b>`}${deck ? "" : stamp(msg)}</div><p class="msg-b">${exact(msg.text)}</p></article>`; }).join("")}</div>
     ${actions.post.map((card) => `<div class="callout wait"><h3>This may answer blocked card ${e(label(card))}</h3><p>Post this message, word for word, as a comment on ${e(label(card))} in ${e(name(destination))}:</p><p class="quote">${exact(result.text)}</p><p>The comment is saved on the card. The request stays open until it is answered or closed.</p><button class="btn primary" data-memory-post="${card.number}">Post on ${e(label(card))}</button></div>`).join("")}
     ${linking && actions.link ? `<form data-memory-link><label>Link note to a card in ${e(name(destination))}<select name="card" required>${linkCards.map((card) => `<option value="${card.number}">${e(deck ? label(card) : `${label(card)} · ${card.title}`)}</option>`).join("")}</select></label><button class="btn"${linkCards.length ? "" : " disabled"}>Link note</button></form>` : ""}
-    ${notice ? `<p role="status">${e(notice)}</p>` : ""}</div><footer class="memory-panel-actions">${actions.quote ? `<p class="memory-destination">Message to ${e(name(destination))} chat</p><button class="btn sm" id="open-in-chat" data-memory-action="chat"${loading || panelError ? " disabled" : ""} aria-controls="chat" aria-expanded="${Boolean(chatOpen)}">Open in chat, ask about it <kbd>↵</kbd></button>` : ""}<button class="btn sm" data-memory-action="copy" aria-keyshortcuts="Y">Copy exact words <kbd>Y</kbd></button>${actions.link ? '<button class="btn sm" data-memory-action="link" aria-keyshortcuts="L">Link to card <kbd>L</kbd></button>' : ""}</footer></section>`;
+    ${notice ? `<p role="status">${e(notice)}</p>` : ""}</div><footer class="memory-panel-actions">${actions.quote ? `<p class="memory-destination">Message to ${e(name(destination))} chat</p><button class="btn sm" id="open-in-chat" data-memory-action="chat"${loading || panelError ? " disabled" : ""} aria-controls="chat" aria-expanded="${Boolean(chatOpen)}">Open in chat, ask about it <kbd>↵</kbd></button>` : ""}<button class="btn sm" data-memory-action="copy" aria-keyshortcuts="Y">Copy exact words <kbd>Y</kbd></button>${actions.link ? '<button class="btn sm" data-memory-action="link" aria-keyshortcuts="L">Link to card <kbd>L</kbd></button>' : ""}${result.kind === "note" && result.delete_note ? '<button class="btn sm" data-memory-action="delete">Delete this note</button>' : ""}</footer></section>`;
 }
 
 // The shell supplies the two mounts and its dock. It owns route and header wiring.
@@ -217,6 +225,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   const person = typeof me === "string" ? me : me.actor;
   const draw = () => {
     if (stopped || importer || mapMode) return;
+    for (const room of state.note?.choices?.wings || []) if (!state.boards.some(board => board.wing === room.wing)) state.boards = [...state.boards, { slug: `notes:${room.wing}`, name: room.name, wing: room.wing, notesOnly: true }];
     const focused = mount.ownerDocument?.activeElement;
     let restore = null;
     if (focused && (mount.contains(focused) || panel?.contains(focused))) {
@@ -225,17 +234,50 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
         : focused.matches("[data-memory-room]") ? `[data-memory-room="${focused.dataset.memoryRoom}"]`
         : focused.matches("[data-memory-action]") ? `[data-memory-action="${focused.dataset.memoryAction}"]`
         : focused.matches("[data-memory-post]") ? `[data-memory-post="${focused.dataset.memoryPost}"]`
-        : focused.name && ["query", "project", "source", "from", "when", "card"].includes(focused.name) ? `[name="${focused.name}"]` : null;
-      if (selector) { const owner = panel?.contains(focused) ? panel : mount; restore = () => owner.querySelector(selector)?.focus(); }
+        : focused.name && ["query", "project", "source", "from", "when", "card", "note-text", "note-wing", "note-room"].includes(focused.name) ? `[name="${focused.name}"]` : null;
+      if (selector) {
+        const owner = panel?.contains(focused) ? panel : mount, start = focused.selectionStart, end = focused.selectionEnd;
+        restore = () => { const node = owner.querySelector(selector); node?.focus(); if (node?.setSelectionRange && typeof start === "number") node.setSelectionRange(start, end); };
+      }
     }
     if (look === "deck") state.filtersOpen = mount.querySelector(".memory-filters")?.open ?? state.filtersOpen;
+    if (state.note) state.note.previewOpen = mount.querySelector(".memory-note-preview")?.open ?? state.note.previewOpen;
     mount.innerHTML = renderMemory(state);
     if (panel) {
       panel.hidden = !state.selected;
       panel.innerHTML = renderMemoryPanel({ ...state, result: state.selected, me: person, chatOpen: dock?.isOpen?.() ?? state.chatOpen });
     }
+    const confirm = panel?.querySelector("[data-note-delete]");
+    if (typeof confirm?.showModal === "function") {
+      confirm.addEventListener("cancel", event => { event.preventDefault(); if (!writing) { state.confirmDelete = null; draw(); } });
+      confirm.showModal?.();
+      confirm.querySelector('[data-memory-action="delete-cancel"]')?.focus();
+    }
     restore?.();
+    const preview = mount.querySelector(".memory-note-preview");
+    if (preview && state.note?.previewOpen) preview.open = true;
   };
+  const note = createNote({ api, draw, alive: () => !stopped, boards: () => state.boards, onResult() {
+    const line = mount.querySelector(".memory-note-saved, .memory-note [role=alert]");
+    line?.focus?.(); line?.scrollIntoView?.({ block: "nearest" });
+  } });
+  state.note = note.state;
+  async function openDrawer(id) {
+    const epoch = ++sourceEpoch;
+    try {
+      const record = await api(`/api/memory/${enc(id)}`);
+      if (stopped || epoch !== sourceEpoch) return;
+      let board = state.boards.find(board => board.wing === record.theme);
+      if (!board) {
+        board = { slug: `notes:${record.theme}`, name: state.note.choices?.wings.find(row => row.wing === record.theme)?.name || wingLabel(record.theme), wing: record.theme, notesOnly: true };
+        state.boards = [...state.boards, board];
+      }
+      const result = { ...record, kind: "note", actor: record.author, wing: record.theme, board: board.slug };
+      result.author = memoryAuthor(result, board); result.sourceLabel = sourceLabel(result, board);
+      state.note.open = false;
+      await select(result);
+    } catch { if (!stopped && epoch === sourceEpoch) { state.note.open = true; state.note.error = "This drawer could not be opened. Check your access and try again."; draw(); } }
+  }
   async function search(filters = state.filters, { restored = false, limit = SEARCH_LIMIT } = {}) {
     mapMode = false; mapDispose?.(); mapDispose = null;
     cancelSearch();
@@ -275,6 +317,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
         state.retry = null;
       }
       state.retry = null;
+      for (const row of page.results) if (row.kind === "note" && !state.boards.some(board => board.wing === row.wing)) state.boards = [...state.boards, { slug: row.board, wing: row.wing, name: wingLabel(row.wing), notesOnly: true }];
       if (look === "deck") rememberRoomCounts(state, page.results, filters);
       const { retry: _retry, ...answer } = page;
       Object.assign(state, answer, { completedQuery: filters.query, searched: true });
@@ -329,7 +372,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     const epoch = ++sourceEpoch;
     const board = state.boards.find((board) => board.slug === result.board);
     if (!board || board.wing !== result.wing) return;
-    Object.assign(state, { selected: result, destination: board, source: board, neighbours: [], cards: [], loading: true, panelError: "", notice: "", linking: false, at: null, chatOpen: false });
+    Object.assign(state, { selected: result, destination: board, source: board, neighbours: [], cards: [], loading: true, panelError: "", notice: "", linking: false, at: null, chatOpen: false, confirmDelete: null, deleteError: "" });
     onSelect(result, board);
     draw();
     const [source, cards] = await Promise.allSettled([loadNeighbours(result, api), board.notesOnly ? { cards: [] } : api(`/api/boards/${enc(board.slug)}/cards`)]);
@@ -361,6 +404,27 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     if (!state.selected || writing || stopped) return;
     const selected = state.selected, destination = state.destination, epoch = sourceEpoch;
     try {
+      if (action === "delete") {
+        if (selected.kind === "note" && selected.delete_note?.csrf) { state.confirmDelete = selected.id; state.deleteError = ""; draw(); }
+        return;
+      }
+      if (action === "delete-cancel") { state.confirmDelete = null; draw(); panel?.querySelector('[data-memory-action="delete"]')?.focus(); return; }
+      if (action === "delete-confirm") {
+        if (state.confirmDelete !== selected.id || !selected.delete_note?.csrf) return;
+        writing = true; state.deleting = true; state.deleteError = ""; draw();
+        try {
+          await api(`/api/memory/${enc(selected.id)}/delete`, { method: "POST", body: { csrf: selected.delete_note.csrf } });
+          if (stopped) return;
+          cancelSearch(); ++searchEpoch; state.busy = false;
+          state.results = state.results.filter(row => !(row.kind === "note" && row.id === selected.id));
+          if (state.selected?.id === selected.id) { state.selected = null; state.confirmDelete = null; }
+          if (state.note.saved?.id === selected.id) state.note.saved = null;
+          state.deletedNotice = "Note deleted";
+        } catch (error) {
+          if (!stopped && epoch === sourceEpoch) state.deleteError = error.status === 507 ? "Storage is low. Free some space and try again." : error.status === 503 ? "Memory is busy or paused for a backup. Try again shortly." : "The note could not be deleted. Open it again and try again.";
+        } finally { state.deleting = false; }
+        return;
+      }
       if (action === "chat") { openInChat(); return; }
       if (action === "hide") { ++sourceEpoch; state.selected = null; draw(); mount.querySelector("[data-memory-result]")?.focus(); return; }
       if (action === "source-retry") { await select(selected); return; }
@@ -381,9 +445,14 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
         if (epoch === sourceEpoch) state.notice = action === "post" ? `Posted on ${look === "deck" ? card.title || "the card" : cardId(destination, card.number)}` : "Note linked";
       }
     } catch { if (epoch === sourceEpoch) state.notice = "That action could not be completed. Try again."; }
-    finally { writing = false; if (epoch === sourceEpoch) draw(); }
+    finally { writing = false; if (!stopped && (epoch === sourceEpoch || action === "delete-confirm")) draw(); }
   }
   function click(event) {
+    const drawer = event.target.closest("[data-note-drawer]");
+    if (drawer?.dataset.noteDrawer) { event.preventDefault(); void openDrawer(drawer.dataset.noteDrawer); return; }
+    const noteAction = event.target.closest("[data-memory-action]")?.dataset.memoryAction;
+    if (noteAction === "note") { void note.open().then(() => { if (!stopped) mount.querySelector('[name="note-text"]')?.focus(); }); return; }
+    if (noteAction === "note-close") { if (!note.state.saving) { note.state.open = false; draw(); mount.querySelector('[data-memory-action="note"]')?.focus(); } return; }
     const room = event.target.closest("[data-memory-room]");
     if (room?.dataset.memoryRoom !== undefined) {
       const filters = { ...state.filters, project: room.dataset.memoryRoom };
@@ -441,8 +510,15 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       event.preventDefault();
       void search(Object.fromEntries(new FormData(form)));
     } else if (form.matches("[data-memory-link]")) { event.preventDefault(); void action("link-note", new FormData(form).get("card")); }
+    else if (form.matches("[data-memory-note]")) { event.preventDefault(); void note.save(); }
   }
   function input(event) {
+    if (event.target.name === "note-text") {
+      note.state.text = event.target.value; note.state.error = "";
+      mount.querySelector(".memory-note [role=alert]")?.remove();
+      const preview = mount.querySelector("[data-note-preview]"); if (preview) preview.textContent = event.target.value;
+      return;
+    }
     if (look !== "deck" || event.target.name !== "query") return;
     state.filters.query = event.target.value;
     state.restoredQuery = false;
@@ -455,6 +531,8 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     }
   }
   function change(event) {
+    if (event.target.name === "note-wing") { void note.chooseWing(event.target.value); return; }
+    if (event.target.name === "note-room") { note.state.room = event.target.value; return; }
     if (event.target.matches?.("[data-map-project]")) { void showMap(event.target.value); return; }
     const form = event.target.closest("[data-memory-search]");
     if (form && event.target.tagName === "SELECT" && form.elements.query.value.trim()) void search(Object.fromEntries(new FormData(form)));
@@ -480,11 +558,13 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   // caller may read it, and it joins the project rooms as a notes-only room.
   const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms", { timeoutMs: 8000 })).then((page) => {
     const owned = new Set(boards.map((board) => board.wing));
-    const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: room.name || room.wing, wing: room.wing, notesOnly: true }));
-    if (rooms.length && !stopped) { state.boards = [...boards, ...rooms]; draw(); }
+    const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: wingLabel(room.wing, room.name), wing: room.wing, notesOnly: true }));
+    if (rooms.length && !stopped) { const known = new Set(state.boards.map(board => board.wing)); state.boards = [...state.boards, ...rooms.filter(room => !known.has(room.wing))]; draw(); }
   }).catch(() => {});
   draw();
-  if (saved.trim()) void search({ query: saved }, { restored: true });
+  const drawer = new URLSearchParams(globalThis.location?.hash?.split("?")[1] || "").get("drawer");
+  if (drawer) void roomsReady.then(() => { if (!stopped) void openDrawer(drawer); });
+  else if (saved.trim()) void search({ query: saved }, { restored: true });
   return {
     search, select, openInChat, backToSource, showMap,
     setProject(project) { state.filters.project = project; draw(); },

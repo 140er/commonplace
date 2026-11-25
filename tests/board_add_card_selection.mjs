@@ -44,7 +44,7 @@ function routeHarness({ hash, base, panelHtml, card, contentHtml = "<p>old</p>",
   const location = { hash };
   const state = { me: { actor: ME, can_admin: true }, deck: { on: () => deck, home: () => "#/", leave() {}, owns: (value) => deck && ["#/", "#/memory", "#/compute"].includes(value) }, screen: 4, route: base, base, boards: [], card, selected: null, addingCard: false, boardFilter: "all", justAdded: null, panelRequest: 0, workbenchChat: null, needsUI: null, memoryUI: null, queue: null, chatVisible: new Set(), queueFocus: "" };
   const context = {
-    state, location, history: { state: {}, replaceState: (_s, _t, value) => { location.hash = value; } }, localStorage: { getItem: () => null, setItem() {} },
+    prepareRoute: async () => {}, state, location, history: { state: {}, replaceState: (_s, _t, value) => { location.hash = value; } }, localStorage: { getItem: () => null, setItem() {} },
     api: (path) => { reads.push(path); return never; },
     root: { querySelector: (selector) => selector === "#content" ? content : selector === "#card-panel" ? panel : null },
     remember() {}, clearAgentSecret() {}, voice: { stop() {} }, boardPreference: () => "k", boardRoute: routes.boardRoute, resolveRoute: routes.resolveRoute, 
@@ -172,7 +172,7 @@ if (which === "add_flow" || which === "add_flow_classic") {
   // Classic look: the bare visit still needs the project list first.
   const classic = routeHarness({ hash: "#/", base: "#/memory", panelHtml: "", card: null, deck: false });
   classic.start(); await classic.tick();
-  assert.deepEqual(classic.reads, ["/api/boards"]);
+  assert.deepEqual(classic.reads, ["/api/boards?view=shell"]);
 } else if (which === "loading") {
   const timers = [];
   globalThis.setTimeout = (fn, ms) => { timers.push([fn, ms]); return timers.length; };

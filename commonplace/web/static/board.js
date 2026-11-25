@@ -1,3 +1,4 @@
+import { snoozedLine } from './card-controls.js';
 import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
 import { segHTML } from './seg.js';
@@ -19,7 +20,7 @@ function author(ref, board) {
 }
 export function cardTags(card, { me, board = {}, messages = [], deck = false } = {}) {
   const tags = [];
-  if (card.waiting) tags.push(waitingText(card));
+  if (card.waiting && !card.snoozed) tags.push(waitingText(card));
   if (isBlocked(card, me)) tags.push('Blocked');
   else if (card.need === 'you' || (card.status === 'review' && card.ask && card.ask_to === me && card.review_kind !== 'completion')) tags.push('Needs me');
   if (card.message_id) tags.push(chatTag(card, messages));
@@ -67,7 +68,7 @@ function doneView(card, options, stop) {
 function cardView(card, options, stop) {
   const id = cardId(options.board, card.number), tags = cardTags(card, options);
   const blocked = isBlocked(card, options.me), selected = options.selected === card.number;
-  return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${prioTag(card)}${tags.map((t) => `<span class="tag ${tagKind(t)}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
+  return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${prioTag(card)}${tags.map((t) => `<span class="tag ${tagKind(t)}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${snoozedLine(card)}${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
 }
 // Component styles (design 03, 04, 05, r2-04-board-1024) stay with this renderer.
 const styles = `
@@ -93,6 +94,8 @@ const styles = `
 .workbench-board .empty-col { margin: 0; padding: 14px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r); font-size: 12.5px; color: var(--text-3); text-align: center; }
 .workbench-board .add-ghost { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 0 8px; border: 1px dashed var(--line-strong); border-radius: var(--r); background: transparent; color: var(--text-2); font-weight: 500; }
 .workbench-board .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px 9px; display: flex; flex-direction: column; gap: 5px; cursor: pointer; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+/* Past the first screenful the browser skips style, layout and paint of off-screen cards until they near the viewport (every card stays in the DOM, so find, focus and keyboard moves still reach it). */
+.workbench-board .cards > .card:nth-child(n+13) { content-visibility: auto; contain-intrinsic-block-size: auto 76px; }
 .workbench-board .card-top { display: flex; align-items: center; gap: 6px; min-height: 18px; flex-wrap: wrap; }
 .workbench-board .card-top .tag.lbl { margin-left: auto; }
 .workbench-board .card-top .tag.lbl + .tag.lbl { margin-left: 0; }

@@ -79,7 +79,22 @@ export function connectorHTML(next, pr) {
 
 // ── One pull request ──
 const stat = (name, value, note = '', title = '') => `<span class="pl-stat" data-stat="${name}"${title ? ` title="${e(title)}"` : ''}><small>${{ lead: 'Lead time', slowest: 'Slowest step', wait: 'Longest wait', now: 'Now' }[name]}</small><b>${value}</b>${note ? `<i>${e(note)}</i>` : ''}</span>`;
-export function prHTML(pr, { open = true } = {}) {
+// The review comments of a PR, from GET /api/pr-review/prs (only PRs whose card the person can
+// read): one chip on the PR and a link to the card, where each comment is shown.
+export function reviewChip(review) {
+  const counts = review?.counts || {};
+  const total = Object.values(counts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  if (!review || !total) return '';
+  const busy = (Number(counts.new) || 0) + (Number(counts.working) || 0);
+  const words = counts.needs_you ? `${counts.needs_you} review ${counts.needs_you === 1 ? 'comment needs' : 'comments need'} you`
+    : busy ? `${busy} review ${busy === 1 ? 'comment is' : 'comments are'} being answered`
+    : `${total} review ${total === 1 ? 'comment' : 'comments'}, all handled`;
+  const tone = counts.needs_you ? 'failed' : busy ? 'running' : 'done';
+  return `<span class="pl-pill pl-reviews" data-state="${tone}" data-pl-reviews>${e(words)}</span>`;
+}
+const reviewLink = review => Number.isInteger(review?.card) && review.card > 0 ? `<a href="#/card/${review.card}" data-pl-review-card>Review comments on card #${review.card}</a>` : '';
+
+export function prHTML(pr, { open = true, review = null } = {}) {
   const lead = pr.lead || {}, slow = pr.slowest, wait = pr.longest_wait;
   const leadNote = lead.in_progress ? 'so far' : pr.state === 'failed' ? 'until it stopped' : lead.basis === 'first_event' ? 'from the first step' : '';
   const stats = [
@@ -90,24 +105,25 @@ export function prHTML(pr, { open = true } = {}) {
   ].join('');
   const flow = pr.steps.map((step, index) => `<li class="pl-cell" data-step="${e(step.step)}" data-state="${step.present ? step.state : 'pending'}"${pr.slowest?.step === step.step ? ' data-slowest="true"' : ''}>${blockHTML(step, pr)}${index < pr.steps.length - 1 ? connectorHTML(pr.steps[index + 1], pr) : ''}</li>`).join('');
   const url = `https://github.com/${pr.repo}/pull/${pr.pr}`;
-  return `<details class="pl-pr" data-pr="${e(pr.repo)}#${pr.pr}" data-state="${pr.state}"${open ? ' open' : ''}><summary><span class="pl-title"><b>#${pr.pr}</b> ${e(pr.title || 'Pull request')}</span><span class="pl-pill" data-state="${pr.state}">${PR_WORDS[pr.state] || ''}</span><span class="pl-stats">${stats}</span></summary><p class="pl-meta"><a href="${e(url)}" target="_blank" rel="noopener noreferrer">Pull request #${pr.pr}</a><span>${e(pr.repo)}</span></p><ol class="pl-flow" aria-label="Steps of pull request ${pr.pr}">${flow}</ol></details>`;
+  return `<details class="pl-pr" data-pr="${e(pr.repo)}#${pr.pr}" data-state="${pr.state}"${open ? ' open' : ''}><summary><span class="pl-title"><b>#${pr.pr}</b> ${e(pr.title || 'Pull request')}</span><span class="pl-pill" data-state="${pr.state}">${PR_WORDS[pr.state] || ''}</span>${reviewChip(review)}<span class="pl-stats">${stats}</span></summary><p class="pl-meta"><a href="${e(url)}" target="_blank" rel="noopener noreferrer">Pull request #${pr.pr}</a><span>${e(pr.repo)}</span>${reviewChip(review) ? reviewLink(review) : ''}</p><ol class="pl-flow" aria-label="Steps of pull request ${pr.pr}">${flow}</ol></details>`;
 }
 
 // ── The page ──
 export const EMPTY_COPY = { title: 'No pull requests yet', body: 'Pipeline events come from the deploy flow. Each pull request shows up here as it goes from card to merge to deploy.' };
 export const emptyHTML = () => `<div class="pl-empty" role="status">${artHTML('pipeline')}<h2>${EMPTY_COPY.title}</h2><p>${EMPTY_COPY.body}</p><button type="button" class="btn" data-pl="demo">See an example</button></div>`;
-export const pageHTML = ({ prs = null, demo = false, error = '', choices = new Map() } = {}) => {
+export const pageHTML = ({ prs = null, demo = false, error = '', choices = new Map(), reviews = new Map() } = {}) => {
   const head = `<header class="pl-head"><div><h1>${TITLE}</h1><p>How each pull request was built and shipped, step by step, and how long it waited in between. Times are Amsterdam time.</p></div></header>`;
   const banner = demo ? '<p class="pl-demo" role="status">This is an example, not your data. <button type="button" class="btn" data-pl="live">Back to your pull requests</button></p>' : '';
   let body;
   if (error) body = `<p class="pl-error" role="alert">${e(error)} <button type="button" class="btn" data-pl="retry">Try again</button></p>`;
   else if (prs === null) body = `<p class="pl-loading" role="status">${artHTML('loading')}Loading…</p>`;
   else if (!prs.length) body = emptyHTML();
-  else body = prs.map((pr, index) => prHTML(pr, { open: choices.get(`${pr.repo}#${pr.pr}`) ?? index < 3 })).join('');
+  else body = prs.map((pr, index) => prHTML(pr, { open: choices.get(`${pr.repo}#${pr.pr}`) ?? index < 3, review: demo ? null : reviews.get(`${pr.repo}#${pr.pr}`) })).join('');
   return `${head}${banner}<div class="pl-list">${body}</div>`;
 };
 
 function styles(doc) {
+  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-pipeline.css')) return;
   if (!doc?.head || doc.querySelector('link[data-pipeline-style]')) return;
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-pipeline.css', import.meta.url).href;
@@ -118,7 +134,7 @@ function styles(doc) {
 export function mount(context) {
   const { root, api } = context, doc = root.ownerDocument || globalThis.document;
   styles(doc);
-  let demo = false, prs = null, error = '', stopped = false, epoch = 0, request = null, timer = null;
+  let demo = false, prs = null, error = '', stopped = false, epoch = 0, request = null, timer = null, reviews = new Map();
   try { demo = new URLSearchParams(globalThis.location?.search || '').get('demo') === '1'; } catch { /* live data */ }
   const choices = new Map();
   root.classList.add('deck-pipeline');
@@ -127,7 +143,7 @@ export function mount(context) {
   let drawn = '';
   const paint = () => {
     if (stopped) return;
-    const html = pageHTML({ prs, demo, error, choices });
+    const html = pageHTML({ prs, demo, error, choices, reviews });
     if (html === drawn) return;
     const top = root.scrollTop;
     root.innerHTML = drawn = html;
@@ -137,9 +153,14 @@ export function mount(context) {
     const mine = ++epoch;
     request?.abort(); request = new AbortController();
     try {
-      const answer = await api(`/api/pipeline/prs?limit=20${demo ? '&demo=1' : ''}`, { signal: request.signal, timeoutMs: 10000 });
+      // The review counts are extra: a failure there never hides the pipeline itself.
+      const [answer, review] = await Promise.all([
+        api(`/api/pipeline/prs?limit=20${demo ? '&demo=1' : ''}`, { signal: request.signal, timeoutMs: 10000 }),
+        demo ? null : api('/api/pr-review/prs?limit=100', { signal: request.signal, timeoutMs: 10000 }).catch(() => null),
+      ]);
       if (stopped || mine !== epoch) return;
       prs = Array.isArray(answer?.prs) ? answer.prs : []; error = '';
+      if (Array.isArray(review?.prs)) reviews = new Map(review.prs.map(item => [`${item.repo}#${item.pr}`, item]));
     } catch (failure) {
       if (stopped || mine !== epoch || failure?.name === 'AbortError') return;
       error = failure?.status === 403 ? 'You cannot see the pipeline in this workspace.' : 'The pipeline could not be loaded.';

@@ -3,6 +3,7 @@ import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
 import { cardId } from "./board.js";
 import { segHTML } from "./seg.js";
+import { budgetNeed } from "./budget-format.js";
 import { decisionBlocksHTML } from "./decision-blocks.js";
 
 const enc = encodeURIComponent;
@@ -137,9 +138,19 @@ function modelRoleRow(item) {
   return `<article class="row-item" data-model-role-item="${e(item.board)}:${e(key)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">${e(item.board_name || item.board)} · ${e(item.role ? `${item.role} role` : "board config")}</div></div>${button}</article>`;
 }
 
+// A cost budget that crossed its warning (owner only): one row that says what and links to the page.
+export function budgetItems(needs = {}, filter = "all") {
+  return filter === "all" || filter === "decisions" ? (needs.budget_warnings || []).filter((item) => item?.kind === "budget" && item.budget) : [];
+}
+function budgetRow(item) {
+  const need = budgetNeed(item);
+  return `<article class="row-item" data-budget-item="${e(item.budget)}"><span class="typ approval">Budget</span><div><h3>${e(need.title)}</h3><div class="sub">${e(need.detail)}</div></div><a class="btn" href="${e(need.href)}">Review budget</a></article>`;
+}
+
 export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], filter = "all", selected = null, now = Date.now() } = {}) {
   const items = needsItems(needs, filter);
   const roles = modelRoleItems(needs, filter);
+  const budgets = budgetItems(needs, filter);
   const setup = filter === "all" || filter === "decisions" ? (needs.runner_setup || []).filter((item) => ["runner_settings", "runner_consent"].includes(item.kind)) : [];
   const setupRows = setup.map((item) => item.kind === "runner_consent" ? runnerConsent(item) : `<article class="row-item" data-runner-setup="${e(item.id)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">Runner settings need owner approval.</div></div><a class="btn" href="#/admin">Review settings</a></article>`).join("");
   const known = new Map([...cards, ...needsItems(needs).map((item) => item.card)].map((card) => [card.number, card]));
@@ -165,8 +176,8 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
   };
   const visibleCards = [...new Set([...items.map((item) => item.card.number), ...held.map((hold) => hold.card)])];
   const projectSlugs = new Set([...visibleCards.map((number) => known.get(number)?.board), ...roles.map((item) => item.board)].filter(Boolean));
-  const total = visibleCards.length + roles.length + setup.length, projectCount = projectSlugs.size;
-  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span>${segHTML({ label: "Filter", attr: "data-needs-filter", current: filter, items: Object.entries(filters) })}</header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${setupRows}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
+  const total = visibleCards.length + roles.length + setup.length + budgets.length, projectCount = projectSlugs.size;
+  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span>${segHTML({ label: "Filter", attr: "data-needs-filter", current: filter, items: Object.entries(filters) })}</header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${setupRows}${budgets.length ? `<h2 class="group-h">Spend</h2>${budgets.map(budgetRow).join("")}` : ""}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length && !budgets.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
 }
 
 export function githubPrUrl(value) {

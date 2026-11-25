@@ -1,0 +1,4 @@
+- **Owns:** `runner_bridge.card_refusal` answers `setup_waiting`, `setup_unfinished` or `setup_only` for a machine the setup guide added that cannot run Coworkers in this version, before the generic "machine unavailable" refusal.
+- **Promises:** A configured board's Start is never accepted for such a machine, and the refusal names the working next step instead of Admin's Attest.
+- **How it fails:** Closed: the start is refused with the stable code.
+- **Tests:** `tests/test_start_setup_only.py`.
