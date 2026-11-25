@@ -1,4 +1,4 @@
-# Technical guide command migration
+### Technical guide command migration
 
 The copy-edit guard permits one exact command correction: the existing Bash block containing the broad pytest invocation followed by Ruff lint and format checks may become the single command `python -m commonplace.guards.prepush --manual --base origin/develop`.
 
