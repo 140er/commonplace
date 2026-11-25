@@ -107,23 +107,22 @@ export function shellThreads({ directory = {} } = {}) {
 }
 const accountLinks = (options, { count = false } = {}) => { const { can_admin, can_manage_instance } = options; return `<a href="#/needs">Needs me${count ? badge(waiting(options), 'need', 'waiting on you') : ''}</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`; };
 // The workspace pages: on the desktop rail as their own group, on the phone in the More sheet (accountLinks).
-const workspaceLinks = ({ can_admin } = {}) => [['#/boards', 'Projects', 'projects'], ['#/needs', 'Needs me', 'needs'], ['#/rules', 'Rules', 'rules'], ['#/console', 'Console', 'console'], ['#/pipeline', 'Pipeline', 'pipeline'], ...(can_admin === true ? [['#/admin', 'Admin', 'admin']] : [])];
+const workspaceLinks = ({ can_admin } = {}) => [['#/needs', 'Needs me', 'needs'], ['#/rules', 'Rules', 'rules'], ['#/console', 'Console', 'console'], ['#/pipeline', 'Pipeline', 'pipeline'], ...(can_admin === true ? [['#/admin', 'Admin', 'admin']] : [])];
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
   const role = { owner: 'Owner', member: 'Member' }[options.role];
   const link = ([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`;
-  const main = sections.filter(([id]) => id !== 'settings'), settings = sections.find(([id]) => id === 'settings');
-  // One list of places, in the order people use them; the bot tree and threads follow, Settings and the account sit at the foot.
-  const places = [['home', options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(isHome(hash))}>${icon('home')}Home</a>`],
-    ...main.map(entry => [entry[0], link(entry)])];
-  const work = `<a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>`;
-  const at = Math.max(places.findIndex(([id]) => id === 'today') + 1, 1);
+  const offered = id => sections.find(([section]) => section === id), settings = offered('settings');
+  // Each place once. The top list is where work happens (Board carries the way to every project); the bots are listed
+  // under their own Bots heading; the workspace's machines and tools form the second group; Settings and the account sit at the foot.
+  const board = `<div class="deck-board-entry"><a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="deck-board-all" href="#/boards"${current(hash === '#/boards')} title="All projects">All projects</a></div>`;
+  const top = `${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(isHome(hash))}>${icon('home')}Home</a>`}${offered('today') ? link(offered('today')) : ''}${board}<a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>`;
   const threads = shellThreads(options);
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
     <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button><a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread" aria-label="New thread" title="New thread">${icon('edit')}</a></div>
-    <div class="deck-links">${places.slice(0, at).map(([, html]) => html).join('')}${work}${places.slice(at).map(([, html]) => html).join('')}</div>
-    <div class="deck-rail-scroll"><h2 class="deck-rail-heading">Your bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>
-    <h2 class="deck-rail-heading"><button class="deck-ws-switch" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Workspace · ${e(workspace)}${icon('chevron')}</button></h2><div class="deck-rail-tools">${workspaceLinks(options).map(([href, label, name]) => `<a class="nav" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon(name)}${label}</a>`).join('')}</div></div>
+    <div class="deck-links">${top}</div>
+    <div class="deck-rail-scroll"><div class="deck-links deck-bots-head">${offered('bots') ? link(offered('bots')) : ''}<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></div><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>
+    <h2 class="deck-rail-heading"><button class="deck-ws-switch" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Workspace · ${e(workspace)}${icon('chevron')}</button></h2><div class="deck-rail-tools">${offered('compute') ? link(offered('compute')) : ''}${workspaceLinks(options).map(([href, label, name]) => `<a class="nav" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon(name)}${label}</a>`).join('')}</div></div>
     <div class="rail-foot">${settings ? link(settings) : ''}<details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${options.can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button></div></details></div>
   </nav>`;
 }

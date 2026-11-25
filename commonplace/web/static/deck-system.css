@@ -3,7 +3,7 @@
    Inert in the classic look. Colour tokens stay in deck-capy.css. */
 :root[data-ui="deck"] {
   --page-top: 40px; --page-side: 48px;
-  --page-width: 1040px;
+  --page-width: 1200px;
   --title-size: 22px;
 }
 :root[data-ui="deck"] body { -webkit-font-smoothing: antialiased; }
@@ -35,6 +35,13 @@
 :root[data-ui="deck"] .deck-ws-switch { display: flex; align-items: center; gap: 6px; min-height: 28px; margin: 0 -6px; padding: 0 6px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 :root[data-ui="deck"] .deck-ws-switch:hover { background: var(--s2); color: var(--ink); }
 :root[data-ui="deck"] .deck-ws-switch .i { width: 10px; height: 10px; transform: rotate(90deg); }
+:root[data-ui="deck"] .deck-board-entry { display: flex; align-items: center; }
+:root[data-ui="deck"] .deck-board-entry > .nav { flex: 1; }
+:root[data-ui="deck"] .deck-board-all { flex: none; margin-left: 4px; padding: 3px 8px; border-radius: var(--radius-control); color: var(--ink3); font-size: 12px; text-decoration: none; }
+:root[data-ui="deck"] .deck-board-all:hover, :root[data-ui="deck"] .deck-board-all[aria-current] { background: var(--s2); color: var(--ink); }
+/* "Bots" is both the page and the heading of the bot list under it. */
+:root[data-ui="deck"] .deck-links.deck-bots-head { flex-direction: row; align-items: center; margin: 8px 0 2px; }
+:root[data-ui="deck"] .deck-links.deck-bots-head > .nav { flex: 1; }
 :root[data-ui="deck"] .deck-rail-tools { display: flex; flex-direction: column; gap: 1px; }
 :root[data-ui="deck"] .deck-rail-tools .nav { min-height: 30px; padding: 0 10px; gap: 10px; font-size: 13.5px; color: var(--ink2); }
 :root[data-ui="deck"] .deck-bot-avatar { background: var(--s2); color: var(--ink2); border: 1px solid var(--line2); }
@@ -61,7 +68,9 @@
   :root[data-ui="deck"] .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding: 20px var(--page-side) 32px; }
   :root[data-ui="deck"] #content > :is(.queue, .rules-view, .console-view) { padding: 0; max-width: var(--page-width); }
   :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); }
-  :root[data-ui="deck"] #content > :is(.workbench-board, .bt-scroll, .bh-wrap, .bots, .deck-compute) { max-width: none; }
+  :root[data-ui="deck"] #content > :is(.bt-scroll, .bh-wrap, .bots) { max-width: none; }
+  :root[data-ui="deck"] .shell #content :is(.bt-page, .bots-roster, .deck-board) { width: auto; max-width: var(--page-width); }
+  :root[data-ui="deck"] .shell #content .deck-compute { max-width: var(--page-width); }
   :root[data-ui="deck"] #content:has(> .pl-head), :root[data-ui="deck"] #content:has(> .deck-compute), :root[data-ui="deck"] #content:has(> .deck-memory) { padding-left: var(--page-side); padding-right: var(--page-side); }
   /* The shell already pads #content; screens that pad themselves would double the edge. */
   :root[data-ui="deck"] .shell #content .bt-page { padding-inline: 0; margin-inline: 0; }
@@ -87,13 +96,15 @@
 /* Title across the card; the meta line and Move to… share the row under it, and the meta wraps rather than hides. */
 :root[data-ui="deck"] .shell .deck-board .card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
 :root[data-ui="deck"] .deck-board .card > h3 { grid-column: 1 / -1; grid-row: 1; }
-:root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: wrap; column-gap: 8px; row-gap: 2px; }
+:root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: nowrap; column-gap: 8px; }
+:root[data-ui="deck"] .deck-board .card-meta > .deck-board-bot { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { flex: none; }
 /* No separator dot: when the line wraps, the state moves down whole instead of leaving a dangling "·". */
 :root[data-ui="deck"] .deck-board .card-meta > span[aria-hidden="true"]:not(.deck-board-avatar) { display: none; }
 :root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
 :root[data-ui="deck"] .deck-board-intro .deck-board-switch { display: inline-flex; align-items: center; min-height: 24px; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line2); border-radius: var(--radius-control); color: var(--ink2); text-decoration: none; font-size: 12.5px; }
 :root[data-ui="deck"] .deck-board-intro .deck-board-switch:hover { color: var(--ink); background: var(--s2); }
-:root[data-ui="deck"] .console-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 560px; padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
+:root[data-ui="deck"] .console-empty { grid-column: 1 / -1; align-self: start; justify-self: start; width: min(560px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 560px; padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
 :root[data-ui="deck"] .console-empty .console-message { margin: 0; color: var(--ink); font-size: 15px; font-weight: 600; }
 :root[data-ui="deck"] .console-empty-next { margin: 0 0 6px; color: var(--ink2); }
 :root[data-ui="deck"] .deck-board .card > .card-top { position: static; grid-column: 2; grid-row: 2; display: flex; }
@@ -135,6 +146,7 @@
 :root[data-ui="deck"] .cb-folder:only-child > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 :root[data-ui="deck"] .needs-me:has(.empty) .keys { display: none; }
 :root[data-ui="deck"] .cb-worker .cb-state-word { display: none; }
+:root[data-ui="deck"] .cb-worker b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 :root[data-ui="deck"] :is(.cb-state-word, .bt-state-word) { margin-left: 6px; color: var(--ink3); font-size: 12px; font-weight: 400; }
 @media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
 :root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
@@ -178,7 +190,7 @@
 /* The next step reads as the one thing to do: a marked row with its link as a button. */
 :root[data-ui="deck"] .ready-to-start li[data-next] { margin: 4px -12px; padding: 12px; border: 1px solid var(--line2); border-radius: var(--radius-control); background: var(--s2); }
 :root[data-ui="deck"] .ready-to-start li[data-next] + li { border-top: 0; }
-:root[data-ui="deck"] .ready-to-start li[data-next] p a { display: inline-flex; align-items: center; min-height: 30px; margin-top: 6px; padding: 0 12px; border-radius: var(--radius-control); background: var(--ink); color: var(--ground); text-decoration: none; font-weight: 600; }
+:root[data-ui="deck"] .ready-to-start li[data-next] p a { color: var(--ink); font-weight: 600; text-decoration-color: var(--violet); text-decoration-thickness: 2px; }
 
 :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] p { color: var(--ink2); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) { padding: 7px 0; color: var(--ink3); }
