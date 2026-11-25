@@ -115,6 +115,8 @@
   :root[data-ui="deck"] body .shell .center > .head:not([hidden]) { padding-top: var(--page-top); }
   :root[data-ui="deck"] body .shell .center #content.deck-workspace.dw-map { padding-top: var(--page-top); }
   :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 4px; }
+  :root[data-ui="deck"] body .shell #content .bt-col { max-width: var(--page-width); padding-inline: 0; }
+  :root[data-ui="deck"] body .shell .look-switch .opt { white-space: nowrap; min-width: max-content; }
   :root[data-ui="deck"] body .shell .center > #content.deck-work { padding-inline: max(var(--page-side), calc((100% - var(--page-width)) / 2)); }
   :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 8px; }
   :root[data-ui="deck"] body .shell #content .deck-memory { padding-top: 8px; }
