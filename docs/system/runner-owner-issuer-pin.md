@@ -7,3 +7,5 @@
 - **T:** Native host scope enforcement, signing-key custody and live issuer proofs
   remain the separate S9 follow-up. Only disposable enrollment proofs are allowed;
   revoke afterward. Neither provider login nor execution is enabled here.
+- **T:** Owner-pin success fixtures create their synthetic sources with private
+  permissions before writing; source safety checks and assertions remain intact.
