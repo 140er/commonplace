@@ -143,6 +143,9 @@
   :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 16px; }
   :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 0; }
   :root[data-ui="deck"] body .shell #content .deck-memory { padding-top: 0; }
+  /* The bar holds the title, so Memory's actions sit on the intro line, clear of the search box. */
+  :root[data-ui="deck"] body .shell #content .deck-memory .memory-heading { min-height: 32px; align-items: center; margin-bottom: 16px; }
+  :root[data-ui="deck"] body .shell #content .deck-memory .memory-actions { top: 0; }
   :root[data-ui="deck"] body .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding-top: 20px; }
   :root[data-ui="deck"] body .shell #content .settings.capy-settings { padding-inline: 0; padding-top: 20px; }
 }
