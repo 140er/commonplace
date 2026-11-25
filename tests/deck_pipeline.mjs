@@ -168,6 +168,6 @@ test('Pipeline is a Deck screen with an entry in the account menu and the phone 
   assert.equal(typeof SCREENS.pipeline, 'function');
   const options = { hash: '', sections: [], section: '', can_admin: true, homeOn: true, bots: [], directory: {} };
   assert.match(renderShellMore(options), /<a href="#\/pipeline">Pipeline<\/a>/);
-  assert.match(renderShellBar(options), /<a class="nav" href="#\/pipeline">[\s\S]*?Pipeline<\/a>/);
+  assert.match(renderShellBar(options), /<a href="#\/pipeline">Pipeline<\/a>/);
   assert.ok(shellTrees);
 });

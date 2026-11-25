@@ -8,7 +8,7 @@ import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { arrangeCapySettings, capyPolicyPresentation } from './deck-settings-capy.js';
 import { createDeckAppearance } from './deck-appearance.js';
-import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
+import { SECTIONS, placeOf, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
 import { arrangeSettings, selectSettings } from './deck-settings.js';
 import { needsMeCount } from './needs-me.js';
 
@@ -50,12 +50,7 @@ export function applyDeck({ doc = globalThis.document, loc = globalThis.location
 }
 
 /** The bar section a route belongs to; '' for the workspace tools reached from the account menu. */
-export function deckSection(hash = '') {
-  const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
-  if (!name || name === 'home' || name === 'today' || name === 'needs') return 'home';
-  if (['work', 'board', 'boards', 'card', 'start'].includes(name)) return 'work';
-  return name === 'bots' || name === 'settings' ? name : '';
-}
+export const deckSection = placeOf;
 export const deckSections = (screens = SCREENS) => SECTIONS.filter(([id]) => id === 'bots' || id === 'settings' || screens[id]);
 /** Home is the undimmed hero; older screen registries keep their fallback. */
 export const deckHome = (screens = SCREENS) => screens.home ? '#/' : screens.today ? '#/today' : '#/bots';

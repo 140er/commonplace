@@ -65,7 +65,7 @@ def test_build_is_reproducible_content_addressed_and_keeps_pinned_cascade(built)
         css.index(f"/* {name} */") for name in pinned
     )
     assert "@import" not in css
-    assert len(manifest["fonts"]) == 2 and "font-display: swap" in css
+    assert len(manifest["fonts"]) == 3 and "font-display: swap" in css
     assert 'url("/app/fonts/' in css
 
 

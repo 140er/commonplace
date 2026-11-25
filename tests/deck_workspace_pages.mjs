@@ -150,14 +150,15 @@ test('nested pages belong to their existing Deck section and keep four destinati
     const ui = createDeck({ storage: { getItem: () => 'deck' }, doc: {} });
     assert.equal(ui.owns(hash), true, hash);
     const bar = renderDeckBar({ hash });
-    assert.deepEqual([...bar.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), ['home', 'today', 'bots', 'compute', 'settings']);
+    assert.deepEqual([...bar.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), ['home', 'work', 'bots', 'compute', 'settings']);
     assert.match(bar, new RegExp(`data-nav="${section}" aria-current="page"`));
     assert.equal((bar.match(/aria-current="page"/g) || []).length, 1);
     // The phone bar has its own tabs; a page without a tab (Cloud workspaces) marks More.
     const tabs = renderDeckTabs({ hash });
     assert.deepEqual([...tabs.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), PHONE_TABS.map(([id]) => id));
-    assert.match(tabs, section === 'bots' ? /data-nav="bots" aria-current="page"/ : /class="deck-tab-more"[^>]*aria-current="page"/);
-    assert.equal((tabs.match(/aria-current="page"/g) || []).length, 1);
+    // A page without a tab (Cloud workspaces) lights no tab; it is reached from the account sheet.
+    assert.equal((tabs.match(/aria-current="page"/g) || []).length, section === 'bots' ? 1 : 0);
+    if (section === 'bots') assert.match(tabs, /data-nav="bots" aria-current="page"/);
   }
 });
 test('classic rail and phone tabs are Bots, Memory and Cloud workspaces, with the same owner map menu', () => {

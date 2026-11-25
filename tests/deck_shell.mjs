@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { renderDeckBar, renderDeckTop, renderDeckTabs, renderDeckMore, deckSections, deckSection } from '../commonplace/web/static/deck.js';
 import { PHONE_TABS } from '../commonplace/web/static/deck-shell.js';
 
-const entries = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['settings', 'Settings']];
+const entries = [['home', 'Waiting on you'], ['work', 'Work'], ['bots', 'Bots'], ['settings', 'Settings']];
 const links = html => [...html.matchAll(/href="([^"]+)" data-nav="([^"]+)"/g)].map(m => [m[2], m[1]]);
 const data = {
   bots: [{ id: 'personal', name: 'Personal bot', private: true, section: 'Operations', unread: 2, state: 'working', coworkers: [{ id: 'job', name: 'Release', state: 'waiting', conversation_id: 'release' }] }],
@@ -19,28 +19,26 @@ test('bot avatars use one letter unless the roster has a first-letter collision'
   assert.deepEqual(labels(bots.toReversed()), ['C', 'RS', 'RE']);
 });
 
-test('the four Deck entries and existing route destinations remain unchanged', () => {
+test('the places are Waiting on you, Work, Bots and Settings, and every older destination stays reachable', () => {
   assert.deepEqual(deckSections(), entries);
-  for (const hash of ['#/', '#/today', '#/bots', '#/bots/personal/coworkers', '#/board', '#/compute', '#/memory', '#/settings']) {
+  for (const hash of ['#/', '#/today', '#/bots', '#/bots/personal/coworkers', '#/board', '#/work', '#/compute', '#/memory', '#/settings']) {
     const html = renderDeckBar({ hash });
-    assert.deepEqual(links(html), [['home', '#/'], ...entries.map(([id]) => [id, `#/${id}`])], 'Home first, then the four entries');
-    assert.match(html, /href="#\/board"/);
-    assert.match(html, /href="#\/memory"/);
+    assert.deepEqual(links(html).map(([id]) => id), ['home', 'work', 'bots', 'compute', 'settings'], 'Waiting, Work, Bots, then the account menu, then Settings');
+    for (const href of ['#/memory', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline', '#/needs']) assert.match(html, new RegExp(`href="${href}"`));
   }
   assert.equal(deckSection('#/bots/personal/coworkers'), 'bots');
+  for (const [hash, section] of [['#/', 'home'], ['#/today', 'home'], ['#/work', 'work'], ['#/board/x', 'work'], ['#/card/3', 'work'], ['#/settings', 'settings'], ['#/rules', '']]) assert.equal(deckSection(hash), section, hash);
 });
 
-test('only Today has an amber action count and Bots has a violet unread count', () => {
+test('only Waiting on you has an amber count and Bots has a violet unread count', () => {
   const html = renderDeckBar({ needs: 3, rulesWaiting: 8, botsWaiting: 3, ...data });
-  assert.match(html, /data-nav="today"[^>]*>[\s\S]*?class="count need">3/);
+  assert.match(html, /data-nav="home"[^>]*>[\s\S]*?class="count need">3/);
   assert.match(html, /data-nav="bots"[^>]*>[\s\S]*?class="count unread">2/);
-  assert.equal((html.match(/class="count /g) || []).length, 3);
   assert.equal((html.match(/class="count need"/g) || []).length, 1);
   assert.equal((renderDeckBar({}).match(/class="count /g) || []).length, 0);
   const tabs = renderDeckTabs({ needs: 3, ...data });
   assert.equal((tabs.match(/class="count /g) || []).length, 1);
   assert.doesNotMatch(tabs, /unread/);
-  assert.doesNotMatch(renderDeckTabs({ needs: 3, screens: {} }), /class="count /);
 });
 
 test('folders and bot trees render live records, coworker states and private locks only', () => {
@@ -67,27 +65,23 @@ test('older lists render directly under Bots and no invented state or unread cou
   assert.doesNotMatch(escaped, /<script>|data-state="arbitrary"/);
 });
 
-test('phone chrome has the four phone tabs, Today badge, avatar wait dot and a mic only without a composer', () => {
-  for (const hash of ['#/today', '#/bots/x/coworkers', '#/board', '#/compute', '#/memory', '#/settings']) {
-    const tabs = renderDeckTabs({ hash, needs: 2, hasComposer: false });
+test('phone chrome has the three phone tabs, the Waiting count, an account button and a search button', () => {
+  for (const hash of ['#/', '#/bots/x/coworkers', '#/work', '#/compute', '#/memory', '#/settings']) {
+    const tabs = renderDeckTabs({ hash, needs: 2 });
     assert.deepEqual(links(tabs), PHONE_TABS.map(([id, , href]) => [id, href]));
-    assert.match(tabs, /data-deck-shell-action="mic"/);
+    assert.doesNotMatch(tabs, /data-deck-shell-action="mic"/, 'the voice button lives in the composer, not the tab bar');
   }
-  for (const hash of ['#/today', '#/bots/x', '#/bots/x/coworkers', '#/board/work/chat', '#/memory']) assert.doesNotMatch(renderDeckTabs({ hash, hasComposer: true }), /data-deck-shell-action="mic"/);
-  assert.doesNotMatch(renderDeckTabs({ hash: '#/' }), /data-deck-shell-action="mic"/);
-  const top = renderDeckTop({ hash: '#/today', needs: 2, user: 'Owner' });
-  assert.match(top, /<b>Today<\/b>/);
-  assert.match(top, /data-deck-waiting="true"/);
+  assert.match(renderDeckTabs({ hash: '#/work' }), /data-nav="work" aria-current="page"/);
+  assert.match(renderDeckTabs({ hash: '#/bots/x' }), /data-nav="bots" aria-current="page"/);
+  const top = renderDeckTop({ hash: '#/', needs: 2, user: 'Owner' });
+  assert.match(top, /<b>Waiting on you<\/b>/);
+  assert.match(top, /data-deck-shell-action="more"/);
   assert.match(top, /data-action="palette"/);
-  assert.match(top, /data-action="switch-workspace"/);
   assert.match(renderDeckTop({ hash: '#/memory' }), /<b>Memory<\/b>/);
-  assert.doesNotMatch(renderDeckTop({ board: { slug: 'work' } }), /<b>Board<\/b>/);
-  const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
-  assert.match(css, /grid-template-columns: 252px/);
-  assert.match(css, /height: 52px/);
-  assert.match(css, /height: 26px/);
-  assert.match(css, /border-left: 1\.5px solid var\(--tree-line\)/);
-  assert.match(css, /h1[^}]*display: none/s);
+  assert.match(renderDeckTop({ hash: '#/board/work', board: { slug: 'work', name: 'Work site' } }), /<b>Work site<\/b>/);
+  const css = readFileSync(new URL('../commonplace/web/static/deck-system.css', import.meta.url), 'utf8');
+  assert.match(css, /grid-template-columns: 236px minmax\(0, 1fr\)/);
+  assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
 });
 
 test('shell refreshes only readable lists, keeps folder collapse and rejects stale account responses', async () => {
@@ -141,46 +135,38 @@ test('shell refreshes only readable lists, keeps folder collapse and rejects sta
   assert.match(html, /class="count unread">3/);
   assert.equal((html.match(/deck-tree-state/g)||[]).length, 4);
   for (const word of ['Ready', 'Healthy', 'Busy', 'Parked']) assert.match(html, new RegExp('deck-tree-state">'+word));
-  assert.match(html, /Member · Studio/);
+  assert.match(html, /Member, Studio/);
   assert.match(html, /href="#\/bots\?new=1" aria-label="New bot"/);
   assert.doesNotMatch(renderDeckBar({bots:[{id:'missing', name:'Missing',last:{at:'invalid'}}]}), /deck-bot-time|deck-tree-state/);
-  assert.match(renderDeckBar({role:'owner',workspace:'Studio'}), /Owner · Studio/);
+  assert.match(renderDeckBar({role:'owner',workspace:'Studio'}), /Owner, Studio/);
 });
 
- test('rail destinations preserve registered Home and Today screens', async () => {
+ test('Waiting on you is home and is offered first', async () => {
   const {SCREENS,deckHome}=await import('../commonplace/web/static/deck.js');
   const {resolveRoute}=await import('../commonplace/web/static/routes.js');
   assert.equal(deckHome(), '#/');
-  assert.equal((await SCREENS.home()).TITLE, 'Commonplace');
-  assert.equal((await SCREENS.today()).TITLE, 'Today');
+  assert.equal(await SCREENS.home(), await SCREENS.today(), 'Home and Today are the same Waiting screen');
+  assert.equal((await SCREENS.work()).TITLE, 'Work');
   assert.equal(resolveRoute('#/',{deck:true}), '#/');
-  assert.equal(resolveRoute('#/today',{deck:true}), '#/today');
-  const html=renderDeckBar({hash:'#/today'});
+  const html=renderDeckBar({hash:'#/'});
   assert.match(html,/class="deck-brand" href="#\/"/);
-  assert.match(html,/class="deck-new-thread nav" href="#\/"/);
-  assert.doesNotMatch(renderDeckTabs({hash:'#/home'}), /data-deck-shell-action="mic"/);
+  assert.match(html,/class="nav" href="#\/" data-nav="home" aria-current="page"/);
+  assert.match(html,/class="deck-new-thread nav" href="#\/bots"/);
 });
 
 const sheetLinks = html => [...html.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
-test('phone: every rail and account destination is reachable from the More sheet with its count', () => {
-  const tabs = renderDeckTabs({ hash: '#/today', needs: 3 }), sheet = renderDeckMore({ hash: '#/today', needs: 3, can_admin: true, can_manage_instance: true });
-  assert.match(tabs, /<button[^>]*class="deck-tab-more"[^>]*aria-expanded="false"[^>]*aria-controls="deck-more"[^>]*>[\s\S]*?More<\/button>/);
+test('phone: every place outside the three tabs is in the account sheet, with its count', () => {
+  const sheet = renderDeckMore({ hash: '#/', needs: 3, can_admin: true, can_manage_instance: true });
   assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
   assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
-  const bar = renderDeckBar({ hash: '#/today', can_admin: true, can_manage_instance: true });
-  const railTools = ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules', '#/admin', '#/instance-admin'];
-  for (const href of railTools) assert.ok(bar.includes(`href="${href}"`), `rail offers ${href}`);
-  // Board and Memory are phone tabs; the sheet holds every other rail place, Cloud workspaces and Settings first.
-  const phone = new Set(PHONE_TABS.map(([, , href]) => href));
-  assert.deepEqual(sheetLinks(sheet), ['#/', '#/compute', '#/settings', ...railTools.filter(href => href !== '#/' && !phone.has(href))], 'the bar and the sheet together offer every rail place');
+  const bar = renderDeckBar({ hash: '#/', can_admin: true, can_manage_instance: true });
+  const places = ['#/settings', '#/memory', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
+  for (const href of places) assert.ok(bar.includes(`href="${href}"`), `the sidebar offers ${href}`);
+  assert.deepEqual(sheetLinks(sheet), places, 'the sheet offers each of them, with the same routes');
   assert.match(sheet, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> waiting on you/);
   assert.match(sheet, /data-action="switch-workspace"/);
   assert.match(sheet, /data-action="logout"/);
-  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/today' })), ['#/', '#/compute', '#/settings', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules']);
-  assert.doesNotMatch(renderDeckBar({ hash: '#/today', needs: 3 }), /deck-more|waiting on you<\/span><\/span><\/a><a href="#\/boards"/);
-  assert.match(renderDeckTabs({ hash: '#/settings' }), /class="deck-tab-more"[^>]*aria-current="page"/);
-  assert.match(renderDeckTabs({ hash: '#/memory' }), /data-nav="memory" aria-current="page"/);
-  assert.doesNotMatch(renderDeckTabs({ hash: '#/today' }), /class="deck-tab-more"[^>]*aria-current/);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/memory', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline']);
 });
 
 test('the More button opens and closes the sheet, any tap inside closes it, Escape returns focus', async () => {
@@ -188,7 +174,7 @@ test('the More button opens and closes the sheet, any tap inside closes it, Esca
   const attrs = {}, focused = [];
   const sheet = { hidden: true, querySelector: () => ({ focus: () => focused.push('first') }), setAttribute(key, value) { attrs.role = value; }, removeAttribute(key) { delete attrs[key]; } };
   const opener = { setAttribute: (key, value) => { attrs[key] = value; }, focus: () => focused.push('opener') };
-  const nodes = { '#phone-tabs .deck-more': sheet, '.deck-tab-more': opener }, events = {}, documentEvents = {};
+  const nodes = { '#phone-tabs .deck-more': sheet, '.deck-phone-avatar': opener }, events = {}, documentEvents = {};
   const shell = createDeckShell({ root: { ownerDocument: {addEventListener(name, cb) {documentEvents[name] = cb;}}, querySelector: key => nodes[key], addEventListener: (name, cb) => { events[name] = cb; } }, context: () => ({}), on: () => true });
   const tap = action => events.click({ target: { closest: () => ({ dataset: { deckShellAction: action } }) }, preventDefault() {} });
   tap('more');
@@ -205,7 +191,6 @@ test('the More button opens and closes the sheet, any tap inside closes it, Esca
   delete globalThis.location;
   assert.doesNotMatch(renderDeckMore({ moreOpen: true }), /id="deck-more"[^>]* hidden/);
   assert.match(renderDeckMore({ moreOpen: true }), /id="deck-more"[^>]* role="dialog"/);
-  assert.match(renderDeckTabs({ moreOpen: true }), /aria-expanded="true"/);
 });
 
 test('phone CSS: five tab columns and a sheet fixed inside the viewport', () => {
