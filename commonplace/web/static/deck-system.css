@@ -105,6 +105,21 @@
   :root[data-ui="deck"] .deck-work .wk-chips { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: 28px; }
 }
 
+/* ---------- Every page starts the same way: one title size at one height, on one centred column ---------- */
+/* `body` raises these above the per-screen sheets, which load later. */
+@media (min-width: 700px) {
+  :root[data-ui="deck"] body .shell .center h1 { font-size: 20px; line-height: 28px; letter-spacing: -0.01em; margin-top: 0; margin-bottom: 0; }
+  :root[data-ui="deck"] body .shell #content > .bt-bar { height: auto; min-height: 0; width: 100%; max-width: var(--page-width); margin-inline: auto; padding: var(--page-top) 0 14px; border-bottom: 0; background: none; }
+  :root[data-ui="deck"] body .shell .deck-work > .wk-bar { height: auto; min-height: 0; padding: var(--page-top) 0 14px; border-bottom: 0; background: none; }
+  :root[data-ui="deck"] body .shell #content .bots[data-pane="roster"] > .bots-roster { max-width: var(--page-width); padding-top: 8px; padding-inline: 0; }
+  :root[data-ui="deck"] body .shell .center > .head:not([hidden]) { padding-top: var(--page-top); }
+  :root[data-ui="deck"] body .shell .center #content.deck-workspace.dw-map { padding-top: var(--page-top); }
+  :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 4px; }
+  :root[data-ui="deck"] body .shell .center > #content.deck-work { padding-inline: max(var(--page-side), calc((100% - var(--page-width)) / 2)); }
+  :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 8px; }
+  :root[data-ui="deck"] body .shell #content .deck-memory { padding-top: 8px; }
+  :root[data-ui="deck"] body .shell #content > .pl-head { margin-top: 8px; }
+}
 /* ---------- Bots list: one bordered list, a row per bot ---------- */
 :root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
 :root[data-ui="deck"] .bots-roster .cb-folder > ul > li + li { border-top: 1px solid var(--line); }
@@ -327,7 +342,7 @@
   :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }
   :root[data-ui="deck"] .bh-head { margin-bottom: 20px; }
   :root[data-ui="deck"] .shell .center .bh-head h1 { display: block; font-size: 22px; }
-  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; flex-wrap: wrap; column-gap: 16px; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; column-gap: 16px; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { flex-basis: 100%; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav button { flex: none; min-height: 44px; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 40px; }

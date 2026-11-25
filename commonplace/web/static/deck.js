@@ -66,7 +66,7 @@ export const renderDeckMore = options => renderShellMore(shellOptions(options));
 /** The Look section at the top of Settings: Deck or Classic, saved in this browser only. */
 export function lookHTML(on) {
   const pick = (look, label, chosen) => `<button type="button" class="opt" data-deck-action="look" data-look="${look}" aria-pressed="${chosen ? 'true' : 'false'}">${label}</button>`;
-  return `<section class="settings-section" id="look"><h2>Look</h2><p>Choose the layout of this app. Classic is the older one. The choice is saved in this browser.</p><div class="look-switch" role="group" aria-label="Look">${pick('deck', 'Current', on)}${pick('classic', 'Classic', !on)}</div></section>`;
+  return `<section class="settings-section" id="look"><h2>Look</h2><p>Choose the layout of this app. Classic is the older one. The choice is saved in this browser.</p><div class="look-switch" role="group" aria-label="Look">${pick('deck', 'Commonplace', on)}${pick('classic', 'Classic', !on)}</div></section>`;
 }
 
 /** The workspace tools as one Settings section. The phone layout shows it, because a phone has no account menu. */

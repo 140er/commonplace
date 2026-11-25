@@ -27,17 +27,17 @@ function settingsBox() {
 }
 const choice = (look) => ({ target: { closest: (q) => (q === '[data-deck-action="look"]' ? { dataset: { look } } : null) } });
 
-test("Look reads Current | Classic in plain words and marks the one in use", () => {
+test("Look reads Commonplace | Classic in plain words and marks the one in use", () => {
   const on = deck.lookHTML(true), off = deck.lookHTML(false);
   for (const html of [on, off]) {
     assert.match(html, /<h2>Look<\/h2>/);
     assert.match(html, /role="group" aria-label="Look"/);
-    assert.ok(html.indexOf(">Current</button>") < html.indexOf(">Classic</button>"), "Current, then Classic");
+    assert.ok(html.indexOf(">Commonplace</button>") < html.indexOf(">Classic</button>"), "Commonplace, then Classic");
     assert.doesNotMatch(html, /Go back to the classic look|Try the Deck look/);
   }
-  assert.match(on, /data-look="deck" aria-pressed="true">Current/);
+  assert.match(on, /data-look="deck" aria-pressed="true">Commonplace/);
   assert.match(on, /data-look="classic" aria-pressed="false">Classic/);
-  assert.match(off, /data-look="deck" aria-pressed="false">Current/);
+  assert.match(off, /data-look="deck" aria-pressed="false">Commonplace/);
   assert.match(off, /data-look="classic" aria-pressed="true">Classic/);
 });
 
