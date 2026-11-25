@@ -150,7 +150,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     const inside = active && target.contains?.(active);
     const refresh = inside && active.dataset?.adminAction === 'refresh' ? active.dataset.adminSection : null;
     const href = inside && active.tagName === 'A' ? active.getAttribute('href') : null;
-    target.innerHTML = `<div class="admin settings"><p class="admin-workspace">${e(current().workspace_name || '')}</p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
+    target.innerHTML = `<div class="admin settings"><p class="admin-workspace">Workspace: <b>${e(current().workspace_name || '')}</b></p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
       if (!sections.has(key) || (key === 'index-stats' && !instanceOwner())) return '';
       if (key === 'deploy') return `<section class="settings-section" data-admin-section="deploy"><h2>${e(title)}</h2>${panel('deploy')}${panel('health')}</section>`;
       return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Needs-me</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;

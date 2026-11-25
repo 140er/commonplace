@@ -138,7 +138,7 @@ test('the rail note and Today section lines keep their words and gain art', () =
   const bots = botsHTML([]);
   const header = bots.match(/<header>[^]*?<\/header>/)[0];
   assertArt(header, 'rule');
-  assert.equal(text(header), 'Your bots Latest from each');
+  assert.equal(text(header), 'Your bots Latest update per bot');
 });
 
 test('the section line and the Memory title piece stay off the phone and cost no height', () => {

@@ -9,12 +9,9 @@
 :root[data-ui="deck"] body { -webkit-font-smoothing: antialiased; }
 
 /* ---------- Stage: the scene is Home's alone; work screens sit on a plain ground ---------- */
-@media (min-width: 700px) {
-  :root[data-ui="deck"] .shell > .center { padding: 0; }
-  :root[data-ui="deck"] .shell > .center .deck-stage { inset: 0; border: 0; border-radius: 0; }
-  :root[data-ui="deck"] .center > #content { border-radius: 0; }
-}
-:root[data-ui="deck"] .deck-stage[data-dimmed="true"] { display: none; }
+@media (min-width: 700px) { :root[data-ui="deck"] { --page-side: 40px; } }
+:root[data-ui="deck"] .deck-stage[data-dimmed="true"] canvas { visibility: hidden; }
+:root[data-ui="deck"] .deck-stage[data-dimmed="true"] { background: var(--stage); }
 :root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .22; }
 :root[data-ui="deck"] .bh-head { margin-bottom: 28px; }
 :root[data-ui="deck"] .bh-head h1 { margin: 0 0 6px; font-size: 28px; }
@@ -33,6 +30,9 @@
 :root[data-ui="deck"] .deck-rail-heading { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--ink3); }
 :root[data-ui="deck"] .deck-rail-heading[hidden] { display: none; }
 :root[data-ui="deck"] .deck-bot-name { font-weight: 500; }
+:root[data-ui="deck"] .deck-ws-switch { display: flex; align-items: center; gap: 6px; min-height: 28px; margin: 0 -6px; padding: 0 6px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+:root[data-ui="deck"] .deck-ws-switch:hover { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .deck-ws-switch .i { width: 10px; height: 10px; transform: rotate(90deg); }
 :root[data-ui="deck"] .deck-rail-tools { display: flex; flex-direction: column; gap: 1px; }
 :root[data-ui="deck"] .deck-rail-tools .nav { min-height: 30px; padding: 0 10px; gap: 10px; font-size: 13.5px; color: var(--ink2); }
 :root[data-ui="deck"] .deck-bot-avatar { background: var(--s2); color: var(--ink2); border: 1px solid var(--line2); }
@@ -56,7 +56,15 @@
   :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); }
   :root[data-ui="deck"] #content > :is(.workbench-board, .bt-scroll, .bh-wrap, .bots, .deck-compute) { max-width: none; }
   :root[data-ui="deck"] #content:has(> .pl-head), :root[data-ui="deck"] #content:has(> .deck-compute), :root[data-ui="deck"] #content:has(> .deck-memory) { padding-left: var(--page-side); padding-right: var(--page-side); }
-  :root[data-ui="deck"] .deck-board { padding-left: var(--page-side); padding-right: var(--page-side); }
+  /* The shell already pads #content; screens that pad themselves would double the edge. */
+  :root[data-ui="deck"] .shell #content .bt-page { padding-inline: 0; margin-inline: 0; }
+  :root[data-ui="deck"] .shell #content :is(.bots-roster, .deck-board) { padding-inline: 0; }
+  :root[data-ui="deck"] .shell #content .deck-memory { margin-left: 0; }
+  :root[data-ui="deck"] .shell .deck-workspace { padding-inline: var(--page-side); }
+  /* The card drawer floats over the board, so opening a card never resizes the rail or moves the board. */
+  :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) { grid-template-columns: 252px minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) > .rail { grid-column: 1; }
+  :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) > .center { grid-column: 2; }
 }
 
 /* ---------- Decorative art: only where a page is empty, never as a rule or a heading ornament ---------- */
@@ -99,6 +107,20 @@
 :root[data-ui="deck"] #content > .queue > .item .meta { color: var(--ink3); font-size: 13px; }
 :root[data-ui="deck"] .rules-empty { max-width: 560px; padding: 16px 18px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink2); background: transparent; }
 
+/* ---------- Small clarity fixes ---------- */
+/* One unnamed group of bots needs no heading under the page title "Bots"; it stays for screen readers. */
+:root[data-ui="deck"] .cb-folder:only-child > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+:root[data-ui="deck"] .needs-me:has(.empty) .keys { display: none; }
+@media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
+:root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
+:root[data-ui="deck"] .admin-workspace { color: var(--ink2); }
+/* A heading focused so screen readers land on it is not a control; it needs no focus box. */
+:root[data-ui="deck"] :is(h1, h2, h3)[tabindex="-1"]:focus { outline: none; }
+@media (min-width: 700px) {
+  /* The bot header lines up with the conversation column under it. */
+  :root[data-ui="deck"] .bots-thread > .bots-head { padding-inline: max(16px, calc((100% - 760px) / 2)); }
+}
+
 /* ---------- Bot conversation: one column for the checklist, the stream and the composer ---------- */
 @media (min-width: 700px) {
   /* The rail already lists every bot; the strip keeps only the one you are talking to. */
@@ -133,11 +155,9 @@
 @media (hover: none) { :root[data-ui="deck"] .bt-keys { display: none; } }
 :root[data-ui="deck"] .bt-keys { color: var(--ink3); font-size: 12px; }
 
-/* ---------- Settings: one readable column; Appearance is a section like the others ---------- */
-:root[data-ui="deck"] .settings.capy-settings { grid-template-columns: minmax(0, 1fr); max-width: calc(760px + 2 * var(--page-side)); }
-:root[data-ui="deck"] .capy-settings .deck-appearance { position: static; }
+/* ---------- Settings: one page with an index; Appearance keeps its preview column on wide screens ---------- */
 :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { padding: var(--page-top) var(--page-side) 0; }
-:root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding: 0; }
+@media (min-width: 700px) { :root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding: 0; } }
 :root[data-ui="deck"] .settings.capy-settings { padding-top: 16px; }
 /* The section links jump within one page, so they read as an index of the page, not as tabs. */
 :root[data-ui="deck"] .capy-settings #deck-settings-nav { align-items: center; gap: 4px 18px; padding: 0 0 4px; border-bottom: 1px solid var(--line); }
@@ -156,8 +176,7 @@
   :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }
   :root[data-ui="deck"] .bh-head { margin-bottom: 20px; }
   :root[data-ui="deck"] .shell .center .bh-head h1 { display: block; font-size: 22px; }
-  /* Rows of filters scroll sideways: the last visible chip fades so the row reads as continuing. */
-  :root[data-ui="deck"] :is(.memory-rooms, .deck-board-filters, .deck-board-states, .seg) { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 24px; }
-  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav button { flex: none; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 40px; }
 }
