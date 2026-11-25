@@ -1,4 +1,4 @@
-"""Optional real-shell proof of the Deck polish items: Today wording and confirmation, phone chrome,
+"""Optional real-shell proof of the Deck polish items: Waiting on you wording and confirmation, phone chrome,
 the Add card sheet and the Escape order. Fixture-served, so no hub and no timing is involved."""
 
 import json
@@ -27,6 +27,16 @@ ASK = {
     "ask_options": ["Blue", "Orange"],
     "updated_at": "2026-01-01T12:00:00Z",
 }
+OPEN_ASK = {
+    "number": 23,
+    "version": 1,
+    "board": "product",
+    "status": "review",
+    "title": "What should the release note say?",
+    "body": "Write it in your own words.",
+    "actions": ["answer"],
+    "updated_at": "2026-01-01T12:00:00Z",
+}
 APPROVAL = {
     "number": 22,
     "version": 5,
@@ -49,7 +59,7 @@ def open_today(page):
             "role": "owner",
         },
         "/api/boards": {"boards": [BOARD]},
-        "/api/needs-me": {"count": 2, "asks": [ASK], "approvals": [APPROVAL]},
+        "/api/needs-me": {"count": 3, "asks": [ASK, OPEN_ASK], "approvals": [APPROVAL]},
         "/api/bots": {"bots": [BOT]},
         "/api/rules/count": {"waiting": 0},
         "/api/events": {"events": [], "seq": 0, "epoch": "fixture"},
@@ -75,7 +85,7 @@ def open_today(page):
     page.route("**/*", serve)
     # The served origin is not a secure context, which has no randomUUID.
     page.add_init_script("crypto.randomUUID ||= () => 'k' + Math.random().toString(16).slice(2)")
-    page.goto("http://example.test/app/?ui=deck#/today")
+    page.goto("http://example.test/app/?ui=deck#/")
     page.wait_for_selector('[data-bt-card="21"]')
     page.evaluate("document.fonts.ready")
     return writes
@@ -88,7 +98,8 @@ def test_today_answer_is_named_for_what_the_person_does(browser, size):  # noqa:
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
         writes = open_today(page)
-        card = page.locator('[data-bt-card="21"]')
+        # A question without offered answers is answered in words: its main button, dialog and send are all "Answer".
+        card = page.locator('[data-bt-card="23"]')
         assert card.locator(".bt-primary").inner_text().strip() == "Answer"
         card.locator(".bt-primary").click()
         dialog = page.locator("dialog.bt-reply[open]")
@@ -99,13 +110,23 @@ def test_today_answer_is_named_for_what_the_person_does(browser, size):  # noqa:
             .evaluate("e => e.closest('label').innerText")
             .startswith("Your answer")
         )
-        dialog.locator("select").select_option(index=1)
+        dialog.locator("textarea").fill("Consent is asked first.")
         dialog.locator('[type="submit"]').click()
         confirm = page.locator('[data-bt="confirm"]')
         confirm.wait_for(state="visible")
         text = confirm.inner_text()
         assert "Answer sent to Shipping" in text and "Board" in text, text
-        assert writes and writes[0][0] == "/api/cards/21/decide", writes
+        assert writes and writes[0][0] == "/api/cards/23/decide", writes
+        # Every answer the bot offered is its own button, and one click sends it.
+        offered = page.locator('[data-bt-card="21"] .bt-actions button[data-bt-choice]')
+        assert offered.all_inner_texts() == ["Blue", "Orange"]
+        offered.nth(1).click()
+        page.wait_for_function(
+            "document.querySelector('[data-bt=confirm]').textContent.includes('Shipping')"
+        )
+        assert writes[1][0] == "/api/cards/21/decide", writes
+        assert writes[1][1]["choice"] == "Orange", writes
+        assert "Answer sent to Shipping" in page.locator('[data-bt="confirm"]').inner_text()
         assert errors == []
     finally:
         page.close()
@@ -136,26 +157,37 @@ def test_today_approve_says_what_it_does(browser):  # noqa: F811
 
 MEASURE_CHROME = """() => {
   const box = e => { const b = e.getBoundingClientRect(); return {l: b.left, t: b.top, r: b.right, b: b.bottom}; };
-  const mic = box(document.querySelector('[data-deck-shell-action="mic"]'));
   const bar = box(document.querySelector('.m-tabs'));
-  const tabs = [...document.querySelectorAll('.m-tabs > :not([data-deck-shell-action="mic"])')].map(box);
-  const gap = Math.min(...tabs.map(t => mic.l >= t.r ? mic.l - t.r : t.l >= mic.r ? t.l - mic.r : -1));
-  const gears = [...document.querySelectorAll('.m-top, .m-tabs')].flatMap(host =>
+  const tabs = [...document.querySelectorAll('.m-tabs > a')].map(e => ({...box(e), label: e.textContent.trim()}));
+  const apart = tabs.every((t, i) => i === 0 || t.l >= tabs[i - 1].r - 0.5);
+  const inside = tabs.every(t => t.l >= 0 && t.r <= innerWidth && t.t >= bar.t && t.b <= bar.b && t.b <= innerHeight);
+  // Settings is one way in on the phone: the header's More button, which opens the sheet that lists it first.
+  const opens = [...document.querySelectorAll('.m-top, .m-tabs')].flatMap(host =>
     [...host.querySelectorAll('button, a')].filter(e => /settings/i.test(e.getAttribute('aria-label') || e.textContent) && e.getClientRects().length));
-  return { gap, insideBar: mic.t >= bar.t + 8 && mic.b <= bar.b - 8 && mic.r <= bar.r - 8,
-    clearOfTabs: tabs.every(t => mic.r <= t.l || mic.l >= t.r), gears: gears.length };
+  return { labels: tabs.map(t => t.label.replace(/\\d.*$/, '')), apart, inside, minHeight: Math.min(...tabs.map(t => t.b - t.t)),
+    mic: document.querySelectorAll('.m-tabs [data-deck-shell-action="mic"], .m-tabs .deck-tab-more').length, gears: opens.length };
 }"""
 
 
 @pytest.mark.parametrize("height", [667, 844])
-def test_phone_mic_clears_the_tab_bar_and_has_one_settings_gear(browser, height):  # noqa: F811
+def test_phone_tab_bar_is_clear_and_settings_has_one_way_in(browser, height):  # noqa: F811
     page = browser.new_page(viewport={"width": 390, "height": height}, reduced_motion="reduce")
     try:
         open_board(page)
         measured = page.evaluate(MEASURE_CHROME)
-        assert measured["clearOfTabs"] and measured["gap"] >= 8, measured
-        assert measured["insideBar"], measured
+        assert measured["labels"] == ["Waiting", "Bots", "Work", "Memory"], measured
+        assert measured["apart"] and measured["inside"], measured
+        assert measured["minHeight"] >= 44, measured
+        assert measured["mic"] == 0, "no mic or More tab sits in the bar"
         assert measured["gears"] == 1, measured
+        page.locator('[data-deck-shell-action="more"]').click()
+        sheet = page.locator("#deck-more")
+        sheet.wait_for(state="visible")
+        links = sheet.locator('a[href="#/settings"]')
+        assert (
+            links.count() == 1
+            and sheet.locator("a, button").first.inner_text().strip() == "Settings"
+        )
     finally:
         page.close()
 
