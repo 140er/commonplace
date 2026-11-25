@@ -1,5 +1,8 @@
 import { defineConfig } from 'vite'
 
+// Node's process, typed here so the plugin's tsconfig needs no @types/node.
+declare const process: { env: Record<string, string | undefined> }
+
 // Dev: the plugin calls same-origin /api and /bridge; Vite forwards them to the
 // G2 bridge, which holds the Commonplace token. Nothing secret is bundled.
 // Vite listens on loopback only. To load it from a phone (G2_DEV_HOST=0.0.0.0),

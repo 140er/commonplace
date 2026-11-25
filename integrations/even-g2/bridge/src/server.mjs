@@ -74,8 +74,27 @@ async function readCapped(res) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+// Without a key the bridge serves loopback only. The Host must name loopback
+// too (any port), which stops a DNS-rebound page. A proxy in front (the dev
+// server, with xfwd) appends the real client to X-Forwarded-For; a client
+// cannot remove that entry, so any non-loopback hop is refused. This stops a
+// LAN client of a LAN-facing dev server even when it forges `Host: localhost`.
+const LOOPBACK_ADDR = /^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/
+export function loopbackOnly(req) {
+  const host = String(req.headers.host ?? '').toLowerCase()
+  const name = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]
+  if (name !== '127.0.0.1' && name !== 'localhost' && name !== '[::1]') return false
+  if (!LOOPBACK_ADDR.test(req.socket.remoteAddress ?? '')) return false
+  const hops = String(req.headers['x-forwarded-for'] ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+  return hops.every(hop => LOOPBACK_ADDR.test(hop))
+}
+
+/** A loopback listen address: an IP literal or `localhost`, never a host name like 127.example.net. */
 export function isLoopback(host) {
-  return host === 'localhost' || host === '::1' || /^127\./.test(host)
+  return host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host)
 }
 
 function sameSecret(given, expected) {
@@ -140,23 +159,6 @@ export function createBridge(rawConfig) {
     })
   }
 
-  // Without a key the bridge serves loopback only. The Host must name loopback
-  // too (any port), which stops a DNS-rebound page. A proxy in front (the dev
-  // server, with xfwd) appends the real client to X-Forwarded-For; a client
-  // cannot remove that entry, so any non-loopback hop is refused. This stops a
-  // LAN client of a LAN-facing dev server even when it forges `Host: localhost`.
-  const LOOPBACK_ADDR = /^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/
-  function loopbackOnly(req) {
-    const host = String(req.headers.host ?? '').toLowerCase()
-    const name = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]
-    if (name !== '127.0.0.1' && name !== 'localhost' && name !== '[::1]') return false
-    if (!LOOPBACK_ADDR.test(req.socket.remoteAddress ?? '')) return false
-    const hops = String(req.headers['x-forwarded-for'] ?? '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-    return hops.every(hop => LOOPBACK_ADDR.test(hop))
-  }
 
   function authorized(req) {
     if (!key) return loopbackOnly(req)

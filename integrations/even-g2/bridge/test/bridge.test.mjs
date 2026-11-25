@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createBridge, checkConfig } from '../src/server.mjs'
+import { createBridge, checkConfig, isLoopback, loopbackOnly } from '../src/server.mjs'
 import { matchRoute, ROUTES } from '../src/allowlist.mjs'
 
 const TOKEN = 'cmmn_' + 'T'.repeat(20) + 'x'.repeat(23)
@@ -268,4 +268,23 @@ test('the allowlist is exactly the read, decide and comment routes', () => {
   )
   assert.equal(matchRoute('GET', '/api/cards/0'), null)
   assert.equal(matchRoute('GET', '/api/cards/12/'), null)
+})
+
+test('the keyless check needs a loopback peer, every forwarded hop and the Host name', () => {
+  const req = (remoteAddress, host, xff) => ({
+    socket: { remoteAddress },
+    headers: { host, ...(xff === undefined ? {} : { 'x-forwarded-for': xff }) },
+  })
+  assert.equal(loopbackOnly(req('127.0.0.1', 'localhost:8790')), true)
+  assert.equal(loopbackOnly(req('::ffff:127.0.0.1', '[::1]:5173', '127.0.0.1')), true)
+  assert.equal(loopbackOnly(req('192.0.2.20', 'localhost:8790')), false)
+  assert.equal(loopbackOnly(req('127.0.0.1', 'localhost:8790', '127.0.0.1, 192.0.2.20')), false)
+  assert.equal(loopbackOnly(req('127.0.0.1', 'evil.example:8790')), false)
+})
+
+test('only IP literals or localhost count as a loopback listen address', () => {
+  assert.equal(isLoopback('127.0.0.1'), true)
+  assert.equal(isLoopback('localhost'), true)
+  assert.equal(isLoopback('127.example.net'), false)
+  assert.throws(() => checkConfig({ hubUrl, token: TOKEN, host: '127.example.net' }), /bridge key/)
 })
