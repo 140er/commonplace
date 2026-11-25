@@ -27,7 +27,7 @@ export const kindOf = card => card.review_kind === 'completion' || (card.actions
 /** The short verb after the bot's name. */
 export const verbOf = card => card.review_kind === 'completion' ? 'finished work' : kindOf(card) === 'review' ? 'wants your OK' : 'asks';
 /** The line in the top bar. The number is the shared needs-me count, the same one the sidebar, the badges and the Board use. */
-export const summaryLine = needs => { const count = needsMeCount(needs); return count ? `${count} ${count === 1 ? 'answer' : 'answers'} needed` : 'Nothing needs you'; };
+export const summaryLine = needs => { const count = needsMeCount(needs); return count ? `${count} ${count === 1 ? 'item' : 'items'} waiting` : 'Nothing is waiting'; };
 /** The filter chips: every count comes from the cards listed below them. */
 export function chipsHTML(list, filter = 'all') {
   const counts = { all: list.length, question: list.filter(card => kindOf(card) === 'question').length, review: list.filter(card => kindOf(card) === 'review').length };

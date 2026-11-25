@@ -73,9 +73,9 @@ test('Today, Home, the badges and the Board report the same count for the same q
   const needs = queue();
   const expected = 7;
   assert.equal(needsMeCount(needs), expected, 'a stale count field never wins over the listed cards');
-  assert.equal(summaryLine(needs), `${expected} answers needed`);
-  assert.equal(summaryLine({ asks: [question] }), '1 answer needed');
-  assert.equal(summaryLine({ count: 0 }), 'Nothing needs you');
+  assert.equal(summaryLine(needs), `${expected} ${expected === 1 ? 'item' : 'items'} waiting`);
+  assert.equal(summaryLine({ asks: [question] }), '1 item waiting');
+  assert.equal(summaryLine({ count: 0 }), 'Nothing is waiting');
   assert.match(waitingHint(needs), new RegExp(`>${expected} waiting on you<`));
   const shown = { needs: needsMeCount(needs), bots: [{ id: 'a', name: 'A' }] };
   assert.match(renderDeckTabs(shown), new RegExp(`class="count need">${expected}`));

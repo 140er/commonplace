@@ -99,7 +99,9 @@
   /* Short answers share a row; a long one takes its own line, and wraps inside it only if it is longer than the line. */
   :root[data-ui="deck"] .bt-actions { flex-direction: row; flex-wrap: wrap; }
   :root[data-ui="deck"] .bt-actions button { flex: 1 1 auto; width: auto; max-width: 100%; white-space: normal; text-align: center; }
-  :root[data-ui="deck"] .bt-actions button.bt-quiet { flex: 1 1 40%; }
+  /* The answers own their rows; Reply and See the work always start a row of their own under them. */
+  :root[data-ui="deck"] .bt-actions::after { content: ""; flex-basis: 100%; order: 1; }
+  :root[data-ui="deck"] .bt-actions button.bt-quiet { order: 2; flex: 1 1 40%; margin-left: 0; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { display: none; }
   :root[data-ui="deck"] .deck-work .wk-chips { mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); padding-right: 16px; }

@@ -69,7 +69,7 @@ def test_home_today_live_actions(hub, fresh, width):
             try:
                 await page.goto(url + "#/")
                 await page.wait_for_selector(".bt-card")
-                await expect(page.locator(".bt-sub")).to_have_text("3 answers needed")
+                await expect(page.locator(".bt-sub")).to_have_text("3 items waiting")
                 assert await page.evaluate("location.hash") == "#/"
                 # The T3 look has no background art: the stage canvas stays hidden.
                 assert await page.locator(".deck-stage").is_hidden()
@@ -118,7 +118,7 @@ def test_home_today_live_actions(hub, fresh, width):
                     "approve": True,
                 }
                 await expect(page.locator(".bt-card")).to_have_count(2)
-                await expect(page.locator(".bt-sub")).to_have_text("2 answers needed")
+                await expect(page.locator(".bt-sub")).to_have_text("2 items waiting")
                 for selector in [
                     '[data-deck="bar"] [data-nav="home"] .count',
                     '[data-deck="tabs"] [data-nav="home"] .count',
@@ -193,7 +193,7 @@ def test_today_cards_are_short_and_every_count_agrees(hub, fresh):
                 assert len(preview) <= 141
                 await first.locator(".bt-full summary").click()
                 await expect(first.locator(".bt-full-text")).to_have_text(long_body.strip())
-                await expect(page.locator(".bt-sub")).to_have_text("2 answers needed")
+                await expect(page.locator(".bt-sub")).to_have_text("2 items waiting")
                 await expect(
                     page.locator('[data-deck="bar"] [data-nav="home"] .count')
                 ).to_have_text("2 waiting on you")
