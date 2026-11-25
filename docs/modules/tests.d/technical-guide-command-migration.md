@@ -1,0 +1,3 @@
+- **Owns:** `tests/test_docs_reference_compat.py` compares technical tokens after validating one exact broad test/lint/format block migration to the affected prepush command.
+- **Promises:** `technical_tokens` retains its existing rules. The exception requires the complete original Bash block and the exact approved replacement, independently of guide filename. All remaining tokens and existing anchor checks stay protected.
+- **Tests:** The actual copy-edit guard accepts the migration and rejects unsupported commands, partial or repeated blocks, nested examples, unrelated technical changes and lost anchors.
