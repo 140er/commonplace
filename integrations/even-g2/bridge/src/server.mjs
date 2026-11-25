@@ -54,6 +54,26 @@ export function checkConfig(config) {
   return { ...config, hubOrigin: hub.origin }
 }
 
+/** The upstream body as text, or null once it passes MAX_UPSTREAM (reading stops there). */
+async function readCapped(res) {
+  const declared = Number(res.headers.get('content-length'))
+  if (declared > MAX_UPSTREAM) {
+    await res.body?.cancel()
+    return null
+  }
+  const chunks = []
+  let size = 0
+  for await (const chunk of res.body ?? []) {
+    size += chunk.length
+    if (size > MAX_UPSTREAM) {
+      await res.body.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
 export function isLoopback(host) {
   return host === 'localhost' || host === '::1' || /^127\./.test(host)
 }
@@ -176,8 +196,8 @@ export function createBridge(rawConfig) {
       return [502, { error: 'hub unreachable', reason: String(why) }, route.name]
     }
     const type = (upstream.headers.get('content-type') ?? '').toLowerCase()
-    const raw = await upstream.text()
-    if (raw.length > MAX_UPSTREAM) return [502, { error: 'hub reply too large' }, route.name]
+    const raw = await readCapped(upstream)
+    if (raw === null) return [502, { error: 'hub reply too large' }, route.name]
     const text = redact(raw)
     if (upstream.status >= 300 && upstream.status < 400) {
       return [502, { error: 'hub redirected; check CMMN_HUB_URL' }, route.name]

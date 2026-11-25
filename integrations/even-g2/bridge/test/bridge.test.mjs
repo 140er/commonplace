@@ -177,12 +177,12 @@ test('without a key only a loopback Host is served (DNS rebinding, LAN proxies)'
     seen.length = 0
     assert.equal(await get(port, `evil.example:${port}`), 401)
     // A LAN client of a dev proxy that keeps its Host header (Vite, changeOrigin off).
-    assert.equal(await get(port, `192.168.1.20:5173`), 401)
+    assert.equal(await get(port, `192.0.2.20:5173`), 401)
     assert.equal(await get(port, `localhost.evil.example:${port}`), 401)
     // A LAN client of a LAN-facing dev server that forges `Host: localhost`:
     // the proxy appends its real address (xfwd), which the client cannot remove.
-    assert.equal(await get(port, 'localhost:5173', '192.168.1.20'), 401)
-    assert.equal(await get(port, 'localhost:5173', '127.0.0.1, 10.0.0.7'), 401)
+    assert.equal(await get(port, 'localhost:5173', '192.0.2.20'), 401)
+    assert.equal(await get(port, 'localhost:5173', '127.0.0.1, 198.51.100.7'), 401)
     assert.equal(seen.length, 0)
     assert.equal(await get(port, 'localhost:5173', '127.0.0.1'), 200)
     assert.equal(await get(port, `localhost:${port}`), 200)
@@ -218,6 +218,28 @@ test('an unreachable hub gives 502 without details that could hold secrets', asy
     assert.ok(!text.includes(TOKEN))
   } finally {
     bridge.close()
+  }
+})
+
+test('an oversized hub reply is cut off at the cap, with or without a length', async () => {
+  for (const chunked of [false, true]) {
+    const big = createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', ...(chunked ? {} : { 'Content-Length': 5 * 1024 * 1024 }) })
+      const part = 'x'.repeat(1024 * 1024)
+      for (let i = 0; i < 5; i++) res.write(part)
+      res.end()
+    })
+    const port = await listen(big)
+    const bridge = createBridge({ hubUrl: `http://127.0.0.1:${port}`, token: TOKEN, log: () => {} })
+    const bport = await listen(bridge)
+    try {
+      const r = await fetch(`http://127.0.0.1:${bport}/api/boards`)
+      assert.equal(r.status, 502, `chunked=${chunked}`)
+      assert.deepEqual(await r.json(), { error: 'hub reply too large' })
+    } finally {
+      bridge.close()
+      big.close()
+    }
   }
 })
 
