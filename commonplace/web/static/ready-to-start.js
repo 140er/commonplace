@@ -24,7 +24,7 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
     : id === 'trust' && readiness[id]?.code === 'trust_missing' ? projectLink('Start permissions', 'trust')
     : id === 'notifications' ? '<a href="#/settings">Notification settings</a>'
     : `<a href="#/admin">${id === 'machine' ? 'Add machine' : 'Approve machine'}</a>`;
-  return `<section class="ready-to-start" role="region" aria-label="Ready to start?"><h2>Ready to start?</h2><ul>${Object.entries(titles).map(([id, title]) => {
+  const rows = Object.entries(titles).map(([id, title]) => {
     const row = readiness[id] || {}, known = Object.hasOwn(states, row.state), state = known ? row.state : 'needs_you';
     let reason = reasons[id]?.[state];
     const step = state === 'needs_you' && modelStep(row.code);
@@ -34,6 +34,10 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
       : row.code === 'choose_model_first' ? 'Choose a model first so its key requirement can be checked.'
       : setupText(row.code, canConfigure);
     const copy = step ? `${e(step.before)}${canConfigure ? action(id) : 'the project settings'}${e(step.after)}` : `${e(reason)}${canConfigure ? ` ${action(id)}` : ''}`;
-    return `<li data-ready="${id}" data-state="${state}"><div><b>${title}</b><span class="ready-state">${states[state]}</span></div><p>${copy}${!canConfigure ? ' Ask the project owner to change setup.' : ''}</p></li>`;
-  }).join('')}</ul></section>`;
+    return { state, html: `<li data-ready="${id}" data-state="${state}"><div><b>${title}</b><span class="ready-state">${states[state]}</span></div><p>${copy}${!canConfigure ? ' Ask the project owner to change setup.' : ''}</p></li>` };
+  });
+  // What needs you comes first; the rows that are fine stay listed, quieter, below it.
+  const open = rows.filter(row => row.state === 'needs_you').length;
+  const summary = open ? `${open === 1 ? 'One step needs' : `${open} steps need`} you before work can start.` : 'Everything needed to start is in place.';
+  return `<section class="ready-to-start" role="region" aria-label="Ready to start?" data-open="${open}"><h2>Ready to start?</h2><p class="ready-summary">${summary}</p><ul>${[...rows.filter(row => row.state === 'needs_you'), ...rows.filter(row => row.state !== 'needs_you')].map(row => row.html).join('')}</ul></section>`;
 }
