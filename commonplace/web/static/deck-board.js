@@ -48,11 +48,13 @@ function boardNotice(cards, columns, { added, me }) {
   const card = added == null ? null : cards.find(item => item.number === added);
   return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>';
 }
-export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = 'todo', ...options }) {
+export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = '', ...options }) {
   const backlog = cards.filter(card => card.status === 'backlog' && !needsOwner(card, options.me));
   const count = status => cards.filter(card => (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status).length;
   // The Needs you column counts this project; Today counts every project. When they differ, say so in words.
   const queued = currentNeeds(), everywhere = queued ? needsMeCount(queued) : null;
+  // A phone shows one column: without an explicit choice, open the first one that has cards rather than an empty Needs you.
+  if (!column) column = columns.map(([status]) => status).find(status => count(status) > 0) || 'todo';
   const note = everywhere != null && everywhere !== count('todo') ? `<p class="deck-board-needs-note" data-needs-note>${everywhere} ${everywhere === 1 ? 'card is' : 'cards are'} waiting on you across all projects; ${count('todo')} ${count('todo') === 1 ? 'is' : 'are'} in this one.</p>` : '';
   const columnHTML = columns.map(([status, name, tone]) => {
     const list = cards.filter(card => (!filter.startsWith('state:') || filter === `state:${status}`) && (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status);

@@ -27,6 +27,12 @@ const paths = {
   chevron: '<path d="m6 4 4 4-4 4"/>',
   lock: '<rect x="3.5" y="7" width="9" height="7" rx="1.5"/><path d="M5.5 7V4a2.5 2.5 0 0 1 5 0v3"/>',
   more: '<circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/>',
+  needs: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.5l2 1.5"/>',
+  projects: '<path d="M2 4.5h12M2 8h12M2 11.5h8"/>',
+  rules: '<path d="M4 2.5h8v11H4zM6 5.5h4M6 8h4M6 10.5h2"/>',
+  console: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m5 7 2 1.5L5 10M8.5 10.5h3"/>',
+  pipeline: '<circle cx="4" cy="8" r="1.6"/><circle cx="12" cy="8" r="1.6"/><path d="M5.6 8h4.8"/>',
+  admin: '<path d="M8 2 3 4v4c0 3 2.2 5.2 5 6 2.8-.8 5-3 5-6V4z"/>',
   mic: '<rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7v1a4.5 4.5 0 0 0 9 0V7M8 12.5V15m-3 0h6"/>',
 };
 const icon = name => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.bots}</svg>`;
@@ -96,6 +102,8 @@ export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
 }
 const accountLinks = (options, { count = false } = {}) => { const { can_admin, can_manage_instance } = options; return `<a href="#/needs">Needs me${count ? badge(waiting(options), 'need', 'waiting on you') : ''}</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`; };
+// The workspace pages: on the desktop rail as their own group, on the phone in the More sheet (accountLinks).
+const workspaceLinks = ({ can_admin } = {}) => [['#/boards', 'Projects', 'projects'], ['#/needs', 'Needs me', 'needs'], ['#/rules', 'Rules', 'rules'], ['#/console', 'Console', 'console'], ['#/pipeline', 'Pipeline', 'pipeline'], ...(can_admin === true ? [['#/admin', 'Admin', 'admin']] : [])];
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
   const role = { owner: 'Owner', member: 'Member' }[options.role];
@@ -111,8 +119,9 @@ export function renderShellBar(options) {
     <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button></div>
     <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
     <div class="deck-links">${places.slice(0, at).map(([, html]) => html).join('')}${work}${places.slice(at).map(([, html]) => html).join('')}</div>
-    <div class="deck-rail-scroll"><h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
-    <div class="rail-foot">${settings ? link(settings) : ''}<details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}<button data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Switch workspace</button></div></details></div>
+    <div class="deck-rail-scroll"><h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>
+    <h2 class="deck-rail-heading">Workspace</h2><div class="deck-rail-tools">${workspaceLinks(options).map(([href, label, name]) => `<a class="nav" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon(name)}${label}</a>`).join('')}</div></div>
+    <div class="rail-foot">${settings ? link(settings) : ''}<details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${options.can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Switch workspace</button><button data-action="logout">Sign out</button></div></details></div>
   </nav>`;
 }
 // Pages outside the four sections still need a phone title, because Deck hides the page heading on a phone.

@@ -1,7 +1,7 @@
 // Frozen console interface; implemented by U6.
 export const CONSOLE_COPY = Object.freeze({
   "loading": "Loading agents…",
-  "noAgentsOwner": "No agents connected. Create one in Settings → Agents.",
+  "noAgentsOwner": "No agents connected yet. Connect one in Settings, under Connected apps.",
   "noAgentsMember": "No agents act as you in this workspace.",
   "showTools": "Show tool calls",
   "stopTools": "Stop showing tool calls",
@@ -62,7 +62,7 @@ export function consoleView({ role, agents, selected, items, output, tools, erro
   const activity = privateAgent ? items.filter((item) => item.source !== "tool") : items;
   return `<section class="console-view" aria-label="Console">
     ${error ? `<p class="console-error" role="status">${e(CONSOLE_COPY.unavailable)}</p>` : ""}
-    ${loading && !agents.length ? `<p class="console-message" role="status">${e(CONSOLE_COPY.loading)}</p>` : !agents.length ? `<p class="console-message">${e(role === "owner" ? CONSOLE_COPY.noAgentsOwner : CONSOLE_COPY.noAgentsMember)}</p>` : `
+    ${loading && !agents.length ? `<p class="console-message" role="status">${e(CONSOLE_COPY.loading)}</p>` : !agents.length ? `<p class="console-message">${e(role === "owner" ? CONSOLE_COPY.noAgentsOwner : CONSOLE_COPY.noAgentsMember)}${role === "owner" ? ' <a href="#/settings" data-console-connect>Connect an agent</a>' : ""}</p>` : `
     <nav class="console-agents" aria-label="Agents"><ul>${agentListHTML(agents, selected, e)}</ul></nav>
     ${agent ? `<div class="console-panels">
       <section class="console-panel console-output" aria-labelledby="console-output-heading">

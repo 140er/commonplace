@@ -606,7 +606,7 @@ function boardView() {
   state.boardCache ||= new Map();
   const cached = state.boardCache.get(board.slug) || {};
   // Keep the active phone column and a parked-card disclosure through polling.
-  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
+  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "";
   state.boardColumn = null;
   const backlog = content.querySelector(".backlog")?.open, doneAll = Boolean(content.querySelector("#col-done[data-all]"));
   boardDispose?.();
