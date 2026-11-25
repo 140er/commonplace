@@ -119,6 +119,7 @@
 /* One unnamed group of bots needs no heading under the page title "Bots"; it stays for screen readers. */
 :root[data-ui="deck"] .cb-folder:only-child > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 :root[data-ui="deck"] .needs-me:has(.empty) .keys { display: none; }
+:root[data-ui="deck"] .cb-worker .cb-state-word { display: none; }
 :root[data-ui="deck"] :is(.cb-state-word, .bt-state-word) { margin-left: 6px; color: var(--ink3); font-size: 12px; font-weight: 400; }
 @media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
 :root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
@@ -158,6 +159,7 @@
 :root[data-ui="deck"] .ready-to-start li b { font-weight: 600; }
 :root[data-ui="deck"] .ready-to-start .ready-state { margin-left: auto; font-size: 12.5px; color: var(--ink3); }
 :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] .ready-state { color: var(--amber); font-weight: 600; }
+:root[data-ui="deck"] .ready-to-start li[data-waits] .ready-state { color: var(--ink3); font-weight: 500; }
 :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] p { color: var(--ink2); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) { padding: 7px 0; color: var(--ink3); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) b { font-weight: 500; color: var(--ink2); }
@@ -202,6 +204,12 @@
 @media (max-width: 699px) {
   :root[data-ui="deck"] { --page-top: 20px; --page-side: 16px; }
   :root[data-ui="deck"] .m-top[data-deck="top"] > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Cloud workspaces with no machine yet: the ways to add one come first, the empty map shrinks below them. */
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) { display: flex; flex-direction: column; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-actions { order: 1; margin-bottom: 12px; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-enroll { order: 2; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-map { order: 3; max-height: 220px; overflow: hidden; }
+  :root[data-ui="deck"] .m-top[data-deck="top"] > b { font-size: 16px; letter-spacing: -0.01em; }
   /* The voice button is a tool, not a destination: quiet next to the tabs. */
   :root[data-ui="deck"] .deck-tab-mic { background: var(--s2); color: var(--ink); border: 1px solid var(--line2); }
   :root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .18; }

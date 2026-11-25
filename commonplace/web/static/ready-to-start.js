@@ -34,10 +34,11 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
       : row.code === 'choose_model_first' ? 'Choose a model first so its key requirement can be checked.'
       : setupText(row.code, canConfigure);
     const copy = step ? `${e(step.before)}${canConfigure ? action(id) : 'the project settings'}${e(step.after)}` : `${e(reason)}${canConfigure ? ` ${action(id)}` : ''}`;
-    return { state, html: `<li data-ready="${id}" data-state="${state}"><div><b>${title}</b><span class="ready-state">${states[state]}</span></div><p>${copy}${!canConfigure ? ' Ask the project owner to change setup.' : ''}</p></li>` };
+    const waits = state === 'needs_you' && row.code === 'choose_model_first';
+    return { state, waits, html: `<li data-ready="${id}" data-state="${state}"${waits ? ' data-waits="model"' : ''}><div><b>${title}</b><span class="ready-state">${waits ? 'Needs you, after the model' : states[state]}</span></div><p>${copy}${!canConfigure ? ' Ask the project owner to change setup.' : ''}</p></li>` };
   });
   // What needs you comes first; the rows that are fine stay listed, quieter, below it.
-  const open = rows.filter(row => row.state === 'needs_you').length;
+  const open = rows.filter(row => row.state === 'needs_you' && !row.waits).length;
   const summary = open ? `${open === 1 ? 'One step needs' : `${open} steps need`} you before work can start.` : 'Everything needed to start is in place.';
   return `<section class="ready-to-start" role="region" aria-label="Ready to start?" data-open="${open}"><h2>Ready to start?</h2><p class="ready-summary">${summary}</p><ul>${[...rows.filter(row => row.state === 'needs_you'), ...rows.filter(row => row.state !== 'needs_you')].map(row => row.html).join('')}</ul></section>`;
 }
