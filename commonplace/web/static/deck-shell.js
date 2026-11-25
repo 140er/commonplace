@@ -94,7 +94,7 @@ export function shellTrees(options = {}) {
   }
   return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
     const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
+    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
       const title = worker.name || worker.title || conversation?.title || 'Coworker';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
@@ -120,8 +120,7 @@ export function renderShellBar(options) {
   const at = Math.max(places.findIndex(([id]) => id === 'today') + 1, 1);
   const threads = shellThreads(options);
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
-    <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button></div>
-    <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
+    <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button><a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread" aria-label="New thread" title="New thread">${icon('edit')}</a></div>
     <div class="deck-links">${places.slice(0, at).map(([, html]) => html).join('')}${work}${places.slice(at).map(([, html]) => html).join('')}</div>
     <div class="deck-rail-scroll"><h2 class="deck-rail-heading">Your bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>
     <h2 class="deck-rail-heading"><button class="deck-ws-switch" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Workspace · ${e(workspace)}${icon('chevron')}</button></h2><div class="deck-rail-tools">${workspaceLinks(options).map(([href, label, name]) => `<a class="nav" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon(name)}${label}</a>`).join('')}</div></div>

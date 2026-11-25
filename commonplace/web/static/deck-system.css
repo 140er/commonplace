@@ -20,8 +20,10 @@
 /* ---------- Rail ---------- */
 :root[data-ui="deck"] .rail[data-deck="bar"] { border-right: 1px solid var(--line); }
 :root[data-ui="deck"] .deck-mark { color: var(--violet); }
-:root[data-ui="deck"] .rail .deck-new-thread { margin: 4px 10px 14px; height: 36px; border: 1px solid var(--line2); background: transparent; }
-:root[data-ui="deck"] .rail .deck-new-thread:hover { background: var(--s2); }
+:root[data-ui="deck"] .rail .deck-brand-row .deck-new-thread { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; margin: 0; padding: 0; border: 1px solid var(--line2); border-radius: var(--radius-control); background: transparent; color: var(--ink2); flex: none; }
+:root[data-ui="deck"] .rail .deck-brand-row .deck-new-thread:hover { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .deck-brand-row .iconbtn { margin-left: auto; }
+:root[data-ui="deck"] .deck-links { margin-top: 4px; }
 :root[data-ui="deck"] .deck-links { margin-bottom: 8px; }
 :root[data-ui="deck"] .rail .nav { min-height: 34px; font-size: 14px; }
 :root[data-ui="deck"] .rail .nav[aria-current], :root[data-ui="deck"] .rail .deck-links .nav[aria-current] { background: var(--s2); color: var(--ink); }
@@ -47,10 +49,15 @@
 :root[data-ui="deck"] .bt-page { width: min(var(--page-width), 100%); }
 :root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); margin-inline: 0; padding: var(--page-top) var(--page-side) 32px; }
 :root[data-ui="deck"] .bots-roster { width: min(calc(var(--page-width) + 2 * var(--page-side)), 100%); margin-inline: 0; }
-:root[data-ui="deck"] .deck-memory { max-width: var(--page-width); margin: 0; }
+:root[data-ui="deck"] .shell #content .deck-memory { max-width: var(--page-width); margin: 0; }
 @media (min-width: 700px) {
   /* Screens titled by the shell head (Projects, Rules, Console, Admin, Needs me) start on the same edge as the rest. */
   :root[data-ui="deck"] .shell .center > .head:not([hidden]) { padding: calc(var(--page-top) - 8px) var(--page-side) 0; min-height: 0; }
+  /* Header actions end where the page body ends. */
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) { max-width: calc(var(--page-width) + 2 * var(--page-side)); }
+  :root[data-ui="deck"] #content :is(.console-view, .admin.settings) { padding-left: 0; padding-right: 0; margin-left: 0; }
+  :root[data-ui="deck"] #content > .console-view .console-message { margin-left: 0; padding-left: 0; }
+  :root[data-ui="deck"] #content:has(> .pl-head) { padding-top: calc(var(--page-top) - 8px); }
   :root[data-ui="deck"] .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding: 20px var(--page-side) 32px; }
   :root[data-ui="deck"] #content > :is(.queue, .rules-view, .console-view) { padding: 0; max-width: var(--page-width); }
   :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); }
@@ -80,7 +87,11 @@
 /* Title across the card; the meta line and Move to… share the row under it, and the meta wraps rather than hides. */
 :root[data-ui="deck"] .shell .deck-board .card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
 :root[data-ui="deck"] .deck-board .card > h3 { grid-column: 1 / -1; grid-row: 1; }
-:root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: wrap; }
+:root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: wrap; column-gap: 8px; row-gap: 2px; }
+/* No separator dot: when the line wraps, the state moves down whole instead of leaving a dangling "·". */
+:root[data-ui="deck"] .deck-board .card-meta > span[aria-hidden="true"]:not(.deck-board-avatar) { display: none; }
+:root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
+:root[data-ui="deck"] .deck-board-intro a { color: var(--ink2); }
 :root[data-ui="deck"] .deck-board .card > .card-top { position: static; grid-column: 2; grid-row: 2; display: flex; }
 :root[data-ui="deck"] .deck-board .card > :not(h3, .card-meta, .card-top) { grid-column: 1 / -1; }
 @media (min-width: 700px) and (hover: hover) {

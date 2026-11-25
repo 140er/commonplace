@@ -46,9 +46,9 @@ function cardHTML(card, options, first) {
 // Just after Add card: say which column holds the new card and the state the server gave it (the Deck has no
 // Todo column), read from the card itself so a queue that has not caught up cannot name another place; else the usual intro.
 export const addedNotice = (card, me) => `Added “${cardTitle(card.title)}” to ${columns.find(([status]) => status === boardGroup(card, me, null))[1]} (${stateWord(card, me, null)}).`;
-function boardNotice(cards, columns, { added, me }) {
+function boardNotice(cards, columns, { added, me, board }) {
   const card = added == null ? null : cards.find(item => item.number === added);
-  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>';
+  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : `<p class="deck-board-intro">${board?.name ? `<b>${e(board.name)}</b> · ` : ''}Every card follows its change from idea to live.${board?.name ? ' <a href="#/boards">Other projects</a>' : ''}</p>`;
 }
 export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = '', ...options }) {
   const backlog = cards.filter(card => card.status === 'backlog' && !needsOwner(card, options.me));
