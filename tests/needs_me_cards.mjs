@@ -27,7 +27,7 @@ test('the primary action is visible on the card without opening Reply', () => {
   assert.match(approve, /class="bt-quiet"[^>]*data-bt-open[^>]*>See the work</);
   // A question's own answers are the buttons: the first is the main one, each sends its own words.
   const answer = cardHTML(question, [], state);
-  assert.match(answer, /class="bt-approve bt-primary"[^>]*data-bt-action="reply" data-bt-choice="0"[^>]*>Blue</);
+  assert.match(answer, /class="bt-approve bt-secondary"[^>]*data-bt-action="reply" data-bt-choice="0"[^>]*>Blue</);
   assert.match(answer, /class="bt-secondary"[^>]*data-bt-action="reply" data-bt-choice="1"[^>]*>Orange</);
   assert.match(answer, /class="bt-quiet bt-desktop-reply"[^>]*data-bt-action="reply"[^>]*>Reply</);
   assert.doesNotMatch(answer, />Approve<|>Hold</);

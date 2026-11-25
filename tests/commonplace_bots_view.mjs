@@ -440,7 +440,7 @@ test("a decision button calls the decide route with the hydrated version and the
   const h = harness({ messages: [msg(1, "bot", { text: "Question", blocks: [decision] })], waiting: [decision] });
   h.state.extra["POST /api/cards/60/decide"] = async () => { h.state.messages = [msg(1, "bot", { text: "Question", blocks: [{ ...decision, open: false, answer: "Yes" }] })]; h.state.waiting = []; return { ok: true }; };
   await h.controller.show("b1");
-  assert.match(h.d.regions.waiting.innerHTML, /Waiting on you \(1\)/);
+  assert.match(h.d.regions.waiting.innerHTML, /1 waiting on you/);
   h.controller.click(el({ botsAction: "decide", work: "60", version: "4", choice: "Yes" }));
   await settle();
   const decide = h.calls.find((c) => c.path === "/api/cards/60/decide");
@@ -469,7 +469,7 @@ test("the waiting strip is one line with a count and opens to the questions", as
   const h = harness({ waiting: blocks });
   await h.controller.show("b1");
   const strip = h.d.regions.waiting.innerHTML;
-  assert.match(strip, /Waiting on you \(2\)/);
+  assert.match(strip, /2 waiting on you/);
   assert.equal((strip.match(/class="wait-toggle"/g) || []).length, 1);
   assert.doesNotMatch(strip, /Q60/);
   h.controller.click(el({ botsAction: "waiting" }));

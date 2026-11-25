@@ -21,6 +21,7 @@ export const BOTS_COPY = Object.freeze({
   loading: "Loading…",
   earlier: "Earlier messages",
   waiting: (n) => `${n} waiting on you`,
+  waitingEverywhere: (n) => `${n} waiting on you across your projects`,
   gone: "That work is no longer available to you.",
   offline: "Could not reach the server. Retrying…",
   unavailable: "This bot is no longer available.",
@@ -259,7 +260,7 @@ export function liveHTML(live, ctx, e) {
 
 export function waitingHTML(waiting, open, ctx, e) {
   if (!waiting.length) return "";
-  return `<div class="wait"><button type="button" class="wait-toggle" data-bots-action="waiting" aria-expanded="${open}">${e(BOTS_COPY.waiting(waiting.length))}${chevron}</button>${open ? `<div class="wait-list">${waiting.map((b) => decisionHTML(b, ctx, e)).join("")}</div>` : ""}</div>`;
+  return `<div class="wait"><button type="button" class="wait-toggle" data-bots-action="waiting" aria-expanded="${open}">${e(ctx?.general ? BOTS_COPY.waitingEverywhere(waiting.length) : BOTS_COPY.waiting(waiting.length))}${chevron}</button>${open ? `<div class="wait-list">${waiting.map((b) => decisionHTML(b, ctx, e)).join("")}</div>` : ""}</div>`;
 }
 
 export function headHTML(bot, e) {
@@ -430,7 +431,7 @@ export function createBots({
   const region = (name) => host()?.querySelector(`[data-region="${name}"]`) ?? null;
   const atBottom = (node) => !node || node.scrollHeight - node.scrollTop - node.clientHeight <= 40;
   const busy = () => Boolean(s.turn) || s.running;
-  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck(), shared: Boolean(s.threadId) });
+  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck(), shared: Boolean(s.threadId), general: s.bot?.kind === 'general' });
   const runningRequestId = () => s.turn?.requestId || (s.running ? [...s.messages].reverse().find((m) => m.role === "user")?.request_id : "") || "";
   const deck = () => globalThis.document?.documentElement?.dataset?.ui === "deck";
   const draftKey = () => deck() && s.threadId ? `${s.botId}:${s.threadId}` : s.botId;

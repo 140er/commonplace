@@ -151,7 +151,7 @@ test('the answers are the card buttons: first is main, an accepting option appro
   const ask = { ...card, actions: ['answer'], ask_options: ['One', 'Two', 'Three', 'Four'] };
   const html = answersHTML(ask, {}, e);
   assert.equal((html.match(/data-bt-choice=/g) || []).length, 4, "every offered answer is a button");
-  assert.match(html, /bt-primary[^>]*data-bt-choice="0"[^>]*>One</);
+  assert.match(html, /bt-approve bt-secondary[^>]*data-bt-choice="0"[^>]*>One</); assert.doesNotMatch(html, /bt-primary/, "peer answers carry equal weight");
   assert.match(html, /data-bt-action="reply"[^>]*>Reply</);
   const done = answersHTML({ ...card, actions: ['accept', 'answer'], review_kind: 'completion', ask_options: ['Accept the completed work', 'Return for more work'] }, {}, e);
   assert.match(done, /bt-primary" data-bt-action="approve"[^>]*>Accept the completed work</);
