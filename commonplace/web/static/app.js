@@ -475,7 +475,7 @@ function navigation() {
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
-  const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", role: state.me.role || (state.me.can_admin === true ? "owner" : "member"), user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
+  const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", role: state.me.role || (state.me.can_admin === true ? "owner" : "member"), user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting, boards: (state.boards || []).map((b) => ({ slug: b.slug, name: b.name })) };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
   boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
   root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });

@@ -16,8 +16,9 @@ export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
 // mount returns { refresh?(context), stop?() }. A name without a loader is not offered in the bar.
 export const SCREENS = {
-  home: () => import('./deck-home.js'),
+  home: () => import('./deck-today-capy.js'),
   today: () => import('./deck-today-capy.js'),
+  work: () => import('./deck-work.js'),
   compute: () => import('./deck-workspace.js'),
   pipeline: () => import('./deck-pipeline.js'),
   coworkers: () => import('./deck-workspace.js'),
@@ -51,8 +52,9 @@ export function applyDeck({ doc = globalThis.document, loc = globalThis.location
 /** The bar section a route belongs to; '' for the workspace tools reached from the account menu. */
 export function deckSection(hash = '') {
   const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
-  if (name === 'bots' || name === 'today' || name === 'compute') return name;
-  return name === 'settings' ? 'settings' : '';
+  if (!name || name === 'home' || name === 'today' || name === 'needs') return 'home';
+  if (['work', 'board', 'boards', 'card', 'start'].includes(name)) return 'work';
+  return name === 'bots' || name === 'settings' ? name : '';
 }
 export const deckSections = (screens = SCREENS) => SECTIONS.filter(([id]) => id === 'bots' || id === 'settings' || screens[id]);
 /** Home is the undimmed hero; older screen registries keep their fallback. */

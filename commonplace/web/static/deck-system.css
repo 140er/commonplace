@@ -1,54 +1,99 @@
-/* Deck page system: the last stylesheet, so it settles what the per-screen files leave open.
-   Plain ground under work screens, one type scale, one left edge for every page, and art only where it says something.
-   Inert in the classic look. Colour tokens stay in deck-capy.css. */
+/* Commonplace design system, after the T3 Code app (140er/t3code-home apps/web): its dark palette, Geist, compact
+   rows, a sidebar beside one canvas. Loaded last, so it settles what the per-screen files leave open; the per-screen
+   files read these tokens. Inert in the classic look. No italic anywhere. */
+@font-face { font-family: Geist; src: url("fonts/geist-latin.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
 :root[data-ui="deck"] {
-  --page-top: 40px; --page-side: 48px;
-  --page-width: 1200px;
-  --title-size: 22px;
+  /* T3 Code dark roles */
+  --ground: #141a22; --stage: #141a22; --rail: #0e141b;
+  --surface-a: 1; --s1: #1c2530; --s1-solid: #1c2530; --card: #1c2530; --s2: #243140; --s3: #2c3846;
+  --line: #2c3846; --line2: #3a4858; --control-line: #3a4858;
+  --ink: #e6edf4; --ink2: #a8b7c7; --ink3: #8695a6; --ink4: #627083;
+  --violet: #9bbbe0; --violet-ink: #9bbbe0; --cyan: #7dcea4; --amber: #e0b15a; --red: #e7a39a; --send: #3b82f6;
+  --font: Geist, ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --radius-control: 0.5rem; --radius-card: 10px; --radius-float: 12px; --radius-dialog: 14px;
+  --page-top: 28px; --page-side: 24px; --page-width: 960px; --title-size: 20px;
 }
-:root[data-ui="deck"] body { -webkit-font-smoothing: antialiased; }
+:root[data-ui="deck"] * { font-synthesis: none; }
+:root[data-ui="deck"] :is(i, em, cite, var, dfn, address) { font-style: normal; }
+:root[data-ui="deck"] body { font-family: var(--font); font-size: 14px; -webkit-font-smoothing: antialiased; background: var(--ground); }
+:root[data-ui="deck"] :focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 
-/* ---------- Stage: the scene is Home's alone; work screens sit on a plain ground ---------- */
-@media (min-width: 700px) { :root[data-ui="deck"] { --page-side: 40px; } }
-:root[data-ui="deck"] .deck-stage[data-dimmed="true"] canvas { visibility: hidden; }
-:root[data-ui="deck"] .deck-stage[data-dimmed="true"] { background: var(--stage); }
-:root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .22; }
-:root[data-ui="deck"] .bh-head { margin-bottom: 28px; }
-:root[data-ui="deck"] .bh-head h1 { margin: 0 0 6px; font-size: 28px; }
-:root[data-ui="deck"] .bh-head p { margin: 0; color: var(--ink2); font-size: 15px; line-height: 1.5; }
+/* ---------- No background art: one flat canvas beside the sidebar ---------- */
+:root[data-ui="deck"] .deck-stage { display: none; }
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .shell > .center { padding: 0; }
+  :root[data-ui="deck"] .center > #content { border-radius: 0; }
+}
+:root[data-ui="deck"] .center, :root[data-ui="deck"] .center > #content { background: var(--ground); }
+:root[data-ui="deck"] .center h1 { font-size: var(--title-size); line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
 
-/* ---------- Rail ---------- */
-:root[data-ui="deck"] .rail[data-deck="bar"] { border-right: 1px solid var(--line); }
-:root[data-ui="deck"] .deck-mark { color: var(--violet); }
-:root[data-ui="deck"] .rail .deck-brand-row .deck-new-thread { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; margin: 0; padding: 0; border: 1px solid var(--line2); border-radius: var(--radius-control); background: transparent; color: var(--ink2); flex: none; }
-:root[data-ui="deck"] .rail .deck-brand-row .deck-new-thread:hover { background: var(--s2); color: var(--ink); }
-:root[data-ui="deck"] .deck-brand-row .iconbtn { margin-left: auto; }
-:root[data-ui="deck"] .deck-links { margin-top: 4px; }
-:root[data-ui="deck"] .deck-links { margin-bottom: 8px; }
-:root[data-ui="deck"] .rail .nav { min-height: 34px; font-size: 14px; }
-:root[data-ui="deck"] .rail .nav[aria-current], :root[data-ui="deck"] .rail .deck-links .nav[aria-current] { background: var(--s2); color: var(--ink); }
-:root[data-ui="deck"] .rail .nav[aria-current] .i { color: var(--violet-ink); }
-:root[data-ui="deck"] .deck-rail-scroll { border-top: 1px solid var(--line); padding-top: 4px; }
-:root[data-ui="deck"] .deck-rail-heading { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--ink3); }
+/* ---------- Sidebar ---------- */
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .shell.two, :root[data-ui="deck"] .shell:not(.two), :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 236px minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell:not(.two).chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 236px minmax(0, 1fr) 396px; }
+}
+:root[data-ui="deck"] .rail[data-deck="bar"] { background: var(--rail); border-right: 1px solid var(--line); }
+:root[data-ui="deck"] .deck-brand-row { height: 52px; padding: 0 10px 0 14px; }
+:root[data-ui="deck"] .deck-brand { gap: 8px; font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+:root[data-ui="deck"] .deck-mark { width: 20px; height: 20px; color: var(--violet); }
+:root[data-ui="deck"] .rail .deck-brand-row .deck-new-thread { display: grid; place-items: center; width: 30px; height: 30px; min-height: 30px; margin: 0 0 0 auto; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink2); }
+:root[data-ui="deck"] .rail .deck-brand-row .deck-new-thread:hover { background: var(--s1); color: var(--ink); }
+:root[data-ui="deck"] .deck-find { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; height: 32px; padding: 0 10px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink2); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
+:root[data-ui="deck"] .deck-find:hover { background: var(--s1); color: var(--ink); }
+:root[data-ui="deck"] .deck-find span { flex: 1; }
+:root[data-ui="deck"] .deck-find kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; background: transparent; color: var(--ink3); font: 11px var(--font); }
+:root[data-ui="deck"] .rail .i { width: 15px; height: 15px; }
+:root[data-ui="deck"] .deck-links { display: flex; flex-direction: column; gap: 1px; margin: 0 8px 6px; }
+:root[data-ui="deck"] .rail .nav, :root[data-ui="deck"] .rail .deck-links .nav { display: flex; align-items: center; width: 100%; min-height: 32px; padding: 0 10px; gap: 8px; border-radius: var(--radius-control); color: var(--ink); font-size: 13.5px; font-weight: 450; box-shadow: none; }
+:root[data-ui="deck"] .rail .nav .i { color: var(--ink2); }
+:root[data-ui="deck"] .rail :is(.nav, .deck-bot-row, .deck-tree-row, .deck-thread-row):hover { background: var(--s1); color: var(--ink); }
+:root[data-ui="deck"] .rail .nav[aria-current], :root[data-ui="deck"] .rail .deck-links .nav[aria-current], :root[data-ui="deck"] :is(.deck-bot-row, .deck-tree-row)[aria-current] { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .deck-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="deck"] .rail .count.need { margin-left: auto; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--amber); color: #141a22; font-size: 11.5px; font-weight: 700; line-height: 18px; text-align: center; }
+:root[data-ui="deck"] .rail .count.unread { background: var(--violet); color: #141a22; }
+:root[data-ui="deck"] .deck-rail-scroll { padding: 0 8px 12px; border: 0; }
+:root[data-ui="deck"] .deck-rail-group { display: flex; align-items: center; margin-top: 12px; }
+:root[data-ui="deck"] .deck-rail-heading, :root[data-ui="deck"] .rail[data-deck="bar"] .deck-rail-heading { display: flex; align-items: center; gap: 6px; flex: 1; min-height: 28px; margin: 0; padding: 0 10px; color: var(--ink2); font-size: 12.5px; font-weight: 600; text-decoration: none; border-radius: var(--radius-control); }
+:root[data-ui="deck"] a.deck-rail-heading:hover, :root[data-ui="deck"] a.deck-rail-heading[aria-current] { color: var(--ink); background: var(--s1); }
+:root[data-ui="deck"] h2.deck-rail-heading { margin-top: 12px; }
 :root[data-ui="deck"] .deck-rail-heading[hidden] { display: none; }
-:root[data-ui="deck"] .deck-bot-name { font-weight: 500; }
-:root[data-ui="deck"] .deck-ws-switch { display: flex; align-items: center; gap: 6px; min-height: 28px; margin: 0 -6px; padding: 0 6px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
-:root[data-ui="deck"] .deck-ws-switch:hover { background: var(--s2); color: var(--ink); }
-:root[data-ui="deck"] .deck-ws-switch .i { width: 10px; height: 10px; transform: rotate(90deg); }
-:root[data-ui="deck"] .deck-board-entry { display: flex; align-items: center; }
-:root[data-ui="deck"] .deck-board-entry > .nav { flex: 1; }
-:root[data-ui="deck"] .deck-board-all { flex: none; margin-left: 4px; padding: 3px 8px; border-radius: var(--radius-control); color: var(--ink3); font-size: 12px; text-decoration: none; }
-:root[data-ui="deck"] .deck-board-all:hover, :root[data-ui="deck"] .deck-board-all[aria-current] { background: var(--s2); color: var(--ink); }
-/* "Bots" is both the page and the heading of the bot list under it. */
-:root[data-ui="deck"] .deck-links.deck-bots-head { flex-direction: row; align-items: center; margin: 8px 0 2px; }
-:root[data-ui="deck"] .deck-links.deck-bots-head > .nav { flex: 1; }
-:root[data-ui="deck"] .deck-rail-tools { display: flex; flex-direction: column; gap: 1px; }
-:root[data-ui="deck"] .deck-rail-tools .nav { min-height: 30px; padding: 0 10px; gap: 10px; font-size: 13.5px; color: var(--ink2); }
-:root[data-ui="deck"] .deck-bot-avatar { background: var(--s2); color: var(--ink2); border: 1px solid var(--line2); }
-:root[data-ui="deck"] .rail .rail-foot { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 10px; }
-:root[data-ui="deck"] .rail .rail-foot > .nav { width: 100%; padding: 0 10px; gap: 10px; }
-:root[data-ui="deck"] .rail[data-deck="bar"] .user-links { bottom: 52px; }
-:root[data-ui="deck"] .rail .me .mark { background: var(--s2); color: var(--ink2); border: 1px solid var(--line2); }
+:root[data-ui="deck"] .deck-new-bot { width: 24px; height: 24px; border-radius: 6px; color: var(--ink2); font-size: 16px; }
+:root[data-ui="deck"] .deck-bot-row { height: 32px; padding: 0 10px; gap: 8px; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .deck-bot-avatar { width: 18px; height: 18px; border-radius: 5px; background: var(--s2); color: var(--ink2); border: 0; font-size: 10px; font-weight: 700; }
+:root[data-ui="deck"] .deck-bot-name { font-size: 13.5px; font-weight: 450; }
+:root[data-ui="deck"] .deck-bot-time { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .deck-private { display: none; }
+:root[data-ui="deck"] .deck-state-dot[data-state="live"] { background: var(--cyan); }
+:root[data-ui="deck"] .deck-state-dot[data-state="busy"] { background: var(--violet); }
+:root[data-ui="deck"] .deck-state-dot[data-state="waiting"] { background: var(--amber); }
+:root[data-ui="deck"] .deck-projects { display: flex; flex-direction: column; gap: 1px; }
+:root[data-ui="deck"] .deck-project-row small { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .rail .rail-foot { display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 8px; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .rail .rail-foot .user-menu { flex: 1; min-width: 0; position: relative; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me { min-height: 36px; padding: 0 8px; gap: 8px; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me:hover { background: var(--s1); }
+:root[data-ui="deck"] .rail .me .mark { width: 24px; height: 24px; border-radius: 50%; background: var(--s2); color: var(--ink); border: 0; font-size: 11px; }
+:root[data-ui="deck"] .deck-owner b { font-size: 13px; font-weight: 550; }
+:root[data-ui="deck"] .deck-owner small { color: var(--ink3); font-size: 11.5px; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .user-links { bottom: 44px; left: 0; right: -40px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); }
+:root[data-ui="deck"] .rail[data-deck="bar"] .user-links :is(a, button) { min-height: 32px; border-radius: var(--radius-control); font-size: 13.5px; }
+:root[data-ui="deck"] .deck-settings-link { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: var(--radius-control); color: var(--ink2); }
+:root[data-ui="deck"] .deck-settings-link:hover, :root[data-ui="deck"] .deck-settings-link[aria-current] { background: var(--s2); color: var(--ink); }
+
+/* ---------- Phone: T3's mobile header and three tabs ---------- */
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .m-top[data-deck="top"], :root[data-ui="deck"] #phone-bar .m-top[data-deck="top"] { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; height: 56px; min-height: 56px; padding: 0 10px; gap: 4px; background: var(--ground); border-bottom: 1px solid var(--line); }
+  :root[data-ui="deck"] .m-top[data-deck="top"] > b { text-align: center; font-size: 16px; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :root[data-ui="deck"] .m-top .deck-phone-avatar, :root[data-ui="deck"] .m-top .iconbtn { width: 40px; height: 40px; min-height: 40px; border: 1px solid var(--line); border-radius: 50%; background: var(--s1); color: var(--ink); font-size: 12px; font-weight: 700; display: grid; place-items: center; background-clip: border-box; }
+  :root[data-ui="deck"] .m-top .iconbtn .i { width: 17px; height: 17px; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); height: calc(64px + env(safe-area-inset-bottom)); padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); gap: 0; background: var(--rail); border-top: 1px solid var(--line); }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 48px; color: var(--ink3); font-size: 11.5px; font-weight: 600; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs a[aria-current] { color: var(--ink); background: none; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs .i { width: 21px; height: 21px; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs .count { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: #141a22; font-size: 11px; font-weight: 700; line-height: 17px; }
+  :root[data-ui="deck"] .shell .center { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  :root[data-ui="deck"] .deck-more-panel { bottom: auto; top: 64px; left: 8px; right: auto; width: min(300px, calc(100vw - 16px)); background: var(--s1); border-color: var(--line); }
+}
 
 /* ---------- One page frame: same left edge, width and title on every screen ---------- */
 :root[data-ui="deck"] .center h1 { font-size: var(--title-size); line-height: 1.25; font-weight: 600; letter-spacing: -0.015em; color: var(--ink); }
@@ -235,17 +280,12 @@
 
 @media (max-width: 699px) {
   :root[data-ui="deck"] { --page-top: 20px; --page-side: 16px; }
-  :root[data-ui="deck"] .m-top[data-deck="top"] > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Cloud workspaces with no machine yet: the ways to add one come first, the empty map shrinks below them. */
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) { display: flex; flex-direction: column; }
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-actions { order: 1; margin-bottom: 12px; }
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-enroll { order: 2; }
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-map { order: 3; max-height: 220px; overflow: hidden; }
-  :root[data-ui="deck"] .m-top[data-deck="top"] > b { font-size: 16px; letter-spacing: -0.01em; }
-  /* The voice button is a tool, not a destination: quiet next to the tabs. */
-  :root[data-ui="deck"] .deck-tab-mic { background: var(--s2); color: var(--ink); border: 1px solid var(--line2); }
-  :root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .18; }
-  :root[data-ui="deck"] .look-switch .opt { min-height: 44px; }
+    :root[data-ui="deck"] .look-switch .opt { min-height: 44px; }
   :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }
   :root[data-ui="deck"] .bh-head { margin-bottom: 20px; }
   :root[data-ui="deck"] .shell .center .bh-head h1 { display: block; font-size: 22px; }
