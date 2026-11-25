@@ -48,10 +48,9 @@ export const cardHTML = ({ card, name, state }) => `<a class="wk-card" href="#/c
 
 export function laneHTML([group, label, tone, empty], list, expanded) {
   const open = expanded.has(group), shown = open ? list : list.slice(0, SHOWN), hidden = list.length - shown.length;
-  const cards = list.length
-    ? shown.map(cardHTML).join('') + (hidden > 0 ? `<button type="button" class="wk-card wk-more" data-wk="more" data-lane="${group}" aria-expanded="false"><span class="wk-title">Show ${hidden} more</span></button>` : open && list.length > SHOWN ? `<button type="button" class="wk-card wk-more" data-wk="less" data-lane="${group}" aria-expanded="true"><span class="wk-title">Show fewer</span></button>` : '')
-    : `<p class="wk-empty">${e(empty)}</p>`;
-  return `<section class="wk-lane" data-lane="${group}" aria-label="${e(label)}"><h2 class="wk-lane-name"><i class="wk-dot${tone ? ` ${tone}` : ''}" aria-hidden="true"></i>${e(label)} <b${group === 'todo' && list.length ? ' class="wk-waits"' : ''}>${list.length}</b></h2><div class="wk-cards">${cards}</div></section>`;
+  const toggle = hidden > 0 ? `<button type="button" class="wk-more" data-wk="more" data-lane="${group}" aria-expanded="false">Show ${hidden} more</button>` : open && list.length > SHOWN ? `<button type="button" class="wk-more" data-wk="less" data-lane="${group}" aria-expanded="true">Show fewer</button>` : '';
+  const cards = list.length ? `<div class="wk-cards">${shown.map(cardHTML).join('')}</div>${toggle}` : `<div class="wk-cards"><p class="wk-empty">${e(empty)}</p></div>`;
+  return `<section class="wk-lane" data-lane="${group}" aria-label="${e(label)}"><h2 class="wk-lane-name"><i class="wk-dot${tone ? ` ${tone}` : ''}" aria-hidden="true"></i>${e(label)} <b${group === 'todo' && list.length ? ' class="wk-waits"' : ''}>${list.length}</b></h2>${cards}</section>`;
 }
 
 /** The health line: how many bots can take work, and a plain sentence when no machine is connected. */

@@ -23,8 +23,10 @@ test('the places are Waiting on you, Work, Bots and Settings, and every older de
   assert.deepEqual(deckSections(), entries);
   for (const hash of ['#/', '#/today', '#/bots', '#/bots/personal/coworkers', '#/board', '#/work', '#/compute', '#/memory', '#/settings']) {
     const html = renderDeckBar({ hash });
-    assert.deepEqual(links(html).map(([id]) => id), ['home', 'work', 'bots', 'compute', 'settings'], 'Waiting, Work, Bots, then the account menu, then Settings');
-    for (const href of ['#/memory', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline']) assert.match(html, new RegExp(`href="${href}"`));
+    assert.deepEqual(links(html).map(([id]) => id), ['home', 'work', 'bots', 'settings', 'compute', 'settings'], 'Waiting, Work, Bots, then the account menu (Settings first), then the footer Settings gear');
+    for (const href of ['#/memory', '#/compute', '#/rules', '#/console', '#/pipeline']) assert.match(html, new RegExp(`href="${href}"`));
+    assert.match(html, /<div class="user-links"><a href="#\/settings" data-nav="settings"[^>]*>Settings<\/a>/, 'the account menu opens with a labelled Settings row');
+    assert.doesNotMatch(html, /href="#\/boards"/, 'Projects is the sidebar heading, not an account menu row');
   }
   assert.equal(deckSection('#/bots/personal/coworkers'), 'bots');
   for (const [hash, section] of [['#/', 'home'], ['#/today', 'home'], ['#/work', 'work'], ['#/board/x', 'work'], ['#/card/3', 'work'], ['#/settings', 'settings'], ['#/rules', '']]) assert.equal(deckSection(hash), section, hash);
@@ -160,12 +162,15 @@ test('phone: every place outside the three tabs is in the account sheet, with it
   assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
   assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
   const bar = renderDeckBar({ hash: '#/', can_admin: true, can_manage_instance: true });
-  const places = ['#/settings', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
+  const places = ['#/settings', '#/compute', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
   for (const href of places) assert.ok(bar.includes(`href="${href}"`), `the sidebar offers ${href}`);
   assert.deepEqual(sheetLinks(sheet), places, 'the sheet offers each of them, with the same routes');
   assert.match(sheet, /data-action="switch-workspace"/);
   assert.match(sheet, /data-action="logout"/);
-  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline']);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/compute', '#/rules', '#/console', '#/pipeline']);
+  assert.deepEqual(sheetLinks(sheet), sheetLinks(bar.slice(bar.indexOf('class="user-links"'))), 'the sheet and the desktop account menu offer the same rows');
+  assert.match(renderDeckMore({ user: 'Maya', role: 'owner', workspace: 'Home' }), /<div class="deck-more-panel"><p class="deck-more-account"><b>Maya<\/b> · Owner, Home<\/p><a href="#\/settings"/, 'the sheet is headed by the account line, as the sidebar footer is');
+  assert.doesNotMatch(sheet, /href="#\/boards"/, 'Projects is part of Work on a phone');
   assert.match(bar, /href="#\/memory"/, 'Memory is a place in the sidebar');
 });
 
@@ -197,7 +202,7 @@ test('phone CSS: five tab columns and a sheet fixed inside the viewport', () => 
   const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
   assert.match(css, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\) 54px/);
   assert.match(css, /\.deck-more \{[^}]*position: fixed; inset: 0/);
-  assert.match(css, /\.deck-more-panel \{[^}]*left: 8px; right: 8px; bottom: calc\(76px/);
+  assert.match(css, /\.deck-more-panel \{[^}]*left: 0; right: 0; bottom: calc\(64px[^}]*border-radius: 16px 16px 0 0/, 'a bottom sheet: full width, rounded top, on the tab bar');
 });
 
 test('the account menu and sheet call the server console "Server admin", and its page title agrees', () => {
@@ -246,4 +251,43 @@ test('review fixes in the stylesheets: full-width bot bar, shared page column, r
   // The phone bar names where you are, so the coworkers breadcrumb goes there.
   const coworkers = read('deck-coworkers.css');
   assert.match(coworkers.slice(coworkers.indexOf('@media (max-width: 699px)')), /\.cb-crumbs \{ display: none; \}/);
+});
+
+test('the Memory icon is a book in the sidebar and the phone tabs, not the old columns', () => {
+  for (const html of [renderDeckBar({ hash: '#/' }), renderDeckTabs({ hash: '#/' })]) {
+    assert.match(html, /href="#\/memory"[^>]*>\s*<svg[^>]*><path d="M3\.5 2h8A1\.5 1\.5 0 0 1 13 3\.5V14H5/s, 'a stroke book from the shared icon set');
+    assert.doesNotMatch(html, /M2 14h12/);
+  }
+});
+
+test('phone: the menu button is marked on the pages that live in the More sheet, and only there', () => {
+  const marked = hash => /class="deck-phone-avatar"[^>]* aria-current="page"/.test(renderDeckTop({ hash }));
+  for (const hash of ['#/settings', '#/compute', '#/compute/management', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin']) assert.ok(marked(hash), hash);
+  for (const hash of ['#/', '#/work', '#/bots', '#/memory', '#/boards', '#/board/x']) assert.ok(!marked(hash), hash);
+  const css = readFileSync(new URL('../commonplace/web/static/deck-system.css', import.meta.url), 'utf8');
+  assert.match(css, /\.m-top \.deck-phone-avatar\[aria-current\] \{[^}]*color: var\(--ink\)/);
+});
+
+test('the account row is never marked current, and choosing anything in its menu closes it', async () => {
+  for (const hash of ['#/rules', '#/console', '#/admin', '#/pipeline', '#/compute', '#/settings']) assert.doesNotMatch(renderDeckBar({ hash }), /<summary class="me"[^>]*data-current/, hash);
+  const css = readFileSync(new URL('../commonplace/web/static/deck-system.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /\.me\[data-current\]/);
+  const { createDeckShell } = await import('../commonplace/web/static/deck-shell.js');
+  const removed = [], events = {};
+  const details = { removeAttribute: key => removed.push(key) };
+  createDeckShell({ root: { querySelector: () => null, addEventListener: (name, cb) => { events[name] = cb; } }, context: () => ({}), on: () => true });
+  events.click({ target: { closest: selector => selector.startsWith('.user-links') ? { closest: () => details } : null }, preventDefault() {} });
+  assert.deepEqual(removed, ['open'], 'a click on a menu row closes the details');
+  events.click({ target: { closest: () => null }, preventDefault() {} });
+  assert.deepEqual(removed, ['open'], 'a click elsewhere leaves it alone');
+  const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
+  assert.match(app, /\.open === true && state\.accountAt === state\.base;/, 'a redraw keeps the menu open only on the same route');
+});
+
+test('every desktop page starts 20px under the bar: pages that #content already pads add no second offset', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-system.css', import.meta.url), 'utf8');
+  assert.match(css, /#content > \.bt-bar \{[^}]*padding: 0 0 6px/, 'Waiting on you');
+  assert.match(css, /> \.bots-roster \{[^}]*padding-top: 0/, 'Bots');
+  assert.match(css, /#content \.admin\.settings \{ padding-top: 0; \}/, 'Admin');
+  assert.match(css, /#content\.capy-coworkers \{ padding-top: 20px; \}/, 'Coworkers');
 });

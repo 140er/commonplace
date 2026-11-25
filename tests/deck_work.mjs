@@ -80,16 +80,17 @@ test('the project choice lives in the address as #/work?project=<slug>', () => {
   assert.equal(projectFrom(workHash('a/b&c')), 'a/b&c');
 });
 
-test('a lane shows its first five cards and a Show N more card that expands it in place', () => {
+test('a lane shows its first five cards and a Show N more link under it that expands it in place', () => {
   const many = Array.from({ length: 8 }, (_, i) => card(i + 1));
   const items = workItems({ boards, cards: byBoard(many), me });
   const closed = laneHTML(LANES[1], items, new Set());
   assert.equal(SHOWN, 5);
   assert.equal((closed.match(/<a class="wk-card"/g) || []).length, 5);
-  assert.match(closed, /<button type="button" class="wk-card wk-more" data-wk="more" data-lane="doing" aria-expanded="false"><span class="wk-title">Show 3 more<\/span>/);
+  assert.match(closed, /<\/div><button type="button" class="wk-more" data-wk="more" data-lane="doing" aria-expanded="false">Show 3 more<\/button><\/section>/, 'a text link under the cards, not a card');
+  assert.doesNotMatch(closed, /class="wk-card wk-more"/);
   const open = laneHTML(LANES[1], items, new Set(['doing']));
   assert.equal((open.match(/<a class="wk-card"/g) || []).length, 8);
-  assert.match(open, /data-wk="less"[^>]*aria-expanded="true"><span class="wk-title">Show fewer</);
+  assert.match(open, /class="wk-more" data-wk="less"[^>]*aria-expanded="true">Show fewer<\/button>/);
   assert.doesNotMatch(open, /Show \d+ more/);
   // Exactly five fit without a toggle.
   const five = laneHTML(LANES[1], items.slice(0, 5), new Set());
@@ -220,4 +221,10 @@ test('the stylesheet follows the Deck tokens: 52px bar, lane grid, no italic, no
   const phone = css.slice(css.indexOf('@media (max-width: 699px)'));
   assert.match(phone, /\.wk-card \{[^}]*min-height: 44px/);
   assert.match(phone, /\.wk-cards \{[^}]*grid-template-columns: 1fr/);
+});
+
+test('desktop lanes use three equal columns and Show N more is a text link, not a card', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-work.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(min-width: 1100px\) \{ \.deck-work \.wk-cards \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \} \}/);
+  assert.match(css, /\.deck-work \.wk-more \{ grid-column: 2;[^}]*border: 0; background: none;[^}]*text-decoration: underline/);
 });

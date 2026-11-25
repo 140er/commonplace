@@ -48,7 +48,7 @@ function cardHTML(card, options, first) {
 export const addedNotice = (card, me) => `Added “${cardTitle(card.title)}” to ${columns.find(([status]) => status === boardGroup(card, me, null))[1]} (${stateWord(card, me, null)}).`;
 function boardNotice(cards, columns, { added, me, board }) {
   const card = added == null ? null : cards.find(item => item.number === added);
-  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : (board?.name ? `<p class="deck-board-intro"><b>${e(board.name)}</b><a class="deck-board-switch" href="#/boards">Other projects</a></p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>');
+  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : (board?.name ? `<p class="deck-board-intro"><b class="deck-board-name">${e(board.name)}</b><a class="deck-board-switch" href="#/boards" aria-label="Switch project">Switch project<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></a></p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>');
 }
 export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = '', ...options }) {
   const backlog = cards.filter(card => card.status === 'backlog' && !needsOwner(card, options.me));

@@ -82,7 +82,6 @@
 
 /* ---------- Review fixes: full-width page bars, readable answers, one-column setup in a thread ---------- */
 :root[data-ui="deck"] .shell #content > .bt-bar { width: 100%; max-width: none; margin-inline: 0; }
-:root[data-ui="deck"] .rail[data-deck="bar"] .me[data-current] { background: var(--s2); }
 :root[data-ui="deck"] .rail[data-deck="bar"] .me > .i { width: 12px; height: 12px; margin-left: auto; color: var(--ink3); transform: rotate(-90deg); }
 /* The Bots heading is a link to the list, never styled as a selected row. */
 :root[data-ui="deck"] a.deck-rail-heading[aria-current] { background: none; color: var(--ink); }
@@ -94,7 +93,7 @@
 @media (min-width: 700px) { :root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); } }
 :root[data-ui="deck"] .bots-thread .ready-to-start ul, :root[data-ui="deck"] .cb-detail .ready-to-start ul { grid-template-columns: minmax(0, 1fr); }
 :root[data-ui="deck"] .console-empty .console-message { margin: 0; padding: 0; }
-:root[data-ui="deck"] .deck-work .wk-state { color: var(--ink2); }
+:root[data-ui="deck"] .deck-work .wk-state { flex: none; color: var(--ink2); white-space: nowrap; }
 :root[data-ui="deck"] .cb-worker small { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 699px) {
   /* An answer is a sentence: one per line, full width, never squeezed into two lines inside a button. */
@@ -136,13 +135,13 @@
   :root[data-ui="deck"] body .shell .center:has(:is(.deck-board, .deck-memory)) > .head #head-actions { display: none; }
   /* The page title lives in the bar, so the in-page copies go. */
   :root[data-ui="deck"] body .shell #content :is(.bt-bar, .wk-bar, .bots-bar, .dc-title, .deck-board-title-row, .memory-heading, .pl-head, .cb-heading) h1 { display: none; }
-  :root[data-ui="deck"] body .shell #content > .bt-bar { height: auto; min-height: 0; width: 100%; max-width: var(--page-width); margin-inline: auto; padding: 20px 0 6px; border-bottom: 0; background: none; }
+  :root[data-ui="deck"] body .shell #content > .bt-bar { height: auto; min-height: 0; width: 100%; max-width: var(--page-width); margin-inline: auto; padding: 0 0 6px; border-bottom: 0; background: none; }
   :root[data-ui="deck"] body .shell .deck-work > .wk-bar { height: auto; min-height: 0; padding: 20px 0 6px; border-bottom: 0; background: none; }
   :root[data-ui="deck"] body .shell .center > #content.deck-work { padding-inline: max(var(--page-side), calc((100% - var(--page-width)) / 2)); }
   :root[data-ui="deck"] body .shell #content .bt-col { max-width: var(--page-width); padding-inline: 0; }
-  :root[data-ui="deck"] body .shell #content .bots[data-pane="roster"] > .bots-roster { max-width: var(--page-width); padding-top: 20px; padding-inline: 0; }
+  :root[data-ui="deck"] body .shell #content .bots[data-pane="roster"] > .bots-roster { max-width: var(--page-width); padding-top: 0; padding-inline: 0; }
   :root[data-ui="deck"] body .shell .center #content.deck-workspace.dw-map { padding-top: 20px; }
-  :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 16px; }
+  :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 20px; }
   :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 0; }
   /* The board scrolls with the page, so a long column runs on below the fold instead of being cut inside a box. */
   :root[data-ui="deck"] body .shell #content .deck-board .board { overflow: visible; height: auto; max-height: none; padding-bottom: 32px; }
@@ -179,9 +178,8 @@
 :root[data-ui="deck"] body .shell .look-switch .opt[aria-pressed="true"] { background: var(--violet); color: var(--ground); }
 :root[data-ui="deck"] .pl-empty .cp-art { display: none; }
 
-/* Each page's creating action is a primary button; the account row is clearly current on its pages. */
+/* Each page's creating action is a primary button. */
 :root[data-ui="deck"] body .shell :is(.deck-board-add, [data-rule-action="new"]) { background: var(--violet); border-color: var(--violet); color: var(--ground); }
-:root[data-ui="deck"] body .rail[data-deck="bar"] .me[data-current] { background: var(--s2); box-shadow: inset 2px 0 0 var(--violet); }
 :root[data-ui="deck"] body .shell .deck-work .wk-lanes { padding-inline: 0; }
 
 /* ---------- Bots list: one bordered list, a row per bot ---------- */
@@ -203,7 +201,12 @@
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs .i { width: 21px; height: 21px; }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs .count { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: #141a22; font-size: 11px; font-weight: 700; line-height: 17px; }
   :root[data-ui="deck"] .shell .center { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-  :root[data-ui="deck"] .deck-more-panel { bottom: auto; top: 64px; left: 8px; right: auto; width: min(300px, calc(100vw - 16px)); background: var(--s1); border-color: var(--line); }
+  /* The More sheet (a bottom sheet in deck-shell.css) is headed by the account line. */
+  :root[data-ui="deck"] .deck-more-account { margin: 0; padding: 14px 12px 10px; border-bottom: 1px solid var(--line); color: var(--ink2); font-size: 13px; }
+  :root[data-ui="deck"] .deck-more-account b { color: var(--ink); font-weight: 600; }
+  /* The menu button reads like a tab: dim until the person is on a page that lives in the sheet. */
+  :root[data-ui="deck"] .m-top .deck-phone-avatar { color: var(--ink3); }
+  :root[data-ui="deck"] .m-top .deck-phone-avatar[aria-current] { color: var(--ink); border-color: var(--line3); background: var(--s2); }
 }
 
 /* ---------- One page frame: same left edge, width and title on every screen ---------- */
@@ -223,6 +226,9 @@
   :root[data-ui="deck"] #content :is(.console-view, .admin.settings) { padding-left: 0; padding-right: 0; }
   :root[data-ui="deck"] #content > .console-view .console-message { margin-left: 0; padding-left: 0; }
   :root[data-ui="deck"] #content:has(> .pl-head) { padding-top: calc(var(--page-top) - 8px); }
+  /* One top offset on every desktop page: 20px under the 52px bar. Where #content carries it, the first block adds none. */
+  :root[data-ui="deck"] #content .admin.settings { padding-top: 0; }
+  :root[data-ui="deck"] #content .admin.settings > .admin-workspace:first-child { margin-top: 0; }
   :root[data-ui="deck"] .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding: 20px var(--page-side) 32px; }
   :root[data-ui="deck"] #content > :is(.queue, .rules-view, .console-view) { padding: 0; max-width: var(--page-width); }
   /* One centred column for every page, as in a T3 thread; Work and boards use the full width for their lanes. */
@@ -270,8 +276,9 @@
 /* No separator dot: when the line wraps, the state moves down whole instead of leaving a dangling "·". */
 :root[data-ui="deck"] .deck-board .card-meta > span[aria-hidden="true"]:not(.deck-board-avatar) { display: none; }
 :root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
-:root[data-ui="deck"] .deck-board-intro .deck-board-switch { display: inline-flex; align-items: center; min-height: 24px; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line2); border-radius: var(--radius-control); color: var(--ink2); text-decoration: none; font-size: 12.5px; }
-:root[data-ui="deck"] .deck-board-intro .deck-board-switch:hover { color: var(--ink); background: var(--s2); }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; margin-left: 8px; padding: 0 6px 0 10px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--s1); color: var(--ink); text-decoration: none; font-size: 12.5px; font-weight: 550; }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch .i { width: 12px; height: 12px; color: var(--ink3); }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch:hover { background: var(--s2); }
 :root[data-ui="deck"] .console-empty { grid-column: 1 / -1; align-self: start; justify-self: start; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: var(--page-width); padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
 :root[data-ui="deck"] .console-empty .console-message { margin: 0; color: var(--ink); font-size: 15px; font-weight: 600; }
 :root[data-ui="deck"] .console-empty-next { margin: 0 0 6px; color: var(--ink2); }

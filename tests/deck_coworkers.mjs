@@ -150,3 +150,13 @@ test('slice styles are Deck scoped, token based, and keep the phone composer in 
   assert.equal(bots.length, 2); assert.equal(bots[0].name, 'Atlas'); assert.equal(bots[0].section, 'Workspace'); assert.equal(bots[0].mine, true);
   assert.equal(bots[1].coworkerOnly, true);
 });
+
+test('a bot that waits on you says so as a word the phone shows under its name', () => {
+  const html = capyRosterHTML({ bots: [{ id: 'w', name: 'Waits', state: 'needs_you' }, { id: 'b', name: 'Busy', state: 'working' }, { id: 'i', name: 'Idle' }] });
+  assert.match(html, /<small class="cb-state-word" data-tone="waiting" aria-hidden="true">Waiting on you<\/small>/);
+  assert.match(html, /data-tone="working" aria-hidden="true">Working<\/small>/);
+  const css = readFileSync(new URL('../commonplace/web/static/deck-coworkers.css', import.meta.url), 'utf8');
+  assert.match(css, /\.cb-bot-row \.cb-state-word, :root\[data-ui="deck"\] \.cb-bot-row \.cb-dot\[data-tone="idle"\] \{ display: none; \}/, 'desktop keeps the dot with its hover label');
+  const phone = css.slice(css.indexOf('@media (max-width: 699px)'));
+  assert.match(phone, /\.cb-state-word\[data-tone="waiting"\] \{ display: block; flex-basis: 100%;/, 'only waiting rows get the word on a phone');
+});

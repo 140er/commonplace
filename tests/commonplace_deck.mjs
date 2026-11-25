@@ -134,11 +134,11 @@ test("applyDeck marks the document and honours ?ui= once, keeping the rest of th
 test("the bar offers Bots and Settings, and a Deck screen only once it is registered", () => {
   const bare = deck.renderDeckBar({ hash: "#/bots", screens: {} });
   assert.ok(bare.startsWith('<nav class="rail"'), "the shell gives this element its id");
-  assert.deepEqual([...bare.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["bots", "compute", "settings"], "no Waiting or Work entry until their screens are registered");
+  assert.deepEqual([...bare.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["bots", "settings", "compute", "settings"], "no Waiting or Work entry until their screens are registered (the menu's Settings row, then the footer gear)");
   assert.equal((bare.match(/aria-current="page"/g) || []).length, 1);
   assert.match(bare, /href="#\/bots" data-nav="bots" aria-current="page"/);
   const full = deck.renderDeckBar({ hash: "#/", needs: 3 });
-  assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["home", "work", "bots", "compute", "settings"]);
+  assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["home", "work", "bots", "settings", "compute", "settings"]);
   assert.match(full, /data-nav="home" aria-current="page">[\s\S]*?Waiting on you<\/span><span class="count need">3/);
   assert.match(full, /class="deck-brand" href="#\/"/);
   assert.equal(deck.deckHome({}), "#/bots");
@@ -153,7 +153,8 @@ test("the bar keeps the shell's actions, escapes names and shows Admin to admins
   assert.match(html, /id="cmdk"/);
   assert.doesNotMatch(html, /<b>"W"|<i>Maya/);
   assert.match(html, /&lt;b&gt;&quot;W&quot;/);
-  for (const href of ["#/boards", "#/memory", "#/console", "#/rules", "#/admin"]) assert.equal((html.match(new RegExp(`href="${href}"`, "g")) || []).length, 1, href);
+  for (const href of ["#/memory", "#/console", "#/rules", "#/admin"]) assert.equal((html.match(new RegExp(`href="${href}"`, "g")) || []).length, 1, href);
+  assert.equal((html.match(/href="#\/boards"/g) || []).length, 0, "Projects is the sidebar heading (shown with projects), not an account menu row");
   for (const can_admin of [false, undefined, "true", 1]) assert.doesNotMatch(deck.renderDeckBar({ can_admin, screens: {} }), /#\/admin/);
   assert.doesNotMatch(html, /<style|style="/);
 });

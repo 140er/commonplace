@@ -1,0 +1,1 @@
+- **Tests:** `tests/deck_shell.mjs`, `tests/deck_work.mjs`, `tests/deck_board.mjs` and `tests/deck_coworkers.mjs` pin the shared account rows and bottom sheet, the closed account menu, the active phone menu button, the Work lane link, the Board switch button, the waiting word on phone bot rows and the single 20px page offset.

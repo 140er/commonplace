@@ -25,7 +25,7 @@ export function stateView(state) {
   if (['done', 'completed', 'succeeded', 'ready', 'healthy', 'live', 'connected'].includes(state)) return { tone: 'live', word: state === 'ready' ? 'Ready' : state === 'healthy' ? 'Healthy' : state === 'connected' ? 'Connected' : 'Done' };
   return { tone: 'idle', word: state === 'failed' ? 'Failed' : state === 'blocked' ? 'Blocked' : state === 'waiting' ? 'Waiting' : 'Idle' };
 }
-const dot = state => { const view = stateView(state); return `<span class="cb-dot" data-tone="${view.tone}" role="img" aria-label="${view.word}"></span>${view.tone === 'idle' ? '' : `<small class="cb-state-word" aria-hidden="true">${view.word}</small>`}`; };
+const dot = state => { const view = stateView(state); return `<span class="cb-dot" data-tone="${view.tone}" role="img" aria-label="${view.word}"></span>${view.tone === 'idle' ? '' : `<small class="cb-state-word" data-tone="${view.tone}" aria-hidden="true">${view.word}</small>`}`; };
 const belongs = (conversation, bot) => list(conversation.bot_ids).some(id => String(id) === String(bot.id)) || Boolean(bot.board && conversation.board === bot.board);
 
 export function overviewBots(bots = [], coworkers = []) {

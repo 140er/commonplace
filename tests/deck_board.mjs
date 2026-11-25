@@ -247,3 +247,14 @@ test('Add card sends the title verbatim and Deck copy still hides other internal
   assert.equal(boardCopy('Fix #12 in ~/work/x'), 'Fix', 'body copy keeps hiding references');
   assert.equal(deckBoard.cardTitle?.('Fix #12 in ~/work/x'), 'Fix #12', 'a title keeps #NNN; paths are still hidden');
 });
+
+test('the project switch reads as a small button, and the phone drops the repeated title and name line', () => {
+  const html = htmlFor({});
+  assert.match(html, /<a class="deck-board-switch" href="#\/boards" aria-label="Switch project">Switch project<svg class="i"/, 'a menu to other projects, with a chevron');
+  assert.doesNotMatch(html, /Other projects/);
+  assert.match(html, /<b class="deck-board-name">Product<\/b>/);
+  const phone = readFileSync(new URL('../commonplace/web/static/deck-board.css', import.meta.url), 'utf8');
+  assert.match(phone, /\.deck-board-heading h1, :root\[data-ui="deck"\] \.deck-board-intro \.deck-board-name \{ display: none; \}/, 'the bar already names the project');
+  assert.match(phone, /\.deck-board-title-row \{[^}]*justify-content: flex-end/, 'the actions row stays');
+  assert.doesNotMatch(phone, /\.deck-board-heading h1 \{ display: block/);
+});

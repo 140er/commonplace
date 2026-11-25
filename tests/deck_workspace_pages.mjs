@@ -150,7 +150,7 @@ test('nested pages belong to their existing Deck section and keep four destinati
     const ui = createDeck({ storage: { getItem: () => 'deck' }, doc: {} });
     assert.equal(ui.owns(hash), true, hash);
     const bar = renderDeckBar({ hash });
-    assert.deepEqual([...bar.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), ['home', 'work', 'bots', 'compute', 'settings']);
+    assert.deepEqual([...bar.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), ['home', 'work', 'bots', 'settings', 'compute', 'settings']);
     assert.match(bar, new RegExp(`data-nav="${section}" aria-current="page"`));
     assert.equal((bar.match(/aria-current="page"/g) || []).length, 1);
     // The phone bar has its own tabs; a page without a tab (Cloud workspaces) marks More.

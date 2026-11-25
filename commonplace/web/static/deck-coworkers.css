@@ -122,6 +122,9 @@
 }
 @media (max-width: 699px) {
   :root[data-ui="deck"] .bots-roster { padding: 16px; }
+  /* A bot that waits on you says so under its name: a phone has no hover to explain the dot. */
+  :root[data-ui="deck"] .cb-bot-row .cb-bot-name { flex-wrap: wrap; row-gap: 0; }
+  :root[data-ui="deck"] .cb-bot-row .cb-state-word[data-tone="waiting"] { display: block; flex-basis: 100%; margin-left: 0; color: var(--amber); font-size: 12.5px; line-height: 18px; }
   :root[data-ui="deck"] .bots-bar h1 { display: block; }
   :root[data-ui="deck"] .bots-new { min-height: 44px; }
   :root[data-ui="deck"] .bots-bar .deck-bots-intro { grid-column: 1 / -1; grid-row: 2; }

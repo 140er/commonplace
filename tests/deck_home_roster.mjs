@@ -120,7 +120,7 @@ test('the phone keeps three tabs and puts Settings first in the account sheet', 
   assert.equal((tabs.match(/<a /g) || []).length, 4, 'Waiting, Chats, Work, Memory');
   assert.match(tabs, /href="#\/" data-nav="home" aria-current="page"/);
   const sheet = renderShellMore(options('#/'));
-  assert.match(sheet, /<div class="deck-more-panel"><a href="#\/settings" data-nav="settings">/);
+  assert.match(sheet, /<div class="deck-more-panel"><p class="deck-more-account"><b>[^<]*<\/b>[^<]*<\/p><a href="#\/settings" data-nav="settings">/);
 });
 
 test('without a registered Home screen neither the rail nor the More sheet offers Home', () => {
