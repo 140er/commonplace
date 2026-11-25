@@ -76,6 +76,7 @@ def test_owner_pin_plan_accept_storage_reinstall_and_removal(setup, tmp_path, ca
     s = setup
     selected = pin(Ed25519PrivateKey.generate())
     source = tmp_path / "issuer-pin.json"
+    source.touch(mode=0o600, exist_ok=False)
     source.write_text(json.dumps(selected))
     parsed = args(s, "--host-issuer-pin", str(source), "--plan")
     assert installer.run(parsed, host=s.host, transport=s.transport) == 0
@@ -175,6 +176,7 @@ def test_standalone_launcher_freezes_the_owner_pin_before_child_install(setup, t
     trusted.write_text(pin(key)["public_key"])
     source = tmp_path / "issuer-pin.json"
     selected = pin(Ed25519PrivateKey.generate())
+    source.touch(mode=0o600, exist_ok=False)
     source.write_text(json.dumps(selected))
     command = [
         "--release",
