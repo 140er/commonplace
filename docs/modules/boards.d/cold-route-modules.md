@@ -1,0 +1,4 @@
+- **Owns:** Batched card-row reads, page-wide stable URL projection, request-scoped wing decisions and the owner's initial recent event window.
+- **Promises:** Card ordering, contents, visibility, expiry and URL identity stay intact; wing authority is evaluated again on every request; after=0 hydrates the latest 200 owner events in ascending order and advances to the current cursor.
+- **How it fails:** Incremental feeds retain their existing cursor semantics; member feeds retain their filtered ordinal cursors; the initial window deliberately omits old history because current lists hydrate separately.
+- **Tests:** tests/test_cold_api_work.py, tests/test_cold_modules.py, tests/test_commonplace_web.py, tests/test_commonplace_boards.py and tests/test_cold_start_routes.py.

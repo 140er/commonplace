@@ -281,6 +281,12 @@ def test_short_links_fallback_and_caddy_agent_routes_are_preserved(public_server
             status, _, content = _get(port, "cmmn.dev", path)
             assert (status, content) == (200, "agent:" + path)
         assert _get(port, "app.cmmn.dev", "/api/me")[2] == "agent:/api/me"
+        # Preview addresses reach the gateway on the app host; the agent host does not serve them.
+        assert (
+            _get(port, "app.cmmn.dev", "/p/pv_0000000000000000/")[2]
+            == "agent:/p/pv_0000000000000000/"
+        )
+        assert _get(port, "cmmn.dev", "/p/pv_0000000000000000/")[0] == 302
 
 
 def test_closed_signup_remains_neutral_and_provisions_nothing(fresh, monkeypatch):

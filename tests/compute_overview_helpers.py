@@ -1,0 +1,358 @@
+"""Shared fixtures for the Compute overview suites: a synthetic fleet and a fake lifecycle executor.
+
+Nothing here reaches a machine. The executor drives ``workspace_lifecycle.claim`` and ``report``
+the way a real machine would, so every state-machine path is exercised without a container.
+"""
+
+import json
+from datetime import datetime, timezone
+
+from commonplace import control_db
+from commonplace.compute import workspace_lifecycle as lifecycle
+from commonplace.projects import model_modes
+from commonplace.runner import jobs, registry
+
+GRANT = {
+    "label": "build-runner",
+    "projects": ["demo"],
+    "topics": ["worker"],
+    "wings": ["project_compute"],
+}
+ADDRESS = "192.0.2.10"
+
+
+def workspace_body(**changes):
+    return {
+        "name": "Build box",
+        "image_source": "custom",
+        "image": "ghcr.io/acme/tools:1.2",
+        **changes,
+    }
+
+
+class FakeExecutor:
+    """What a machine does: claim the next request, then report phases for it."""
+
+    def __init__(self, env, *, register=True):
+        self.env = env
+        self.name = "fake-executor"
+        if register:
+            env.gateway._compute_workspace_executor = self
+
+    def _now(self):
+        return self.env.store._now()
+
+    def claim(self):
+        with self.env.store._journal() as conn:
+            return lifecycle.claim(conn, self.name, self._now())
+
+    def report(self, claim, phase, **kwargs):
+        with self.env.store._journal() as conn:
+            lifecycle.report(
+                conn, claim["workspace_id"], claim["claim_token"], phase, self._now(), **kwargs
+            )
+
+    def fail(self, workspace_id, reason="out_of_memory"):
+        """The machine reports that a workspace it was running failed, with no request waiting."""
+        with self.env.store._journal() as conn:
+            lifecycle.fail(conn, workspace_id, reason, self._now())
+
+    def run(self, claim, *phases, revision=None):
+        """Report each phase in order; ``running`` carries the revision the claim saw."""
+        for phase in phases:
+            extra = (
+                {"applied_revision": revision or claim["revision"]} if phase == "running" else {}
+            )
+            if phase == "failed":
+                extra = {"reason": "start_failed"}
+            self.report(claim, phase, **extra)
+
+
+def iso(epoch):
+    return control_db._iso(datetime.fromtimestamp(epoch, timezone.utc))
+
+
+class Fleet:
+    """Runner machines of the compute fixture: enroll, make them seen, run jobs, report resources."""
+
+    def __init__(self, env):
+        self.env = env
+        registry.ensure(env.db)
+        model_modes.ensure_schema(env.db)
+
+    def enroll(self, label="build-runner", attest=True, **grant):
+        made = registry.enroll(self.env.db, self.env.principal, {**GRANT, "label": label, **grant})
+        if attest:
+            row = registry.get_machine(self.env.db, self.env.workspace, made["machine_id"])
+            registry.attest(
+                self.env.db,
+                self.env.principal,
+                made["machine_id"],
+                {
+                    "topics": json.loads(row["topics"]),
+                    "provider_instance_id": "worker",
+                    "worker_connection_id": made["worker_connection_id"],
+                },
+            )
+        return made
+
+    def seen(self, made, seconds_ago, *, worker=False):
+        """Say the machine's own credential was last used ``seconds_ago`` seconds before the fixture clock."""
+        at = iso(self.env.clock.now - seconds_ago)
+        key = "worker_connection_id" if worker else "machine_connection_id"
+        # There is no public setter for a credential's last use (it is stamped by authenticating); a test
+        # that needs a past value writes the column directly, here and nowhere else.
+        with self.env.db._lock:
+            self.env.db._conn.execute(
+                "UPDATE connections SET last_used_at=? WHERE id=?", (at, made[key])
+            )
+
+    def store(self):
+        return jobs.open_store(self.env.gateway, self.env.workspace)
+
+    def work(self, made):
+        """A card the machine's worker is working on (``doing``, assigned to it), as ``jobs.lease`` reads it.
+        Returns its number; a started run counts as in progress only while its card is like this."""
+        from pathlib import Path
+
+        from commonplace.boards.service import BoardService
+        from commonplace.extensions import ToolContext
+        from mempalace.sqlite_crypto import connect
+
+        service = BoardService(ToolContext(principal=self.env.principal, gateway=self.env.gateway))
+        number = service.task_add("A card being worked on", board="compute")["number"]
+        worker = self.env.db.connection(made["worker_connection_id"], self.env.workspace)["name"]
+        conn = connect(
+            str(Path(self.env.gateway.workspace_dir(self.env.workspace)) / "boards.sqlite3")
+        )
+        try:
+            conn.execute(
+                "UPDATE tasks SET status='doing',assignee=? WHERE id=?", ("conn:" + worker, number)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return number
+
+    def move_out_of_doing(self, number, status="todo"):
+        """The card leaves Doing (a person moves it): this is what frees the machine's place for a finished run."""
+        from pathlib import Path
+
+        from mempalace.sqlite_crypto import connect
+
+        conn = connect(
+            str(Path(self.env.gateway.workspace_dir(self.env.workspace)) / "boards.sqlite3")
+        )
+        try:
+            conn.execute("UPDATE tasks SET status=?,assignee=NULL WHERE id=?", (status, number))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def disable(self, made):
+        """The owner turned the runner off (the machine is still enrolled; it just starts nothing)."""
+        with self.env.db._lock:
+            self.env.db._conn.execute(
+                "UPDATE runner_machines SET enabled=0 WHERE id=?", (made["machine_id"],)
+            )
+
+    def guided(self, made, state, accepted=False):
+        """The machine as the setup guide leaves it before the owner approves it: its code was exchanged (so it is switched
+        off until approved) and the pairing is ``connected``, ``failed`` or ``stalled`` (nothing more came for 15 minutes)."""
+        from datetime import timedelta
+
+        from commonplace.compute import pairing
+        from commonplace.runner import enrollment
+
+        enrollment.ensure(self.env.db)
+        pairing.ensure(self.env.db)
+        now = control_db._now()
+        consumed = now - timedelta(minutes=20 if state == "stalled" else 1)
+        stamp, eid, pid = (
+            control_db._iso(now),
+            "enr_" + made["machine_id"],
+            "pair_" + made["machine_id"],
+        )
+        steps = {
+            "connected": [("prerequisites", "ok", None)],
+            "stalled": [("prerequisites", "ok", None)],
+            "failed": [("prerequisites", "ok", None), ("service", "failed", "service_failed")],
+        }[state]
+        with self.env.db._lock:
+            conn = self.env.db._conn
+            conn.execute(
+                "INSERT INTO runner_enrollments(id, workspace_id, machine_label, expires_at, consumed_at, owner_id, "
+                "request_id, manifest_digest, settings_version, intent, machine_id, created_at) VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    eid,
+                    self.env.workspace,
+                    made["machine_id"],
+                    stamp,
+                    control_db._iso(consumed),
+                    "owner",
+                    "req-" + eid,
+                    "a" * 64,
+                    1,
+                    "{}",
+                    made["machine_id"],
+                    stamp,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO machine_pairings(id, workspace_id, kind, label, owner_id, request_id, request_hash, "
+                "enrollment_id, version, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    pid,
+                    self.env.workspace,
+                    "runner",
+                    made["machine_id"],
+                    "owner",
+                    "req-" + pid,
+                    "h",
+                    eid,
+                    1,
+                    stamp,
+                    stamp,
+                ),
+            )
+            for step, outcome, cause in steps:
+                conn.execute(
+                    "INSERT INTO machine_pairing_steps(pairing_id, step, state, cause, reported_at) VALUES (?,?,?,?,?)",
+                    (pid, step, outcome, cause, control_db._iso(consumed)),
+                )
+            if accepted:
+                conn.execute(
+                    "UPDATE machine_pairings SET accepted_by='owner', accepted_at=? WHERE id=?",
+                    (stamp, pid),
+                )
+            conn.execute(
+                "UPDATE runner_machines SET enabled=? WHERE id=?",
+                (1 if accepted else 0, made["machine_id"]),
+            )
+
+    def end(self, job_id, *, minutes_ago=0):
+        """The machine reported the run's end: the run ledger learns of it (the job row stays ``started``)."""
+        at = iso(self.env.clock.now - minutes_ago * 60)
+        with self.store().transaction() as conn:
+            row = conn.execute("SELECT * FROM runner_jobs WHERE id=?", (job_id,)).fetchone()
+            from commonplace.runner import ledger
+
+            ledger.sync(conn, row)
+            conn.execute(
+                "UPDATE run_ledger SET status='completed',ended_at=? WHERE job_id=?", (at, job_id)
+            )
+
+    def job(self, made, state="started", *, minutes_ago=1, project="demo", task=1, **columns):
+        """One run row for the machine, ``minutes_ago`` old."""
+        at = iso(self.env.clock.now - minutes_ago * 60)
+        values = {
+            "id": f"job_{task}_{state}",
+            "task_number": task,
+            "board_slug": "compute",
+            "machine_id": made["machine_id"],
+            "project": project,
+            "topic": "worker",
+            "grant_version": 1,
+            "runtime_mode": "approval-required",
+            "requested_by": "user:synthetic",
+            "state": state,
+            "created_at": at,
+            "updated_at": at,
+            "starting_at": at if state != "queued" else None,
+            "started_at": at if state == "started" else None,
+            **columns,
+        }
+        with self.store().transaction() as conn:
+            conn.execute(
+                "INSERT INTO runner_jobs ("
+                + ",".join(values)
+                + ") VALUES ("
+                + ",".join("?" for _ in values)
+                + ")",
+                tuple(values.values()),
+            )
+        return values["id"]
+
+    def resources(self, made, *, seconds_ago=30, memory_mb=6144, cpu_free=3.5):
+        from commonplace.runner import capacity
+
+        with self.store().transaction() as conn:
+            conn.execute(capacity.SCHEMA)
+            conn.execute(
+                "INSERT OR REPLACE INTO runner_resources VALUES (?,?,?)",
+                (
+                    made["machine_id"],
+                    iso(self.env.clock.now - seconds_ago),
+                    json.dumps(
+                        {
+                            "memory_available_mb": memory_mb,
+                            "cpu_free": cpu_free,
+                            "memory_floor_mb": 1024,
+                        }
+                    ),
+                ),
+            )
+
+    def spend(
+        self,
+        made,
+        *,
+        micros=1_500_000,
+        currency="USD",
+        job="spend_1",
+        minutes_ago=60,
+        unknown=False,
+    ):
+        """One finished run in the ledger with a cost event (or an unknown cost)."""
+        from commonplace.runner import costs
+
+        at = iso(self.env.clock.now - minutes_ago * 60)
+        with self.store().transaction() as conn:
+            conn.execute(
+                "INSERT INTO run_ledger(job_id,task_number,board_slug,project,topic,machine_id,requested_by,"
+                "status,started_at,ended_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    job,
+                    9,
+                    "compute",
+                    "demo",
+                    "worker",
+                    made["machine_id"],
+                    "user:synthetic",
+                    "completed",
+                    at,
+                    at,
+                    at,
+                    at,
+                ),
+            )
+            costs.record(
+                conn,
+                job,
+                now=at,
+                **({"unknown": True} if unknown else {"cost_micros": micros, "currency": currency}),
+            )
+
+
+def revoke_machine(env, made):
+    registry.revoke(env.db, env.principal, made["machine_id"])
+
+
+def after(env, seconds):
+    env.clock.now += seconds
+
+
+def parse_time(text):
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+__all__ = [
+    "ADDRESS",
+    "FakeExecutor",
+    "Fleet",
+    "after",
+    "iso",
+    "revoke_machine",
+    "workspace_body",
+]

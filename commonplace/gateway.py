@@ -57,7 +57,15 @@ from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .bounded_map import BoundedMap
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
-from .policy import PIPELINE_SCOPE, TOOL_RULES, Policy, canonical_wing, is_private_wing
+from .policy import (
+    FEED_SCOPES,
+    PIPELINE_SCOPE,
+    PR_REVIEW_SCOPE,
+    TOOL_RULES,
+    Policy,
+    canonical_wing,
+    is_private_wing,
+)
 from .vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
 from .workers import (
     DEFAULT_REQUEST_WAIT_S,
@@ -87,6 +95,17 @@ MAX_FANOUT_WINGS = 64
 MAX_SEARCH_CANDIDATES = 100
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
+# A feeder token's one scope maps to the routes it may call and the refusal it gets elsewhere.
+_FEED_ROUTES = {
+    PIPELINE_SCOPE: (
+        {("POST", "/api/pipeline/events")},
+        "this connection can only record pipeline events",
+    ),
+    PR_REVIEW_SCOPE: (
+        {("POST", "/api/pr-review/comments"), ("GET", "/api/pr-review/watch")},
+        "this connection can only post review comments and read the watch list",
+    ),
+}
 
 
 def _public_worker_response(response, raw_reason=False):
@@ -463,7 +482,9 @@ class WorkerClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {worker.token}",
             "Host": worker.host_header,
-            provenance.IDENTITY_HEADER: provenance.encode_identity(principal.identity()),
+            provenance.IDENTITY_HEADER: provenance.encode_identity(
+                provenance.request_identity(principal.identity())
+            ),
         }
         budget = current_wait()
         if budget is not None:
@@ -2244,9 +2265,12 @@ def _public_route(method: str, path: str) -> bool:
     if path.startswith("/api/bridge/in/"):
         return True  # chat-platform intake: the platform's signature is the credential
     if method == "GET":
-        return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
-            ("/app/", "/s/", "/.well-known/", "/skills/decks/")
-        )
+        return path in (
+            "/app",
+            "/app/login",
+            "/oauth/authorize",
+            "/machine-setup.sh",
+        ) or path.startswith(("/app/", "/s/", "/.well-known/", "/skills/decks/", "/p/"))
     return method == "POST" and (
         path.startswith("/app/auth/")
         or path
@@ -2256,6 +2280,7 @@ def _public_route(method: str, path: str) -> bool:
             "/oauth/revoke",
             "/api/runner-enrollment/exchange",
             "/api/runner-enrollment/recover",
+            "/api/runner-pairing/check",
         )
     )
 
@@ -2299,6 +2324,8 @@ def _rest_tool(method, path):
         return "needs_me"
     if parts == ["api", "costs"] and method == "GET":
         return "costs_summary"
+    if parts == ["api", "me", "model-mode"] and method == "GET":
+        return "model_mode"
     if parts == ["api", "topology"] and method == "GET":
         return "topology_get"
     if parts == ["api", "topology", "route"] and method == "GET":
@@ -2315,10 +2342,7 @@ def _rest_tool(method, path):
                 "approve": "task_approve",
             }.get(parts[3])
     if parts[:2] == ["api", "memory"]:
-        if len(parts) == 2 and method == "POST":
-            return "memory_save"
-        if len(parts) == 3 and method == "GET":
-            return "memory_search" if parts[2] in ("search", "map") else "memory_get"
+        return _memory_rest_tool(method, parts)
     if parts[:2] == ["api", "webhooks"]:
         if len(parts) == 2:
             return {"GET": "webhook_list", "POST": "webhook_add"}.get(method)
@@ -2329,6 +2353,16 @@ def _rest_tool(method, path):
                 return "webhook_list"
             if method == "POST" and parts[3] == "test":
                 return "webhook_test"
+    return None
+
+
+def _memory_rest_tool(method, parts):
+    if len(parts) == 4 and parts[3] == "delete" and method == "POST":
+        return "mempalace_delete_drawer"
+    if len(parts) == 2 and method == "POST":
+        return "memory_save"
+    if len(parts) == 3 and method == "GET":
+        return "memory_search" if parts[2] in ("search", "map") else "memory_get"
     return None
 
 
@@ -2800,6 +2834,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
         topup = False
+        asset = self.command == "GET" and ratelimit.app_asset(path)
+        if asset:
+            # Public files share a generous per-IP ceiling, never the session/API budget.
+            policies.append((ratelimit.STATIC_ASSETS, ip))
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
@@ -2808,7 +2846,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
             policies.append((ratelimit.CREDENTIALS, ip))
-        if principal is not None:
+        if principal is not None and not asset:
             if principal.person:
                 session = sessions.cookie_value(self.headers.get("Cookie")) or ""
                 identity = "session:" + hashlib.sha256(session.encode()).hexdigest()
@@ -2828,7 +2866,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         # Short links replace the anonymous policy with their own budget.
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
-        elif principal is None:
+        elif principal is None and not asset:
             # Only shell reads use this budget. Credential routes keep BOTH
             # their original anonymous and sensitive limits, including GETs.
             shell = self.command == "GET" and (
@@ -2965,16 +3003,17 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         return False
 
     def _pipeline_token_refused(self, path, principal):
-        """A token whose only scope is pipeline:write records pipeline events and nothing else."""
-        if (
-            principal is None
-            or principal.person
-            or tuple(principal.policy.scopes) != (PIPELINE_SCOPE,)
-            or (self.command, path) == ("POST", "/api/pipeline/events")
-        ):
+        """A feeder token (one feed scope, nothing else) reaches its own routes and no others."""
+        if principal is None or principal.person:
+            return False
+        scopes = tuple(principal.policy.scopes)
+        if len(scopes) != 1 or scopes[0] not in FEED_SCOPES:
+            return False
+        allowed, text = _FEED_ROUTES[scopes[0]]
+        if (self.command, path) in allowed:
             return False
         self.close_connection = True
-        self._send_json(403, {"error": "this connection can only record pipeline events"})
+        self._send_json(403, {"error": text})
         return True
 
     def _handle(self):
@@ -3129,6 +3168,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             name = request["params"]["name"]
             if "delete" in name or "remove" in name:
                 return False
+        if _rest_tool(self.command, path) == "mempalace_delete_drawer":
+            return False  # Deleting a note can reduce an exceeded storage quota.
         gateway = self.server.gateway
         if (
             gateway.storage_meter.used(

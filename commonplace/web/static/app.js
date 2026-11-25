@@ -1,45 +1,90 @@
-import { deckPaletteItems } from './deck-home-palette.js';
-import { mountWorkspaceOrchestration } from "./projects.js";
-import { mountProjectPanel } from "./projectpanel.js";
-import { mountAgentSchedules } from "./agent-schedules.js";
-import { mountToolPolicy } from "./tool-policy.js";
+import { loadRouteStyles } from "./route-styles.js";
+import { boundedRequest } from "./request-deadline.js";
+import { waitingTotal } from "./bot-counts.js";
+
+// Controllers load only for their route or an explicitly opened panel. Failed imports can retry.
+let deckPaletteItems, mountWorkspaceOrchestration, mountProjectPanel, mountAgentSchedules, mountToolPolicy, eventItem,
+  ASKED_KEY, DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow,
+  queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML,
+  bindSwipe, SWIPE, planView, rulesView, rulesHandlers, childProgress,
+  agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret, createAdmin,
+  createRunnerBlock, createInstanceAdmin, createInviteBlock, openWorkspaces, createConsole, createBots,
+  createTopologyMap, discoveryAction, createChat, createDock, renderBoard, bindBoard,
+  cardId, cardColumn, chatTag, loadChatTimes, roveTo, drawerCopy,
+  createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview,
+  reviewerChange, addBlockers, parseBlockerNumbers, removeBlocker, lifecycleRequest, placeLifecycle,
+  createNeeds, createMemory, createPalette, mountOnboarding, createCardMenu, putMove,
+  moveNotice, conflictText;
+const routeModules = new Map();
+function loadRouteModule(name) {
+  if (!routeModules.has(name)) routeModules.set(name, (async () => {
+    switch (name) {
+      case "deck-home-palette": ({ deckPaletteItems } = await import("./deck-home-palette.js")); break;
+      case "projects": ({ mountWorkspaceOrchestration } = await import("./projects.js")); break;
+      case "projectpanel": ({ mountProjectPanel } = await import("./projectpanel.js")); break;
+      case "agent-schedules": ({ mountAgentSchedules } = await import("./agent-schedules.js")); break;
+      case "tool-policy": ({ mountToolPolicy } = await import("./tool-policy.js")); break;
+      case "decide": ({ eventItem, ASKED_KEY, COPY: DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML } = await import("./decide.js")); break;
+      case "decide-swipe": ({ bindSwipe, SWIPE } = await import("./decide-swipe.js")); break;
+      case "plan": ({ planView } = await import("./plan.js")); break;
+      case "rules": ({ rulesView, rulesHandlers } = await import("./rules.js")); break;
+      case "children": ({ childProgress } = await import("./children.js")); break;
+      case "agents": ({ agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } = await import("./agents.js")); break;
+      case "admin": ({ createAdmin } = await import("./admin.js")); break;
+      case "adminrunners": ({ createRunnerBlock } = await import("./adminrunners.js")); break;
+      case "instance-admin": ({ createInstanceAdmin } = await import("./instance-admin.js")); break;
+      case "invites": ({ createInviteBlock, openWorkspaces } = await import("./invites.js")); break;
+      case "console": ({ createConsole } = await import("./console.js")); break;
+      case "bots": ({ createBots } = await import("./bots.js")); break;
+      case "topology-map": ({ createTopologyMap } = await import("./topology-map.js")); break;
+      case "map-discovery": ({ discoveryAction } = await import("./map-discovery.js")); break;
+      case "chat": ({ createChat } = await import("./chat.js")); break;
+      case "chatdock": ({ createDock } = await import("./chatdock.js")); break;
+      case "board": ({ boardView: renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } = await import("./board.js")); break;
+      case "deck-board": ({ drawerCopy } = await import("./deck-board.js")); break;
+      case "details": ({ createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview } = await import("./details.js")); break;
+      case "card-reviewer": ({ reviewerChange } = await import("./card-reviewer.js")); break;
+      case "blockers": ({ addBlockers, parseBlockerNumbers, removeBlocker } = await import("./blockers.js")); break;
+      case "lifecycle": ({ lifecycleRequest, placeLifecycle } = await import("./lifecycle.js")); break;
+      case "needs": ({ createNeeds } = await import("./needs.js")); break;
+      case "memory": ({ createMemory } = await import("./memory.js")); break;
+      case "palette": ({ createPalette } = await import("./palette.js")); break;
+      case "onboarding": ({ mountOnboarding } = await import("./onboarding.js")); break;
+      case "cardmenu": ({ createCardMenu } = await import("./cardmenu.js")); break;
+      case "cardmove": ({ putMove, moveNotice, conflictText } = await import("./cardmove.js")); break;
+      default: throw new Error("Unknown screen module");
+    }
+  })().catch(error => { routeModules.delete(name); throw error; }));
+  return routeModules.get(name);
+}
+async function prepareRoute(hash, behind = "#/") {
+  const page = hash.startsWith("#/card/") ? behind : hash;
+  const names = [];
+  if (/^#\/(board|space|chat)(?:\/|$)/.test(page)) names.push("board", "children", "projectpanel", "chatdock", "cardmove");
+  if (page.startsWith("#/space/")) names.push("decide");
+  if (page.startsWith("#/memory")) names.push("memory", "board", "chatdock");
+  if (page === "#/needs" || (page === "#/" && !state.deck?.on())) names.push("needs", "details", "board", "children", "chatdock", "cardmove");
+  if (page.startsWith("#/decide")) names.push("decide", "decide-swipe");
+  if (page === "#/settings") names.push("projects", "agent-schedules", "tool-policy", "plan", "agents");
+  if (page === "#/rules") names.push("rules");
+  if (page === "#/admin") names.push("admin", "adminrunners", "invites");
+  if (page === "#/instance-admin") names.push("instance-admin");
+  if (page.startsWith("#/console")) names.push("console");
+  if (page.startsWith("#/bots") && !state.deck?.owns(page)) names.push("bots");
+  if (page === "#/compute-map") names.push("topology-map", "map-discovery");
+  if (hash.startsWith("#/card/")) names.push("details", "board", "children", "deck-board", "card-reviewer", "blockers", "lifecycle", "decide");
+  await Promise.all([loadRouteStyles(hash), loadRouteStyles(page), ...[...new Set(names)].map(loadRouteModule)]);
+  if (page === "#/rules" && !rulesUI) rulesUI = rulesHandlers(root, api, refresh, showError);
+}
 import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { needItems } from "./home.js";
-import { eventItem, ASKED_KEY, COPY as DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML } from "./decide.js";
-import { bindSwipe, SWIPE } from "./decide-swipe.js";
-import { planView } from "./plan.js";
-import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
-import { childProgress } from "./children.js";
-import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
-import { createAdmin, boundedRequest } from "./admin.js";
-import { createRunnerBlock } from "./adminrunners.js";
-import { createInstanceAdmin } from "./instance-admin.js";
-import { createInviteBlock, openWorkspaces } from "./invites.js";
-import { createConsole } from "./console.js";
-import { createBots, waitingTotal } from "./bots.js";
-import { createTopologyMap } from "./topology-map.js";
-import { discoveryAction } from "./map-discovery.js";
-import { createChat } from "./chat.js";
-import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
-import { boardView as renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } from "./board.js";
-import { drawerCopy } from "./deck-board.js";
-import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview } from "./details.js";
-import { reviewerChange } from "./card-reviewer.js";
-import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
-import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
 import { boardRoute, resolveRoute } from "./routes.js";
 import { showLoading } from "./loading.js";
-import { createNeeds } from "./needs.js";
-import { createMemory } from "./memory.js";
-import { createPalette } from "./palette.js";
-import { mountOnboarding } from "./onboarding.js";
-import { createCardMenu } from "./cardmenu.js";
-import { putMove, moveNotice, conflictText } from "./cardmove.js";
 import { applyDeck, createDeck } from "./deck.js";
 import { createNeedLedger } from "./deck-home-today.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
@@ -87,7 +132,7 @@ const state = {
 // The Deck look (the default; classic is the explicit opt-out): its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => shellMenu(), singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => { void shellMenu().catch(error => showError(error.message)); }, singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;
@@ -109,7 +154,7 @@ const options = (items, selected) => items.map((s) => `<option value="${e(s)}" $
 let speechState = { active: false, text: "" };
 const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
 const voice = voiceInput(root, api, showError);
-const rulesUI = rulesHandlers(root, api, refresh, showError);
+let rulesUI = null;
 function speechView() {
   const button = root.querySelector('[data-action="speak-digest"]');
   if (button) {
@@ -190,10 +235,15 @@ function callTree(card) {
   return `<section class="cs" aria-label="Call tree"><div class="cs-head">${head}</div><div class="cs-body"><ul class="cs-tree">${(stack.roots || []).map((n, i) => node(n, String(i), "")).join("")}${cut}${rest}</ul></div></section>`;
 }
 
-// Stable selectors survive a re-render, so focus can return to the same control.
+// Stable selectors survive a re-render, so focus can return to the same control. The Previews
+// section's keys are listed here too (kept equal to FOCUS_KEYS in cardpreviews.js by a test), so
+// this shell does not load that module before a card is opened.
+const PREVIEW_FOCUS_KEYS = ["data-preview-open", "data-preview-stop", "data-preview-reopen", "data-preview-retry", "data-preview-delete", "data-preview-delete-confirm", "data-preview-delete-cancel", "data-preview-field", "data-preview-rule-summary", "data-preview-rule-save", "data-preview-heading"];
+// The same for the Review comments section (kept equal to FOCUS_KEYS in cardreviews.js by a test).
+const REVIEW_FOCUS_KEYS = ["data-review-heading", "data-review-retry", "data-review-answer", "data-review-more", "data-review-original", "data-review-expand", "data-review-settings"];
 function focusKey(el) {
   if (el.id) return `#${CSS.escape(el.id)}`;
-  for (const name of ["data-action", "data-details-tab", "data-details-title"]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
+  for (const name of ["data-action", "data-details-tab", "data-details-title", ...PREVIEW_FOCUS_KEYS, ...REVIEW_FOCUS_KEYS]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
   return null;
 }
 function remember() {
@@ -257,6 +307,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
+  state.boardCache?.clear();
   state.deck?.appearance?.stop();
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
@@ -287,6 +338,7 @@ function currentBoard() {
 }
 function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
 function closeCardPanel() {
+  if (/^#\/board\/[^/?]+\/settings$/.test(state.route)) { location.hash = state.base; return; }
   if (state.deck?.on() && phone() && history.state?.deckProjectSettings) { history.back(); return; }
   detailsUI?.stop(); detailsUI = null;
   if (state.route.startsWith("#/card/")) location.hash = state.base;
@@ -314,8 +366,12 @@ function paletteUI() {
   }
   return state.palette.ui;
 }
-function shortcutsView() { paletteUI().shortcuts(); }
-function shellMenu() {
+async function shortcutsView() {
+  try { await loadRouteModule("palette"); paletteUI().shortcuts(); } catch (error) { showError(error.message); }
+}
+async function shellMenu() {
+  try { await Promise.all(["palette", "deck-home-palette"].map(loadRouteModule)); }
+  catch (error) { showError(error.message); return; }
   const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
   const deck = document.documentElement.dataset.ui === "deck", roster = state.deckRoster;
   const bots = roster?.workspace === state.me?.workspace && roster?.actor === state.me?.actor ? roster.bots : [];
@@ -323,13 +379,14 @@ function shellMenu() {
 }
 async function paletteCommand(item) {
   const action = item.action;
+  if (action === "new-card") await Promise.all(["details", "blockers", "card-reviewer", "lifecycle"].map(loadRouteModule));
   if (action === "new-card") newCardForm();
   else if (action === "open-chat") {
     const slug = item.board || currentBoard()?.slug, target = slug && `#/board/${enc(slug)}/chat`;
     if (target && location.hash === target) void state.workbenchChat?.dock.open(); else if (target) location.hash = target;
-  } else if (action === "new-board") openOnboarding();
+  } else if (action === "new-board") await openOnboarding();
   else if (action === "coordinator" || action === "logout") shellAction(action, item.board);
-  else if (action === "workspaces") openWorkspaces({ api, e, onError: showError });
+  else if (action === "workspaces") { await loadRouteModule("invites"); openWorkspaces({ api, e, onError: showError }); }
   else if (action === "move-card" || action === "edit-card") { state.selected = item.number; openSelectedCard(action); }
   else if (action === "copy-card-link") {
     try { await navigator.clipboard.writeText(new URL(`${location.pathname}${item.href}`, location.origin).href); }
@@ -343,7 +400,8 @@ function shellAction(action, board) {
   if (board) button.dataset.board = board;
   root.append(button); button.click(); button.remove();
 }
-function openOnboarding() {
+async function openOnboarding() {
+  try { await loadRouteModule("onboarding"); } catch (error) { showError(error.message); return; }
   root.querySelector("#shell-dialog")?.close();
   if (state.onboarding) return;
   state.onboarding = mountOnboarding(document.body, { api, first: !state.boards.length,
@@ -413,7 +471,7 @@ function navigation() {
   if (!boardNav) return;
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base === "#/compute-map" ? "map" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : /^#\/compute(\/management)?$/.test(state.base) ? "compute" : state.base === "#/compute-map" ? "map" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
@@ -428,7 +486,10 @@ function navigation() {
   // shell() draws this before route() sets state.base, so until the first route the stage reads the address: its first paint is final.
   const hash = globalThis.location?.hash || "#/";
   state.deck?.appearance?.sync(state.screen === 0 ? (hash === "#/" ? state.deck.home() : hash) : state.base);
-  void state.deck?.shell?.sync();
+  if (typeof requestAnimationFrame === "function") {
+    const viewer = state.me;
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (viewer === state.me) void state.deck?.shell?.sync({ cached: true }); }));
+  } else void state.deck?.shell?.sync({ cached: true });
   state.shellSync?.();
 }
 function showError(text, { drawer = false } = {}) {
@@ -542,6 +603,8 @@ function boardView() {
   // The redrawn header gets the chat control back without waiting for the next refresh.
   if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
+  state.boardCache ||= new Map();
+  const cached = state.boardCache.get(board.slug) || {};
   // Keep the active phone column and a parked-card disclosure through polling.
   const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
   state.boardColumn = null;
@@ -551,10 +614,42 @@ function boardView() {
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column });
+  const options = { board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column };
+  // Counts/readiness do not change card markup. Retain the mounted tree on a
+  // revisit and skip identical polls; changed cards keep their unchanged peers.
+  const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], fromBar });
+  const mounted = content.querySelector(".workbench-board");
+  if ((!state.restoringBoard && signature !== cached.signature) || !mounted) {
+    const html = fromBar + renderBoard(options);
+    if (mounted && content.ownerDocument) {
+      const template = content.ownerDocument.createElement("template"); template.innerHTML = html;
+      const next = template.content.querySelector(".workbench-board");
+      const oldRows = new Map([...mounted.querySelectorAll(".card[data-card]")].map(row => [row.dataset.card, row]));
+      const byNumber = new Map(cards.map(card => [String(card.number), JSON.stringify(card)]));
+      next.querySelectorAll(".card[data-card]").forEach(row => {
+        const old = oldRows.get(row.dataset.card);
+        if (!old) return;
+        if (cached.cardSignatures?.get(row.dataset.card) !== byNumber.get(row.dataset.card) || cached.presentation !== JSON.stringify([options.bots, options.filter, options.sheet])) {
+          old.replaceChildren(...row.childNodes);
+          for (const attribute of [...old.attributes]) if (!row.hasAttribute(attribute.name)) old.removeAttribute(attribute.name);
+          for (const attribute of row.attributes) old.setAttribute(attribute.name, attribute.value);
+        }
+        row.replaceWith(old);
+      });
+      mounted.replaceChildren(...next.childNodes);
+      for (const attribute of [...mounted.attributes]) if (!next.hasAttribute(attribute.name)) mounted.removeAttribute(attribute.name);
+      for (const attribute of next.attributes) mounted.setAttribute(attribute.name, attribute.value);
+      content.replaceChildren(...template.content.childNodes);
+      content.querySelector(".workbench-board").replaceWith(mounted);
+    } else content.innerHTML = html;
+    cached.signature = signature;
+    cached.cardSignatures = new Map(cards.map(card => [String(card.number), JSON.stringify(card)]));
+    cached.presentation = JSON.stringify([options.bots, options.filter, options.sheet]);
+  }
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
+    if (top.querySelector('[data-action="card-menu"]')) return;
     const id = top.querySelector(".cid")?.textContent || cardId(board, Number(top.closest("[data-card]").dataset.card));
     top.insertAdjacentHTML("beforeend", `<button type="button" class="iconbtn card-more" id="more-${e(id)}" data-action="card-menu" data-card="${e(top.closest("[data-card]").dataset.card)}" aria-label="${state.deck?.on() ? "Move to…" : `Actions for ${e(id)}: move, edit`}">${state.deck?.on() ? "Move to…" : '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg>'}</button>`);
   });
@@ -567,8 +662,18 @@ function boardView() {
   });
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
-  void fillChatTimes(board);
-  void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
+  cached.nodes = [...(content.childNodes || [])];
+  state.boardCache.set(board.slug, cached);
+  // At most four mounted boards, scoped to this signed-in shell; list data is
+  // always revalidated when revisited and mutations retain server versions.
+  if (state.boardCache.size > 4) state.boardCache.delete(state.boardCache.keys().next().value);
+  const extras = () => {
+    if (currentBoard()?.slug !== board.slug) return;
+    void fillChatTimes(board);
+    void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(extras));
+  else extras();
 }
 // The form closes and the new card shows at once, selected, in the column it landed in: the read behind the card route can take seconds.
 function cardAdded(card) {
@@ -709,7 +814,7 @@ function spaceView() {
 }
 function boardsView() {
   title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
@@ -720,7 +825,12 @@ function releaseControl(card) {
 // Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
 const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
-const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal");
+// The owner's stop-rule form counts while it has focus or unsaved text: a background refresh then leaves the panel alone.
+const ruleFormInUse = () => {
+  const form = root.querySelector("#card-panel [data-preview-rule-form]");
+  return form && (form.contains(document.activeElement) || [...form.querySelectorAll("input")].some((input) => input.value !== input.defaultValue)) ? form : null;
+};
+const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal") || ruleFormInUse();
 async function cardPanel(number, epoch, { keepForm = false } = {}) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
@@ -744,7 +854,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (rebase) { state.base = `#/board/${enc(card.board)}`; void refresh(); }
     const saved = remember();
     // A refresh of the open card reuses the component, so focus stays where the user left it.
-    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
+    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle, onChanged: () => { void refresh(); } }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
     const queued = Object.values(state.needs || {}).flatMap(items => Array.isArray(items) ? items : []).find(item => item.number === card.number && item.version === card.version);
     const shown = detailsUI.show({ ...card, actions: card.actions || queued?.actions }, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people, deck: state.deck?.on() === true, canRemove: state.me.can_admin === true, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
@@ -827,7 +937,7 @@ async function openProjectSettings(action, b, { mountProject, settingsOptions })
   needs?.pause(true);
   panel.hidden = false;
   panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
-  if (state.deck?.on() && phone() && !history.state?.deckProjectSettings) {
+  if (state.deck?.on() && phone() && !state.route.endsWith("/settings") && !history.state?.deckProjectSettings) {
     history.pushState({ ...history.state, deckProjectSettings: true }, "", location.hash);
   }
   await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
@@ -904,22 +1014,47 @@ async function phonePushAction(action) {
 }
 async function settingsView(epoch) {
   title("Settings");
-  const content = root.querySelector("#content");
-  if (!content.querySelector(".settings")) content.innerHTML = message("Loading settings…");
-  const [connections, hooks, plan, phonePush, chatSettings, orchestration] = await Promise.allSettled(["/api/connections", "/api/webhooks", "/api/plan", "/api/phone-push", "/api/chat-settings", "/api/settings/orchestration"].map((path) => api(path, { timeoutMs: 10000 })));
-  if (epoch !== state.screen) return;
+  const content = root.querySelector("#content"), request = (state.settingsRequest || 0) + 1;
+  state.settingsRequest = request;
+  const viewer = state.me;
+  const current = () => state.me === viewer && epoch === state.screen && request === state.settingsRequest;
+  const sections = {
+    plan: { path: "/api/plan", name: "Plan", view: planView },
+    orchestration: { path: "/api/settings/orchestration", name: "Coworker management", view: () => '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
+    chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
+    connections: { path: "/api/connections", name: "Agents", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
+    phone: { path: "/api/phone-push", name: "Phone notifications", view: phonePushView, ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },
+    hooks: { path: "/api/webhooks", name: "Webhooks", view: (value) => `<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${(value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks")}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section>` },
+  };
   const saved = remember();
-  const failed = (name, result) => message(`Could not load ${name}: ${result.reason?.message || "Request failed"}`, true);
-  state.phonePushPending = phonePush.status === "fulfilled" && phonePush.value.test?.status === "pending";
-  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : failed("Plan", plan)}${orchestration.status === "fulfilled" ? '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>' : failed("Coworker management", orchestration)}${voice.settings()}${chatSettings.status === "fulfilled" ? `<section class="settings-section"><h2>Chat</h2><p>${e(chatSettings.value.front.enabled && chatSettings.value.front.provider !== "none" ? `Answers by ${chatSettings.value.front.provider}/${chatSettings.value.front.model}` : chatSettings.value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(chatSettings.value.usage.used_today)} · Yours: ${e(chatSettings.value.usage.user_used_today)}</p>${chatSettings.value.usage.last_error ? `<p role="status">Last model error: ${e(chatSettings.value.usage.last_error)}</p>` : ""}</section>` : failed("Chat", chatSettings)}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${failed("Agents", connections)}</section>`}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section>${phonePush.status === "fulfilled" ? phonePushView(phonePush.value) : `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${failed("Phone notifications", phonePush)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : failed("Webhooks", hooks)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
-  if (orchestration.status === "fulfilled") mountWorkspaceOrchestration(content.querySelector("[data-workspace-orchestration]"), {api, e, enabled: orchestration.value.enabled, current: () => epoch === state.screen});
-  mountAgentSchedules(content.querySelector("[data-agent-schedules]"), {api, e, current: () => epoch === state.screen});
-  mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, presentation: state.deck?.policyPresentation(), current: () => epoch === state.screen});
+  content.innerHTML = `<div class="settings">${Object.entries(sections).map(([key, section]) => `<section class="settings-section" data-settings-part="${key}"><h2>${section.name}</h2>${message("Still loading…")}</section>`).join("")}${voice.settings()}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section><section class="settings-section" id="capabilities-status"><h2>Capabilities and status</h2><p>The skills this workspace has, chat bridge and meeting status, and what agent runs cost. Read-only.</p><a class="blockbtn" href="/app/status.html">Open capabilities and status</a></section><section class="settings-section" id="budgets-link"><h2>Spend and budgets</h2><p>What agent runs cost per workspace, agent and project, and the limits on it. Only the workspace owner sets budgets.</p><a class="blockbtn" href="/app/budgets.html">Open spend and budgets</a></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
+  mountAgentSchedules(content.querySelector("[data-agent-schedules]"), { api, e, current });
+  mountToolPolicy(content.querySelector("[data-tool-policy]"), { api, e, presentation: state.deck?.policyPresentation(), current });
   state.deck?.settings(content);
-  restore(saved);
-  void state.voiceReady?.then(() => {
-    if (epoch === state.screen && state.base === "#/settings" && state.deck?.on()) state.deck?.settings(content);
-  });
+  // Each section owns its placeholder. A late answer cannot recreate another
+  // section's form or erase a draft entered while an optional read was loading.
+  await Promise.all(Object.entries(sections).map(async ([key, section]) => {
+    try {
+      const value = await api(section.path, { timeoutMs: 3000 });
+      if (!current()) return;
+      const host = content.querySelector(`[data-settings-part="${key}"]`);
+      if (!host) return;
+      const template = document.createElement("template");
+      template.innerHTML = section.view(value);
+      const node = template.content.firstElementChild;
+      if (node) {
+        node.dataset.settingsPart = key;
+        host.replaceWith(node);
+        section.ready?.(value, node);
+      } else host.hidden = true;
+    } catch (error) {
+      if (!current()) return;
+      const host = content.querySelector(`[data-settings-part="${key}"]`);
+      if (host) host.innerHTML = `<section class="settings-section"><h2>${section.name}</h2>${message(`Could not load ${section.name}: ${error.message}`, true)}</section>`;
+    }
+    if (current()) { state.deck?.settings(content); restore(saved); }
+  }));
+  void state.voiceReady?.then(() => { if (current() && state.base === "#/settings") state.deck?.settings(content); });
 }
 
 async function memoryView(epoch, refresh = false) {
@@ -971,7 +1106,7 @@ function mountWorkbenchChat() {
       }
       return result;
     };
-    chatUI ??= createChat({ mount: () => root.querySelector("#chat-content"), api: paneApi, e, me: state.me,
+    const chatOptions = { mount: () => root.querySelector("#chat-content"), api: paneApi, e, me: state.me,
       onState() {
         const heading = root.querySelector("#chat-content #chat-h"), view = root.querySelector("#chat-content .chat-view");
         if (heading && view) { heading.id = "chat-content-h"; view.setAttribute("aria-labelledby", heading.id); }
@@ -990,8 +1125,27 @@ function mountWorkbenchChat() {
         state.chatDetail = { number, row };
         location.hash = `#/card/${number}`;
       },
-    });
-    const dock = createDock({ root: layout, api, e, chat: chatUI });
+    };
+    let chatLoading = null, stopped = false, headerListener = null, chatOpen = false;
+    const chat = () => chatLoading ||= loadRouteModule("chat").then(() => {
+      if (stopped || disposed) return null;
+      if (!chatUI) {
+        chatUI = createChat(chatOptions);
+        chatUI.setOpen?.(chatOpen);
+        if (headerListener) chatUI.watchHeader?.(headerListener);
+      }
+      return chatUI;
+    }).catch(error => { chatLoading = null; throw error; });
+    const lazyChat = {
+      async show(...args) { const ui = await chat(); return ui?.show(...args); },
+      stop() { stopped = true; if (!chatUI) chatLoading = null; chatUI?.stop(); },
+      setOpen(value) { chatOpen = value; if (value) stopped = false; chatUI?.setOpen?.(value); },
+      setQuote(value) { chatUI?.setQuote?.(value); },
+      focusComposer() { chatUI?.focusComposer?.(); },
+      watchHeader(handler) { headerListener = handler; chatUI?.watchHeader?.(handler); },
+      reopened() { chatUI?.reopened?.(); },
+    };
+    const dock = createDock({ root: layout, api, e, chat: lazyChat });
     function schedule() {
       clearTimeout(timer);
       if (!disposed && !document.hidden) timer = setTimeout(pollUnread, 15000);
@@ -1069,7 +1223,7 @@ function mountWorkbenchChat() {
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
         const mount = root.querySelector("#phone-tabs");
-        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
+        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : /^#\/compute(\/management)?$/.test(state.base) ? "compute" : "", botsWaiting: state.botsWaiting });
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
@@ -1151,29 +1305,63 @@ function consoleScreen() {
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
   if (["#/admin", "#/instance-admin"].includes(state.route)) return;
-  const epoch = state.screen, request = ++state.refreshRequest;
+  const epoch = state.screen, request = ++state.refreshRequest, viewer = state.me;
   if (!background) state.renderPending = epoch;
-  const current = () => epoch === state.screen && request === state.refreshRequest;
-  const read = (path, options = {}) => api(path, { ...options, ...(state.base === "#/settings" ? { timeoutMs: 10000 } : {}) }).catch((error) => {
+  const current = () => state.me === viewer && epoch === state.screen && request === state.refreshRequest;
+  const read = (path, options = {}) => api(path, options).catch((error) => {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
+  // Browser frames must get a turn before optional reads compete with main data.
+  // Non-browser harnesses keep their virtual-clock behavior.
+  const afterPaint = (work) => typeof requestAnimationFrame === "function"
+    ? new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))).then(() => current() ? work() : null)
+    : Promise.resolve().then(work);
   try {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
     // The owner queue is not a prerequisite for a member's workspace screens.
-    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
-    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
+    const needsPage = ["#/needs", "#/decide"].includes(state.base) || (state.base === "#/" && !state.deck?.on());
+    // Only bootstrap metadata has a short budget; actual queue/rule content
+    // and subsequent card, list and memory reads retain their existing budgets.
+    let paintDone;
+    const painted = typeof requestAnimationFrame === "function" ? new Promise(resolve => { paintDone = resolve; }) : Promise.resolve();
+    const optionalRead = (path, options) => typeof requestAnimationFrame === "function"
+      ? painted.then(() => afterPaint(() => read(path, options))) : read(path, options);
+    const ownerNeeds = state.me.can_admin === true ? (needsPage ? read("/api/needs-me", { optional: true }) : optionalRead("/api/needs-me", { optional: true, timeoutMs: 3000 })) : Promise.resolve(null);
+    const ruleRead = state.base === "#/rules" ? read("/api/rules") : optionalRead("/api/rules/count", { timeoutMs: 3000 });
+    const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : optionalRead("/api/bots", { timeoutMs: 3000 });
+    // Badges are optional, not prerequisites of Settings, Memory, a project or a card.
+    // Keep the last value during revalidation and guard late arrivals by screen/request.
+    void ownerNeeds.then((needs) => {
+      if (!current()) return;
+      state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me); navigation();
+    }).catch(() => {});
+    void ruleRead.then((rules) => { if (current() && rules) { state.rulesWaiting = rules.waiting; navigation(); } }).catch(() => {});
+    void rosterRead.then((roster) => {
+      if (current() && roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); navigation(); }
+    }).catch(() => {});
+    const cardRead = /^#\/(board|space)\//.test(state.base)
+      ? read(`/api/boards/${enc(decodeURIComponent(state.base.split("/")[2]))}/cards`) : null;
+    const [boards, needs, rules, cardData] = await Promise.all([
+      read("/api/boards?view=shell", { timeoutMs: 3000 }),
+      needsPage ? ownerNeeds : null,
+      state.base === "#/rules" ? ruleRead : null, cardRead,
+    ]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
-    if (roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); }
+    state.boards = boards.boards;
+    if (needsPage || state.me.can_admin !== true) state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
-      const result = await api(`/api/boards/${enc(slug)}/cards`);
+      const result = cardData;
       if (!current()) return;
       state.cards = result.cards;
       state.children = result.children || [];
       state.linked = result.linked;
+      if (state.base.startsWith("#/board/")) {
+        state.boardCache ||= new Map();
+        state.boardCache.set(slug, { ...state.boardCache.get(slug), data: result });
+      }
       if (state.base.startsWith("#/space/")) {
         if (state.chatBoard !== slug) {
           const page = await api(`/api/boards/${enc(slug)}/chat?last=50`);
@@ -1216,7 +1404,7 @@ async function refresh({ background = false, events = [] } = {}) {
       boardView();
     } else if (state.deck?.owns(state.base)) {
       await state.deck.show(state.base, { background, epoch });
-    } else if (/^#\/bots(?:\/|$)/.test(state.base)) {
+    } else if (/^#\/bots(?:[/?]|$)/.test(state.base)) {
       if (!background) botsScreen();
     } else if (/^#\/console(?:\?|$)/.test(state.base)) {
       if (!background) consoleScreen();
@@ -1229,14 +1417,23 @@ async function refresh({ background = false, events = [] } = {}) {
       queueNoteOffline();
     } else needsView();
     if (!current()) return true;
+    paintDone?.();
     if (state.base.startsWith("#/board/") || state.base === "#/needs" || state.base.startsWith("#/memory")) {
-      mountWorkbenchChat();
+      void afterPaint(() => mountWorkbenchChat());
       if (events.some((event) => event.kind === "space_message" || event.kind === "space_replied")) void state.workbenchChat?.pollUnread();
     } else state.workbenchChat?.dispose();
     restore(saved); play();
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
     if (state.route.startsWith("#/card/") && !(background && (panelForm() || root.querySelector('form[data-form="release-origin"]')))) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
     showError("");
+    if (state.base === "#/boards" || state.base.startsWith("#/board/")) {
+      // Detailed runner/waiting summaries start after the main data has painted.
+      void afterPaint(() => read("/api/boards")).then((page) => {
+        if (!current() || !page) return;
+        state.boards = page.boards; navigation();
+        if (state.base === "#/boards") boardsView();
+      }).catch(() => {});
+    }
     return true;
   } catch (error) {
     if (!current() || !state.me) return;
@@ -1244,6 +1441,10 @@ async function refresh({ background = false, events = [] } = {}) {
     if (state.base === "#/rules") rulesUI.force = false;
     showError(error.message);
     const content = root.querySelector("#content");
+    if (state.base.startsWith("#/board/") && [401, 403, 404].includes(error.status)) {
+      state.boardCache?.delete(decodeURIComponent(state.base.split("/")[2]));
+      content.innerHTML = message(error.message, true);
+    }
     if ((state.base === "#/settings" && (!background || !content.querySelector(".settings"))) || !content.children.length) content.innerHTML = message(error.message, true);
     return false;
   }
@@ -1443,6 +1644,7 @@ async function sendDecide(effect, keepalive) {
 }
 async function route() {
   if (!state.me) return;
+  const routeRequest = state.routeRequest = (state.routeRequest || 0) + 1;
   remember();
   let hash = location.hash || "#/";
   // The Deck look has its own home; the classic one resolves "#/" to a project below.
@@ -1450,9 +1652,17 @@ async function route() {
   // A shared card link (first screen of the visit) needs a screen behind the card.
   const direct = state.screen === 0 && /^#\/card\/[1-9]\d*$/.test(hash);
   // In the Deck look "#/" is its own Home screen: the logo draws it without waiting for the project list.
-  if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || direct) {
-    const result = await api("/api/boards");
-    if (!state.me) return;
+  if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || hash === "#/board" || direct) {
+    let result;
+    try { result = await api("/api/boards?view=shell", { timeoutMs: 3000 }); }
+    catch {
+      if (state.me) {
+        state.bootRoutePending = true;
+        root.querySelector("#content").innerHTML = '<p class="message" role="status">Could not load projects. <button data-action="retry-route">Retry</button></p>';
+      }
+      return false;
+    }
+    if (!state.me || routeRequest !== state.routeRequest) return false;
     state.boards = result.boards;
   }
   let last;
@@ -1460,10 +1670,21 @@ async function route() {
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
   const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last, deck: state.deck?.owns("#/compute") === true });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
+  const projectSettings = /^#\/board\/([^/?]+)\/settings$/.exec(hash);
+  const pageHash = projectSettings ? `#/board/${projectSettings[1]}` : hash;
+  try { await prepareRoute(pageHash, direct ? boardRoute({ boards: state.boards, last }) : state.base); }
+  catch (error) {
+    if (routeRequest !== state.routeRequest || !state.me) return false;
+    state.bootRoutePending = true;
+    root.querySelector("#content").innerHTML = message("Could not load this screen.", false) + '<button data-action="retry-route">Retry</button>';
+    showError(error.message);
+    return false;
+  }
+  if (routeRequest !== state.routeRequest || !state.me) return false;
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
   }
-  if (hash !== state.route) clearAgentSecret(root);
+  if (hash !== state.route) clearAgentSecret?.(root);
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
   if (!hash.startsWith("#/card/")) state.justAdded = null;
@@ -1472,6 +1693,7 @@ async function route() {
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
     state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?(?:\?new=1)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
+    if (projectSettings) state.base = pageHash;
     if (start === undefined && state.deck?.owns(hash)) state.base = hash;
     // Today and Compute exist in the Deck look only; without it they are an unknown address.
     if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
@@ -1514,10 +1736,26 @@ async function route() {
   else if (cardPanelHost.hidden) state.cardRead = null;
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
+  const cachedBoard = state.base.startsWith("#/board/") && state.boardCache?.get(decodeURIComponent(state.base.split("/")[2]));
+  if (cachedBoard?.nodes?.length && cachedBoard.data && state.base !== previousBase) {
+    root.querySelector("#content").replaceChildren(...cachedBoard.nodes);
+    state.cards = cachedBoard.data.cards; state.children = cachedBoard.data.children || []; state.linked = cachedBoard.data.linked;
+    state.restoringBoard = true;
+    try { boardView(); } finally { state.restoringBoard = false; }
+  }
   showError("");
+  if (state.bootRoutePending) { state.bootRoutePending = false; schedule(0); }
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
-  await refresh();
+  const refreshed = await refresh();
+  if (projectSettings && refreshed !== false && routeRequest === state.routeRequest && state.me) {
+    try {
+      const projects = await import("./projects.js");
+      if (routeRequest !== state.routeRequest || !state.me) return;
+      await openProjectSettings("coordinator", { dataset: { board: decodeURIComponent(projectSettings[1]) } }, projects);
+      root.querySelector("[data-project-back]")?.focus();
+    } catch (error) { showError(error.message); }
+  }
 }
 // Opening a card: the panel draws what the lists already know of it at once, and the card's own read
 // starts now, beside the project refresh instead of after it. A known card is drawn in full as soon as
@@ -1656,9 +1894,12 @@ root.addEventListener("click", async (event) => {
     return;
   }
   try {
-    if (action === "shortcuts") shortcutsView();
+    if (action === "card-menu") await Promise.all(["cardmenu", "cardmove"].map(loadRouteModule));
+    if (["new-card", "edit-card", "handoff", "remove-assignment"].includes(action)) await Promise.all(["details", "blockers", "card-reviewer", "lifecycle"].map(loadRouteModule));
+    if (action === "switch-workspace" && state.deck?.on()) await loadRouteModule("invites");
+    if (action === "shortcuts") await shortcutsView();
     else if (action === "switch-workspace" && state.deck?.on()) openWorkspaces({ api, e, onError: showError });
-    else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
+    else if (["palette", "switch-project", "switch-workspace"].includes(action)) await shellMenu(action);
     else if (action === "cancel-card") cancelCard();
     else if (action === "card-menu") {
       const card = findCard(number), board = currentBoard() || state.boards.find((item) => item.slug === card?.board);
@@ -1727,6 +1968,7 @@ root.addEventListener("click", async (event) => {
       restore(saved);
       root.querySelector(`.cs [data-path="${CSS.escape(b.dataset.path)}"]`)?.focus({ preventScroll: true });
     } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
+    else if (action === "retry-route") await route();
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
       root.querySelector("#card-panel .assignment-refusal")?.remove();
@@ -1739,6 +1981,7 @@ root.addEventListener("click", async (event) => {
       voice.stop();
       const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
     } else if (action === "coordinator" || action === "project-models") {
+      event.preventDefault?.();
       const epoch = state.screen, projects = await import("./projects.js");
       if (epoch !== state.screen) return;
       return openProjectSettings(action, b, projects);
@@ -1759,7 +2002,7 @@ root.addEventListener("click", async (event) => {
       const result = await api(request.path, { method: "POST", body: request.body });
       if (action === "carry-on") location.hash = `#/card/${result.card.number}`;
     });
-    else if (action === "new-board") openOnboarding();
+    else if (action === "new-board") await openOnboarding();
     else if (action === "logout") {
       state.needsUI?.stop(); state.needsUI = null;
       voice.stop();
@@ -1997,7 +2240,7 @@ document.addEventListener("keydown", (event) => {
 let timer = null, polling = false, retryDelay = 2000;
 function schedule(delay) { clearTimeout(timer); timer = setTimeout(poll, delay ?? (document.hidden ? 30000 : 2000)); }
 async function poll() {
-  if (polling || !state.me) { schedule(); return; }
+  if (polling || !state.me || state.bootRoutePending) { schedule(); return; }
   polling = true;
   try {
     const feed = await api(`/api/events?after=${state.seq}&epoch=${encodeURIComponent(state.eventEpoch || "")}`);
@@ -2031,7 +2274,7 @@ window.addEventListener("popstate", () => {
     root.querySelector("#card-panel").hidden = true;
   }
 });
-window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret?.(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {
@@ -2045,8 +2288,31 @@ setInterval(() => {
   });
 }, 15000);
 async function boot() {
-  try { state.me = await boundedRequest(api, "/api/me"); setPeople(state.me.people); }
-  catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
+  globalThis.commonplaceBootGuard?.started();
+  if (state.bootPending || state.me) return;
+  state.bootPending = true;
+  try {
+    // boot runs after module evaluation. Start each deadline with the request,
+    // allowing ten seconds for the first cold identity read and three on retry.
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        const me = await boundedRequest(api, "/api/me", { timeoutMs: attempt === 0 ? 10000 : 3000 });
+        if (!me) throw new Error("Identity unavailable");
+        setPeople(me.people); state.me = me;
+        break;
+      } catch (error) {
+        if (error.status === 401) { state.error = ""; await signin(signinCode); return; }
+        root.innerHTML = `<main class="message" aria-label="Connection status"><h1>Commonplace</h1><p role="status">${attempt < 3 ? "Could not reach Commonplace, retrying..." : "Could not reach Commonplace. Retry to connect."}</p><button type="button" data-boot-retry>Retry</button></main>`;
+        root.querySelector("[data-boot-retry]").onclick = () => { if (state.bootRetry) state.bootRetry(); else void boot(); };
+        if (attempt === 3) return;
+        await new Promise(resolve => {
+          const finish = () => { state.bootRetry = null; resolve(); };
+          const timer = setTimeout(finish, [1000, 2000, 4000][attempt]);
+          state.bootRetry = () => { clearTimeout(timer); finish(); };
+        });
+      }
+    }
+  } finally { state.bootPending = false; }
   if (!state.me) return;
   shell(); state.voiceReady = Promise.resolve(voice.load());
   if (!state.me) return;
@@ -2064,8 +2330,8 @@ async function boot() {
     const search = params.toString();
     history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
   }
-  await route();
+  if (await route() === false) return;
   if (moved) showError("This card is in another workspace. Sign out, then sign in again to open it.");
-  if (state.me) schedule(0);
+  if (state.me) schedule(2000);
 }
 boot();

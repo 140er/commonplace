@@ -11,7 +11,7 @@ let error = '', rendered = 0, expired = 0, blocked = failure !== 'success';
 const requests = [];
 const queue = { count: 1, asks: [{ number: 8, title: 'Review request' }] };
 const content = { children: [], innerHTML: '', querySelector: () => null };
-const values = { '/api/boards': { boards: [{ slug: 'project' }] }, '/api/needs-me': queue,
+const values = { '/api/boards?view=shell': { boards: [{ slug: 'project' }] }, '/api/needs-me': queue,
   '/api/rules/count': { waiting: 0 }, '/api/bots': { bots: [] } };
 const context = {
   deckNeedsLedger: createNeedLedger(),
@@ -24,8 +24,8 @@ const context = {
     let status = 200;
     if (path === '/api/needs-me' && role === 'member') status = 403;
     if (blocked && path === '/api/needs-me' && ['401', '403', '503'].includes(failure)) status = Number(failure);
-    if (blocked && path === '/api/boards' && failure === 'boards') status = 503;
-    return { status, ok: status === 200, json: async () => status === 200 ? values[path] : { error: 'Read refused or unavailable' } };
+    if (blocked && path === '/api/boards?view=shell' && failure === 'boards') status = 503;
+    return { status, ok: status === 200, json: async () => status === 200 ? (values[path] || (path === '/api/boards' ? values['/api/boards?view=shell'] : undefined)) : { error: 'Read refused or unavailable' } };
   },
   remember: () => ({}), restore() {}, capture: () => () => {}, navigation() {},
   boardsView() { rendered++; content.children = [{}]; content.innerHTML = 'Projects'; },
@@ -37,7 +37,7 @@ const retry = app.match(/else if \(action === "retry"\) ([^\n]+)/);
 assert.ok(retry, 'Production Retry handler exists');
 runInNewContext('async function clickRetry() { ' + retry[1] + ' }', context);
 const ok = await context.refresh();
-if (['503', 'boards'].includes(failure)) {
+if (failure === 'boards') {
   assert.equal(ok, false, 'A transient read error offers Retry');
   assert.match(content.innerHTML, /Retry/);
   blocked = false;
@@ -54,7 +54,7 @@ if (role === 'member') {
   assert.equal(context.state.needs.count, 0, 'No stale owner queue survives');
 } else {
   assert.ok(requests.includes('/api/needs-me'), 'Owners retain the decision queue');
-  assert.equal(context.state.needs.count, ['401', '403'].includes(failure) ? 0 : 1);
+  assert.equal(context.state.needs.count, ['401', '403'].includes(failure) ? 0 : failure === '503' ? 99 : 1);
 }
 // Required authentication errors still expire the session, including bounded reads.
 context.fetch = async () => ({ status: 401, ok: false, json: async () => ({ error: 'Sign in' }) });

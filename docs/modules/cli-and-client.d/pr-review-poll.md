@@ -1,0 +1,1 @@
+- **Owns:** `commonplace pr-review poll` (the review-comment feeder, `pr_review.feeder.add_parser`) runs like the runner client: it never opens the data directory, because it runs beside GitHub access on another machine than the hub.

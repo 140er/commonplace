@@ -48,7 +48,9 @@ README = """Commonplace account export
 
 account/         what the server stores about your account
 workspaces/<id>/ every workspace you own: control rows, every table of every
-                 workspace database (stores/) and every other file (files/)
+                 workspace database (stores/) and every other file (files/);
+                 published preview files are left out (the preview records are
+                 in control/previews*.ndjson), a Coworker can publish them again
 manifest.json    what this archive contains, with row counts
 
 Each .ndjson file holds one JSON object per line: one stored row, unchanged.
@@ -169,7 +171,13 @@ def workspace_files(directory) -> tuple:
     if not directory.is_dir() or directory.is_symlink():
         return databases, files
     for root, dirs, names in os.walk(directory, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not (Path(root) / d).is_symlink())
+        dirs[:] = sorted(
+            d
+            for d in dirs
+            if not (Path(root) / d).is_symlink()
+            # Published preview bundles: rebuildable artifacts, not account content.
+            and not (Path(root) == directory and d == "previews")
+        )
         for name in sorted(names):
             path = Path(root) / name
             if path.is_symlink() or not path.is_file():

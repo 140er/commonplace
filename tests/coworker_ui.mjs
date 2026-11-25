@@ -5,7 +5,9 @@ import { runInNewContext } from 'node:vm';
 const source = name => readFileSync(new URL(`../commonplace/web/static/${name}.js`, import.meta.url), 'utf8');
 const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;
 const apiURL = moduleURL(source('api'));
-const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL))));
+const createURL = moduleURL(source('bot-create'));
+const setupURL = moduleURL(source('coworker-setup').replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)));
+const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL)).replace(/(['"])\.\/bot-create\.js\1/g, JSON.stringify(createURL)).replace(/(['"])\.\/coworker-setup\.js\1/g, JSON.stringify(setupURL))));
 const { createCoworkers, coworkerTarget, coworkerJobHTML } = await load('coworkers');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const bot = { id: 'bot-1', name: 'Mira', instructions: 'Keep exact words', connection_id: null };
@@ -47,7 +49,7 @@ function fixture() {
   };
   const input = (field, value) => listeners.get('input')({ target: { dataset: { cwField: field }, value, closest: () => null } });
   const submit = (kind, entries = [], id = null) => {
-    const form = { dataset: { cwForm: kind, id }, entries };
+    const form = { dataset: { cwForm: kind, id }, entries, elements: Object.fromEntries(entries.map(([key,value])=>[key,{value}])) };
     listeners.get('submit')({ target: { closest: selector => selector === '[data-cw-form]' ? form : null }, preventDefault() {}, stopPropagation() {} });
   };
   const click = (action, id) => listeners.get('click')({ target: { closest: selector => selector === '[data-cw-action]' ? { dataset: { cwAction: action, id } } : null } });
@@ -278,7 +280,7 @@ const cases = {
     }), directory({ bots: [{ ...bot, name: attack }] }));
     assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     assert.match(f.host.innerHTML, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp;/);
-    assert.match(f.host.innerHTML, /Needs configuration/);
+    assert.match(f.host.innerHTML, /Needs a model/);
     assert.doesNotMatch(f.host.innerHTML, />Completed</);
     assert.match(f.host.innerHTML, /href="#\/card\/314"/);
     assert.match(f.host.innerHTML, /href="#\/bots\/-\/coworkers\/conversations\/a\?message=1"/);

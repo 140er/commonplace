@@ -1,0 +1,4 @@
+- **Owns:** The roster's decision-badge projection and deferred bot controller loading.
+- **Promises:** Decision badges read the same authorized card queue without computing unrelated setup attention; shared readiness and conversation semantics remain unchanged.
+- **How it fails:** Existing stale roster rows survive transient refresh failures; unknown rosters retain their loading state; deferred conversation code cannot hold the initial shell.
+- **Tests:** tests/test_cold_api_work.py, tests/test_bots_api.py and the bot and shell Node harness wrappers.

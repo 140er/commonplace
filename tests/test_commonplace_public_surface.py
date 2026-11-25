@@ -33,9 +33,19 @@ EXACT = {
     ("GET", "/api/holds"): "authenticated",
     ("GET", "/api/topology"): "authenticated",
     ("GET", "/api/costs"): "authenticated",
+    ("GET", "/api/status"): "authenticated",
     ("GET", "/api/settings/costs"): "authenticated",
     ("PUT", "/api/settings/costs"): "authenticated",
     **{(method, "/api/settings/budgets"): "authenticated" for method in ("GET", "PUT", "DELETE")},
+    **{
+        (method, "/api/settings/model-mode"): "authenticated" for method in ("GET", "PUT", "DELETE")
+    },
+    **{
+        (method, "/api/me/model-connections"): "authenticated"
+        for method in ("GET", "POST", "DELETE")
+    },
+    ("PUT", "/api/me/model-use-own"): "authenticated",
+    ("GET", "/api/me/model-mode"): "authenticated",
     ("GET", "/api/learned"): "authenticated",
     ("GET", "/api/learning/settings"): "authenticated",
     ("PATCH", "/api/learning/settings"): "authenticated",
@@ -59,7 +69,8 @@ EXACT = {
     ("GET", "/api/invites"): "authenticated",
     ("POST", "/api/invites"): "authenticated",
     ("GET", "/api/workspaces"): "authenticated",
-    # Workspace creation requires the signed-in person's same-origin session.
+    # Account provisioning deliberately has no MCP tool or token authority:
+    # a person session, explicit same-origin Origin and session-bound csrf are required.
     ("POST", "/api/workspaces"): "authenticated",
     ("POST", "/api/workspaces/switch"): "authenticated",
     ("GET", "/api/me"): "authenticated",
@@ -78,6 +89,11 @@ EXACT = {
     # Code-authenticated, single-use bootstrap; recovery requires a bound-key challenge.
     ("POST", "/api/runner-enrollment/exchange"): "bootstrap",
     ("POST", "/api/runner-enrollment/recover"): "bootstrap",
+    # Guided pairing: the code and pairing id authenticate the check; the status report is the machine's own.
+    ("POST", "/api/runner-pairing/check"): "bootstrap",
+    # The setup launcher is the same text for every caller and holds no secret or tenant data.
+    ("GET", "/machine-setup.sh"): "public",
+    ("POST", "/api/runner/pairing-status"): "authenticated",
     # Machine runner (commonplace/runner), inert until an owner attests.
     ("GET", "/api/runners"): "authenticated",
     ("POST", "/api/runners"): "authenticated",
@@ -124,6 +140,18 @@ EXACT = {
     ("POST", "/api/settings/capture"): "authenticated",
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
+    ("GET", "/api/handoff/start"): "authenticated",
+    ("POST", "/api/handoff/start"): "authenticated",
+    # Memory organisation views: read facts, sources, links; previewed changes that keep history.
+    ("GET", "/api/organise/places"): "authenticated",
+    ("GET", "/api/organise/facts"): "authenticated",
+    ("GET", "/api/organise/sources"): "authenticated",
+    ("GET", "/api/organise/source"): "authenticated",
+    ("GET", "/api/organise/links"): "authenticated",
+    ("POST", "/api/organise/facts/invalidate"): "authenticated",
+    ("POST", "/api/organise/facts/supersede"): "authenticated",
+    ("POST", "/api/organise/links/add"): "authenticated",
+    ("POST", "/api/organise/links/remove"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",
     ("GET", "/api/settings/handoff"): "authenticated",
     ("PUT", "/api/settings/handoff"): "authenticated",
@@ -149,12 +177,19 @@ EXACT = {
     ("GET", "/api/pipeline/prs"): "authenticated",
     ("GET", "/api/tool-policy"): "authenticated",
     ("POST", "/api/tool-policy"): "authenticated",
+    **{(method, "/api/previews"): "authenticated" for method in ("GET", "POST")},
+    ("POST", "/api/pr-review/comments"): "authenticated",
+    ("GET", "/api/pr-review/watch"): "authenticated",
+    ("GET", "/api/pr-review/prs"): "authenticated",
+    **{(method, "/api/pr-review/people"): "authenticated" for method in ("GET", "PUT")},
 }
 PREFIX = {
     ("GET", "/api/runners/enrollments/"): "unavailable",
     ("DELETE", "/api/runners/enrollments/"): "unavailable",
     ("GET", "/api/instance-admin/"): "authenticated",
     **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/previews/"): "authenticated" for method in ("GET", "POST", "PUT", "DELETE")},
+    **{(method, "/api/pr-review/"): "authenticated" for method in ("GET", "POST", "PUT")},
     **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/coworkers/"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/admin/instance/"): "authenticated",
@@ -215,6 +250,8 @@ PREFIX = {
     ("GET", "/app/auth/"): "public",
     ("POST", "/app/auth/"): "public",
     ("GET", "/s/"): "public",
+    # Preview files check the session in the route, so a signed-out browser gets a sign-in page.
+    ("GET", "/p/"): "public",
     ("GET", "/api/handoffs/"): "authenticated",
     ("POST", "/api/handoffs/"): "authenticated",
     ("GET", "/api/threads/"): "authenticated",
@@ -355,6 +392,9 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("GET", "/api/costs"),
         ("GET", "/api/settings/costs"),
         ("GET", "/api/settings/budgets"),
+        ("GET", "/api/settings/model-mode"),
+        ("GET", "/api/me/model-connections"),
+        ("GET", "/api/me/model-mode"),
         ("GET", "/api/topology/route"),
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
@@ -363,9 +403,43 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("GET", "/api/webhooks/1/deliveries"),
         ("POST", "/api/webhooks/1/test"),
         ("DELETE", "/api/webhooks/1"),
+        ("POST", "/api/compute/gateways/g1/credential"),
+        ("POST", "/api/compute/nodes/n1/credential"),
+        # The Compute overview: reads and owner actions all sit under the authenticated /api/compute/ prefix.
+        ("GET", "/api/compute/overview"),
+        ("GET", "/api/compute/overview/workspace/w1"),
+        ("GET", "/api/compute/overview/workspace/w1/preview/start"),
+        ("POST", "/api/compute/overview/workspace/w1/start"),
+        ("POST", "/api/compute/overview/runner/mach_1/drain"),
     ]
     for method, path in paths:
         assert hardened(request(surface, method, path, body=b"invalid")) == 401
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/api/compute/overview"),
+        ("GET", "/api/compute/overview/runner/mach_1"),
+        ("GET", "/api/compute/overview/workspace/w1/preview/stop"),
+        ("POST", "/api/compute/overview/workspace/w1/start"),
+        ("POST", "/api/compute/overview/runner/mach_1/resume"),
+    ],
+)
+def test_compute_overview_refuses_every_token_even_a_full_one(surface, method, path):
+    """The overview is read by a signed-in member and acted on by the owner person; no token (full or
+    read-only) is a person, so none reaches it, and nothing is served or changed."""
+    for untrusted in (False, True):
+        _cid, _value, auth = token(surface, f"overview-{untrusted}", untrusted=untrusted)
+        status, _headers, body = request(
+            surface,
+            method,
+            path,
+            headers={**auth, "Content-Type": "application/json", "Origin": "http://127.0.0.1"},
+            body=b"{}" if method == "POST" else None,
+        )
+        assert status in (401, 403, 421), (method, path, status)
+        assert b'"items"' not in body and b'"workspaces"' not in body
 
 
 @pytest.mark.parametrize("header", [None, "Bearer bad", "Basic secret"])
@@ -904,6 +978,7 @@ REST_TOOLS = [
     ("POST", "/api/cards/1/decide", "decide"),
     ("GET", "/api/needs-me", "needs_me"),
     ("GET", "/api/costs", "costs_summary"),
+    ("GET", "/api/me/model-mode", "model_mode"),
     ("GET", "/api/topology", "topology_get"),
     ("GET", "/api/topology/route", "topology_route"),
     ("GET", "/api/memory/search", "memory_search"),
@@ -1322,3 +1397,9 @@ def test_throttled_browser_navigation_is_a_recovery_screen(surface, path):
     assert b'href="/app/?signin=throttled">Retry</a>' in content
     assert b"Set-Cookie" not in content
     assert "Set-Cookie" not in headers
+
+
+def test_note_delete_alias_requires_the_delete_tool():
+    from commonplace.gateway import _rest_tool
+
+    assert _rest_tool("POST", "/api/memory/id/delete") == "mempalace_delete_drawer"

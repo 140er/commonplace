@@ -1,0 +1,4 @@
+- **Owns:** `enrollment.issue` takes an optional code lifetime and an `in_tx` flag; `enrollment.charge` takes an optional per-minute limit.
+- **Promises:** Defaults are unchanged (five minutes, own transaction, ten attempts a minute), so the manual enrollment routes behave as before. Guided pairing issues a 15-minute code inside its own transaction so the pairing row, the enrollment and both audit rows commit together.
+- **How it fails:** A failure after `issue` rolls back the enrollment with the pairing.
+- **Tests:** `tests/test_runner_enrollment.py` (unchanged behaviour) and `tests/test_compute_pairing.py`.

@@ -99,7 +99,11 @@ def test_login_without_token_opens_normal_signin(hub, monkeypatch, query_string)
     assert status == 302 and headers["Location"] == "/app/"
     assert "Set-Cookie" not in headers and not body
     status, _, body = request(hub, headers["Location"])
-    assert status == 200 and b"<h1>Sign in</h1>" in body
+    assert (
+        status == 200
+        and "Loading Commonplace…".encode() in body
+        and b"<h1>Sign in</h1>" not in body
+    )
     assert b'<script type="module" src="/app/app.js">' in body
     status, _, body = request(hub, "/app/auth/providers")
     assert status == 200
@@ -124,7 +128,11 @@ def test_invalid_login_redirects_without_reflecting_or_logging_token(hub, caplog
     output = capsys.readouterr()
     assert token not in caplog.text + output.out + output.err
     status, _, body = request(hub, headers["Location"])
-    assert status == 200 and b"<h1>Sign in</h1>" in body
+    assert (
+        status == 200
+        and "Loading Commonplace…".encode() in body
+        and b"<h1>Sign in</h1>" not in body
+    )
     assert request(hub, "/api/me")[0] == 401
     with hub.db._lock:
         assert hub.db._conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
@@ -151,7 +159,11 @@ def test_fresh_user_logout_then_direct_login(hub):
         assert status == 302 and response_headers["Location"] == "/app/"
         assert "Set-Cookie" not in response_headers
         status, _, body = request(hub, response_headers["Location"], headers=headers)
-        assert status == 200 and b"<h1>Sign in</h1>" in body
+        assert (
+            status == 200
+            and "Loading Commonplace…".encode() in body
+            and b"<h1>Sign in</h1>" not in body
+        )
 
 
 def test_logout_refuses_foreign_origin_and_keeps_session(hub):
@@ -174,7 +186,8 @@ def test_events_workspace_isolation_cursor_and_large_batch(hub):
     assert request(hub, "/api/events")[0] == 401
     status, _, body = request(hub, "/api/events?after=0", headers=cookie)
     payload = json.loads(body)
-    assert status == 200 and len(payload["events"]) == 205
+    assert status == 200 and len(payload["events"]) == 200
+    assert payload["events"][0]["subject"] == "#5"
     assert payload["seq"] == events.latest_seq(hub.db, hub.workspace)
     assert b"other workspace secret" not in body
     assert all(event["workspace_id"] == hub.workspace for event in payload["events"])
@@ -253,7 +266,8 @@ def test_connections_wings_deadline(hub, monkeypatch):
     assert elapsed[0] < 1.5
     status, _, body = replies[0]
     payload = json.loads(body)
-    assert status == 200 and payload["wings"] == []
+    assert status == 200 and payload["wings"] is None
+    assert payload["wings_state"] == "loading"
     assert [row["name"] for row in payload["connections"]] == ["desktop"]
     assert payload["mcp_url"].endswith("/mcp")
 
@@ -280,7 +294,8 @@ def test_connections_wings_deadline_slow_worker(hub, monkeypatch):
             worker.join(3)
     print(f"connections response with a 2s worker: {elapsed:.3f}s")
     assert elapsed < 1.5, "Connection management waited for a slow optional memory lookup"
-    assert status == 200 and json.loads(body)["wings"] == []
+    assert status == 200 and json.loads(body)["wings"] is None
+    assert json.loads(body)["wings_state"] == "loading"
 
 
 def test_connections_wings_transport_budget(hub, monkeypatch):
@@ -297,6 +312,64 @@ def test_connections_wings_transport_budget(hub, monkeypatch):
     status, _, body = request(hub, "/api/connections", headers=cookie)
     assert status == 200 and json.loads(body)["wings"] == ["project_atlas"]
     assert len(budgets) == 1 and 0 < budgets[0] <= 1, "Worker transport needs the lookup deadline"
+
+
+def test_connections_wings_concurrent_readers_share_available_result(hub, monkeypatch):
+    from concurrent.futures import Future
+
+    from commonplace.web import agents, startup
+
+    cookie, _, _ = login(hub)
+    release, joined = threading.Event(), threading.Event()
+    lock = threading.Lock()
+    waiters, calls, replies, errors = [], [], [], []
+
+    class ObservedFuture(Future):
+        def result(self, timeout=None):
+            with lock:
+                waiters.append(1)
+                if len(waiters) == 2:
+                    joined.set()
+            return super().result(timeout)
+
+    def wings(*_args):
+        calls.append(1)
+        assert release.wait(5)
+        return ["project_atlas"]
+
+    def load():
+        try:
+            replies.append(request(hub, "/api/connections", headers=cookie))
+        except Exception as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(startup, "Future", ObservedFuture)
+    monkeypatch.setattr(agents, "grantable_wings", wings)
+    clients = [threading.Thread(target=load) for _ in range(2)]
+    try:
+        for client in clients:
+            client.start()
+        assert joined.wait(2), "Both requests must wait on the shared result"
+    finally:
+        release.set()
+        for client in clients:
+            client.join(3)
+    assert not errors
+    assert len(calls) == 1, "Concurrent callers must share one upstream read"
+    assert len(replies) == 2
+    for status, _, body in replies:
+        assert status == 200
+        assert json.loads(body)["wings"] == ["project_atlas"]
+        assert json.loads(body)["wings_state"] == "ready"
+
+
+def test_connections_completed_empty_wings_are_distinct_from_loading(hub, monkeypatch):
+    cookie, _, _ = login(hub)
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", lambda *_: {"wings": {}})
+    status, _, body = request(hub, "/api/connections", headers=cookie)
+    assert status == 200
+    assert json.loads(body)["wings"] == []
+    assert json.loads(body)["wings_state"] == "ready"
 
 
 def test_connections_wings_single_flight(hub, monkeypatch):
@@ -322,7 +395,8 @@ def test_connections_wings_single_flight(hub, monkeypatch):
             worker.join(2)
     assert started == 1, "Repeated requests must not accumulate blocked wing lookups"
     assert elapsed < 0.5, "A busy optional lookup must fall back immediately"
-    assert status == 200 and json.loads(body)["wings"] == []
+    assert status == 200 and json.loads(body)["wings"] is None
+    assert json.loads(body)["wings_state"] == "loading"
 
     monkeypatch.setattr(
         hub.gateway, "call_memory_tool", lambda *_: {"wings": {"project_atlas": {}}}
@@ -342,7 +416,8 @@ def test_connections_wings_tool_error_fallback(hub, monkeypatch):
 
     monkeypatch.setattr(hub.gateway, "call_memory_tool", unavailable)
     status, _, body = request(hub, "/api/connections", headers=cookie)
-    assert status == 200 and json.loads(body)["wings"] == []
+    assert status == 200 and json.loads(body)["wings"] is None
+    assert json.loads(body)["wings_state"] == "unavailable"
     assert [row["name"] for row in json.loads(body)["connections"]] == ["desktop"]
     assert b"unavailable worker details" not in body
 
@@ -352,7 +427,8 @@ def test_static_index_and_spa_fallback(hub, path):
     status, headers, body = request(hub, path)
     assert status == 200 and headers["Content-Type"].startswith("text/html")
     assert b'<script type="module" src="/app/app.js">' in body
-    assert b"Sign in" in body
+    assert "Loading Commonplace…".encode() in body
+    assert b"Sign in" not in body
     assert b'<a class="brand-home" href="/app/"' in body
     assert b'<img class="brand-v2" src="/app/brand/logo-small-dark.svg"' in body
     assert "default-src 'self'" in headers["Content-Security-Policy"]

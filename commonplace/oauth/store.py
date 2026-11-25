@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
     redirect_uris TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS oauth_client_approvals (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
+    approved_by TEXT NOT NULL REFERENCES users(id),
+    approved_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, client_id)
+);
 CREATE TABLE IF NOT EXISTS oauth_requests (
     request_hash TEXT PRIMARY KEY,
     parameters TEXT NOT NULL,
@@ -142,6 +149,45 @@ def conn_role(conn, principal):
         (principal.workspace_id, principal.user_id),
     ).fetchone()
     return row["role"] if row else None
+
+
+def client_approved(conn, workspace_id: str, client_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM oauth_client_approvals WHERE workspace_id=? AND client_id=?",
+            (workspace_id, client_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def _authorize_client(conn, client_id, principal, *, approve_client):
+    """Check live authority inside the code transaction, never trust a prior GET."""
+    person = conn.execute(
+        "SELECT m.role FROM memberships m JOIN users u ON u.id=m.user_id "
+        "WHERE m.workspace_id=? AND m.user_id=? AND u.disabled_at IS NULL AND u.is_person=1",
+        (principal.workspace_id, principal.user_id),
+    ).fetchone()
+    if (
+        not principal.person
+        or principal.auth != "session"
+        or principal.connection_id
+        or person is None
+    ):
+        raise OAuthError("access_denied", "A signed-in workspace member is required", 403)
+    approved = client_approved(conn, principal.workspace_id, client_id)
+    if approve_client:
+        if person["role"] != "owner":
+            raise OAuthError("access_denied", "Only a workspace owner can approve this client", 403)
+        if not approved:
+            conn.execute(
+                "INSERT INTO oauth_client_approvals(workspace_id,client_id,approved_by,approved_at) "
+                "VALUES (?,?,?,?)",
+                (principal.workspace_id, client_id, principal.user_id, now()),
+            )
+        return
+    if not approved:
+        raise OAuthError("access_denied", "A workspace owner must approve this client first", 403)
 
 
 def _live_connection(conn, connection_id):
@@ -267,7 +313,9 @@ def _guess_client(client_row) -> str:
     return "other"
 
 
-def create_code(conn, client_row, principal, parameters, *, person_capabilities=()) -> str:
+def create_code(
+    conn, client_row, principal, parameters, *, person_capabilities=(), approve_client=False
+) -> str:
     granted = set(parameters["scope"].split())
     if granted & {"bots:chat", "bots:confirm", "bots:learned"} and not (
         principal.person
@@ -280,6 +328,7 @@ def create_code(conn, client_row, principal, parameters, *, person_capabilities=
     ):
         # Consent already drops an unticked or ineligible grant; never mint it otherwise.
         raise OAuthError("invalid_scope")
+    _authorize_client(conn, client_row["client_id"], principal, approve_client=approve_client)
     cid = "conn_" + secrets.token_hex(8)
     slug = re.sub(r"[^a-z0-9]+", "-", client_row["client_name"].lower()).strip("-")[:80] or "client"
     while True:
@@ -359,11 +408,14 @@ def exchange(db, parameters: dict) -> dict:
             raise OAuthError("invalid_grant")
         if row["used_at"] is not None:
             _revoke(conn, row["connection_id"])
-        elif row["expires_at"] > now() and _live_connection(conn, row["connection_id"]):
-            conn.execute(
-                "UPDATE oauth_codes SET used_at = ? WHERE code_hash = ?", (now(), row["code_hash"])
-            )
-            result = _issue(conn, row)
+        elif row["expires_at"] > now():
+            connection = _live_connection(conn, row["connection_id"])
+            if connection and client_approved(conn, connection["workspace_id"], row["client_id"]):
+                conn.execute(
+                    "UPDATE oauth_codes SET used_at = ? WHERE code_hash = ?",
+                    (now(), row["code_hash"]),
+                )
+                result = _issue(conn, row)
     if result is None:
         raise OAuthError("invalid_grant")
     return result

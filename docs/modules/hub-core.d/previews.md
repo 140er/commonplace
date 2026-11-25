@@ -1,0 +1,1 @@
+- **Owns:** `commonplace.previews` is listed in `extensions.MODULES`, so its tables, `/api/previews` routes and the `preview_publish`, `preview_list` and `preview_stop` tools are installed with the other gateway extensions (module `previews`).

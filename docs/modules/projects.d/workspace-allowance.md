@@ -1,0 +1,4 @@
+- **Owns:** The existing plan module's owned_workspaces allowance and check_workspace_creation hook.
+- **Promises:** With plans enabled, the free tier allows 5 owned workspaces; ordinary memberships consume none. Paid accounts retain their existing plan and remain subject to the instance cap and abuse controls. No billing flow or external call is added.
+- **How it fails:** A plan refusal gives a plain reason before provisioning; assign_signup_plan still preserves paid plans and can refuse atomically with the control transaction.
+- **Tests:** tests/test_workspace_creation.py checks plan preservation and rollback; tests/test_workspace_creation_safety.py checks ownership accounting and the free allowance alongside the instance override.

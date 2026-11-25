@@ -106,8 +106,27 @@ export function createInviteBlock({ api, e, copy = text => globalThis.navigator.
   return { show, stop };
 }
 
-// Lists only the caller's own workspaces; creation never switches without a separate click.
-export async function openWorkspaces({ api, e, onError = () => {}, doc = globalThis.document, reload = () => globalThis.location.assign('/app/') }) {
+// Rules come from the authoritative sanitizer, including its Unicode character set.
+export function workspaceNameValidator(rules) {
+  let pattern, whitespace;
+  if (rules) {
+    pattern = new RegExp(rules.pattern, 'u');
+    whitespace = new RegExp(rules.trim_pattern, 'gu');
+  }
+  const clean = value => whitespace ? value.replace(whitespace, '') : value.trim();
+  return { clean, issue(value) {
+    if (!rules) return 'Workspace name rules are unavailable. Close and reopen the switcher.';
+    const candidate = clean(value);
+    if (!candidate) return rules.messages.empty;
+    if (Array.from(candidate).length > rules.max_length) return rules.messages.length;
+    if (rules.path_tokens.some(token => candidate.includes(token))) return rules.messages.path;
+    if (candidate.includes(rules.null_token)) return rules.messages.null;
+    return pattern.test(candidate) ? '' : rules.messages.characters;
+  } };
+}
+
+// Lists only the caller's own workspaces; confirmed creation opens its empty Home.
+export async function openWorkspaces({ api, e, onError = () => {}, doc = globalThis.document, reload = () => { globalThis.location.hash = '/'; globalThis.location.reload(); } }) {
   let result;
   try { result = await api('/api/workspaces'); }
   catch (error) { onError(error.message || 'Workspaces unavailable.'); return null; }
@@ -117,16 +136,17 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
   dialog.className = 'sheet menu-sheet workspace-switch';
   dialog.setAttribute('aria-labelledby', 'workspace-switch-h');
   const workspaces = result.workspaces || [];
+  const nameValidator = workspaceNameValidator(result.name_rules);
   const items = workspaces.map(w => deck
     ? `<li><button type="button" class="workspace-row" data-workspace="${e(w.id)}"${w.current ? ' aria-current="true" aria-disabled="true"' : ''}><span class="workspace-label">${e(w.name)}</span><span class="workspace-role">${e(w.role)}</span><span class="workspace-current" aria-hidden="true">${w.current ? '✓' : ''}</span></button></li>`
     : `<li><button type="button" class="btn" data-workspace="${e(w.id)}"${w.current ? ' disabled aria-current="true"' : ''}>${e(w.name)} · ${e(w.role)}${w.current ? ' · current' : ''}</button></li>`).join('');
   let stage = 'list', name = '', requestId = '', busy = false, created = null, refusal = '';
   const button = (attribute, text, primary = false) => `<button type="button" class="btn${primary ? ' primary' : ''}" ${attribute}>${text}</button>`;
   function nameIssue(value) {
-    const candidate = value.trim();
-    if (!candidate) return 'Enter a workspace name.';
-    if (candidate.length > 128) return 'Use 128 characters or fewer.';
-    if (workspaces.some(w => w.name.trim().toLocaleLowerCase() === candidate.toLocaleLowerCase())) return 'You already have a workspace with this name. Choose a different name.';
+    const issue = nameValidator.issue(value);
+    if (issue) return issue;
+    const candidate = nameValidator.clean(value);
+    if (workspaces.some(w => nameValidator.clean(w.name).toLocaleLowerCase() === candidate.toLocaleLowerCase())) return 'You already have a workspace with this name. Choose a different name.';
     return '';
   }
   function updateName(form, showEmpty = false) {
@@ -142,7 +162,7 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
     let title, content;
     if (stage === 'name') {
       title = 'Create workspace';
-      content = `<form data-workspace-name><label for="workspace-name">Workspace name</label><input id="workspace-name" name="name" ${deck ? 'aria-describedby="workspace-name-error"' : 'maxlength="128"'} required autocomplete="off" value="${e(name)}">${deck ? '<p id="workspace-name-error" data-workspace-name-error role="status"></p>' : ''}<div class="workspace-actions"><button class="btn primary" type="submit"${deck && nameIssue(name) ? ' disabled' : ''}>Continue</button>${button('data-workspace-cancel', 'Cancel')}</div></form>`;
+      content = `<form data-workspace-name><label for="workspace-name">Workspace name</label><input id="workspace-name" name="name" aria-describedby="workspace-name-error" required autocomplete="off" value="${e(name)}"><p id="workspace-name-error" data-workspace-name-error role="status"></p><div class="workspace-actions"><button class="btn primary" type="submit"${nameIssue(name) ? ' disabled' : ''}>Continue</button>${button('data-workspace-cancel', 'Cancel')}</div></form>`;
     } else if (stage === 'confirm') {
       title = deck ? `Create "${e(name)}"?` : 'Create this workspace?';
       content = deck
@@ -179,15 +199,15 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.addEventListener('input', event => {
     const form = event.target.closest?.('[data-workspace-name]');
-    if (deck && form) updateName(form);
+    if (form) updateName(form);
   });
   dialog.addEventListener('submit', event => {
     const form = event.target.closest?.('[data-workspace-name]');
     if (!form) return;
     event.preventDefault();
     if (busy || stage !== 'name') return;
-    if (deck && updateName(form, true)) return;
-    name = form.elements.name.value.trim();
+    if (updateName(form, true)) return;
+    name = nameValidator.clean(form.elements.name.value);
     if (!name) return;
     requestId = globalThis.crypto.randomUUID();
     stage = 'confirm'; render();
@@ -206,15 +226,17 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
     dialog.querySelector('[data-workspace-error]').textContent = '';
     try {
       if (confirm && stage === 'confirm') {
-        const response = await api('/api/workspaces', { method: 'POST', body: { name, request_id: requestId } });
+        const response = await api('/api/workspaces', { method: 'POST', body: { name, request_id: requestId, csrf: result.csrf } });
         created = response.workspace;
         stage = 'result'; render();
+        await api('/api/workspaces/switch', { method: 'POST', body: { workspace: created.id } });
+        reload();
       } else {
         await api('/api/workspaces/switch', { method: 'POST', body: { workspace: selected.dataset.workspace } });
         reload();
       }
     } catch (error) {
-      if (deck && confirm && error.status >= 400 && error.status < 500) {
+      if (deck && confirm && stage === 'confirm' && error.status >= 400 && error.status < 600) {
         const reason = error.payload?.error || error.message || 'Could not create workspace.';
         refusal = ({
           'This instance is closed to new workspaces.': 'New workspaces are turned off on this server.',

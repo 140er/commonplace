@@ -3,6 +3,7 @@
 import json
 import logging
 
+from commonplace.compute import pairing
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import (
@@ -142,12 +143,18 @@ def register(gateway):
         parts = path_parts(h, "/api/runners")
         method = h.command
         if method == "GET" and not parts:
+            guided = pairing.guided_state(gateway.db, owner.workspace_id)
             send_json(
                 h,
                 200,
                 {
                     "machines": [
-                        {**_view(row), **install_receipts.owner_view(gateway.db, row)}
+                        {
+                            **_view(row),
+                            **install_receipts.owner_view(gateway.db, row),
+                            # A machine added through the setup guide: its state in the pairing's own words (or None).
+                            "guided": guided.get(row["id"]),
+                        }
                         for row in registry.machines(gateway.db, owner.workspace_id)
                     ]
                 },

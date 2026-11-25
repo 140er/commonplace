@@ -600,7 +600,7 @@ test("new bot sheet posts name, job and instructions, then opens the bot", async
   h.state.extra["POST /api/bots"] = async (body) => { h.state.bots = [...h.state.bots, botRow("n1", body.name)]; return { bot: botRow("n1", body.name) }; };
   await h.controller.show(null);
   h.controller.click(el({ botsAction: "new" }));
-  assert.match(h.d.regions.sheet.innerHTML, /New bot[^]*How to work/);
+  assert.match(h.d.regions.sheet.innerHTML, /Create bot[^]*How to work/);
   await h.controller.submit(form({ botsForm: "create" }, { name: " Notes ", job: "Keep notes", instructions: "" }));
   assert.deepEqual(h.calls.find((c) => c.method === "POST" && c.path === "/api/bots").body, { name: "Notes", job: "Keep notes" });
   assert.deepEqual(h.gone, ["#/bots/n1"]);
@@ -611,7 +611,7 @@ test("the Today creation entry opens the same sheet and ignores a stopped screen
   const h = harness({ bots: [] });
   await h.controller.show(null);
   await h.controller.newBot();
-  assert.match(h.d.regions.sheet.innerHTML, /New bot[^]*How to work/);
+  assert.match(h.d.regions.sheet.innerHTML, /Create bot[^]*How to work/);
   h.controller.stop();
   const before = h.d.regions.sheet.innerHTML;
   await h.controller.newBot();
@@ -700,8 +700,8 @@ test("each roster load reports the bots to the shell, so the rail badge needs no
 
 test("the shell routes #/bots and #/bots/<id>, loads the stylesheet and lists Bots once in rail and tabs", async () => {
   const app = await read("app.js"), html = await read("index.html"), rail = await read("rail.js");
-  assert.match(html, /<link rel="stylesheet" href="\/app\/bots\.css">/);
-  assert.match(app, /import \{ createBots, waitingTotal \} from "\.\/bots\.js"/);
+  assert.match(await read("route-styles.js"), /bots: \['bots\.css'/);
+  assert.match(app, /createBots \} = await import\("\.\/bots\.js"\)/);
   assert.ok(app.includes("bots(?:\\/[A-Za-z0-9_-]+)?"), "route regex");
   assert.match(app, /botsScreen\(\)/);
   const { renderRail, renderPhoneTabs } = await import("../commonplace/web/static/rail.js");
@@ -885,4 +885,17 @@ test("the review sheet shows the server's sentence when the list cannot be read"
   h.controller.click(el({ botsAction: "learned-sheet" }));
   await settle();
   assert.match(h.d.regions.sheet.innerHTML, /Request failed \(500\)/);
+});
+
+test("create bot rejects invalid names before a request and preserves the draft", async () => {
+  const h = harness();
+  await h.controller.show(null);
+  await h.controller.newBot();
+  await h.controller.submit(form({botsForm: "create"}, {name: " ", job: "Keep notes", instructions: "Exact draft"}));
+  assert.equal(h.calls.filter(c => c.method === "POST" && c.path === "/api/bots").length, 0);
+  assert.match(h.d.regions.sheet.innerHTML, /value=" "/);
+  assert.match(h.d.regions.sheet.innerHTML, /value="Keep notes"/);
+  assert.match(h.d.regions.sheet.innerHTML, /Exact draft/);
+  assert.match(h.d.regions.sheet.innerHTML, /Use 1–60 characters/);
+  h.controller.stop();
 });

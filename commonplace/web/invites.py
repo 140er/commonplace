@@ -10,6 +10,7 @@ sign-in, and asks for one confirming click before the invite is used.
 
 from __future__ import annotations
 
+import hmac
 import html
 import json
 from urllib.parse import quote
@@ -243,8 +244,14 @@ def _workspaces(gateway, h):
         send_json(h, 403, {"error": "Sign in to see your workspaces"})
         return
     if h.command == "GET":
+        from mempalace.config import name_validation_rules
+
         rows = invites.memberships(db, principal.user_id, principal.workspace_id)
-        send_json(h, 200, {"workspaces": rows})
+        body = {"workspaces": rows, "name_rules": name_validation_rules()}
+        session = sessions.cookie_value(h.headers.get("Cookie"))
+        if principal.auth == "session" and session and not h.headers.get("Authorization"):
+            body["csrf"] = sessions.workspace_csrf(session)
+        send_json(h, 200, body)
         return
     try:
         data = read_json(h)
@@ -275,6 +282,8 @@ def _create_workspace(gateway, h):
     if (
         not principal.person
         or principal.auth != "session"
+        or principal.connection_id
+        or not gateway.db.user(principal.user_id)["is_person"]
         or h.headers.get("Authorization")
         or not sessions.cookie_value(h.headers.get("Cookie"))
     ):
@@ -288,11 +297,42 @@ def _create_workspace(gateway, h):
     except ValueError:
         return
     try:
-        if set(data) != {"name", "request_id"}:
+        csrf = data.get("csrf")
+        session = sessions.cookie_value(h.headers.get("Cookie"))
+        if (
+            not isinstance(csrf, str)
+            or not csrf.isascii()
+            or not hmac.compare_digest(csrf, sessions.workspace_csrf(session))
+        ):
+            send_json(h, 403, {"error": "Open the workspace switcher again and try again."})
+            return
+        if set(data) != {"name", "request_id", "csrf"}:
             raise ValueError("Use a workspace name and request id only.")
-        workspace, created = invites.create_workspace(
-            gateway.db, principal.user_id, name=data["name"], request_id=data["request_id"]
-        )
+        from commonplace.admission import GATE, GateBusy
+        from commonplace.backup import FenceBusy, fence_lock
+        from mempalace import storage_guard
+
+        try:
+            with fence_lock(gateway.supervisor.root.parent), GATE.creating(timeout=0):
+                if gateway.supervisor.paused:
+                    raise invites.WorkspaceCreationError(
+                        503, "Workspaces are paused for a backup. Try again shortly.", 30
+                    )
+                storage = storage_guard.status(
+                    gateway.supervisor.root.parent, storage_guard.DEPLOYED_MIN_FREE_BYTES
+                )
+                if storage["disk_low"]:
+                    raise storage_guard.StorageFull()
+                workspace, created = invites.create_workspace(
+                    gateway.db, principal.user_id, name=data["name"], request_id=data["request_id"]
+                )
+                from commonplace.social.accounts import initialize_workspace
+
+                initialize_workspace(gateway, principal.user_id, workspace["id"])
+        except (GateBusy, FenceBusy):
+            raise invites.WorkspaceCreationError(
+                503, "Workspaces are paused for backup or maintenance. Try again shortly.", 30
+            ) from None
     except (ValueError, ControlError) as exc:
         gateway.db.audit(
             action="workspace.create",
@@ -302,7 +342,17 @@ def _create_workspace(gateway, h):
             auth="session",
             reason="creation_refused",
         )
-        send_json(h, getattr(exc, "status", 400), {"error": str(exc)})
+        retry = getattr(exc, "retry_after_s", None)
+        if retry:
+            _send(
+                h,
+                getattr(exc, "status", 400),
+                json.dumps({"error": str(exc), "retry_after_s": retry}).encode(),
+                "application/json",
+                (("Retry-After", str(retry)),),
+            )
+        else:
+            send_json(h, getattr(exc, "status", 400), {"error": str(exc)})
         return
     send_json(h, 201 if created else 200, {"workspace": workspace})
 

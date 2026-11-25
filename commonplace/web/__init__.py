@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
 import mimetypes
+import re
 import threading
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -26,13 +28,15 @@ CSP = (
 def _response(h, status, body=b"", content_type="text/plain; charset=utf-8", headers=None):
     h.send_response(status)
     h.send_header("Content-Type", content_type)
-    h.send_header("Content-Length", str(len(body)))
-    h.send_header("Cache-Control", "no-store")
-    h.send_header("Content-Security-Policy", CSP)
+    if status != 304:
+        h.send_header("Content-Length", str(len(body)))
+    h.send_header("Cache-Control", (headers or {}).get("Cache-Control", "no-store"))
+    h.send_header("Content-Security-Policy", (headers or {}).get("Content-Security-Policy", CSP))
     h.send_header("X-Content-Type-Options", "nosniff")
     h.send_header("Referrer-Policy", "no-referrer")
     for name, value in (headers or {}).items():
-        h.send_header(name, value)
+        if name not in ("Cache-Control", "Content-Security-Policy"):
+            h.send_header(name, value)
     h.end_headers()
     h.wfile.write(body)
 
@@ -76,6 +80,11 @@ def _static(h):
     ):
         _response(h, 404, b"Not found")
         return
+    if relative == "route-preload.js":
+        from . import assets
+
+        _asset_response(h, assets.route_preload(STATIC), "text/javascript; charset=utf-8")
+        return
     target = (STATIC / relative).resolve()
     if not target.is_relative_to(STATIC.resolve()):
         _response(h, 404, b"Not found")
@@ -94,18 +103,86 @@ def _static(h):
         mime = "text/javascript"
     if mime.startswith("text/"):
         mime += "; charset=utf-8"
-    _response(h, 200, target.read_bytes(), mime)
+    body = target.read_bytes()
+    policy = None
+    if target.name == "index.html":
+        from . import assets
+
+        body = assets.index(body, STATIC)
+        policy = assets.boot_policy(STATIC, CSP)
+    _asset_response(h, body, mime, policy=policy)
+
+
+_COMPRESSIBLE = ("text/", "image/svg+xml", "application/json")
+_GZIP_MIN = 1024
+_gzipped: dict[str, bytes] = {}
+_gzip_lock = threading.Lock()
+
+
+def _accepts_gzip(h):
+    for item in h.headers.get("Accept-Encoding", "").split(","):
+        parts = [part.strip() for part in item.split(";")]
+        if parts[0].lower() != "gzip":
+            continue
+        try:
+            quality = next((float(p[2:]) for p in parts[1:] if p.startswith("q=")), 1)
+        except ValueError:
+            return False
+        return quality > 0
+    return False
+
+
+def _gzip_asset(body, tag):
+    """Lossless transfer encoding of one asset, deterministic and kept per content hash."""
+    with _gzip_lock:
+        packed = _gzipped.get(tag)
+    if packed is None:
+        packed = gzip.compress(body, compresslevel=9, mtime=0)
+        with _gzip_lock:
+            if len(_gzipped) >= 64:
+                _gzipped.pop(next(iter(_gzipped)))
+            _gzipped[tag] = packed
+    return packed
+
+
+def _asset_response(h, body, mime, *, policy=None):
+    from .assets import etag
+
+    tag = etag(body)
+    # Long caching is safe only when a filename carries this content's hash.
+    fingerprint = re.search(r"[.-]([0-9a-f]{8,64})\.", urlsplit(h.path).path)
+    immutable = fingerprint and tag[1:-1].startswith(fingerprint[1])
+    headers = {
+        "Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache",
+        "ETag": tag,
+    }
+    packed = len(body) >= _GZIP_MIN and mime.startswith(_COMPRESSIBLE) and _accepts_gzip(h)
+    if len(body) >= _GZIP_MIN and mime.startswith(_COMPRESSIBLE):
+        headers["Vary"] = "Accept-Encoding"
+    if packed:
+        # A distinct validator per representation; the fingerprint check above uses the plain one.
+        headers["ETag"] = tag[:-1] + '-gzip"'
+        headers["Content-Encoding"] = "gzip"
+    if policy:
+        headers["Content-Security-Policy"] = policy
+    validators = [
+        item.strip().removeprefix("W/") for item in h.headers.get("If-None-Match", "").split(",")
+    ]
+    if headers["ETag"] in validators or "*" in validators:
+        headers.pop("Content-Encoding", None)
+        _response(h, 304, content_type=mime, headers=headers)
+    else:
+        _response(h, 200, _gzip_asset(body, tag) if packed else body, mime, headers)
 
 
 def _connection_wings(gateway, principal, slot):
     """Bound an optional read even if worker startup or queueing blocks."""
-    from commonplace.extensions import ToolError
     from commonplace.rules.checks import deadline
 
     from .agents import grantable_wings
 
     if not slot.acquire(blocking=False):
-        raise ToolError("Memory wing listing is busy")
+        raise TimeoutError("Memory wing listing is busy")
     result = Future()
 
     def list_wings():
@@ -127,7 +204,7 @@ def _connection_wings(gateway, principal, slot):
     try:
         return result.result(timeout=CONNECTION_WINGS_TIMEOUT_S)
     except (FutureTimeoutError, TimeoutError):
-        raise ToolError("Memory wing listing timed out") from None
+        raise TimeoutError("Memory wing listing timed out") from None
 
 
 def _phone_feed(gateway, h, principal):
@@ -212,12 +289,18 @@ def install(gateway):
             return
         account = plans.workspace_account(gateway.db, principal.workspace_id)
         current = plans.get_plan(gateway.db, account) if account else None
-        used = (
-            gateway.storage_meter.used(
-                principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+        from .startup import snapshots
+
+        used, storage_state = (
+            snapshots(gateway).read(
+                ("storage", principal.workspace_id),
+                lambda: gateway.storage_meter.used(
+                    principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+                ),
+                ttl=60.0,
             )
             if account
-            else 0
+            else (0, "ready")
         )
         send_json(
             h,
@@ -225,7 +308,11 @@ def install(gateway):
             {
                 "enabled": True,
                 "plan": current.name if current else None,
-                "storage": {"used": used, "limit": current.storage_bytes if current else None},
+                "storage": {
+                    "used": used,
+                    **({"state": storage_state} if account else {}),
+                    "limit": current.storage_bytes if current else None,
+                },
                 "transcription": {
                     "used_today": plans.transcription_used(gateway.db, account) if account else 0,
                     "limit": current.transcription_seconds if current else None,
@@ -270,8 +357,14 @@ def install(gateway):
                 # A member-era ordinal is not a raw workspace cursor.
                 response = {"events": [], "seq": latest, "reset": True}
             else:
-                batch = events.after(
-                    gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                # Initial hydration already reads current lists. Replaying the
+                # entire historical log delays that first view without adding data.
+                batch = (
+                    events.recent(gateway.db, principal.workspace_id)
+                    if seq == 0 and principal.person
+                    else events.after(
+                        gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                    )
                 )
                 response = {"events": batch, "seq": latest}
         send_json(h, 200, response)
@@ -284,17 +377,19 @@ def install(gateway):
             send_json(h, 403, {"error": "Owner access required"})
             return
         from commonplace import bots_grant, decide_grant
-        from commonplace.extensions import ToolError
 
         from .agents import connection_view, decide_view
 
         rows = gateway.db.connections(principal.workspace_id)
         view = decide_view(gateway, principal)
-        try:
-            wings = _connection_wings(gateway, principal, connection_wings_slot)
-        except ToolError:
-            # Connection management remains available while memory is offline.
-            wings = []
+        from .startup import snapshots, viewer_key
+
+        wings, wings_state = snapshots(gateway).read(
+            ("connection-wings", *viewer_key(principal)),
+            lambda: _connection_wings(gateway, principal, connection_wings_slot),
+            wait_s=CONNECTION_WINGS_TIMEOUT_S,
+            retry_s=0.0,
+        )
         send_json(
             h,
             200,
@@ -307,13 +402,14 @@ def install(gateway):
                     "learned": bots_grant.LEARNED_TEXT,
                 },
                 "wings": wings,
+                "wings_state": wings_state,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },
         )
 
     from .. import capacity
     from ..topology import node_panel as topology_node
-    from . import admin, agents, goals, invites, task_types
+    from . import admin, agents, goals, invites, status, task_types
 
     admin.install(gateway)
     capacity.install(gateway)
@@ -321,6 +417,7 @@ def install(gateway):
     agents.install(gateway)
     task_types.install(gateway)
     goals.install(gateway)
+    status.install(gateway)
     topology_node.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)

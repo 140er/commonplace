@@ -1,0 +1,4 @@
+- **Owns:** `overview.workspace_item`, `_action` and `_workspace_preview` project lifecycle knowledge into action and effect metadata.
+- **Promises:** Unknown and unreachable work retain uncertainty; active phases never claim empty work. Action and preview refusal wording agree while existing reason codes and permissions remain intact.
+- **How it fails:** A stale or missing report cannot justify a definitive running or empty-work claim; preview reads never mutate a lifecycle request.
+- **Tests:** `tests/test_workspace_preview_knowledge.py` and the existing workspace lifecycle and guard suites.

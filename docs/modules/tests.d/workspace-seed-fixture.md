@@ -1,0 +1,2 @@
+- **Promises:** Workspace store-switch cases copy one closed synthetic seed into independent writable databases; every switch, backup, rollback, authority, crash and cleanup check still executes.
+- **Tests:** `tests/test_workspace_store_switch.py` checks distinct file identities and unchanged seed and sibling bytes after real thread, board, fact, logstream, vector and sidecar writes.

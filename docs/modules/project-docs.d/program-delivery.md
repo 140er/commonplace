@@ -1,0 +1,4 @@
+- **Owns:** `docs/runner-program-delivery.md` explains offline package construction, explicit site configuration, normal owner delivery and target recovery, exact startup-tree validation and the Python 3.10 dependency pin.
+- **Promises:** The guide distinguishes a verified program install from enrollment, native authority and actual Coworker execution.
+- **How it fails:** Unsupported Python/platform or missing release configuration remains an explicit prerequisite with no hosted or external fallback.
+- **Tests:** `tests/test_docs_obligations.py` and `tests/test_docs_fragments.py`.

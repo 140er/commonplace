@@ -64,7 +64,7 @@ def oauth(j, *, scope=READ_SCOPE, tick=True, import_tick=False, decision="allow"
     assert page[0] == 200
     raw = page[2].decode()
     request = unescape(re.search(r'name="request" value="([^"]+)"', raw)[1])
-    data = {"request": request, "decision": decision}
+    data = {"request": request, "decision": decision, "approve_client": "1"}
     if tick:
         data["grant_import_read"] = "1"
     if import_tick:

@@ -1,0 +1,4 @@
+- **Owns:** `pairing.py` freezes an optional program pin in the pairing and enrollment intent; `pairing_routes.py` serves only those bytes through the existing live-code check route.
+- **Promises:** Normal owner creation and single-use enrollment remain authoritative; the command verifies its launcher before execution, and release replacement never silently changes an issued command.
+- **How it fails:** Wrong workspace, used, expired, cancelled or revoked code, a credential substituted for a code, a different purpose/digest or unavailable release refuses delivery.
+- **Tests:** `tests/test_runner_program_delivery_regression.py`, `tests/test_runner_program_delivery.py` and `tests/test_compute_pairing.py`.

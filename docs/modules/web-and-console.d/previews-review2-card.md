@@ -1,0 +1,1 @@
+- **Owns:** `web/static/app.js` treats the open stop-rule form of the card's Previews section as a form in use (`ruleFormInUse`, part of `panelForm`) and lists the Save control among the focus keys it restores; `workbench.css` sets the Previews small print to 14 px on phones and touch screens.

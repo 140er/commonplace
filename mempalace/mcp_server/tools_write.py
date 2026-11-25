@@ -950,6 +950,12 @@ def _delete_resolved_drawer(col, drawer_id: str, *, bulk: bool = False):
     )
     if record is None:
         return {"success": False, "error": f"Drawer not found: {drawer_id}"}
+    if (_provenance.current() or {}).get(
+        "origin"
+    ) == _provenance.STANDALONE_NOTE and not _provenance.standalone_note(
+        record["metadata"], drawer_id
+    ):
+        return {"success": False, "error": "Only standalone notes can be deleted here."}
     return _delete_record(col, drawer_id, record, bulk=bulk)
 
 

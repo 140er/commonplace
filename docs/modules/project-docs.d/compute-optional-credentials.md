@@ -1,0 +1,4 @@
+- **Owns:** The decision record and operator text for saving a Compute gateway or target without a credential and binding one right after (`docs/system/compute-credential-guide.md`, `docs/compute/RUNNING.md`, `docs/compute/control-contract.md`).
+- **Promises:** They state that the credential is bound to the server-assigned record ID, that an unbound record is refused for verification and runs until one is bound, and that binding happens once.
+- **How it fails:** The text drifting from the routes or the refusal reason fails `tests/test_compute_optional_credentials.py` and the `unbound` case of `tests/compute_ui.mjs`.
+- **Tests:** `tests/test_compute_optional_credentials.py`.

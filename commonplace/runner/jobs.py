@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -54,6 +55,10 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
 CREATE UNIQUE INDEX IF NOT EXISTS runner_jobs_one_active ON runner_jobs(task_number)
  WHERE state IN ('queued','leased','starting','uncertain');
 CREATE INDEX IF NOT EXISTS runner_jobs_board_state ON runner_jobs(board_slug,state);
+CREATE INDEX IF NOT EXISTS runner_jobs_machine_state ON runner_jobs(machine_id,state);
+CREATE INDEX IF NOT EXISTS runner_jobs_state_updated ON runner_jobs(state,updated_at,machine_id);
+CREATE INDEX IF NOT EXISTS runner_jobs_machine_updated ON runner_jobs(machine_id,updated_at,id);
+CREATE INDEX IF NOT EXISTS runner_jobs_starting ON runner_jobs(starting_at,machine_id);
 CREATE UNIQUE INDEX IF NOT EXISTS runner_jobs_request
  ON runner_jobs(task_number,requested_by,request_key) WHERE request_key IS NOT NULL;
 """
@@ -69,6 +74,15 @@ CONFIG_COLUMNS = {
     "model": "TEXT",
 }
 SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER", "launch_output": "TEXT"}
+# Model modes (card #617): the mode and account a start was admitted under, pinned like the model.
+ACCOUNT_COLUMNS = {
+    "mode": "TEXT",
+    "mode_source": "TEXT",
+    "account_kind": "TEXT",
+    "account_label": "TEXT",
+    "account_person": "TEXT",
+    "account_connection_id": "TEXT",
+}
 STOP_COLUMNS = {
     "run_id": "TEXT",
     "stop_request_id": "TEXT",
@@ -150,7 +164,7 @@ class JobStore:
 def _migrate(conn):
     """Add the config run-record columns to a runner_jobs table that lacks them."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS
+    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS | ACCOUNT_COLUMNS
     missing = [name for name in additions if name not in columns]
     if not missing:
         return
@@ -275,6 +289,13 @@ def _sweep(store):
         triggers.run(store)
     except Exception as exc:
         log_failure(logger, "orchestrator trigger sweep failed", exc)
+    # Review comments waiting for a Coworker (card #613); own failure handling, same rule.
+    try:
+        from commonplace.pr_review import trigger
+
+        trigger.run(store.gateway, store.workspace_id)
+    except Exception as exc:
+        log_failure(logger, "review comment trigger failed", exc)
 
 
 def _hourly(conn, machine, now):
@@ -314,6 +335,7 @@ def create(
     request_key=None,
     person=False,
     guard=None,
+    account=None,
 ):
     """Return (HTTP status, stored row); machine is the resolved registry row.
 
@@ -356,6 +378,7 @@ def create(
             request_key=request_key,
             person=person,
             admission_check=admission_check if on or guard is not None else None,
+            account=account,
         )
 
 
@@ -374,6 +397,7 @@ def create_in(
     person=False,
     config=None,
     admission_check=None,
+    account=None,
 ):
     """``create`` on the caller's open ``BEGIN IMMEDIATE`` connection.
 
@@ -452,14 +476,73 @@ def create_in(
             + " WHERE id=?",
             (*(config.get(key) for key in CONFIG_COLUMNS), job),
         )
+    if account is not None:
+        conn.execute(
+            "UPDATE runner_jobs SET mode=?, mode_source=?, account_kind=?, account_label=?, "
+            "account_person=?, account_connection_id=? WHERE id=?",
+            (
+                account["mode"],
+                account["mode_source"],
+                account["account_kind"],
+                account["account_label"],
+                account["account_person"],
+                account.get("account_connection_id"),
+                job,
+            ),
+        )
     row = dict(_row(conn, job))
     ledger.sync(conn, row, agent=machine["worker_connection_id"])
     return 201, row
 
 
+IN_FLIGHT_SQL = (
+    "SELECT id,project,state,board_slug,task_number FROM runner_jobs WHERE machine_id=? AND "
+    "state IN ('leased','starting','uncertain','started')"
+)
+
+
+def working_cards(gateway, workspace_id, assignees):
+    """``{assignee: {(board_slug, task_number)}}``: the cards in ``doing`` assigned to each of ``assignees`` (a worker's
+    connection name with the ``conn:`` prefix). Read from committed cards without BoardStore's schema/write lock; board
+    writes acquire runner admission first, so the reverse lock would deadlock."""
+    from commonplace.projects import orchestration as orch
+
+    wanted = set(assignees)
+    result = {name: set() for name in wanted}
+    with orch.board_read(gateway.workspace_dir(workspace_id)) as boards:
+        for row in boards.execute(
+            "SELECT b.slug AS slug,t.id AS id,t.assignee AS assignee FROM tasks t JOIN boards b ON b.id=t.board_id "
+            "WHERE t.status='doing'"
+        ):
+            if row["assignee"] in wanted:
+                result[row["assignee"]].add((row["slug"], row["id"]))
+    return result
+
+
+def in_flight(conn, machine_id, working):
+    """The runs that hold a slot of the machine, the one definition the lease and the overview share: every run that is
+    leased, starting or uncertain, and every ``started`` run whose card is still being worked on by the machine's worker.
+    A started run stays ``started`` in this table after it ends (only the run ledger learns of the end), so what
+    holds the slot is the card, not the run. ``working`` is a callable returning the machine's cards in ``doing``; it is
+    called only when a started run exists."""
+    rows = conn.execute(IN_FLIGHT_SQL, (machine_id,)).fetchall()
+    if any(row["state"] == "started" for row in rows):
+        live = working()
+        rows = [
+            row
+            for row in rows
+            if row["state"] != "started" or (row["board_slug"], row["task_number"]) in live
+        ]
+    return rows
+
+
 def lease(store, machine):
     from commonplace.projects import orchestration as orch
 
+    from .predicate import setup_only_refusal
+
+    if setup_only_refusal(store.gateway, machine, store.workspace_id):
+        return None  # a machine from the setup guide only checks itself in this version: nothing is leased to it
     on = orch.enabled(store.gateway.db, store.workspace_id)
     workers = orch.workers(store.gateway.db, store.workspace_id) if on else frozenset()
     _sweep(store)
@@ -475,31 +558,14 @@ def lease(store, machine):
             else store.transaction()
         ) as conn,
     ):
-        in_flight = conn.execute(
-            "SELECT project,state,board_slug,task_number FROM runner_jobs WHERE machine_id=? AND "
-            "state IN ('leased','starting','uncertain','started')",
-            (machine["id"],),
-        ).fetchall()
-        if any(row["state"] == "started" for row in in_flight):
-            # Read committed cards without BoardStore's schema/write lock; board
-            # writes acquire runner admission first, so the reverse lock would deadlock.
-            with orch.board_read(store.gateway.workspace_dir(store.workspace_id)) as boards:
-                working = {
-                    (row["slug"], row["id"])
-                    for row in boards.execute(
-                        "SELECT b.slug,t.id FROM tasks t JOIN boards b ON b.id=t.board_id "
-                        "WHERE t.status='doing' AND t.assignee=?",
-                        (assignee,),
-                    )
-                }
-            in_flight = [
-                row
-                for row in in_flight
-                if row["state"] != "started" or (row["board_slug"], row["task_number"]) in working
-            ]
-        if len(in_flight) >= machine["max_in_flight"]:
+        slots = in_flight(
+            conn,
+            machine["id"],
+            lambda: working_cards(store.gateway, store.workspace_id, [assignee])[assignee],
+        )
+        if len(slots) >= machine["max_in_flight"]:
             return None
-        projects = {r["project"] for r in in_flight}
+        projects = {r["project"] for r in slots}
         capped_boards = set()
         for row in conn.execute(
             "SELECT * FROM runner_jobs WHERE machine_id=? AND state='queued' ORDER BY created_at,rowid",
@@ -540,7 +606,7 @@ def lease(store, machine):
                 continue
             authority.enter_context(store.gateway.db._lock)
             current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
-            refusal = binding_problem(current, row)
+            refusal = binding_problem(current, row) or account_problem(store, current, row)
             if refusal:
                 _update(conn, row, dict(state="cancelled", outcome_code=refusal, updated_at=now))
                 authority.pop_all().close()
@@ -548,7 +614,7 @@ def lease(store, machine):
             from . import capacity
 
             if (
-                len(in_flight) >= current["max_in_flight"]
+                len(slots) >= current["max_in_flight"]
                 or capacity.available(conn, current, now, max_agents=capacity.job_limit(conn, row))
                 <= 0
             ):
@@ -591,6 +657,37 @@ def binding_problem(machine, row, *, starting=False):
     return None
 
 
+def account_problem(store, machine, row):
+    """Recheck the admitted connection under the caller's runner/control fences.
+
+    Mode changes affect new admissions only. Old shared jobs remain usable on shared
+    machines; an old personal job without a pin cannot establish its original identity.
+    Never reconstruct that pin from the account's label or its current connection.
+    """
+    from commonplace.projects import model_modes
+
+    saved = dict(row)
+    if saved.get("account_kind") == "person" and not saved.get("account_connection_id"):
+        return "account_changed"
+    try:
+        connection = model_modes.connection_of_machine(
+            store.gateway.db._conn, store.workspace_id, machine["id"]
+        )
+    except sqlite3.Error:
+        return "mode_unavailable"
+    if saved.get("account_kind") != "person":
+        return "account_changed" if connection is not None else None
+    if (
+        connection is None
+        or connection["id"] != saved["account_connection_id"]
+        or connection["user_id"] != saved.get("account_person")
+        or connection["label"] != saved.get("account_label")
+        or (saved.get("model_provider") and connection["provider"] != saved["model_provider"])
+    ):
+        return "account_changed"
+    return None
+
+
 def starting(store, machine, lease_token, *, validate):
     """Serialize fresh control validation through the guarded write and commit."""
     _sweep(store)
@@ -605,7 +702,11 @@ def starting(store, machine, lease_token, *, validate):
             raise Conflict("start is not leased")
         authority.enter_context(store.gateway.db._lock)
         current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
-        refusal = validate(row) or binding_problem(current, row, starting=True)
+        refusal = (
+            validate(row)
+            or binding_problem(current, row, starting=True)
+            or account_problem(store, current, row)
+        )
         if retry:
             if refusal:
                 raise Conflict(refusal)
@@ -842,8 +943,11 @@ def resolve(store, job, principal, outcome, thread_id=None, *, conn=None):
 
 
 def status(store, task, principal):
+    from commonplace.projects import model_modes
+
     _sweep(store)
     machines = {m["id"]: m for m in registry.machines(store.gateway.db, store.workspace_id)}
+    viewer = principal.user_id if principal.person else None
     with store.connection() as conn:
         rows = conn.execute(
             "SELECT * FROM runner_jobs WHERE task_number=? ORDER BY created_at,rowid", (task,)
@@ -853,6 +957,7 @@ def status(store, task, principal):
         dict(
             job=row["id"],
             run=runs.get(row["id"]),
+            account=model_modes.run_view(row, viewer),
             machine_label=machines[row["machine_id"]]["label"]
             if row["machine_id"] in machines
             else None,

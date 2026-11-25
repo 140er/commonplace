@@ -12,9 +12,11 @@ from commonplace.projects import (
     connect,
     escalation,
     limits,
+    model_modes,
     models,
     orchestration,
     panel_routes,
+    readiness,
     seats,
     wing,
 )
@@ -29,6 +31,36 @@ def _person(gateway, h):
         send_json(h, 403, {"error": "Sign in to view projects"})
         return None
     return principal
+
+
+def _may_write(service, board):
+    """Whether this person may write the board: the rule the panel write route enforces."""
+    try:
+        service._write(board)
+    except ToolError:
+        return False
+    return True
+
+
+def _effective(gateway, principal, slug):
+    """Each role's model and source, and (model modes, card #617) the account it would run on for
+    the caller: mode, where the mode comes from, account kind and the caller's own label."""
+    roles = models.effective_roles(gateway.db, principal.workspace_id, slug)
+    view = {role: effective.public() for role, effective in roles.items()}
+    if getattr(gateway, "runner_installed", False):
+        try:
+            accounts = model_modes.effective_for(
+                gateway.db,
+                principal.workspace_id,
+                slug,
+                principal.user_id if principal.person else None,
+                {role: e.choice.provider if e.choice else None for role, e in roles.items()},
+            )
+        except (model_modes.ModeUnavailable, sqlite3.Error):
+            accounts = {}
+        for role, account in accounts.items():
+            view[role]["account"] = account
+    return view
 
 
 def _view(gateway, principal, board):
@@ -51,12 +83,14 @@ def _view(gateway, principal, board):
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()
         },
+        "models_effective": _effective(gateway, principal, board["slug"]),
         "model_catalog": [
             choice.public()
             for choice in models.catalog(gateway.db, principal.workspace_id, board["slug"])
         ],
         "escalation": rule.public() if rule is not None else None,
         "can_configure": principal.person and principal.role == "owner",
+        "can_edit_panel": _may_write(service, board),
     }
     from commonplace.runner import sessions
 
@@ -83,6 +117,7 @@ def _view(gateway, principal, board):
                 for m in registry.machines(gateway.db, principal.workspace_id)
                 if m["enabled"] and not m["revoked_at"]
             ]
+    result["readiness"] = readiness.snapshot(gateway, principal, board["slug"], main=result["main"])
     return result
 
 

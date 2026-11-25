@@ -1,0 +1,10 @@
+- **Owns:**
+
+  - `commonplace/web/static/compute-overview.js` and its section in `compute.js` and `compute.css` (`compute-ov-*` classes, one scoped warn token): the "Overview" at the top of the Compute management screen in Classic and in the Deck Management tab. It lists runners, target machines and cloud workspaces from `GET /api/compute/overview` with one status chip, one sentence, a health line, a usage line and a "Status and activity" button per item; filters by kind and by status; an in-place detail from `GET /api/compute/overview/<kind>/<id>`; a refresh every 30 seconds (the served interval, at least 15) that pauses while the page is hidden, a Refresh button, "As of" time, and one polite status line that speaks only when a status changed. It only reads; no sentence in it promises that anything runs.
+- **Promises:**
+
+  - The words come from the server, which never reports running or online without a fresh report; the screen adds none of its own, escapes every value, keeps the old data marked as out of date when a refresh fails, repaints only its own section (focus on a control inside it survives) and never rereads within 5 seconds of a read the screen already made. Members see cloud workspaces and a note that machines and runners are the owner's; no action is offered to anyone.
+- **How it fails:**
+
+  - A failed first read shows a red message and "Try again" instead of a list; a failed refresh keeps the data and says so; an item that disappears closes its panel and says so through the status line; a 401 is handed to the screen.
+- **Tests:** `tests/compute_overview_ui.mjs` through `tests/test_compute_overview_ui.py` (pure helpers, rows, details, every state, polling with fake timers, announcements, filters, detail focus, members, the production Compute controller) and `tests/test_compute_overview_browser.py` (real Chromium, Classic and Deck, 1280x800 and 390x844: every state, filters, detail focus and Escape, member view, loading, empty and failed states, polling with a fake clock, a status change announced, touch scroll).

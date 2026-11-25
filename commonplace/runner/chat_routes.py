@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from commonplace.boards._http import HTTPError, send_json
 from commonplace.http_util import log_failure
 
-from . import chat_relay, registry, runner_api
+from . import chat_relay, ledger, registry, runner_api
 from .registry import CHAT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ _BODY_KEYS = {
     "answer": {"job", "lease_token", "text", "cli", "model"},
     "fail": {"job", "lease_token", "code"},
 }
+# What the runner may add about the job's usage; the hub holds no prices and estimates nothing.
+_USAGE_KEYS = frozenset(
+    ("input_tokens", "output_tokens", "cost_micros", "currency", "cost_unknown")
+)
 
 
 def _body(h, action):
@@ -37,7 +41,8 @@ def _body(h, action):
         value = json.loads(h.rfile.read(length).decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
         raise HTTPError(400, "invalid JSON") from None
-    if not isinstance(value, dict) or value.keys() - _BODY_KEYS[action]:
+    usage_keys = set() if action == "lease" else _USAGE_KEYS
+    if not isinstance(value, dict) or value.keys() - _BODY_KEYS[action] - usage_keys:
         raise HTTPError(400, "invalid request body")
     required = {"clis"} if action == "lease" else _BODY_KEYS[action]
     if required - value.keys():
@@ -56,8 +61,15 @@ def _body(h, action):
             raise HTTPError(400, "invalid relay_always")
     else:
         for key, item in value.items():
-            if not isinstance(item, str) or not item:
+            if key not in usage_keys and (not isinstance(item, str) or not item):
                 raise HTTPError(400, "invalid " + key)
+        usage = {key: value.pop(key) for key in usage_keys & value.keys()}
+        if usage:
+            try:
+                ledger.clean({"job_id": value["job"], **usage})
+            except ValueError:
+                raise HTTPError(400, "invalid usage") from None
+            value["usage"] = usage
         if action == "answer":
             try:
                 size = len(value["text"].encode("utf-8"))

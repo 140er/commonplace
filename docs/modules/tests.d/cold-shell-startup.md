@@ -1,0 +1,4 @@
+- **Owns:** Scoped bootstrap deadlines, eight-second ordinary GETs, visible unavailable counts, null-safe agent rendering and wing transport-budget, concurrent single-flight, retry and explicit loading-state regressions; cold-start 30-second dependency fixtures and updated shell/plan/wing snapshot harnesses.
+- **Promises:** The same slow-dependency regressions fail on pinned develop and pass on the change; each run is bounded and isolated.
+- **How it fails:** Late metadata cannot replace main content or drafts; missing counters cannot appear as real zero totals.
+- **Tests:** tests/test_commonplace_web.py, tests/test_commonplace_agent_wing_grant.py, tests/test_cold_start.py, tests/test_cold_start_routes.py, tests/test_shell_snapshots.py, tests/test_settings_load.py and all Node harness wrapper files.

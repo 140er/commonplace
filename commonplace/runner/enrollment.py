@@ -4,6 +4,7 @@ All authority, credential and audit writes share the control transaction. No
 runtime is activated here; a redeemed machine remains disabled and unbound.
 """
 
+import contextlib
 import hashlib
 import json
 import re
@@ -239,7 +240,8 @@ def set_enabled(db, owner, value):
         return {"enabled": value, "version": version}
 
 
-def issue(db, owner, data):
+def issue(db, owner, data, *, minutes=CODE_MINUTES, in_tx=False):
+    """``in_tx``: the caller already holds the control transaction (guided pairing shares it)."""
     if set(data) != {"request_id", "manifest_digest", "grant"}:
         raise ValueError("invalid enrollment intent")
     request, digest = data["request_id"], data["manifest_digest"]
@@ -250,7 +252,7 @@ def issue(db, owner, data):
         or not DIGEST.fullmatch(digest)
     ):
         raise ValueError("invalid enrollment intent")
-    with db._tx():
+    with contextlib.nullcontext() if in_tx else db._tx():
         owner = owner_now(db, owner)
         _require_enabled(db, owner.workspace_id)
         now, stamp = _time()
@@ -273,7 +275,7 @@ def issue(db, owner, data):
         if pending or (machine and not machine["revoked_at"]):
             raise registry.Conflict("label already in use")
         eid, code = control_db._new_id("enr"), secrets.token_urlsafe(32)
-        expires = control_db._iso(now + timedelta(minutes=CODE_MINUTES))
+        expires = control_db._iso(now + timedelta(minutes=minutes))
         version = settings(db, owner.workspace_id)["version"]
         db._conn.execute(
             "INSERT INTO runner_enrollments(id, workspace_id, machine_label, code_hash, expires_at, owner_id, request_id, manifest_digest, settings_version, intent, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -318,7 +320,7 @@ def inspect(db, owner, eid, *, revoke=False):
         return status(row)
 
 
-def charge(db, workspace, purpose):
+def charge(db, workspace, purpose, limit=ATTEMPTS_PER_MINUTE):
     """Durable workspace-wide counters survive restarts and include denied tries."""
     with db._tx():
         _require_enabled(db, workspace)
@@ -332,7 +334,7 @@ def charge(db, workspace, purpose):
             "SELECT attempts FROM runner_enrollment_attempts WHERE workspace_id=? AND purpose=?",
             (workspace, purpose),
         ).fetchone()
-        limited = row[0] > ATTEMPTS_PER_MINUTE
+        limited = row[0] > limit
         if limited:
             _audit(db, workspace, "denied", decision="deny", reason="rate_limited")
     if limited:

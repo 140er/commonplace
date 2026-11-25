@@ -58,10 +58,37 @@ def requester_ok(gateway, principal, machine) -> bool:
     return not requester_gaps(gateway, principal, machine)
 
 
+def setup_only_refusal(gateway, machine, workspace_id=None) -> str | None:
+    """Why a machine the setup guide added cannot run Coworkers in this version, as a stable code, or ``None`` for every
+    other machine: ``"setup_waiting"`` (connected, waiting for the owner's approval), ``"setup_unfinished"`` (a step failed
+    or nothing more came for 15 minutes) or ``"setup_only"`` (approved, and the install only checks the machine). The one
+    answer the start options, the request and the lease share."""
+    from commonplace.compute import pairing
+
+    db = gateway.db
+    try:
+        machine_id, workspace = machine["id"], workspace_id or machine["workspace_id"]
+    except (KeyError, IndexError):
+        return None  # a legacy runner row has no machine id: it was never added through the setup guide
+    if not hasattr(db, "_conn"):  # a stand-in control store (some runner tests) has no pairings
+        return None
+    pending = pairing.pending_machines(db, workspace).get(machine_id)
+    if pending:
+        return (
+            "setup_waiting"
+            if pending["state"] == "connected" and not pending["stalled"]
+            else "setup_unfinished"
+        )
+    return "setup_only" if machine_id in pairing.setup_only_ids(db, workspace) else None
+
+
 def startable(gateway, machine, row, board) -> None:
     worker = gateway.db.authenticate_connection(machine["worker_connection_id"])
     if worker is None or worker.workspace_id != machine["workspace_id"]:
         raise Refused("worker unavailable")
+    guided = setup_only_refusal(gateway, machine)
+    if guided:
+        raise Refused(guided)
     service = BoardService(ToolContext(worker, gateway), store=False)
     from commonplace.boards.store import active_blockers
     from commonplace.projects import orchestration as orch

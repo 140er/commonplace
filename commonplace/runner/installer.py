@@ -9,6 +9,7 @@ import secrets
 import signal
 import sys
 import threading
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
@@ -56,6 +57,10 @@ EXCHANGE = "/api/runner-enrollment/exchange"
 RECOVER = "/api/runner-enrollment/recover"
 
 
+class EnrollmentRefused(InstallError):
+    """The site answered and said no (a spent, expired or cancelled code), as opposed to not answering."""
+
+
 class Transport:
     """TLS only, no redirects, cookies, bearer credentials or environment proxies."""
 
@@ -89,10 +94,16 @@ class Transport:
                 if len(raw) > 32768:
                     raise ValueError
                 return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                # The site failed to answer about this code: it did not say no.
+                raise InstallError(
+                    "enrollment delivery unavailable; run the command again"
+                ) from None
+            # The site answered: the answer is a refusal, not a connection problem.
+            raise EnrollmentRefused("enrollment refused by the site") from None
         except Exception:
-            raise InstallError(
-                "enrollment delivery unavailable; retry with the saved identity"
-            ) from None
+            raise InstallError("enrollment delivery unavailable; run the command again") from None
 
     def runtime_status(self, token, body):
         from .runtime_status import PATH

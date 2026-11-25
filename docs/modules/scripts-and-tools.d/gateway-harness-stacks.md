@@ -1,0 +1,4 @@
+- **Owns:** the `stacks` command of the gateway memory harness control port (`scripts/gateway_memory_harness.py`).
+- **Promises:** `stacks` answers each live thread's name and its innermost four frames (file, line, function), so a memory ramp can be tied to the thread doing the work. It reads no request values and changes nothing.
+- **How it fails:** It is a local measurement aid for the harness's own child process; an unknown command still answers `{"error": "unknown"}`.
+- **Tests:** Exercised by hand in the sawtooth investigation; the harness's growth tests are unchanged.

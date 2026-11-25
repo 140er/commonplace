@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from commonplace.runner import chat_agent
 from tests._relay_helpers import relay_hub_fixture  # noqa: F401
 from tests.runner_harness import _private_json, runner, runner_config
 
@@ -176,3 +177,58 @@ def test_chat_config_validation(relay_hub, tmp_path):
         result = runner(["check", "--config", str(path)], {})
         assert result.returncode == 0
         assert "runs with its tools on" in result.stdout
+
+
+def _result(**fields):
+    return json.dumps({"type": "result", "result": " Answer. ", **fields})
+
+
+def test_unwrap_reads_only_whitelisted_usage_from_a_cli_result():
+    text, usage = chat_agent._unwrap(
+        _result(
+            usage={
+                "input_tokens": 3,
+                "cache_creation_input_tokens": 4,
+                "cache_read_input_tokens": 5,
+                "output_tokens": 7,
+                "prompt": "secret prompt",
+            },
+            total_cost_usd=0.0123,
+            session_id="canary",
+        )
+    )
+    assert text == "Answer."
+    assert usage == {
+        "input_tokens": 12,
+        "output_tokens": 7,
+        "cost_micros": 12300,
+        "currency": "USD",
+    }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Plain text answer.",
+        '{"answer": "not a CLI result"}',
+        '{"type": "result", "result": 5}',
+        "{not json",
+        '{"type": "result"',
+    ],
+)
+def test_unwrap_leaves_anything_else_as_plain_text_without_usage(raw):
+    assert chat_agent._unwrap(raw) == (raw, {})
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"usage": {"input_tokens": -1, "output_tokens": True}, "total_cost_usd": -1},
+        {"usage": {"input_tokens": "9", "output_tokens": 1.5}, "total_cost_usd": "0.1"},
+        {"usage": {"input_tokens": 10**16, "output_tokens": 10**16}, "total_cost_usd": 1e30},
+        {"usage": ["not", "a", "dict"], "total_cost_usd": float("nan")},
+        {"usage": {}, "total_cost_usd": 0},
+    ],
+)
+def test_unwrap_never_invents_usage_from_invalid_or_zero_numbers(fields):
+    assert chat_agent._unwrap(_result(**fields)) == ("Answer.", {})

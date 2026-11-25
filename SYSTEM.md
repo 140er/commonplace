@@ -13,6 +13,10 @@ entry was written.
 
 ## Decisions
 
+### Review comment originals
+
+See [`docs/system/review-comment-originals.md`](docs/system/review-comment-originals.md) for revision-bound original-word reads and reveals.
+
 ### Coworker UI lifecycle
 
 Moved to [`docs/system/coworker-ui-lifecycle.md`](docs/system/coworker-ui-lifecycle.md); edit it there.

@@ -123,6 +123,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .runner-block fieldset label { flex-direction: row; align-items: center; gap: 8px; }
 .runner-block fieldset input { width: 18px; height: 18px; min-height: 0; }
 .runner-machine { padding: 16px 0; border-top: 1px solid var(--line); }
+.runner-guided p { overflow-wrap: anywhere; }
+:root .runner-block .runner-guided [data-runner-guided-link] { min-height: 44px; white-space: normal; }
+@media (pointer: coarse), (max-width: 699px) {
+  :root [data-admin-runners] section.runner-block :is(p, small, label, button, a) { font-size: 14px; }
+  :root [data-admin-runners] section.runner-block :is(button, select, input:not([type="checkbox"]):not([type="radio"])),
+  :root [data-admin-runners] section.runner-block fieldset label { min-height: 44px; }
+  :root [data-admin-runners] section.runner-block :is(input:not([type="checkbox"]):not([type="radio"]), select) { font-size: 16px; }
+  :root [data-admin-runners] section.runner-block fieldset input { width: 24px; height: 24px; }
+}
 @media (max-width: 640px) {
   .agent-secret { grid-template-columns: minmax(0, 1fr); }
   .agent-form > label, .agent-form > button { flex-basis: 100%; }

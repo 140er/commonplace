@@ -127,6 +127,8 @@ test('quiet search, counted display-name chips and viewer attribution use return
   assert.equal(savedBy({ actor: me.actor, author: 'owner' }, { [me.actor]: 'owner' }, me.actor), 'you');
   assert.equal(savedBy({ actor: 'conn:opaque', author: 'owner' }, {}), 'Unknown author');
   assert.equal(savedBy({ actor: 'user:writer' }, { 'user:writer': 'Memory writer' }, me.actor), 'Memory writer');
+  assert.equal(roomName({ slug: 'blue-eye', wing: 'project_blue_eye', name: '' }), 'Blue Eye');
+  assert.equal(roomName({ slug: 'blue-eye', wing: 'project_blue_eye', name: 'HALO avatar' }), 'HALO avatar');
   assert.equal(roomName({ slug: 'private-work', name: 'Private notes' }), 'Private notes');
   assert.equal(roomName({ slug: 'private-work', name: 'private-work' }), 'Private work');
   const html = renderMemory(state);

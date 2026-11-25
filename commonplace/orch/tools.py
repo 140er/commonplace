@@ -208,7 +208,13 @@ def config_render(ctx, board, version=None, channel="live"):
         config = schema.parse(found.body)
     except schema.ConfigError as exc:
         raise store._config_error(exc) from None
-    return {"board": board, "version": found.ref, "markdown": schema.render(config)}
+    from commonplace.projects import models
+
+    words = {
+        role: models.describe(item)
+        for role, item in models.effective_roles(ctx.db, ctx.principal.workspace_id, board).items()
+    }
+    return {"board": board, "version": found.ref, "markdown": schema.render(config, words)}
 
 
 def config_diff(ctx, board, old, new):

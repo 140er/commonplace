@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_escalation_authority_probe.py` and `tests/test_escalation_authority.py`.
+- **Promises:** The same-provider and cross-provider behavioral probe pins the final account connection, machine and successful runner lease. Controls cover missing initial authority, final-provider refusals without admission writes, failed-round selection, keyed replays, requester grants, connection replacement and an isolated HTTP journey.
+- **How it fails:** Assertions fail if an unused provider creates a missing-account item, a refused final account creates a job or ledger row, a final machine bypasses its grant, a changed connection leases, or a start reads control authority after its snapshot.
+- **Tests:** These two files plus the existing escalation, model-mode, runner, session and admission tests.

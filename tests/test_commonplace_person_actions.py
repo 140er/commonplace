@@ -15,7 +15,7 @@ from commonplace import oauth, sessions
 from commonplace.oauth import store
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_boards import api, service
-from tests.test_commonplace_oauth import Client
+from tests.test_commonplace_oauth import Client, client_approval
 
 DECIDE = "cards:decide:person"
 APPROVE = "cards:approve:person"
@@ -48,7 +48,7 @@ def grant(client, capabilities=SCOPES, *, checked=None, oauth_scopes=("memory:re
     status, _, html = client.request("GET", path)
     assert status == 200, html
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
-    data = {"request": request, "decision": "allow"}
+    data = {"request": request, "decision": "allow", **client_approval(html)}
     for scope in checked:
         data[
             {
@@ -177,6 +177,7 @@ def test_old_client_and_token_never_gain_person_authority(phone):
 
 
 def member_client(phone):
+    phone.approve(phone.cid, redirect_uri="cmmn://auth/callback", scope="memory:read")
     member = phone.hub.db.create_user("member@example.test")
     phone.hub.db.add_member(phone.hub.workspace, member, "member", actor=phone.hub.admin)
     phone.login("member@example.test")
@@ -564,7 +565,14 @@ def test_consent_form_cannot_grant_after_kill_switch(phone, monkeypatch):
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
     monkeypatch.delenv("COMMONPLACE_PHONE_ACTIONS")
     status, headers, _ = phone.request(
-        "POST", path, {"request": request, "decision": "allow", "grant_person_decide": "1"}
+        "POST",
+        path,
+        {
+            "request": request,
+            "decision": "allow",
+            "grant_person_decide": "1",
+            **client_approval(html),
+        },
     )
     assert status == 303
     assert "code" in parse_qs(urlsplit(headers["Location"]).query)
@@ -665,7 +673,7 @@ def test_code_creation_cannot_mint_person_grants_for_non_session_authority(phone
     db = phone.hub.db
     with db._lock:
         before = db._conn.execute("SELECT count(*) FROM connections").fetchone()[0]
-    with pytest.raises(OAuthError, match="invalid_scope"), db._lock, db._tx() as conn:
+    with pytest.raises(OAuthError, match="access_denied"), db._lock, db._tx() as conn:
         store.create_code(
             conn,
             store.client(db, phone.cid),

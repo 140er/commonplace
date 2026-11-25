@@ -19,6 +19,9 @@ from commonplace.http_util import send_json
 from .control import StoreError, open_store
 from .fence import FenceDenied
 
+_WORKSPACE_OPTIONAL = frozenset(
+    "cpu_cores memory_mib storage_gib network node_id private_registry request_id".split()
+)
 _CREATE_FIELDS = {
     "gateways": frozenset(
         "board name address port account host_key credential_id credential_version pin_confirmed".split()
@@ -30,6 +33,7 @@ _CREATE_FIELDS = {
         "gateway_id task_number agent_id cidrs interfaces methods expires_at limits".split()
     ),
     "executions": frozenset("node_id task_number operation arguments request_id".split()),
+    "workspaces": frozenset("name image_source image".split()),
     "scripts": frozenset("node_id task_number request_id source arguments output_paths".split()),
 }
 
@@ -38,6 +42,14 @@ def _fields(body, fields, *, optional=()):
     if set(body) - set(fields) or set(fields) - set(optional) - set(body):
         raise StoreError()
     return body
+
+
+def _check_scope_body(body):
+    if "agent_id" in body and type(body["agent_id"]) is not str:
+        raise StoreError()
+    if body["task_number"] is None:
+        # A scope belongs to a task (the column is NOT NULL): null is a refused body, not a failed insert.
+        raise StoreError()
 
 
 def _pairs(values):
@@ -71,9 +83,152 @@ def _body(h, maximum=8192):
         raise StoreError() from None
 
 
+# The reason a cloud workspace route gives when the code that refused did not name one itself.
+_WORKSPACE_REASON = {
+    "sign_in": "session",
+    "owner_required": "member",
+    "not_found": "route",
+    "invalid_request": "request",
+    "authority_unavailable": "authority",
+}
+
+
+# What a refusal from the shared write boundary becomes on a cloud workspace route: only the two codes that
+# name the person (not signed in; a token or other non-person caller) are about who is asking.
+_BOUNDARY_WORKSPACE = {
+    "sign_in": (401, "sign_in"),
+    "person_session_required": (403, "owner_required"),
+}
+
+
+def _tail_parts(path):
+    """The decoded segments after /api/compute, or None when the path is not a clean one.
+
+    Pure: the permission check and the router both read the path through this, so an encoded
+    segment (``/%77orkspaces``) is judged as the route it really is.
+    """
+    prefix = "/api/compute"
+    tail = path[len(prefix) :] if path == prefix or path.startswith(prefix + "/") else None
+    if tail is None or tail.endswith("/") or "//" in tail:
+        return None
+    parts = [unquote(part) for part in tail.split("/") if part]
+    if any(not part or "/" in part for part in parts):
+        return None
+    return parts
+
+
+def _workspace_body(h, allowed, optional):
+    """Parse a workspace write body; every refusal names a reason (and the field, when it is one)."""
+    from . import workspaces
+
+    try:
+        body = _body(h)
+    except StoreError:
+        raise workspaces.refuse(None, "body") from None
+    if set(body) - set(allowed):
+        raise workspaces.refuse(None, "unknown_field")
+    missing = sorted(set(allowed) - set(optional) - set(body))
+    if missing:
+        raise workspaces.refuse(missing[0], "required")
+    return body
+
+
+def _workspaces(h, store, principal, parts, auth):
+    """Cloud workspace records: reads for any member, writes for owners.
+
+    The owner check runs before any body is read (``handle`` does it for every write), and a
+    record of another workspace is concealed before the body of an action on it is read.
+    """
+    from . import workspaces
+
+    if h.command == "GET":
+        if not parts:
+            return send_json(h, 200, store.list_workspaces(principal, **auth))
+        if parts == ["images"]:
+            return send_json(h, 200, workspaces.options())
+        if len(parts) == 1:
+            return send_json(h, 200, store.get_workspace(principal, parts[0], **auth))
+    elif h.command == "POST":
+        if not parts:
+            body = _workspace_body(
+                h, _CREATE_FIELDS["workspaces"] | _WORKSPACE_OPTIONAL, _WORKSPACE_OPTIONAL
+            )
+            item, created = store.create_workspace(principal, **auth, **body)
+            return send_json(h, 201 if created else 200, {"workspace": item})
+        if len(parts) == 1:
+            store.get_workspace(principal, parts[0], **auth)
+            body = _workspace_body(
+                h,
+                workspaces.EDITABLE_FIELDS | {"expected_revision"},
+                workspaces.EDITABLE_FIELDS,
+            )
+            item = store.update_workspace(principal, parts[0], **auth, **body)
+            return send_json(h, 200, {"workspace": item})
+        if len(parts) == 2 and parts[1] == "discard":
+            store.get_workspace(principal, parts[0], **auth)
+            body = _workspace_body(h, {"expected_revision"}, ())
+            item = store.discard_workspace(principal, parts[0], **auth, **body)
+            return send_json(h, 200, {"discarded": item})
+        if len(parts) == 2 and parts[1] == "credential":
+            # Registry logins cannot be stored yet; the store refuses after the same checks.
+            store.get_workspace(principal, parts[0], **auth)
+            item = store.bind_workspace_credential(principal, parts[0], **auth)
+            return send_json(h, 200, {"workspace": item})
+    raise StoreError("not_found", 404)
+
+
+def _overview(h, store, principal, parts, auth):
+    from . import overview_routes
+
+    return overview_routes.dispatch(h, store, principal, parts, auth, _workspace_body)
+
+
+def _pairings(h, store, principal, parts, auth):
+    from . import pairing_routes
+
+    return pairing_routes.dispatch(h, store, principal, parts, auth, _workspace_body)
+
+
+# Route families that share the cloud workspace rules (members read, a reason on every refusal).
+_FAMILIES = {"workspaces": _workspaces, "overview": _overview, "pairings": _pairings}
+
+
+def _with_reason(payload, workspace_route):
+    """On a cloud workspace route every refusal carries a reason; others keep their fixed shape."""
+    if workspace_route and "reason" not in payload:
+        payload = {**payload, "reason": _WORKSPACE_REASON.get(payload["error"], "request")}
+    return payload
+
+
+def _workspace_route(path):
+    """The overview shares the cloud workspace rules: members read it, every refusal carries a reason."""
+    return [unquote(item) for item in path.split("/") if item][:3] in (
+        ["api", "compute", "workspaces"],
+        ["api", "compute", "overview"],
+        ["api", "compute", "pairings"],
+    )
+
+
 def handle(gateway, handler):
     """Serve only the frozen /api/compute management surface."""
+    try:
+        return _handle(gateway, handler)
+    except (TypeError, OverflowError):
+        # The control journal no longer hides these two. On the older routes a wrong-typed value in a body is
+        # still the fixed refusal; the cloud workspace and overview routes let a bug show as one.
+        if _workspace_route(urlsplit(handler.path).path):
+            raise
+        if handler.command != "GET":
+            handler.close_connection = True
+        return send_json(handler, 400, {"error": "invalid_request"})
+
+
+def _handle(gateway, handler):
     h = handler
+    # Cloud workspace routes name a reason on every refusal (``_WORKSPACE_REASON`` fills the gaps).
+    path = urlsplit(h.path).path
+    parts = _tail_parts(path)
+    workspace_route = _workspace_route(path)
     try:
         principal, cookie = _person(gateway, h)
         # Reject ambiguous cookies in a single header too.
@@ -82,29 +237,29 @@ def handle(gateway, handler):
             raise StoreError("sign_in", 401)
         session_hash = sessions._hash(cookie)
         store = open_store(gateway, principal.workspace_id)
+        # Cloud workspace records are readable by every current member; all else is owner-only.
+        member_read = h.command == "GET" and workspace_route
         with gateway.db._lock:
-            store._owner(principal, session_hash)
+            (store._member if member_read else store._owner)(principal, session_hash)
         write = h.command != "GET"
         if write:
             _write_boundary(gateway, h)
         parsed = urlsplit(h.path)
-        prefix = "/api/compute"
-        tail = (
-            parsed.path[len(prefix) :]
-            if parsed.path == prefix or parsed.path.startswith(prefix + "/")
-            else None
-        )
-        if tail is None or tail.endswith("/") or "//" in tail:
+        if parts is None:
             raise StoreError("not_found", 404)
         if parsed.query or parsed.fragment:
-            raise StoreError()
-        parts = [unquote(part) for part in tail.split("/") if part]
-        if any(not part or "/" in part for part in parts):
-            raise StoreError("not_found", 404)
+            from . import workspaces
+
+            raise workspaces.refuse(None, "query") if workspace_route else StoreError()
         auth = {"session_hash": session_hash}
+        family = _FAMILIES.get(parts[0]) if parts else None
+        if family is not None:
+            return family(h, store, principal, parts[1:], auth)
         if h.command == "GET":
             if not parts:
                 return send_json(h, 200, store.inventory(principal, **auth))
+            if parts == ["credentials"]:
+                return send_json(h, 200, store.list_credentials(principal, **auth))
             if len(parts) == 1 and parts[0] in _CREATE_FIELDS:
                 kind = parts[0]
                 return send_json(h, 200, {kind: getattr(store, "list_" + kind)(principal, **auth)})
@@ -116,10 +271,14 @@ def handle(gateway, handler):
                 body = _fields(
                     _body(h, 65_536 if kind == "scripts" else 8192),
                     _CREATE_FIELDS[kind],
-                    optional=("agent_id",) if kind == "scopes" else (),
+                    optional=("agent_id",)
+                    if kind == "scopes"
+                    else ("credential_id", "credential_version")
+                    if kind in ("gateways", "nodes")
+                    else (),
                 )
-                if kind == "scopes" and "agent_id" in body and type(body["agent_id"]) is not str:
-                    raise StoreError()
+                if kind == "scopes":
+                    _check_scope_body(body)
                 if kind == "executions":
                     execution, created = store.propose_execution(principal, **auth, **body)
                     return send_json(h, 201 if created else 200, {"execution": execution})
@@ -129,6 +288,14 @@ def handle(gateway, handler):
                 singular = kind[:-1]
                 item = getattr(store, "create_" + singular)(principal, **auth, **body)
                 return send_json(h, 201, {singular: item})
+            if len(parts) == 3 and parts[0] in ("gateways", "nodes") and parts[2] == "credential":
+                kind, object_id, _ = parts
+                singular = kind[:-1]
+                # Conceal foreign IDs before inspecting the body, as for the other actions.
+                getattr(store, "get_" + singular)(principal, object_id, **auth)
+                body = _fields(_body(h), ("credential_id", "credential_version"))
+                item = store.bind_credential(principal, kind, object_id, **auth, **body)
+                return send_json(h, 200, {singular: item})
             if len(parts) == 3 and parts[0] in ("scopes", "executions"):
                 kind, object_id, action = parts
                 if (kind, action) not in (
@@ -151,6 +318,10 @@ def handle(gateway, handler):
         raise StoreError("not_found", 404)
     except BoundaryError as exc:
         h.close_connection = True
+        if workspace_route:
+            # By code, not by status: a foreign Origin is a refused request, not a refused person.
+            status, code = _BOUNDARY_WORKSPACE.get(exc.code, (400, "invalid_request"))
+            return send_json(h, status, _with_reason({"error": code}, True))
         code = (
             "sign_in"
             if exc.code == "sign_in"
@@ -165,14 +336,19 @@ def handle(gateway, handler):
         )
     except FenceDenied:
         h.close_connection = True
-        return send_json(h, 503, {"error": "authority_unavailable"})
+        return send_json(h, 503, _with_reason({"error": "authority_unavailable"}, workspace_route))
     except ControlError:
         h.close_connection = True
-        return send_json(h, 401, {"error": "sign_in"})
+        return send_json(h, 401, _with_reason({"error": "sign_in"}, workspace_route))
     except StoreError as exc:
         if h.command != "GET":
             h.close_connection = True
-        return send_json(h, exc.status, {"error": exc.code})
+        detail = {
+            key: value for key, value in (("field", exc.field), ("reason", exc.reason)) if value
+        }
+        return send_json(
+            h, exc.status, _with_reason({"error": exc.code, **detail}, workspace_route)
+        )
 
 
 def install(gateway):

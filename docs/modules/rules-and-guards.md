@@ -17,7 +17,7 @@
 
   - Rule evidence (`commonplace/rules/evidence.py`): bounded `rule_events` plus `rule_stats` counters per workspace, written by `rules_feedback` (MCP) and `/api/rules/<id>/feedback` (REST).
 
-  - The pre-push quick check (`guards/prepush.py`): changed-file selection, the shared time budget and the report of what it skipped; and the hook installer (`guards/hooks.py`) whose scripts resolve each worktree's own environment.
+  - The pre-push quick check (`guards/prepush.py`): changed-file lint, format and typechecking, documentation validation and mapped tests, with an elapsed alarm; and the hook installer (`guards/hooks.py`) whose scripts resolve each worktree's own environment and can stage a preserved chain separately.
 
   - `commonplace.guards.pretool`, a PreToolUse command that refuses git-hook bypasses (`docs/hook-bypass-guard.md`).
 
@@ -33,7 +33,7 @@
 
   - `rules_get` takes `keys=[...]` for selected rules in full (unknown keys named) and, with `effective=true`, `format=index` for the compact index. Both are partial reads: they never record the full set as served and give no `rules_seq`. Defaults are unchanged.
 
-  - The quick check names itself a quick check, reports every skipped or cut-off step, and fails the push only when a check it ran failed. The installed hooks work in a fresh linked worktree or say how to set it up.
+  - The quick check names itself a quick check and blocks failed or unavailable required checks. Elapsed time never cuts off or omits work. The installed hooks work in a fresh linked worktree or say how to set it up.
 
   - Evidence never changes a rule or its sequence. Agents write with `memory:write` and read back only their own events plus the rule's counters; people read all events, only owners write. `rules_feedback` is an exempt write: a report, not an instruction.
 
@@ -47,7 +47,7 @@
 
   - Evidence tables are created additively in `migrate()`; events are capped (50 per writer, 200 per rule) while counters keep the full history, so a pruned event is no longer readable but still counted.
 
-  - A test whose name matches no changed module is not selected, so the quick check can pass while a distant test would fail; a cut-off step is reported, not retried; a worktree with no environment blocks the hook with the setup command.
+  - A test whose name matches no changed module is not selected, so the quick check can pass while a distant test would fail; a worktree with no environment blocks the hook with the setup command. Typechecking follows imports and can expose existing errors outside the changed files.
 
 - **Tests:**
 
@@ -60,4 +60,4 @@
 
   - `tests/test_rules_enforcement_points.py` holds one skip-detecting check per enforcement point (injection, session hook, write sequence check, reviewers); `docs/design/RULES.md` maps each point to its tests.
 
-  - `tests/test_guards_prepush.py` covers test selection, the budget (cut-off lint, cut-off tests, skipped steps), docs-check and the per-worktree tool path; `tests/test_guards_hooks.py` installs the hooks into a clone and pushes and commits from fresh linked worktrees.
+  - `tests/test_guards_prepush.py` covers test selection, non-cutting alarms, missing checks, docs-check and the per-worktree tool path; `tests/test_guards_hooks.py` installs or stages hooks in disposable clones and exercises commits, pushes and real rejected mutations.

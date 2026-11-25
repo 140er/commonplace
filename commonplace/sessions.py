@@ -19,11 +19,22 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .control_db import ControlDB, Principal
-from .policy import PIPELINE_SCOPE, SCOPES, Policy
+from .policy import FEED_SCOPES, SCOPES, Policy
 
 COOKIE = "cmmn_session"
 LINK_MINUTES = 15
 SESSION_DAYS = 30
+
+
+def workspace_csrf(session: str) -> str:
+    """Purpose-bound browser proof, following the existing consent-token pattern."""
+    return hashlib.sha256(("workspace-create-v1:" + session).encode()).hexdigest()
+
+
+def memory_delete_csrf(session: str, drawer_id: str) -> str:
+    """Bind note deletion proof to this browser session and exact drawer."""
+    return hashlib.sha256(("memory-delete-v1:" + session + ":" + drawer_id).encode()).hexdigest()
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS login_links (
@@ -70,7 +81,7 @@ def person_policy(role: Optional[str] = None) -> Policy:
         "bots:chat",
         "bots:confirm",
         "bots:learned",
-        PIPELINE_SCOPE,  # the deploy script's own token scope, never a person's
+        *FEED_SCOPES,  # the feeders' own token scopes, never a person's
     }
     if role != "owner":
         excluded.add("private:read")

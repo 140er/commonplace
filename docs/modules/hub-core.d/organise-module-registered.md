@@ -1,0 +1,1 @@
+- **Promises:** `commonplace.memory_organise` is in the gateway's extension list, so the memory organisation routes are mounted on every gateway that mounts the memory routes.

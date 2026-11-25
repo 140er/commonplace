@@ -1,0 +1,1 @@
+- **Owns:** `docs/system/previews.md` records the owner's six decisions and how slice 1 differs from the plan.

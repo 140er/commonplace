@@ -110,6 +110,35 @@ def resolve(db, provider: str, profile: Profile, *, signup: bool) -> str:
     return _resolve(db, provider, profile, signup=signup)[0]
 
 
+def initialize_workspace(gateway, user_id, workspace_id, *, mark_complete=True):
+    """Finish the same empty default board for signup, CLI and browser creation.
+
+    The control row's retry marker remains set until the board is usable. A retry
+    after interruption completes this workspace instead of making another one.
+    """
+    db = gateway.db
+    with db._lock:
+        if not db.workspace(workspace_id)["initial_space_pending"]:
+            return
+        principal = sessions.person_principal(db, user_id, workspace_id)
+        if (
+            principal is None
+            or not principal.person
+            or principal.role != "owner"
+            or principal.user_id != user_id
+            or principal.workspace_id != workspace_id
+        ):
+            raise ControlError("Workspace provisioning requires its owner.")
+        service = BoardService(ToolContext(principal=principal, gateway=gateway))
+        if not any(board["slug"] == "commonplace" for board in service.board_list()):
+            service.board_add(slug="commonplace", name="Commonplace")
+        if mark_complete:
+            with db._tx() as conn:
+                conn.execute(
+                    "UPDATE workspaces SET initial_space_pending=0 WHERE id=?", (workspace_id,)
+                )
+
+
 def complete_signin(gateway, provider: str, profile: Profile, *, signup: bool) -> tuple[str, str]:
     """Provision a new person's space before issuing their first session."""
     db = gateway.db
@@ -122,18 +151,7 @@ def complete_signin(gateway, provider: str, profile: Profile, *, signup: bool) -
         landing = "/app/"
         try:
             if pending:
-                principal = sessions.person_principal(db, uid, workspace)
-                if (
-                    principal is None
-                    or not principal.person
-                    or principal.role != "owner"
-                    or principal.user_id != uid
-                    or principal.workspace_id != workspace
-                ):
-                    raise SignInError("failed")
-                service = BoardService(ToolContext(principal=principal, gateway=gateway))
-                if not any(board["slug"] == "commonplace" for board in service.board_list()):
-                    service.board_add(slug="commonplace", name="Commonplace")
+                initialize_workspace(gateway, uid, workspace, mark_complete=False)
                 landing = "/app/#/board/commonplace"
             # The board has its own database. Keep the retry marker until both
             # session issuance and this control-database transition commit.

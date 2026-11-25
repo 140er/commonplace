@@ -133,7 +133,7 @@ class Journey:
         assert status == 200
         match = re.search(rb'name="request" value="([^"]+)"', raw)
         assert match is not None
-        data = {"request": unescape(match[1].decode()), "decision": "allow"}
+        data = {"request": unescape(match[1].decode()), "decision": "allow", "approve_client": "1"}
         if tick:
             data["grant_import"] = "1"
         return self.form(path, data, owner=self.owner)

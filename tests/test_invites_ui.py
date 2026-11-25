@@ -31,7 +31,10 @@ def test_invite_block_and_workspace_switcher(hub):
 
 def test_app_wires_invites_and_the_switcher(hub):
     app, palette = _served(hub, "app"), _served(hub, "palette")
-    assert 'import { createInviteBlock, openWorkspaces } from "./invites.js";' in app
+    assert '{ createInviteBlock, openWorkspaces } = await import("./invites.js")' in app
     assert "invites: createInviteBlock({ api, e })" in app
-    assert 'action === "workspaces") openWorkspaces({ api, e, onError: showError })' in app
+    assert (
+        'action === "workspaces") { await loadRouteModule("invites"); openWorkspaces({ api, e, onError: showError })'
+        in app
+    )
     assert "add('workspaces', 'Switch workspace', 'Workspace', { action: 'workspaces'" in palette

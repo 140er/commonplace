@@ -1,0 +1,4 @@
+- **Owns:** `test_compute_pause_snapshot.py` and the added `compute_overview_ui.mjs` cases exercise the real controller pairing callback, delayed list/detail replies, explicit reads while paused, Resume before an older request finishes, and expired-session refusal.
+- **Promises:** Existing Node cases and browser test/helper assertions remain unchanged. The frozen component selection fails behaviorally on the pinned production source and passes with the snapshot fix.
+- **How it fails:** A test fails if an automatic check reads while paused, an invalidated reply replaces a snapshot or clears a newer read's busy state, manual reads stop working, or an expired-session refusal is suppressed.
+- **Tests:** The Classic/Deck desktop/phone browser matrix covers pairing changes, late automatic responses and the existing paused workspace-signature path with manual Refresh and Resume controls.

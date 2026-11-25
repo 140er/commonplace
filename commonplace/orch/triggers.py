@@ -207,7 +207,9 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
             events = boards.execute(_EVENTS, (cursor, board_row["id"], BATCH)).fetchall()
             cards = {row["task_id"]: dict(task_row(boards, row["task_id"])) for row in events}
         at = now or jobs._now()
-        retries = [] if on else start_retry.due(conn, board, at)
+        retries = (
+            [] if on else _by_priority(boards_dir=directory, rows=start_retry.due(conn, board, at))
+        )
         if not events and not on and not retries:
             return results
         version = orch_store.resolve_in(conn, board)
@@ -215,8 +217,13 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
             return results
         machine = registry.get_machine(gateway.db, ws, version.config().runner.machine)
         stopped = False
-        for event in events:
+        # Most urgent card first, then event order; the cursor only moves past events whose
+        # predecessors are all handled, so a lower-priority card is never skipped.
+        order = sorted(events, key=lambda e: (cards[e["task_id"]]["priority"], e["id"]))
+        ids, handled = sorted(e["id"] for e in events), set()
+        for event in order:
             principal, ref, refusal = _actor(gateway, ws, event, machine)
+            advance = _watermark(cursor, ids, handled | {event["id"]})
             _barrier("sweep_after_requester", conn)
             try:
                 plan = runner_bridge.prepare(
@@ -234,14 +241,15 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
                 # A start that cannot even be planned is a coded miss for this event,
                 # not an infrastructure error: leaving the cursor would block the board.
                 code = exc.code if isinstance(exc, runner_bridge.StartRefused) else "config_invalid"
-                trigger = runner_bridge.TriggerRef(event["id"], cursor, gen, ref)
+                trigger = runner_bridge.TriggerRef(event["id"], cursor, gen, ref, advance=advance)
                 if not runner_bridge.trigger_miss(
                     js, board, event["task_id"], trigger, code, now=now
                 ):
                     results.append({"event": event["id"], "dropped": True})
                     stopped = True
                     break
-                cursor = event["id"]
+                cursor = advance
+                handled.add(event["id"])
                 results.append(
                     {"event": event["id"], "card": event["task_id"], "job": None, "miss": code}
                 )
@@ -251,7 +259,7 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
                 js,
                 plan,
                 path="trigger",
-                trigger=runner_bridge.TriggerRef(event["id"], cursor, gen, ref),
+                trigger=runner_bridge.TriggerRef(event["id"], cursor, gen, ref, advance=advance),
                 actor_refusal=refusal,
                 now=now,
             )
@@ -259,7 +267,8 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
                 results.append({"event": event["id"], "dropped": True})
                 stopped = True
                 break
-            cursor = event["id"]  # re-recorded from the advance
+            cursor = advance  # re-recorded from the advance
+            handled.add(event["id"])
             results.append(
                 {
                     "event": event["id"],
@@ -275,6 +284,32 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
     if on:
         results.extend(_reconcile(js, st, board, now or jobs._now()))
     return results
+
+
+def _watermark(cursor: int, ids: list[int], handled: set[int]) -> int:
+    """The highest event id such that it and every lower id in ``ids`` is handled, else ``cursor``."""
+    mark = cursor
+    for event_id in ids:
+        if event_id not in handled:
+            break
+        mark = event_id
+    return mark
+
+
+def _by_priority(*, boards_dir, rows: list[dict]) -> list[dict]:
+    """Pending retries most urgent card first, then oldest event first."""
+    if len(rows) < 2:
+        return rows
+    marks = ",".join("?" * len(rows))
+    with BoardStore(boards_dir).connection() as boards:
+        rank = {
+            row["id"]: row["priority"]
+            for row in boards.execute(
+                "SELECT id, priority FROM tasks WHERE id IN (" + marks + ")",
+                [row["card"] for row in rows],
+            )
+        }
+    return sorted(rows, key=lambda r: (rank.get(r["card"], 2), r["event_id"]))
 
 
 def _retry_starts(js, board_row, version, machine, retries, pair, now) -> list[dict]:

@@ -39,7 +39,7 @@ const errors = [], requests = [];
 const settle = () => new Promise(resolve=>setImmediate(resolve));
 const state = {pending:new Set(), card};
 const context = {
-  conflictText,
+  conflictText, loadRouteModule: async () => {},
   state, canRemoveAssignment:details.canRemoveAssignment, assignmentPickup:details.assignmentPickup,
   deckAssignmentForm:details.deckAssignmentForm, assignmentRefusal:details.assignmentRefusal,
   detailsUI:null, consoleUI:null, root:{querySelector:()=>panel, querySelectorAll:()=>[], addEventListener:(name, fn)=>{context[name]=fn;}},

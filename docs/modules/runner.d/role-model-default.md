@@ -1,0 +1,4 @@
+- **Owns:** The Coworker session's model choice (`runner/sessions.py`), now the effective model.
+- **Promises:** A session starts on the role's default when no choice is set and records that model; losing every usable model fences the session as `model_unresolved`.
+- **How it fails:** A session whose model changed since it was bound is refused as `model_changed`.
+- **Tests:** `tests/test_runner_session_guards.py`.

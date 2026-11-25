@@ -35,6 +35,60 @@ from .write_routing import (
 
 MAX_NAME_LENGTH = 128
 _SAFE_NAME_RE = re.compile(r"^(?:[^\W_]|[^\W_][\w .'-]{0,126}[^\W_])$")
+NAME_PATH_TOKENS = ("..", "/", "\\")
+NAME_NULL_TOKEN = "\x00"
+
+
+def _unicode_character_ranges(predicate):
+    """Portable character classes with Python's Unicode semantics, also for JS /u."""
+    ranges = []
+    start = previous = None
+    for codepoint in range(sys.maxunicode + 1):
+        if not predicate(chr(codepoint)):
+            continue
+        if previous is not None and codepoint != previous + 1:
+            ranges.append(chr(start) if start == previous else f"{chr(start)}-{chr(previous)}")
+            start = None
+        if start is None:
+            start = codepoint
+        previous = codepoint
+    if start is not None:
+        ranges.append(chr(start) if start == previous else f"{chr(start)}-{chr(previous)}")
+    return "".join(ranges)
+
+
+@lru_cache(maxsize=1)
+def name_validation_rules():
+    """Describe sanitize_name without changing its accepted set or its errors.
+
+    JS's \\w and \\s differ from Python's, including for Unicode. Expand those
+    classes from this runtime once, so browser validation uses the exact set
+    behind the authoritative Python pattern and strip operation.
+    """
+    alphanumeric = _unicode_character_ranges(str.isalnum)
+    whitespace = _unicode_character_ranges(str.isspace)
+    pattern = _SAFE_NAME_RE.pattern.replace(r"[^\W_]", f"[{alphanumeric}]")
+    pattern = pattern.replace(r"\w", alphanumeric + "_")
+    help_text = (
+        f"Use 1–{MAX_NAME_LENGTH} letters or digits, with internal spaces, "
+        "underscores (_), periods (.), apostrophes (') or hyphens (-). "
+        "Start and end with a letter or digit."
+    )
+    return {
+        "max_length": MAX_NAME_LENGTH,
+        "pattern": pattern,
+        "trim_pattern": f"^[{whitespace}]+|[{whitespace}]+$",
+        "path_tokens": list(NAME_PATH_TOKENS),
+        "null_token": NAME_NULL_TOKEN,
+        "messages": {
+            "empty": "Enter a workspace name. " + help_text,
+            "length": f"Use {MAX_NAME_LENGTH} characters or fewer.",
+            "path": "Names cannot contain /, \\, or consecutive periods (..). " + help_text,
+            "null": "Names cannot contain null characters. " + help_text,
+            "characters": "This name contains invalid characters. " + help_text,
+        },
+    }
+
 
 # MCP clients (e.g. Claude Desktop, WorkBuddy) occasionally relay lone UTF-16
 # surrogates (U+D800–U+DFFF) when proxying binary-in-Unicode or corrupted
@@ -139,11 +193,11 @@ def sanitize_name(value: str, field_name: str = "name") -> str:
         raise ValueError(f"{field_name} exceeds maximum length of {MAX_NAME_LENGTH} characters")
 
     # Block path traversal
-    if ".." in value or "/" in value or "\\" in value:
+    if any(token in value for token in NAME_PATH_TOKENS):
         raise ValueError(f"{field_name} contains invalid path characters")
 
     # Block null bytes
-    if "\x00" in value:
+    if NAME_NULL_TOKEN in value:
         raise ValueError(f"{field_name} contains null bytes")
 
     # Enforce safe character set

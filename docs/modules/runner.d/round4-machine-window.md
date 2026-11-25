@@ -1,0 +1,4 @@
+- **Owns:** `machine_setup.py` stops, before the administrator question, when the installation here belongs to another site or its manifest cannot be read; it names the screen "Cloud workspaces" in every next step, says a refused confirmation in the page's words, and says when the final reports could not reach the app; `installer.py` words a lost delivery as "run the command again".
+- **Promises:** Nothing is asked of, or changed on, a machine whose installation is another site's or unreadable.
+- **How it fails:** Closed: the command stops and says nothing was changed.
+- **Tests:** `tests/test_machine_setup.py`.

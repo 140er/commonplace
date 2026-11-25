@@ -53,3 +53,6 @@
   .dw-worker dl { grid-template-columns: 1fr; gap: 16px; }
   .dw-crumbs > * + *::before { margin-right: 10px; }
 }
+
+/* Tablet touch (wider than the phone breakpoint) gets the same 44px targets as a phone. */
+@media (pointer: coarse) { .dw-tabs a, .dw-crumbs a, .dw-switch a, .dw-switch span { min-height: 44px; } }

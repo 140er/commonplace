@@ -21,11 +21,18 @@ PIN_PUBLIC = {
     ("GET", "/app/threads/"),
     ("GET", "/oauth/authorize"),
     ("GET", "/s/"),
+    # Preview files: the route checks the session itself, so a signed-out browser gets a
+    # sign-in page instead of a JSON error.
+    ("GET", "/p/"),
     ("GET", "/skills/decks/"),
     # Bootstrap authenticates with a single-use enrollment code before credentials exist.
     ("POST", "/api/runner-enrollment/exchange"),
     # Lost-response recovery authenticates a single-use challenge with the bound key.
     ("POST", "/api/runner-enrollment/recover"),
+    # Pairing check: the pairing id and one-time code are the only credential.
+    ("POST", "/api/runner-pairing/check"),
+    # The machine setup launcher: one text for every caller, no secret in it.
+    ("GET", "/machine-setup.sh"),
     ("POST", "/app/auth/"),
     ("POST", "/app/auth/email"),
     ("POST", "/app/auth/email/verify"),

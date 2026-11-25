@@ -16,6 +16,7 @@ from commonplace import sessions
 from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
 from commonplace.policy import Policy
+from commonplace.previews import store
 from commonplace.workers import WorkerSupervisor
 
 ALICE_NOTE = "Alice's note: café ☕, line one\nline two\ttabbed — kept exactly"
@@ -92,6 +93,29 @@ class Site:
         conn.close()
         (directory / "palace").mkdir(exist_ok=True)
         (directory / "palace" / "notes.txt").write_text(note, encoding="utf-8")
+
+    def publish_preview(self, workspace, card=7, name="home") -> str:
+        """A published preview the way publish leaves it: row, revision, events and files."""
+        identity = "pv_" + workspace[-8:]
+        at = "2026-01-01T00:00:00Z"
+        with self.db._tx() as conn:
+            store.event(conn, workspace, "", card, "publish_started", "conn:alice-agent")
+            conn.execute(
+                "INSERT INTO previews(id,workspace_id,card,name,state,reason,current_revision,"
+                "actor,published_by,by_person,created_at,updated_at) "
+                "VALUES (?,?,?,?,'ready','published',1,'conn:alice-agent','a1',0,?,?)",
+                (identity, workspace, card, name, at, at),
+            )
+            conn.execute(
+                "INSERT INTO preview_revisions(preview_id,revision,digest,size_bytes,file_count,"
+                "published_by,by_person,published_at) VALUES (?,1,'d1',14,1,'a1',0,?)",
+                (identity, at),
+            )
+            store.event(conn, workspace, identity, card, "published", "conn:alice-agent")
+        folder = store.revision_dir(self.gateway, workspace, identity, 1)
+        folder.mkdir(parents=True)
+        (folder / "index.html").write_text("<h1>Hello</h1>", encoding="utf-8")
+        return identity
 
     def session(self, user, workspace) -> str:
         return sessions.start_session(self.db, user, workspace)

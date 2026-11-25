@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -47,6 +48,7 @@ from commonplace.control_db import ControlError, Principal
 from commonplace.extensions import ToolContext, ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
+from .credentials import CredentialError, list_credential_references
 from .fence import _attach_connection, _held
 from .protocol import (
     EnrolledRoute,
@@ -72,6 +74,9 @@ MAX_SCOPE_SECONDS = 3600
 MAX_PROPOSAL_SECONDS = 900
 MAX_APPROVAL_SECONDS = 300
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+# Stands in for the reference only while validating a record saved without a credential;
+# it is never stored or used (`_enrollment`/`_route` refuse such records unless validating).
+_PLACEHOLDER_ID = "unbound"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gateways (
  id TEXT PRIMARY KEY, board TEXT NOT NULL, board_id INTEGER NOT NULL,
@@ -97,10 +102,28 @@ CREATE TABLE IF NOT EXISTS executions (
  approved_by TEXT, approval_session_hash TEXT,
  UNIQUE(user_id,request_id)
 );
+CREATE TABLE IF NOT EXISTS cloud_workspaces (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+ node_id TEXT REFERENCES nodes(id),
+ image_source TEXT NOT NULL CHECK(image_source IN ('curated','custom')),
+ image_reference TEXT NOT NULL,
+ private_registry INTEGER NOT NULL DEFAULT 0 CHECK(private_registry IN (0,1)),
+ registry_credential_id TEXT, registry_credential_version INTEGER,
+ cpu_millicores INTEGER NOT NULL CHECK(cpu_millicores BETWEEN 500 AND 32000),
+ memory_mib INTEGER NOT NULL CHECK(memory_mib BETWEEN 512 AND 131072),
+ storage_gib INTEGER NOT NULL CHECK(storage_gib BETWEEN 1 AND 2048),
+ network TEXT NOT NULL CHECK(network IN ('outbound','none')),
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','ready','failed')),
+ state_reason TEXT,
+ revision INTEGER NOT NULL DEFAULT 1, applied_revision INTEGER,
+ created_by TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit (
  id INTEGER PRIMARY KEY, object_id TEXT NOT NULL, action TEXT NOT NULL,
  user_id TEXT NOT NULL, created_at REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS audit_object ON audit(object_id,id);
 CREATE TABLE IF NOT EXISTS enrollment_verifications (
  node_id TEXT PRIMARY KEY REFERENCES nodes(id), gateway_id TEXT NOT NULL,
  enrollment TEXT NOT NULL, receipt_digest TEXT NOT NULL,
@@ -143,8 +166,9 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN
 class StoreError(ValueError):
     """A fixed public error code, without request text or private bindings."""
 
-    def __init__(self, code="invalid_request", status=400):
-        self.code, self.status = code, status
+    def __init__(self, code="invalid_request", status=400, *, field=None, reason=None):
+        # ``field`` and ``reason`` are fixed codes naming the form field and why (workspaces only).
+        self.code, self.status, self.field, self.reason = code, status, field, reason
         super().__init__(code)
 
 
@@ -259,7 +283,7 @@ class Store:
     def _now(self):
         return finite(self.clock())
 
-    def _owner(self, principal, session_hash):
+    def _member(self, principal, session_hash):
         if (
             not isinstance(principal, Principal)
             or not principal.person
@@ -290,12 +314,17 @@ class Store:
             current = None
         if current is None:
             raise StoreError("sign_in", 401)
+        return current
+
+    def _owner(self, principal, session_hash):
+        current = self._member(principal, session_hash)
         if current.role != "owner":
             raise StoreError("owner_required", 403)
         return current
 
     @contextmanager
-    def _transaction(self, principal, session_hash):
+    def _transaction(self, principal, session_hash, *, member=False):
+        """Owner-only unless ``member``: then any current member of this workspace (reads)."""
         guard = (
             _held(self._authority_fence, self.workspace_id, local=True)
             if self._authority_fence is not None
@@ -303,7 +332,7 @@ class Store:
         )
         with guard:
             with self.gateway.db._lock:
-                current = self._owner(principal, session_hash)
+                current = (self._member if member else self._owner)(principal, session_hash)
                 with self._journal() as conn:
                     yield conn, current
 
@@ -332,8 +361,12 @@ class Store:
                     if "operator_note" not in columns:
                         conn.execute("ALTER TABLE execution_runs ADD COLUMN operator_note TEXT")
                     from .script_control import schema
+                    from .workspace_lifecycle import schema as lifecycle_schema
+                    from .workspaces import schema as workspace_schema
 
                     schema(conn)
+                    workspace_schema(conn)
+                    lifecycle_schema(conn)
                     _attach_connection(conn, str(path), "compute")
                     conn.execute("BEGIN IMMEDIATE")
                     try:
@@ -345,8 +378,15 @@ class Store:
                         conn.commit()
                 finally:
                     conn.close()
-        except (ProtocolDenied, ScopeDenied, TypeError, OverflowError):
+        except (ProtocolDenied, ScopeDenied):
+            # Only the protocol's own refusals; a TypeError or OverflowError is a bug and must show as one.
             raise StoreError() from None
+        except sqlite3.OperationalError as exc:
+            # A compute database that is locked or busy is not a bug and not the caller's fault: say so (503), change
+            # nothing, and let them try again. Any other database error is still a bug and shows as one.
+            if "locked" in str(exc) or "busy" in str(exc):
+                raise StoreError("authority_unavailable", 503, reason="busy") from None
+            raise
 
     def _authority(self, principal, board, task_number=None):
         """Use the canonical board's current read/write and task visibility."""
@@ -457,7 +497,15 @@ class Store:
         return value
 
     @staticmethod
-    def _enrollment(row, metadata):
+    def _unbound(metadata):
+        return metadata.get("credential_id") is None
+
+    @classmethod
+    def _enrollment(cls, row, metadata, *, allow_unbound=False):
+        # Every verification, proposal, script and discovery path builds its binding here,
+        # so a record without a credential is refused at one place, on the server.
+        if cls._unbound(metadata) and not allow_unbound:
+            raise StoreError("credential_not_bound", 409)
         return GatewayEnrollment(
             workspace=metadata["workspace"],
             gateway=row["id"],
@@ -466,11 +514,13 @@ class Store:
             account=metadata["account"],
             pin=_pin(metadata["host_key"]),
             epoch=metadata["epoch"],
-            credential_id=metadata["credential_id"],
-            credential_version=metadata["credential_version"],
+            credential_id=metadata["credential_id"] or _PLACEHOLDER_ID,
+            credential_version=metadata["credential_version"] or 1,
         )
 
-    def _route(self, row, metadata, gateway_id):
+    def _route(self, row, metadata, gateway_id, *, allow_unbound=False):
+        if self._unbound(metadata) and not allow_unbound:
+            raise StoreError("credential_not_bound", 409)
         return EnrolledRoute(
             workspace=self.workspace_id,
             gateway=gateway_id,
@@ -481,8 +531,8 @@ class Store:
             account=metadata["account"],
             pin=_pin(metadata["host_key"]),
             epoch=metadata["epoch"],
-            credential_id=metadata["credential_id"],
-            credential_version=metadata["credential_version"],
+            credential_id=metadata["credential_id"] or _PLACEHOLDER_ID,
+            credential_version=metadata["credential_version"] or 1,
         )
 
     @staticmethod
@@ -503,6 +553,7 @@ class Store:
             "board": row["board"],
             "created_at": row["created_at"],
             **{key: metadata[key] for key in fields},
+            "credential_bound": metadata["credential_id"] is not None,
         }
 
     def _public_node(self, row, metadata, gateway):
@@ -577,14 +628,15 @@ class Store:
         port,
         account,
         host_key,
-        credential_id,
-        credential_version,
-        pin_confirmed,
+        credential_id=None,
+        credential_version=None,
+        pin_confirmed=None,
     ):
         with self._transaction(principal, session_hash) as (conn, current):
             context = self._authority(current, board)
             if pin_confirmed is not True:
                 raise StoreError()
+            bound = self._reference(credential_id, credential_version)
             gateway_id = uuid.uuid4().hex
             binding = GatewayEnrollment(
                 self.workspace_id,
@@ -594,11 +646,13 @@ class Store:
                 account,
                 _pin(host_key),
                 1,
-                credential_version,
-                credential_id,
+                credential_version if bound else 1,
+                credential_id if bound else _PLACEHOLDER_ID,
             )
             metadata = {**_document(binding), "name": _text(name), "state": "pending_verification"}
             metadata["host_key"] = metadata.pop("pin")
+            if not bound:
+                metadata.update(credential_id=None, credential_version=None)
             self._capacity(conn, "gateways", MAX_GATEWAYS)
             conn.execute(
                 "INSERT INTO gateways VALUES (?,?,?,?,?)",
@@ -626,14 +680,15 @@ class Store:
         interface,
         account,
         host_key,
-        credential_id,
-        credential_version,
-        pin_confirmed,
+        credential_id=None,
+        credential_version=None,
+        pin_confirmed=None,
     ):
         with self._transaction(principal, session_hash) as (conn, current):
             gateway, gm = self._gateway(conn, current, gateway_id)
             if pin_confirmed is not True:
                 raise StoreError()
+            bound = self._reference(credential_id, credential_version)
             node_id = uuid.uuid4().hex
             route = EnrolledRoute(
                 self.workspace_id,
@@ -645,12 +700,14 @@ class Store:
                 account,
                 _pin(host_key),
                 1,
-                credential_version,
-                credential_id,
+                credential_version if bound else 1,
+                credential_id if bound else _PLACEHOLDER_ID,
             )
-            enrollment_digest(self._enrollment(gateway, gm), route)
+            enrollment_digest(self._enrollment(gateway, gm, allow_unbound=True), route)
             metadata = {**_document(route), "name": _text(name), "state": "pending_verification"}
             metadata["host_key"] = metadata.pop("pin")
+            if not bound:
+                metadata.update(credential_id=None, credential_version=None)
             self._capacity(conn, "nodes", MAX_NODES)
             conn.execute(
                 "INSERT INTO nodes VALUES (?,?,?,?)",
@@ -659,6 +716,48 @@ class Store:
             self._audit(conn, current, node_id, "node.created")
             row = self._row(conn, "nodes", node_id)
             return self._public_node(row, metadata, gateway)
+
+    @staticmethod
+    def _reference(credential_id, credential_version):
+        """True for a full reference, False for none; half a reference is invalid."""
+        if credential_id is None and credential_version is None:
+            return False
+        if credential_id is None or credential_version is None:
+            raise StoreError()
+        return True
+
+    def bind_credential(
+        self, principal, kind, object_id, *, session_hash, credential_id, credential_version
+    ):
+        """Bind a credential reference, once, to a gateway or target saved without one.
+
+        ``kind`` is ``gateways`` or ``nodes``; the reference is checked like one given at
+        creation, nothing is opened or verified here, and a bound record is never changed.
+        """
+        with self._transaction(principal, session_hash) as (conn, current):
+            if kind == "gateways":
+                row, metadata = self._gateway(conn, current, object_id)
+            else:
+                row, metadata, _, _ = self._node(conn, current, object_id)
+            if not self._unbound(metadata):
+                raise StoreError("credential_already_bound", 409)
+            if not self._reference(credential_id, credential_version):
+                raise StoreError()
+            identifier(credential_id)
+            positive_integer(credential_version)
+            metadata = {
+                **metadata,
+                "credential_id": credential_id,
+                "credential_version": credential_version,
+            }
+            update = (
+                "UPDATE gateways SET metadata=? WHERE id=?"
+                if kind == "gateways"
+                else "UPDATE nodes SET metadata=? WHERE id=?"
+            )
+            conn.execute(update, (canonical(metadata).decode(), object_id))
+            self._audit(conn, current, object_id, f"{kind[:-1]}.credential_bound")
+            return self._get_public(conn, current, kind, object_id)
 
     def _agent(self, agent_id, board, task_number):
         identifier(agent_id)
@@ -1036,6 +1135,26 @@ class Store:
                 "can_manage": True,
             }
 
+    def list_credentials(self, principal, *, session_hash):
+        """Reference-only credential list (id, purpose, account, version, state, expiry).
+
+        Reads only plaintext reference columns of the separate custody file; the
+        wrapping key, encrypted keys and public keys are never opened or returned.
+        """
+        with self.gateway.db._lock:
+            self._owner(principal, session_hash)
+        path = Path(self._path() if callable(self._path) else self._path)
+        try:
+            status, rows = list_credential_references(
+                path.parent / "compute-credentials.sqlite3",
+                path.parent,
+                self.workspace_id,
+                now=self._now(),
+            )
+        except CredentialError:
+            return {"credentials": [], "status": "unavailable"}
+        return {"credentials": rows, "status": status}
+
     def list_gateways(self, principal, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
             return self._list(conn, current, "gateways")
@@ -1067,6 +1186,44 @@ class Store:
     def get_execution(self, principal, execution_id, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
             return self._get_public(conn, current, "executions", execution_id)
+
+    def list_workspaces(self, principal, *, session_hash):
+        """Cloud workspace records; any current member may read (owners also manage)."""
+        from .workspaces import list_workspaces
+
+        return list_workspaces(self, principal, session_hash=session_hash)
+
+    def get_workspace(self, principal, workspace_id, *, session_hash):
+        from .workspaces import get_workspace
+
+        return get_workspace(self, principal, workspace_id, session_hash=session_hash)
+
+    def create_workspace(self, principal, **kwargs):
+        """Create a cloud workspace record; returns ``(item, created)`` like ``create_script``."""
+        from .workspaces import create_workspace
+
+        return create_workspace(self, principal, **kwargs)
+
+    def update_workspace(self, principal, workspace_id, **kwargs):
+        from .workspaces import update_workspace
+
+        return update_workspace(self, principal, workspace_id, **kwargs)
+
+    def bind_workspace_credential(self, principal, workspace_id, **kwargs):
+        from .workspaces import bind_registry_credential
+
+        return bind_registry_credential(self, principal, workspace_id, **kwargs)
+
+    def discard_workspace(self, principal, workspace_id, **kwargs):
+        from .workspaces import discard_workspace
+
+        return discard_workspace(self, principal, workspace_id, **kwargs)
+
+    def _set_workspace_state(self, conn, workspace_id, state, reason=None, **kwargs):
+        """Lifecycle seam for the later start/stop code (no REST path)."""
+        from .workspaces import set_state
+
+        set_state(conn, workspace_id, state, reason, **kwargs)
 
     def create_script(self, principal, **kwargs):
         """Create an immutable task/node-bound script; return (metadata, created)."""

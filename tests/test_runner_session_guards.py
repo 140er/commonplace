@@ -31,7 +31,7 @@ def test_session_authority_is_rechecked_before_host_effect(session_world, guard)
 
         registry.patch(w.db, w.owner, w.machine_id, {"enabled": False})
     else:
-        w.set_models(None, role="main")
+        w.clear_models()  # no choice and an empty list: nothing usable
     w.tick()
     assert len(w.calls) == 1, "lost authority must fence even an inspection/continuation"
 

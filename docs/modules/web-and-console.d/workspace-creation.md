@@ -1,5 +1,4 @@
-- **Promises:**
-
-  - The workspace switcher shares creation, confirmation and result behavior between Classic and Deck. Deck styling uses its existing surface and input tokens, rounded cards and primary pills; the dialog fits phone gutters without horizontal scrolling. Shell routing and imports stay unchanged.
-
-  - Deck name entry gives inline feedback for an empty, overlong or already-listed name before confirmation. This is presentation validation; the server contract remains unchanged.
+- **Owns:** Shared workspace switcher entry points in Classic and Deck, on desktop and phone.
+- **Promises:** Confirmation names the empty isolated result. Success switches the session, sets its default Home route and forces a reload so no cached identity or data survives from the previous workspace. A failed switch retains an Open workspace action that retries without creating again.
+- **How it fails:** Name feedback is inline; cap, plan, rate, disk and pause refusals preserve the server's plain reason. Creation remains on its confirmation after uncertain transport errors and keeps the same request id. Existing navigation imports and shell code stay unchanged.
+- **Tests:** tests/workspace_creation.mjs checks forced reload, automatic switching, csrf, retries and recovery after a failed switch. tests/test_workspace_creation_browser.py exercises both looks and sizes with real sessions and before/after captures.

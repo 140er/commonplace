@@ -18,11 +18,13 @@ that workspace, so a removed owner leaves no open doors behind.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import secrets
 import sqlite3
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from typing import Optional
 
 from .control_db import ControlDB, ControlError, _iso, _new_id, _now
@@ -59,21 +61,31 @@ CREATE TABLE IF NOT EXISTS workspace_creations (
 );
 CREATE INDEX IF NOT EXISTS idx_workspace_creations_rate
     ON workspace_creations(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_workspace_creations_instance
+    ON workspace_creations(created_at);
 """
 
 
 class WorkspaceCreationError(ControlError):
-    def __init__(self, status, message):
+    def __init__(self, status, message, retry_after_s=None):
         super().__init__(message)
         self.status = status
+        self.retry_after_s = retry_after_s
+
+
+def _creation_setting(name, default):
+    from .ratelimit import _integer
+
+    return _integer(os.environ, name, default, 1)
 
 
 def create_workspace(db, user_id, *, name, request_id):
     """Reuse signup provisioning, atomically remembering a person's request."""
     from mempalace.config import sanitize_name
 
-    from . import plans
-    from .social.accounts import signup_enabled
+    from . import plans, ratelimit
+    from .admission import GATE
+    from .social.accounts import allowed_signup_emails, signup_enabled
 
     name = sanitize_name(name, "Workspace name")
     if not isinstance(request_id, str) or len(request_id) != 36:
@@ -82,9 +94,13 @@ def create_workspace(db, user_id, *, name, request_id):
         request_id = str(uuid.UUID(request_id))
     except ValueError:
         raise ValueError("Use a valid workspace request id.") from None
-    with db._lock, db._tx() as conn:
+    # Nonblocking admission avoids waiting for a backup while holding the DB lock.
+    with GATE.creating(timeout=0), db._lock, db._tx() as conn:
+        user = db.user(user_id)
+        if not user["is_person"]:
+            raise WorkspaceCreationError(403, "Only a person can create a workspace.")
         previous = conn.execute(
-            "SELECT w.id, w.name FROM workspace_creations c "
+            "SELECT w.id, w.name, w.slug FROM workspace_creations c "
             "JOIN workspaces w ON w.id = c.workspace_id "
             "WHERE c.user_id = ? AND c.request_id = ?",
             (user_id, request_id),
@@ -92,29 +108,93 @@ def create_workspace(db, user_id, *, name, request_id):
         if previous:
             if previous["name"] != name:
                 raise WorkspaceCreationError(409, "This request was already used for another name.")
-            return {"id": previous["id"], "name": previous["name"], "role": "owner"}, False
-        if not signup_enabled():
+            return {
+                "id": previous["id"],
+                "name": previous["name"],
+                "slug": previous["slug"],
+                "role": "owner",
+            }, False
+        if signup_enabled():
+            creation_rule = "signup open"
+        elif user["is_admin"] == 1:  # Same stored flag as instance_admin.stored_flag.
+            creation_rule = "instance admin"
+        elif user["email"].strip().casefold() in allowed_signup_emails():
+            creation_rule = "allowlist"
+        else:
             raise WorkspaceCreationError(403, "This instance is closed to new workspaces.")
+        cap = _creation_setting("COMMONPLACE_WORKSPACE_LIMIT", 5)
+        if plans.owned_workspace_count(db, user_id) >= cap:
+            raise WorkspaceCreationError(403, f"You can have at most {cap} owned workspaces.")
+        try:
+            plans.check_workspace_creation(db, user_id)
+        except plans.LimitReached as exc:
+            raise WorkspaceCreationError(403, str(exc)) from None
+        hourly = _creation_setting("COMMONPLACE_WORKSPACE_CREATIONS_PER_HOUR", 3)
+        daily = _creation_setting("COMMONPLACE_WORKSPACE_CREATIONS_PER_DAY", 20)
         now = _now()
         recent = conn.execute(
             "SELECT count(*) FROM workspace_creations WHERE user_id = ? AND created_at > ?",
             (user_id, _iso(now - timedelta(hours=1))),
         ).fetchone()[0]
-        if recent >= 5:
+        if recent >= hourly:
             raise WorkspaceCreationError(
-                429, "You have created five workspaces recently. Try again in an hour."
+                429, "Too many new workspaces. Try again in 60 minutes.", 3600
             )
-        workspace = db.create_workspace(name, user_id, personal=True, conn=conn)
+        total = conn.execute(
+            "SELECT count(*) FROM workspace_creations WHERE created_at > ?",
+            (_iso(now - timedelta(days=1)),),
+        ).fetchone()[0]
+        if total >= daily:
+            raise WorkspaceCreationError(
+                429, "Too many new workspaces on this server. Try again tomorrow.", 86400
+            )
+        # The shared helper charges both policies together. The durable ledger above
+        # also enforces rolling limits across restarts and multiple gateway processes.
+        if not hasattr(db, "_workspace_creation_limiter"):
+            db._workspace_creation_limiter = ratelimit.TokenBuckets()
+        policies = [
+            (ratelimit.Limit("workspace-user", hourly, 3600), user_id),
+            (ratelimit.Limit("workspace-instance", daily, 86400), "instance"),
+        ]
+        retry = db._workspace_creation_limiter.check(policies)
+        if retry:
+            raise WorkspaceCreationError(429, "Too many new workspaces. Try again later.", retry)
+        workspace = None
+        directory = None
+        directory_created = False
         try:
+            workspace = db.create_workspace(
+                name,
+                user_id,
+                personal=True,
+                initial_space_pending=True,
+                audit_reason=creation_rule,
+                conn=conn,
+            )
             plans.assign_signup_plan(db, user_id, workspace, via="workspace", conn=conn)
-        except plans.LimitReached as exc:
-            raise WorkspaceCreationError(403, str(exc)) from None
-        conn.execute(
-            "INSERT INTO workspace_creations(user_id, request_id, workspace_id, created_at) "
-            "VALUES (?,?,?,?)",
-            (user_id, request_id, workspace, _iso(now)),
-        )
-        return {"id": workspace, "name": name, "role": "owner"}, True
+            from .workspace_store import workspace_root
+
+            directory = workspace_root(Path(db.path).parent, workspace)
+            directory.mkdir(parents=True, mode=0o700)
+            directory_created = True
+            conn.execute(
+                "INSERT INTO workspace_creations(user_id, request_id, workspace_id, created_at) "
+                "VALUES (?,?,?,?)",
+                (user_id, request_id, workspace, _iso(now)),
+            )
+        except Exception as exc:
+            db._workspace_creation_limiter.refund(policies)
+            if directory_created:
+                directory.rmdir()  # only this request's new, still-empty directory
+            if isinstance(exc, plans.LimitReached):
+                raise WorkspaceCreationError(403, str(exc)) from None
+            raise
+        return {
+            "id": workspace,
+            "name": name,
+            "slug": db.workspace(workspace)["slug"],
+            "role": "owner",
+        }, True
 
 
 class InviteError(ControlError):

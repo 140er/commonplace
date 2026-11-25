@@ -1,0 +1,4 @@
+- **Owns:** `docs/system/sync-daemon-test-cursors.md` records the cursor fixture's production key, journal and durability settings.
+- **Promises:** Each orchestration test retains its own disk-backed database, workload and assertions.
+- **How it fails:** A rollback journal blocks the concurrent-reader commit regression; relaxed synchronization fails its durability assertion.
+- **Tests:** `tests/test_commonplace_sync_daemon_unit.py` covers reader snapshots, committed visibility and full synchronization.

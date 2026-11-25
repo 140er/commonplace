@@ -1,0 +1,4 @@
+- **Owns:** The wording of the recovery view's note about the actions it does not offer (`commonplace/web/static/orchstatus.js`).
+- **Promises:** The note names the owner's tools as "Coworker tools", like the rest of the visible copy; no field, identifier or data attribute changes.
+- **How it fails:** A wrong word shows only as different text; `tests/test_coworker_ui_copy.py` rejects the old role word in visible copy.
+- **Tests:** `tests/test_coworker_ui_copy.py` and `tests/test_orchstatus.py` (which runs `tests/orchstatus.mjs`).

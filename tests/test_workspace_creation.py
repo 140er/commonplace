@@ -18,9 +18,16 @@ def creation(world, monkeypatch):  # noqa: F811
 
 
 def create(site, *, body=None, browser=None, headers=None, token=None):
-    return (browser or site.owner.browser).post(
+    browser = browser or site.owner.browser
+    body = dict(
+        body if body is not None else {"name": "New workspace", "request_id": str(uuid.uuid4())}
+    )
+    csrf = browser.get("/api/workspaces").json().get("csrf") if token is None else None
+    if csrf is not None:
+        body.setdefault("csrf", csrf)
+    return browser.post(
         "/api/workspaces",
-        body if body is not None else {"name": "New workspace", "request_id": str(uuid.uuid4())},
+        body,
         headers={"Origin": f"http://127.0.0.1:{site.port}", **(headers or {})},
         token=token,
     )
@@ -38,14 +45,21 @@ def test_create_is_empty_owned_isolated_and_switches(creation):
     assert response.status == 201, response.text
     workspace = response.json()["workspace"]
     wid = workspace["id"]
-    assert workspace == {"id": wid, "name": "New workspace", "role": "owner"}
+    assert workspace == {
+        "id": wid,
+        "name": "New workspace",
+        "slug": workspace["slug"],
+        "role": "owner",
+    }
     assert site.owner.browser.me().json()["workspace"] == old
     assert site.db.role(wid, site.owner.id) == "owner"
     assert site.db.role(wid, site.guest.id) is None
     assert wid not in str(site.guest.browser.get("/api/workspaces").json())
     assert site.guest.browser.post("/api/workspaces/switch", {"workspace": wid}).status == 404
     assert site.owner.browser.post("/api/workspaces/switch", {"workspace": wid}).status == 200
-    assert site.owner.browser.get("/api/boards").json() == {"boards": []}
+    assert [board["slug"] for board in site.owner.browser.get("/api/boards").json()["boards"]] == [
+        "commonplace"
+    ]
     assert site.owner.browser.get("/api/boards/private/cards").status == 404
     assert "OLD_CONTENT" not in site.owner.browser.get("/api/cards").text
     assert site.owner.browser.post("/api/boards", {"slug": "new", "name": "New"}).status == 201
@@ -84,12 +98,12 @@ def test_closed_signup_refuses_with_reason(creation, monkeypatch, value):
 
 def test_creation_rate_limit_is_per_person_and_plain(creation):
     site = creation
-    for _ in range(5):
+    for _ in range(3):
         assert create(site).status == 201
     before = len(site.db.workspaces())
     refused = create(site)
     assert refused.status == 429
-    assert "Try again in an hour" in refused.json()["error"]
+    assert "Try again in 60 minutes" in refused.json()["error"]
     assert len(site.db.workspaces()) == before
     assert create(site, browser=site.guest.browser).status == 201
     assert any(r["decision"] == "deny" for r in site.db.audit_entries(site.owner.workspace))
@@ -181,7 +195,7 @@ def test_request_and_rate_limit_survive_reopening_control_database(creation):
             reopened, site.owner.id, name="Persistent", request_id=request_id
         )
         assert not made and workspace == response.json()["workspace"]
-        for _ in range(4):
+        for _ in range(2):
             invites.create_workspace(
                 reopened, site.owner.id, name="More", request_id=str(uuid.uuid4())
             )

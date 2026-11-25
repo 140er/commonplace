@@ -1,0 +1,4 @@
+- **Owns:** Batched workspace-scoped persistent share links.
+- **Promises:** A page reuses existing codes and creates missing codes in one transaction, with bounded lookup batches; a single-link request delegates to the same collision-safe implementation.
+- **How it fails:** Invalid paths and workspace references still refuse; collisions retry without changing an existing link; no permission decisions are cached across requests.
+- **Tests:** tests/test_cold_api_work.py, tests/test_commonplace_boards.py and tests/test_commonplace_public_surface.py.

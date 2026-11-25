@@ -1,0 +1,3 @@
+### Existing runner program integrity
+
+Program delivery retains the exact pinned archive privately. The standalone bootstrap verifies that archive, the prefix and its installed files even when already running under the expected interpreter; only the second interpreter launch is omitted. Existing-prefix verification therefore does not require downloading with a spent enrollment code. Fresh environments publish only the checked interpreter, without unused aliases or activation scripts. Missing, changed or foreign prefix state is preserved and refused. These checks add no readiness, provider, grant or execution authority.

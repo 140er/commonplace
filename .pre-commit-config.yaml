@@ -1,6 +1,6 @@
 # Only the commit stage runs through pre-commit. The pre-push stage is the quick
-# check in commonplace/guards/prepush.py (lint, format, docs-check and mapped fast
-# tests inside a time budget). Install both hooks with
+# check in commonplace/guards/prepush.py (lint, format, mypy, docs-check and mapped
+# fast tests; elapsed time is an alarm only). Install both hooks with
 #   python -m commonplace.guards.hooks install
 # not `pre-commit install`, whose hook breaks in linked worktrees.
 default_install_hook_types: [pre-commit]

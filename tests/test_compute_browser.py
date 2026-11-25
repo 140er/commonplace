@@ -56,7 +56,7 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(origin + "/app/?ui=deck#/compute/management")
                 heading = page.locator(".compute-title h1")
-                assert heading.inner_text() == "Compute"
+                assert heading.inner_text() == "Cloud workspaces"
                 page.wait_for_function(
                     """() => {
                         const heading = document.querySelector('.compute-title h1');
@@ -122,6 +122,7 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                     "Approved · automatic execution authorized", exact=True
                 ).wait_for()
                 page.reload()
+                page.locator("[data-compute-advanced] > summary").click()
                 approved.get_by_text(
                     "Approved · automatic execution authorized", exact=True
                 ).wait_for()
@@ -205,6 +206,7 @@ def test_compute_browser_immutable_script_inspection_and_approval(script_state, 
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(origin + "/app/?ui=deck#/compute/management")
+                page.locator("[data-compute-advanced] > summary").click()
                 page.get_by_role("button", name="Add Python script", exact=True).click()
                 page.locator('select[name="node_id"]').select_option(state.node["id"])
                 page.locator('input[name="task_number"]').fill(str(env.task))
@@ -237,6 +239,7 @@ def test_compute_browser_immutable_script_inspection_and_approval(script_state, 
                     "Approved · automatic execution authorized", exact=True
                 ).wait_for()
                 page.reload()
+                page.locator("[data-compute-advanced] > summary").click()
                 approved.get_by_text(
                     "Approved · automatic execution authorized", exact=True
                 ).wait_for()

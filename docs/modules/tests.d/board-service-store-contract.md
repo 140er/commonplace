@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_board_service_store_contract.py` keeps valid no-store helper and explicit-connection approval controls separate from the intentional missing-store operation refusals. Normal storage reuses the existing `BoardStore`.

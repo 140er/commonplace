@@ -1,0 +1,4 @@
+- **Owns:** `machine_setup.py` prints `Reason:` lines on every failure path and asks the site (probe) before it removes an earlier installation.
+- **Promises:** The installer itself is unchanged; only fixed installer refusals and operating-system messages are printed, never the code or a token.
+- **How it fails:** An earlier installation the site reports open, or cannot confirm closed, is left as it is.
+- **Tests:** `tests/test_machine_setup.py`.

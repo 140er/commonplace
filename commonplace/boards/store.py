@@ -17,7 +17,7 @@ from mempalace.sqlite_crypto import connect, row_factory
 from . import contracts, decision_blocks
 from .display import need_for, plan_waiting
 from .goals import GOALS_SCHEMA
-from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name
+from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name, source as priority_source
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
@@ -49,6 +49,7 @@ TASK_COLUMNS = {
     "reviewer": "TEXT",
     "ask_blocks": "TEXT",
     "priority": f"INTEGER NOT NULL DEFAULT {DEFAULT_RANK} CHECK (priority BETWEEN 0 AND {len(PRIORITIES) - 1})",
+    "priority_by": "TEXT NOT NULL DEFAULT '' CHECK (priority_by IN ('', 'person', 'coworker'))",
 }
 
 
@@ -249,6 +250,7 @@ def _paths(raw) -> list:
 
 def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
+    columns = row.keys()
     result = {
         "number": row["id"],
         "parent": row["parent_number"],
@@ -265,7 +267,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         "return_to": row["return_to"],
         "flags": json.loads(row["flags"] or "[]"),
         **{
-            key: row[key] if key in row.keys() else None
+            key: row[key] if key in columns else None
             for key in TASK_COLUMNS
             if key
             not in (
@@ -275,14 +277,18 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
                 "pr_repo",
                 "task_type",
                 "priority",
+                "priority_by",
                 "ask_blocks",
                 "claim_session",
             )
         },
         "ask_blocks": decision_blocks.public(row),
-        "priority": priority_name(row["priority"] if "priority" in row.keys() else None),
+        "priority": priority_name(row["priority"] if "priority" in columns else None),
+        "priority_source": priority_source(
+            row["priority_by"] if "priority_by" in columns else None
+        ),
         "labels": json.loads(row["labels"] or "[]"),
-        "paths": _paths(row["paths"] if "paths" in row.keys() else None),
+        "paths": _paths(row["paths"] if "paths" in columns else None),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],
@@ -290,7 +296,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         "updated_at": row["updated_at"],
         "position": row["position"],
         # Filed by a restricted (untrusted) connection; clients gate their own actions on this.
-        "restricted": "restricted_origin" in row.keys() and bool(row["restricted_origin"]),
+        "restricted": "restricted_origin" in columns and bool(row["restricted_origin"]),
     }
     person_owner = bool(principal and principal.person and principal.role == "owner")
     result["can_prioritize"] = person_owner
@@ -549,6 +555,11 @@ class BoardStore:
                 for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
+                if "priority_by" not in columns:
+                    # Only an owner could set a priority before: a non-default one is a person's.
+                    conn.execute(
+                        "UPDATE tasks SET priority_by='person' WHERE priority!=?", (DEFAULT_RANK,)
+                    )
                 if "restricted_origin" not in columns:
                     # NULL leaves legacy agent backlog pending a policy lookup.
                     conn.execute(

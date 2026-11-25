@@ -15,7 +15,7 @@ const linksUrl = url(await read('cardlinks.js'));
 // A data: module cannot resolve "./x.js": every other sibling import loads from its file.
 const siblings = (source) => source.replace(/(from\s*)(['"])\.\/([\w-]+\.js)\2/g, (_all, from, _quote, name) => from + JSON.stringify(new URL(`../commonplace/web/static/${name}`, import.meta.url).href));
 async function module(name) {
-  assert.match(app, new RegExp(`from ["']\\./${name}\\.js["']`), `${name} import missing`);
+  assert.ok(app.includes(`from "./${name}.js"`) || app.includes(`import("./${name}.js")`), `${name} import missing`);
   return import(url(siblings((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl)).replace(/(['"])\.\/cardlinks\.js\1/g, JSON.stringify(linksUrl)))));
 }
 const e = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -26,7 +26,7 @@ function node() { return { innerHTML: '', hidden: true, dataset: {}, children: [
 for (const selector of ['#board-nav', '#phone-bar', '#phone-tabs', '#content', '#card-panel', '.shell', '#title', '#head-actions']) nodes[selector] = node();
 const root = { innerHTML: '', querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} };
 const storage = new Map();
-const context = { root, state, e, placeLifecycle: () => {}, enc: encodeURIComponent, document: { activeElement: null, title: '' }, location: { hash: state.route }, localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, URLSearchParams, remember: () => ({}), restore() {}, title() {}, markOpenCard() {}, voice: { stop() {} }, showError: (s) => assert.equal(s, ''), needsCards: () => [], message: (text) => text, showLoading: (host, text) => { host.innerHTML = text; }, matchMedia: () => ({matches: false, addEventListener() {}, removeEventListener() {}}), MutationObserver: class {observe() {} disconnect() {}}, setTimeout, clearTimeout };
+const context = { prepareRoute: async () => {}, loadRouteModule: async () => {}, root, state, e, placeLifecycle: () => {}, enc: encodeURIComponent, document: { activeElement: null, title: '' }, location: { hash: state.route }, localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, URLSearchParams, remember: () => ({}), restore() {}, title() {}, markOpenCard() {}, voice: { stop() {} }, showError: (s) => assert.equal(s, ''), needsCards: () => [], message: (text) => text, showLoading: (host, text) => { host.innerHTML = text; }, matchMedia: () => ({matches: false, addEventListener() {}, removeEventListener() {}}), MutationObserver: class {observe() {} disconnect() {}}, setTimeout, clearTimeout };
 const run = (s) => runInNewContext(s, context);
 // The shell's panel helpers (the panel observer's resume and the settings opener) sit at module level.
 run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));
@@ -48,10 +48,10 @@ if (which === 'shell') {
   run(slice('function navigation()', 'function showError') + '\nnavigation();');
   const html = nodes['#board-nav'].outerHTML;
   assert.equal(typeof html, 'string');
-  // The rail lists Bots and Memory only: no project rows, no per-project counts.
+  // The rail lists Bots, Memory and Cloud workspaces (a deliberate third entry from card #614: Compute was not reachable at a glance in Classic): no project rows, no per-project counts.
   assert.doesNotMatch(html, /agents working|9 need you|class="proj"/);
-  assert.deepEqual([...html.slice(0, html.indexOf('rail-foot')).matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1]), ['#/bots', '#/memory']);
-  assert.equal((nodes['#phone-tabs'].innerHTML.match(/<a /g) || []).length, 2);
+  assert.deepEqual([...html.slice(0, html.indexOf('rail-foot')).matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1]), ['#/bots', '#/memory', '#/compute']);
+  assert.equal((nodes['#phone-tabs'].innerHTML.match(/<a /g) || []).length, 3);
   state.base = '#/needs'; state.selected = 12;
   context.needsCards = () => [{number: 12, board: 'alpha'}];
   run('navigation();');

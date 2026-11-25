@@ -264,6 +264,24 @@ select another workspace. For example:
 {"thread_id":"mcp:source-id","to":"<provider>/<model>","effort":"max","note":"Continue the deployment checks."}
 ```
 
+## From the app
+
+Open **Memory**, then **Saved threads** (`/app/history.html`). It lists the
+threads Memory has saved. Opening one shows its chain, newest first: the saved
+threads, how many messages each holds, and where the chain ends. A new agent
+that recalls the thread reads exactly those threads, in the exact words they
+were saved. Each has a link to its messages. Nothing is summarised.
+
+If the thread has a successor that is still running, a form asks for the new
+destination (`provider/model`, optional effort and your own note). **Review the
+handoff** shows the destination, the thread it continues and what is carried
+over; **Start the handoff** then runs the same start as `handoff_start`, with the
+same checkout binding, settings and launch authority. Only people the server
+already lets start a handoff see the form. When there is no action the page says
+why (Handoff off, no successor yet, a later thread already continues it, or no
+launch authority) and what to do next. The page uses `GET` and `POST`
+`/api/handoff/start`; without `confirm` the `POST` only reviews.
+
 For automatic threshold handoffs too, set `COMMONPLACE_URL` and a
 workspace-scoped `COMMONPLACE_TOKEN` in the environment that starts T3's
 agents, then merge the Claude and Codex hook definitions in the next section

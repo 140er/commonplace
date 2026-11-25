@@ -2,7 +2,7 @@
 
 import json
 
-from . import headroom, jobs, registry
+from . import drain, headroom, jobs, registry
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS runner_resources (
  machine_id TEXT PRIMARY KEY, reported_at TEXT NOT NULL, resources TEXT NOT NULL
@@ -27,6 +27,8 @@ def available(conn, machine, now, *, max_agents=None):
     Only expanded config limits use resource reports. Missing/stale measurements
     are unknown, not a measured shortage. The runner rechecks before launching.
     """
+    if drain.is_drained(conn, machine["id"]):
+        return 0  # drained: no new starts; runs already started finish (see drain.py)
     hourly = conn.execute(
         "SELECT COUNT(*) FROM runner_jobs WHERE machine_id=? AND starting_at>?",
         (machine["id"], jobs._after(now, -3600)),
@@ -58,9 +60,12 @@ def board_capacity(gateway, ws, conn, board, cap, now):
     if config is None or config.runner is None:
         return None
     machine = registry.get_machine(gateway.db, ws, config.runner.machine)
+    from .predicate import setup_only_refusal
+
     capacity = 0
     if (
         machine
+        and not setup_only_refusal(gateway, machine, ws)
         and machine["enabled"]
         and not machine["revoked_at"]
         and machine["binding_state"] == "owner_attested"

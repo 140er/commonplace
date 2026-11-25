@@ -175,7 +175,7 @@ test('no glance requests in classic or without a project; errors and late respon
   assert.equal(late.regions.sheet.innerHTML, ''); late.ui.stop();
 });
 
-test('new CSS is entirely Deck-scoped, token-based, and linked directly after deck.css', () => {
+test('new CSS is entirely Deck-scoped, token-based, and loaded for the Bots route', () => {
   const read = (name) => readFileSync(new URL(`../commonplace/web/static/${name}`, import.meta.url), 'utf8');
   const css = read('deck-bots.css').replace(/\/\*[\s\S]*?\*\//g, '');
   for (const match of css.matchAll(/([^{}]+)\{/g)) {
@@ -189,5 +189,6 @@ test('new CSS is entirely Deck-scoped, token-based, and linked directly after de
   assert.match(css, /100% - 760px/);
   assert.match(css, /deck-bot-state\[hidden\][^}]*display: block !important/);
   assert.match(css, /bb\.decision\[data-state="open"\]::before[^]*content: "Waiting on you"/);
-  assert.match(read('index.html'), /href="\/app\/deck.css">\s*<link rel="stylesheet" href="\/app\/deck-bots.css">/);
+  assert.match(read('index.html'), /href="\/app\/deck.css"/);
+  assert.match(read('route-styles.js'), /bots: \[.*'deck-bots\.css'/);
 });

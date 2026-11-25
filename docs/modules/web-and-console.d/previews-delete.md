@@ -1,0 +1,1 @@
+- **Owns:** `workbench.css` styles the Previews section's delete confirmation (a separated block with full-width 44 px actions on a phone).

@@ -1,0 +1,4 @@
+- **Owns:** Public static-asset admission alongside HTML, API and credential token buckets.
+- **Promises:** Public asset GETs share a bounded 6000/minute per-IP ceiling across signed-in and anonymous requests; documents and provider inventory keep their 600/minute shell budget; API, credential, untrusted-write and short-link policies retain their budgets and identities.
+- **How it fails:** Exhausted asset admission returns HTTP 429 with Retry-After independently of API admission; credential paths cannot select the asset policy by adding a file suffix; serving permissions do not change.
+- **Tests:** tests/test_cold_asset_limits.py and tests/test_commonplace_public_surface.py.

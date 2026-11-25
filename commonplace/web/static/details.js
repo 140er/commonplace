@@ -1,11 +1,14 @@
 import { api as request, escape as e, actor } from "./api.js";
 import { loadCardLinks, placeCardLinks } from "./cardlinks.js";
 import { attachCardRuns, cardRunsSlot } from "./cardruns.js";
+import { attachCardPreviews, cardPreviewsSlot, previousPreviews } from "./cardpreviews.js";
+import { attachCardReviews, cardReviewsSlot, previousReviews } from "./cardreviews.js";
 import { blockersSection } from "./blockers.js";
 import { waitingSection } from "./waiting.js";
 import { cardTypeRows, saveCardType } from "./tasktypes.js";
 import { reviewerRows } from "./card-reviewer.js";
 import { drawerSummary, drawerActions, drawerCopy, stateWord, needsOwner } from "./deck-board.js";
+import { cardControls, loadCardGoals, saveCardControl } from "./card-controls.js";
 import { showLoading } from "./loading.js";
 
 const statuses = ["backlog", "todo", "doing", "review", "done"];
@@ -98,6 +101,15 @@ const styles = `
 .workbench-details .title-row, .workbench-details .row, .workbench-details .acts, .workbench-details .reply { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .workbench-details h2 { font-size:17px; line-height:23px; flex:1; }
 .workbench-details .fields { display:grid; grid-template-columns:100px minmax(0,1fr); gap:6px 8px; font-size:13px; }
+.card-scheduling { display:flex; flex-direction:column; gap:10px; overflow-wrap:anywhere; }
+.card-scheduling summary { cursor:pointer; min-height:36px; display:list-item; }
+.card-scheduling label { display:flex; flex-direction:column; gap:6px; }
+.card-scheduling input, .card-scheduling select { min-width:0; width:100%; max-width:100%; min-height:36px; font:inherit; color:inherit; background:var(--surface); border:1px solid var(--line); border-radius:4px; padding:6px; }
+.card-scheduling .snooze-choices { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.card-goal { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; align-items:center; }
+.card-goal label { grid-column:1 / -1; }
+.card-scheduling [role=alert]:empty { display:none; }
+.card-snoozed { margin:6px 0; font-size:13px; overflow-wrap:anywhere; }
 .workbench-details dt { color:var(--text-3); } .workbench-details dd { margin:0; }
 .workbench-details .callout { border-radius:var(--r); padding:10px 12px; display:flex; flex-direction:column; gap:8px; font-size:13px; }
 .workbench-details .block { background:var(--block-bg); box-shadow:inset 3px 0 0 var(--block); }
@@ -158,8 +170,9 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
   const stripBox = strip ? `<div class="chat-about from-chat" data-row="${e(strip.row || "")}"><span class="fc-text">${strip.kind === "board" ? `You picked ${e(id)} on the board. The chat is one click away.` : `Opened from ${e(name)} chat: ${e(strip.source || "")}.`}</span><button class="btn sm" data-back-chat data-action="back-to-chat">Back to chat</button></div>` : "";
   const tag = context.blocked ? "Blocked" : context.needsMe ? "Needs me" : card.review_kind === "completion" ? `Reviewer: ${author(card.ask_to)}` : "";
   const linked = (card.linked || []).map((link) => `<li><a href="#/memory?id=${enc(link.drawer_id)}"${link.invalidated ? ' class="gone"' : ""}>${e(link.title || "Memory")}</a></li>`).join("");
-  const html = `<section class="workbench-details" aria-label="Card details" data-card="${e(card.number)}" data-version="${e(card.version)}"><div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context">${["details", "memory"].map((key) => `<button role="tab" id="tab-${key}" aria-selected="${tab === key}" aria-controls="ctx-panel" tabindex="${tab === key ? 0 : -1}" data-details-tab="${key}">${label(key)}</button>`).join("")}</div><button class="btn ghost sm hide" data-action="close-panel" aria-keyshortcuts="]">Hide</button></div>${stripBox}<div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === "memory" ? `<div class="ctx-body"><h2>Memory for ${e(id)}</h2><ul>${linked || "<li>No linked memories</li>"}</ul><a class="btn" href="#/memory?q=${enc(card.ask || card.title)}">Search memory</a></div>` : `<div class="ctx-body"><header class="detail-h"><div class="row"><span class="cid">${e(id)}</span>${tag ? `<span class="tag ${context.blocked ? "block" : "wait"}">${e(tag)}</span>` : ""}</div><div class="title-row"><h2 tabindex="-1" data-details-title>${e(card.title)}</h2><button class="btn ghost sm" data-action="edit-card">Edit <kbd>E</kbd></button><button class="btn ghost sm" data-action="handoff">Hand off</button></div></header><dl class="fields"><dt>Status</dt><dd><select id="card-status" aria-label="Card status"${context.proposal ? " disabled" : ""}>${statuses.map((status) => `<option value="${status}"${status === card.status ? " selected" : ""}>${label(status)}</option>`).join("")}</select><button class="btn sm" data-action="panel-move"${context.proposal ? " disabled" : ""}>Move</button></dd><dt>Priority</dt><dd>${card.can_prioritize ? `<select id="card-priority" aria-label="Card priority">${priorities.map((item) => `<option value="${item}"${item === (card.priority || "normal") ? " selected" : ""}>${label(item)}</option>`).join("")}</select><button class="btn sm" data-action="panel-priority">Set</button>` : e(label(card.priority || "normal"))}</dd>${cardTypeRows(card)}<dt>${card.need === "working" ? "Working on it" : "Who"}</dt><dd>${e(card.assignee ? author(card.assignee) : card.status === "todo" ? deck ? "Nobody yet" : assignmentPickup(card) : "—")}${deck && !card.assignee && card.status === "todo" ? `<small class="assignment-help">${e(assignmentPickup(card, true))}</small>` : ""}${canRemoveAssignment(card) ? deck && !canRemove ? `<small class="assignment-help">Only the workspace owner can change this.</small>` : `<button class="btn" data-action="remove-assignment">Remove assignment</button>${deck ? "" : `<small>${e(assignmentPickup(card))}</small>`}` : ""}</dd>${card.ask_to && card.review_kind !== "completion" ? `<dt>Waiting on</dt><dd>${e(author(card.ask_to))}</dd>` : ""}${reviewerRows(card, { people, author })}${card.return_to?.startsWith("conn:") && card.status === "review" ? `<dt>Built by</dt><dd>${e(author(card.return_to))}</dd>` : ""}${card.labels?.length ? `<dt>Labels</dt><dd>${card.labels.map((item) => e(item)).join(" · ")}</dd>` : ""}${card.paths?.length ? `<dt>Owns paths</dt><dd class="path-contract" data-path-contract>${card.paths.map((item) => `<code>${e(item)}</code>`).join(" ")}</dd>` : ""}</dl>${waitingSection(card)}${blockersSection(card)}${cardRunsSlot(card)}${contextBox}${originBox}<section data-details-description><div class="sec-h"><h3>Description</h3><button class="btn ghost sm" data-action="edit-card" aria-label="Edit ${e(id)}">Edit</button></div><p class="body-text">${exact(card.body)}</p></section><section><div class="sec-h"><h3>Activity</h3></div><ol class="activity">${activityHTML(card, author, stamp)}</ol></section></div><div class="ctx-foot"><form class="reply" data-form="comment"><label class="sr" for="details-comment">Comment on ${e(id)}</label><textarea id="details-comment" name="text" rows="1" data-draft="comment-${e(card.number)}" placeholder="Comment or @mention…" required></textarea><button class="btn">Send</button></form></div>`}</div></section>`;
-  if (!deck) return html;
+  const html = `<section class="workbench-details" aria-label="Card details" data-card="${e(card.number)}" data-version="${e(card.version)}"><div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context">${["details", "memory"].map((key) => `<button role="tab" id="tab-${key}" aria-selected="${tab === key}" aria-controls="ctx-panel" tabindex="${tab === key ? 0 : -1}" data-details-tab="${key}">${label(key)}</button>`).join("")}</div><button class="btn ghost sm hide" data-action="close-panel" aria-keyshortcuts="]">Hide</button></div>${stripBox}<div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === "memory" ? `<div class="ctx-body"><h2>Memory for ${e(id)}</h2><ul>${linked || "<li>No linked memories</li>"}</ul><a class="btn" href="#/memory?q=${enc(card.ask || card.title)}">Search memory</a></div>` : `<div class="ctx-body"><header class="detail-h"><div class="row"><span class="cid">${e(id)}</span>${tag ? `<span class="tag ${context.blocked ? "block" : "wait"}">${e(tag)}</span>` : ""}</div><div class="title-row"><h2 tabindex="-1" data-details-title>${e(card.title)}</h2><button class="btn ghost sm" data-action="edit-card">Edit <kbd>E</kbd></button><button class="btn ghost sm" data-action="handoff">Hand off</button></div></header><div data-card-controls-slot></div><dl class="fields"><dt>Status</dt><dd><select id="card-status" aria-label="Card status"${context.proposal ? " disabled" : ""}>${statuses.map((status) => `<option value="${status}"${status === card.status ? " selected" : ""}>${label(status)}</option>`).join("")}</select><button class="btn sm" data-action="panel-move"${context.proposal ? " disabled" : ""}>Move</button></dd><dt>Priority</dt><dd>${card.can_prioritize ? `<select id="card-priority" aria-label="Card priority">${priorities.map((item) => `<option value="${item}"${item === (card.priority || "normal") ? " selected" : ""}>${label(item)}</option>`).join("")}</select><button class="btn sm" data-action="panel-priority">Set</button>` : e(label(card.priority || "normal"))}</dd>${cardTypeRows(card)}<dt>${card.need === "working" ? "Working on it" : "Who"}</dt><dd>${e(card.assignee ? author(card.assignee) : card.status === "todo" ? deck ? "Nobody yet" : assignmentPickup(card) : "—")}${deck && !card.assignee && card.status === "todo" ? `<small class="assignment-help">${e(assignmentPickup(card, true))}</small>` : ""}${canRemoveAssignment(card) ? deck && !canRemove ? `<small class="assignment-help">Only the workspace owner can change this.</small>` : `<button class="btn" data-action="remove-assignment">Remove assignment</button>${deck ? "" : `<small>${e(assignmentPickup(card))}</small>`}` : ""}</dd>${card.ask_to && card.review_kind !== "completion" ? `<dt>Waiting on</dt><dd>${e(author(card.ask_to))}</dd>` : ""}${reviewerRows(card, { people, author })}${card.return_to?.startsWith("conn:") && card.status === "review" ? `<dt>Built by</dt><dd>${e(author(card.return_to))}</dd>` : ""}${card.labels?.length ? `<dt>Labels</dt><dd>${card.labels.map((item) => e(item)).join(" · ")}</dd>` : ""}${card.paths?.length ? `<dt>Owns paths</dt><dd class="path-contract" data-path-contract>${card.paths.map((item) => `<code>${e(item)}</code>`).join(" ")}</dd>` : ""}</dl>${card.snoozed ? "" : waitingSection(card)}${blockersSection(card)}${cardRunsSlot(card)}${cardReviewsSlot(card)}${cardPreviewsSlot(card)}${contextBox}${originBox}<section data-details-description><div class="sec-h"><h3>Description</h3><button class="btn ghost sm" data-action="edit-card" aria-label="Edit ${e(id)}">Edit</button></div><p class="body-text">${exact(card.body)}</p></section><section><div class="sec-h"><h3>Activity</h3></div><ol class="activity">${activityHTML(card, author, stamp)}</ol></section></div><div class="ctx-foot"><form class="reply" data-form="comment"><label class="sr" for="details-comment">Comment on ${e(id)}</label><textarea id="details-comment" name="text" rows="1" data-draft="comment-${e(card.number)}" placeholder="Comment or @mention…" required></textarea><button class="btn">Send</button></form></div>`}</div></section>`;
+  const controls = () => cardControls(card, { owner: canRemove });
+  if (!deck) return html.replace('<div data-card-controls-slot></div>', controls);
   const header = `<header class="detail-h"><div class="deck-card-state"><i class="deck-board-dot ${needsOwner(card, me) ? "waiting" : card.status === "done" ? "live" : "idle"}" aria-hidden="true"></i>${e(stateWord(card, me))}</div><h2 tabindex="-1" data-details-title>${e(card.title)}</h2></header>`;
   return drawerCopy(html
     .replace('class="workbench-details"', () => 'class="workbench-details deck-card-drawer"')
@@ -173,7 +186,7 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
     .replace('<form class="reply" data-form="comment">', () => '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')
     .replace(`Memory for ${e(id)}`, () => 'Linked memory')
     .replace('Context (exact words)', () => 'Context')
-    .replace("'s request, quoted exactly", () => "'s request"), id);
+    .replace("'s request, quoted exactly", () => "'s request"), id).replace('<div data-card-controls-slot></div>', controls);
 }
 
 // The Deck drawer before the card's own read answers. It has the drawer's shape, so the board
@@ -191,12 +204,33 @@ export function showCardPreview(host, number, card, options) {
 }
 
 // The shell keeps ownership of card mutations, drafts, sheet modality and chat focus return.
-export function createDetails({ mount, api = request, onMemory = () => {}, afterDraw = () => {} }) {
-  let current, options, revision = 0, links = null;
+export function createDetails({ mount, api = request, onMemory = () => {}, afterDraw = () => {}, onChanged = () => {} }) {
+  let current, options, revision = 0, links = null, controlPending = false;
   const draw = () => {
+    const sameCard = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number);
+    const commentDraft = sameCard ? mount.querySelector("[name=text]")?.value : null;
     const controlsOpen = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number) && mount.querySelector("[data-deck-card-controls]")?.open;
     const replyOpen = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number) && mount.querySelector("[data-deck-reply-toggle]")?.getAttribute("aria-expanded") === "true";
+    const oldControls = mount.querySelector("[data-card-controls]");
+    const snoozeOpen = mount.querySelector("[data-card-snooze]")?.open;
+    const snoozeAt = mount.querySelector("[data-card-snooze-at]")?.value;
+    const selectedGoal = mount.querySelector("[data-card-goal]")?.value;
+    const goalDraft = selectedGoal !== oldControls?.dataset.goalId ? selectedGoal : null;
+    const previews = previousPreviews(mount);
+    const reviews = previousReviews(mount);
     mount.innerHTML = renderDetails(current, options);
+    if (commentDraft != null && mount.querySelector("[name=text]")) mount.querySelector("[name=text]").value = commentDraft;
+    const snooze = mount.querySelector("[data-card-snooze]");
+    if (snooze && snoozeOpen) snooze.open = true;
+    if (snoozeAt && mount.querySelector("[data-card-snooze-at]")) mount.querySelector("[data-card-snooze-at]").value = snoozeAt;
+    const controlsError = mount.querySelector("[data-card-controls-error]");
+    if (controlsError && oldControls) controlsError.textContent = oldControls.querySelector("[data-card-controls-error]")?.textContent || "";
+    const controlRoot = mount.querySelector("[data-card-controls]");
+    if (controlRoot) void loadCardGoals(controlRoot, current, api).then(() => {
+      const select = controlRoot.querySelector("[data-card-goal]");
+      if (select && goalDraft != null) select.value = goalDraft;
+      if (controlPending) controlRoot.querySelectorAll("button, input, select").forEach(input => { input.disabled = true; });
+    });
     if (replyOpen || options.replyOpen) {
       const reply = mount.querySelector("#deck-card-reply");
       if (reply) reply.hidden = false;
@@ -206,6 +240,8 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     if (controls && controlsOpen) controls.open = true;
     if (options.tab === "details") placeCardLinks(mount, links);
     void attachCardRuns(mount, current, { api });
+    void attachCardReviews(mount, current, { api, previous: reviews });
+    void attachCardPreviews(mount, current, { api, previous: previews });
     if (options.tab === "details") afterDraw(mount, current);
   };
   function selectTab(tab, focus = false) {
@@ -222,6 +258,32 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     if (tab === "memory") onMemory(current);
   }
   const click = (event) => {
+    const control = event.target.closest("[data-card-snooze-choice], [data-card-snooze-save], [data-card-wake], [data-card-goal-save]");
+    if (control) {
+      event.preventDefault();
+      if (controlPending || (control.hasAttribute("data-card-goal-save") && mount.querySelector("[data-card-goal]")?.disabled)) return;
+      controlPending = true;
+      const token = revision;
+      const card = current, controlRoot = control.closest("[data-card-controls]");
+      const error = controlRoot.querySelector("[data-card-controls-error]");
+      error.textContent = "";
+      controlRoot.setAttribute("aria-busy", "true");
+      controlRoot.querySelectorAll("button, input, select").forEach(input => { input.disabled = true; });
+      void saveCardControl(control, controlRoot, card, api).then(updated => {
+        if (revision === token && current?.number === card.number) current = updated;
+        onChanged(updated);
+      }).catch(failure => {
+        if (current?.number === card.number) {
+          const liveError = mount.querySelector("[data-card-controls-error]");
+          if (liveError) liveError.textContent = failure.message;
+        }
+      }).finally(() => {
+        controlPending = false;
+        controlRoot.removeAttribute("aria-busy");
+        if (current?.number === card.number) draw();
+      });
+      return;
+    }
     const tab = event.target.closest("[data-details-tab]");
     if (tab) selectTab(tab.dataset.detailsTab, true);
     else if (event.target.closest("[data-deck-reply-toggle]")) {
@@ -257,7 +319,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
       const token = ++revision;
       // A refresh of the same card keeps the user's focus; only a new card moves it to the heading.
       const changed = current?.number !== card.number || current?.board !== card.board;
-      if (changed) links = null;
+      if (changed) { links = null; mount.querySelector("[data-card-controls]")?.remove(); }
       current = card;
       options = { ...settings, tab: "details" };
       draw();
@@ -293,6 +355,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     selectTab,
     stop() {
       revision++;
+      current = null;
       mount.removeEventListener("click", click);
       mount.removeEventListener("keydown", keydown);
     },

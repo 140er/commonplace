@@ -123,15 +123,34 @@ def card_url(ctx, number) -> str:
 
 
 def with_urls(ctx, value):
-    """Every card dict in ``value`` (nested) gains ``url``."""
-    if isinstance(value, list):
-        return [with_urls(ctx, v) for v in value]
-    if isinstance(value, dict):
-        out = {k: with_urls(ctx, v) for k, v in value.items()}
-        if isinstance(out.get("number"), int) and "status" in out and "board" in out:
-            out.setdefault("url", card_url(ctx, out["number"]))
-        return out
-    return value
+    """Every nested card gains its stable URL, with one page-wide write."""
+    cards = []
+
+    def project(item):
+        if isinstance(item, list):
+            return [project(child) for child in item]
+        if isinstance(item, dict):
+            out = {key: project(child) for key, child in item.items()}
+            if (
+                isinstance(out.get("number"), int)
+                and "status" in out
+                and "board" in out
+                and "url" not in out
+            ):
+                cards.append(out)
+            return out
+        return item
+
+    result = project(value)
+    if cards:
+        from commonplace import urls
+
+        links = urls.share_links(
+            ctx.db, ctx.principal.workspace_id, [f"/app/#/card/{c['number']}" for c in cards]
+        )
+        for item in cards:
+            item["url"] = links[f"/app/#/card/{item['number']}"]
+    return result
 
 
 def people(ctx, text: str) -> str:

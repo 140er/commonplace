@@ -1,0 +1,4 @@
+- **Owns:** Cheap project names in the bot roster.
+- **Promises:** Roster discovery does not invoke full board capacity and waiting projections.
+- **How it fails:** A slow optional directory cannot hold the personal bot list or selected thread.
+- **Tests:** tests/test_cold_start_routes.py and the bot navigation harnesses.

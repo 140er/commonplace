@@ -83,29 +83,37 @@ export function mount(context) {
     read?.abort(); read = new AbortController();
     const token = ++generation, alive = () => active && token === generation;
     const options = { signal: read.signal, timeoutMs: 10000 };
-    const results = await Promise.allSettled([
+    const reads = [
       ctx.me?.can_admin === true ? api('/api/needs-me', options) : Promise.resolve(ctx.needs || { count: 0 }),
       api('/api/bots', options),
       api(`/api/events?after=${seq}${eventEpoch ? `&epoch=${enc(eventEpoch)}` : ''}`, options),
-    ]);
-    if (!alive()) return;
-    const [queue, roster, feed] = results;
-    if (queue.status === 'fulfilled') {
-      needs = queue.value || { count: 0 };
-      for (const card of needsCards(needs)) if (settled.has(stamp(card)) || exiting.has(stamp(card))) needs = removeNeed(needs, card);
-      loaded = true;
-    }
-    if (roster.status === 'fulfilled') bots = roster.value?.bots || [];
-    else if ([401, 403, 404].includes(roster.reason?.status)) bots = [];
-    if (feed.status === 'fulfilled') {
-      if (feed.value.reset) events = [];
-      events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at)) || (b.seq || 0) - (a.seq || 0)).slice(0, 12).map(event => ({ ...event, activity: event.activity || activityEvent(event, bots, needs) }));
-      seq = feed.value.seq || 0; eventEpoch = feed.value.epoch || '';
-    } else if ([401, 403].includes(feed.reason?.status)) events = [];
-    region('error').hidden = queue.status === 'fulfilled' && roster.status === 'fulfilled';
-    region('error').textContent = queue.status === 'rejected' ? 'Today could not be refreshed. Try again.' : roster.status === 'rejected' ? 'Your bots could not be refreshed.' : '';
-    if (queue.status === 'rejected' && [401, 403, 404].includes(queue.reason?.status)) { needs = { count: 0 }; dialog.close(); current = null; }
-    paint();
+    ];
+    const results = reads.map(() => ({ status: 'pending' }));
+    const settle = (index, result) => {
+      results[index] = result;
+      if (!alive()) return;
+      const [queue, roster, feed] = results;
+      if (queue.status === 'fulfilled') {
+        needs = queue.value || { count: 0 };
+        for (const card of needsCards(needs)) if (settled.has(stamp(card)) || exiting.has(stamp(card))) needs = removeNeed(needs, card);
+        loaded = true;
+      }
+      if (roster.status === 'fulfilled') bots = roster.value?.bots || [];
+      else if ([401, 403, 404].includes(roster.reason?.status)) bots = [];
+      if (feed.status === 'fulfilled') {
+        if (feed.value.reset) events = [];
+        events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at)) || (b.seq || 0) - (a.seq || 0)).slice(0, 12).map(event => ({ ...event, activity: event.activity || activityEvent(event, bots, needs) }));
+        seq = feed.value.seq || 0; eventEpoch = feed.value.epoch || '';
+      } else if ([401, 403].includes(feed.reason?.status)) events = [];
+      region('error').hidden = queue.status !== 'rejected' && roster.status !== 'rejected';
+      region('error').textContent = queue.status === 'rejected' ? 'Today could not be refreshed. Try again.' : roster.status === 'rejected' ? 'Your bots could not be refreshed.' : '';
+      if (queue.status === 'rejected' && [401, 403, 404].includes(queue.reason?.status)) { needs = { count: 0 }; dialog.close(); current = null; }
+      paint();
+    };
+    await Promise.all(reads.map((read, index) => read.then(
+      value => settle(index, { status: 'fulfilled', value }),
+      reason => settle(index, { status: 'rejected', reason }),
+    )));
   }
   function openReply(card, action = 'reply', answering = false) {
     if (action === 'reply' && !(card.actions || []).some(action => ['answer', 'accept'].includes(action))) { ctx.go?.(`#/card/${card.number}`); return; }

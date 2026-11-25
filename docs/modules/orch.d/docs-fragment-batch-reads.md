@@ -1,0 +1,8 @@
+- **Owns:**
+  - Documentation fragment reads batch immutable Git blob IDs within each call.
+- **Promises:**
+  - Every module, field and system fragment still reaches the existing parsers; both revisions remain available for ownership, documentation changes and base-listed waivers. Batches preserve ordering and UTF-8 replacement decoding without persistent caches.
+- **How it fails:**
+  - Git failures, missing blobs and malformed or incomplete batch replies raise a documentation infrastructure error. Fragment structure, coverage and documentation obligations retain their existing failures.
+- **Tests:**
+  - `tests/test_docs_check_batch.py` bounds process growth as fragments are added and covers exact bytes, unusual filenames, duplicate contents, moving refs, deleted ownership and failed batch reads. Existing documentation checker and fragment cases retain their assertions.

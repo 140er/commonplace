@@ -13,13 +13,13 @@ from commonplace.boards.service import ParentError
 from commonplace.boards.store import BoardStore
 from commonplace.cli import main
 from commonplace.control_db import ControlDB, ControlError
-from commonplace.oauth import store as oauth_store
 from commonplace.policy import Policy
 from tests._commonplace_helpers import (
     REVIEW_CONTEXT,
     hub_fixture,  # noqa: F401
 )
 from tests.test_commonplace_boards import api, env, mcp, service  # noqa: F401
+from tests.test_commonplace_oauth import Client
 
 
 def actor(hub, name, parent=None, workspace=None):
@@ -502,24 +502,9 @@ def test_connection_listing_and_cli_expose_ancestry(hub, env, tmp_path, capsys):
     assert f"parent {parent_id}" in listing
 
 
-def test_oauth_connections_remain_top_level(hub, env):  # noqa: F811
-    _token, _principal, person, _cookie, _owner = env
-    with hub.db._lock, hub.db._tx() as conn:
-        conn.execute(
-            "INSERT INTO oauth_clients(client_id,client_name,redirect_uris,created_at) VALUES ('client','Claude','[]',0)"
-        )
-        client = conn.execute("SELECT * FROM oauth_clients WHERE client_id='client'").fetchone()
-        oauth_store.create_code(
-            conn,
-            client,
-            person,
-            {
-                "scope": "memory:read memory:write",
-                "redirect_uri": "https://client.example/callback",
-                "resource": "https://memory.example/mcp",
-                "code_challenge": "challenge",
-            },
-        )
+def test_oauth_connections_remain_top_level(hub):
+    client = Client(hub)
+    client.grant(client.register())
     row = next(c for c in hub.db.connections(hub.workspace) if c["auth"] == "oauth")
     assert row["parent_id"] is None and row["started_by"] == "user"
 

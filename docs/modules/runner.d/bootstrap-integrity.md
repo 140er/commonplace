@@ -1,0 +1,4 @@
+- **Owns:** Program verification before the standalone bootstrap continues setup from its own installed interpreter.
+- **Promises:** Fresh delivery and existing-prefix entry both verify the exact pinned archive and installed program before importing the installer. A private copy of the original archive permits verification during interrupted enrollment recovery without downloading with a spent code. Only the verified interpreter is published in the private environment's `bin` directory.
+- **How it fails:** Changed or missing archives, changed program files, interpreter aliases and activation entries refuse without repairing or deleting an existing prefix. No service, enrollment or execution authorization is added by program verification.
+- **Tests:** `tests/test_runner_bootstrap_integrity.py`, `tests/test_runner_program_delivery.py`, `tests/test_machine_setup.py`.

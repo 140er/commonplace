@@ -1,0 +1,4 @@
+- **Owns:** The name_rules field in GET /api/workspaces and its shared Classic/Deck name validator.
+- **Promises:** Both looks validate on input and again before confirmation using the server's name rules. An invalid name has a plain inline explanation of the actual allowed characters and keeps Continue disabled. POST /api/workspaces keeps the same fields, authority, responses and server validation; no allowed character is added.
+- **How it fails:** Missing rule data refuses client progression with a reopen instruction. A server refusal after client acceptance remains readable in the existing dialog. Validation creates no workspace request before confirmation.
+- **Tests:** tests/workspace_creation.mjs, tests/test_workspace_creation_ui.py, tests/test_workspace_name_rules.py and tests/test_workspace_name_browser.py cover invalid and valid names, server/client drift, server authority and both looks at 1280 and 390 pixels.

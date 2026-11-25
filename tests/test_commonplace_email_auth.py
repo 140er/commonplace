@@ -233,8 +233,9 @@ def test_fresh_signup_isolation_logout_and_closed_signup_relogin(fresh, monkeypa
     client, mailbox = fresh()
     assert counts(client) == (0, 0)
     status, _, page = client.request("/app/")
-    assert status == 200 and b'aria-label="Email"' in page
-    assert b'action="/app/auth/email"' in page
+    # The document stays neutral until the client receives a real identity 401.
+    assert status == 200 and b"Loading Commonplace" in page
+    assert b'aria-label="Email"' not in page and b'action="/app/auth/email"' not in page
     assert client.ask()[0] == 202
     assert counts(client) == (0, 0)
     link = mailbox.link()

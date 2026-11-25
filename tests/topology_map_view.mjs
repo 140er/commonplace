@@ -580,15 +580,16 @@ test("screen: show() again starts clean and an old answer cannot draw into the n
 
 test("wiring: the app mounts the map in one place and the account menu links to it for the owner", async () => {
   const app = await read("app.js");
-  assert.match(app, /import \{ createTopologyMap \} from "\.\/topology-map\.js";/);
+  assert.match(app, /createTopologyMap \} = await import\("\.\/topology-map\.js"\)/);
   assert.equal(app.split("createTopologyMap(").length - 1, 1);
   assert.match(app, /state\.base === "#\/compute-map"\) \{\n\s+if \(!background\) topologyScreen\(\);/);
-  assert.match(await read("index.html"), /<link rel="stylesheet" href="\/app\/topology\.css">/);
+  assert.match(await read("route-styles.js"), /'compute-map': \['topology\.css'/);
   const rail = await import("../commonplace/web/static/rail.js");
   // Under Workspace in the account menu, on the desktop rail and in the phone's menu alike.
   for (const render of [rail.renderRail, rail.renderPhoneBar]) {
-    assert.match(render({ can_admin: true }), /<a href="#\/console">Console<\/a><a href="#\/compute-map">Compute map<\/a><\/div>/);
+    assert.match(render({ can_admin: true }), /<a href="#\/console">Console<\/a><a href="#\/compute">Cloud workspaces<\/a><a href="#\/compute-map">Compute map<\/a><\/div>/);
     assert.doesNotMatch(render({ can_admin: false }), /compute-map/);
+    assert.match(render({ can_admin: false }), /<a href="#\/compute">Cloud workspaces<\/a>/, 'Cloud workspaces (Compute) is for every member');
   }
   assert.match(app, /state\.base === "#\/compute-map" \? "map"/);
   const css = await read("topology.css");
