@@ -171,7 +171,7 @@ function runHTML(job) {
 
 // The inner HTML of the section for a loaded list; `note` is the last refusal or confirmation.
 export function cardRunsHTML(jobs, note = "", start = null) {
-  const list = jobs.length ? `<ul class="run-list">${jobs.map(runHTML).join("")}</ul>` : `<p class="run-empty">No agent has been started on this card.</p>`;
+  const list = jobs.length ? `<ul class="run-list">${jobs.map(runHTML).join("")}</ul>` : `<p class="run-empty">No bot run has started on this card.</p>`;
   return `<div class="sec-h"><h3>Runs</h3></div>${list}${startHTML(start, jobs)}<p class="run-note" role="status" aria-live="polite">${e(note)}</p>`;
 }
 

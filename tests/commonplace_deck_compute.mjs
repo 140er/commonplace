@@ -840,7 +840,7 @@ test('status line from counts: busy, idle, stuck, unknown and partial', () => {
   const stuck = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'uncertain', 11, 3), run('2', 'queued', 12, 45), run('3', 'started', 13, 4)]) }]);
   assert.equal(work.statusText(stuck, now), '1 running, 0 waiting, 2 stuck. Look at the flagged jobs below. Last activity 3 minutes ago.');
   assert.deepEqual(stuck.jobs.map(j => j.job), ['1', '2', '3'], 'stuck first, then running');
-  assert.match(work.statusText(model([]), now), /^No machines yet\. Add one to run bots’ code on it\.$/, 'no machine asked: nothing to say about the route');
+  assert.match(work.statusText(model([]), now), /^No machines yet\. Add one to see it here; in this version Commonplace checks it, and bots do not run on it yet\.$/, 'no machine asked: nothing to say about the route');
   assert.match(work.statusText(model([{ ok: false }]), now), /^Running work could not be read just now\./, 'a failed read is not the route saying it cannot report');
   assert.doesNotMatch(work.statusText(model([{ ok: false }, { ok: false }]), now), /not reported/);
   assert.equal(work.statusText(model([{ ok: true, agents: { applicable: false, reason: 'not_a_runner' } }]), now).startsWith('Running work is not reported'), true);

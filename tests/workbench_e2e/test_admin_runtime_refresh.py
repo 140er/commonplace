@@ -98,7 +98,7 @@ def test_runtime_refresh_keeps_focus_without_stealing_it(hub, runtime, chromium,
         _shot(page, f"{look}-refresh-{outcome}-focused")
 
         begin()
-        elsewhere = page.get_by_role("link", name="Manage agents and workspace settings")
+        elsewhere = page.get_by_role("link", name="Manage connected apps and workspace settings")
         elsewhere.focus()
         expect(elsewhere).to_be_focused()
         finish()

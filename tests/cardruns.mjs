@@ -86,7 +86,7 @@ const cases = {
   },
   empty() {
     const html = cardRunsHTML([]);
-    assert.ok(html.includes('No agent has been started on this card.'));
+    assert.ok(html.includes('No bot run has started on this card.'));
     assert.ok(!html.includes('data-run-cancel'));
   },
   escape() {
@@ -114,7 +114,7 @@ const cases = {
     assert.ok(cardRunsSlot(card).includes('Waiting for the machine to pick it up'));
     const again = fakeSlot();
     await attachCardRuns(again.mount, card, { api: async () => [] });
-    assert.ok(again.slot.innerHTML.includes('No agent has been started'));
+    assert.ok(again.slot.innerHTML.includes('No bot run has started'));
   },
   async hidden() {
     // A member (403) or a card that is gone (404): the section stays out of the panel.
@@ -323,7 +323,7 @@ const cases = {
       await wait(); await wait();
       assert.equal(posts, 1);
       assert.ok(one.slot.innerHTML.includes(expected), expected);
-      assert.ok(one.slot.innerHTML.includes('No agent has been started on this card.'));
+      assert.ok(one.slot.innerHTML.includes('No bot run has started on this card.'));
     }
     void slot; void handlers; void mount;
   },

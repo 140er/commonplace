@@ -184,7 +184,7 @@ def _(ui, seed):
 
 
 def _connect_dialog(p):
-    """03c: Connect an agent from the empty board. Returns whether that was a dialog.
+    """03c: Connect an app from the empty board. Returns whether that was a dialog.
 
     The shipped app opens project settings first; its Connect agent button then opens
     the setup dialog, so the later phases (03c2-03e) stay testable either way.

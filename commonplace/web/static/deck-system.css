@@ -452,3 +452,10 @@
 /* Work cards: a long project name and state wrap onto the next line instead of being cut. */
 :root[data-ui="deck"] body .deck-work .wk-meta { flex-wrap: wrap; row-gap: 2px; }
 :root[data-ui="deck"] body .deck-work .wk-name { white-space: normal; overflow: visible; }
+
+/* The selected Board state reads as selected: a primary edge on top of its fill. */
+:root[data-ui="deck"] body .deck-board-states button[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--violet); color: var(--ink); }
+/* Card details on Work and the Board read a little larger and clearer than captions. */
+:root[data-ui="deck"] body .deck-work .wk-meta { color: var(--ink2); font-size: 13px; }
+:root[data-ui="deck"] body .deck-board .card-meta { color: var(--ink2); font-size: 12.5px; }
+:root[data-ui="deck"] body .deck-work .wk-lane-name b, :root[data-ui="deck"] body .deck-board .col-count { color: var(--ink2); }

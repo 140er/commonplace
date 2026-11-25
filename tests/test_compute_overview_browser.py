@@ -675,7 +675,9 @@ def test_the_deck_map_tab_stops_saying_checking_when_there_is_nothing_to_check(s
         status = page.locator('[data-compute-region="status"]')
         expect(status).to_be_visible()
         expect(status).not_to_contain_text("Checking")
-        expect(status).to_contain_text("No machines yet. Add one to run bots’ code on it.")
+        expect(status).to_contain_text(
+            "No machines yet. Add one to see it here; in this version Commonplace checks it, and bots do not run on it yet."
+        )
         empty = page.locator('[data-compute-region="empty"]')
         expect(empty).to_contain_text("A cloud workspace can still be saved without a machine")
         _shot(page, f"{label}-64-map-no-machines")
