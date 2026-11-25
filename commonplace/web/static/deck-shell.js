@@ -100,7 +100,7 @@ export function shellTrees(options = {}) {
   }
   return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
     const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${states[bot.state]?.[1] === 'waiting' || (bot.board && needsCards(options.needsQueue || {}).some(card => card?.board === bot.board)) ? '<span class="deck-state-dot" data-state="waiting" role="img" aria-label="Waiting on you"></span>' : ''}${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
+    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${states[bot.state]?.[1] === 'waiting' || (bot.board && needsCards(options.needsQueue || {}).some(card => card?.board === bot.board)) ? '<span class="deck-state-dot" data-state="waiting" role="img" aria-label="Waiting on you" title="Waiting on you"></span>' : ''}${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
       const title = worker.name || worker.title || conversation?.title || 'Coworker';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
@@ -166,7 +166,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (open) sheet.querySelector('a, button')?.focus();
   }
   const moreOpen = () => moreAt !== null && moreAt === hashNow();
-  const options = () => ({ bots, directory, closed, treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen() });
+  const options = () => ({ bots, directory, closed, treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen(), needsQueue: context?.()?.needs || {} });
   function chrome() {
     if (!on()) return;
     const form = composer();
@@ -225,8 +225,19 @@ export function createDeckShell({ root, api, context, on }) {
     if (action === 'more' && sheet) { event.preventDefault(); showMore(sheet, sheet.hidden); }
     if (action === 'more-close' && sheet) showMore(sheet, false);
     if (action === 'retry') { event.preventDefault(); void sync(); }
-    if (action === 'new-thread' && globalThis.location?.hash === '#/') {
-      event.preventDefault(); root.querySelector('#content textarea, #content input')?.focus();
+    // New chat opens the General bot with its reply box ready; without one it falls back to the Bots list.
+    const general = action === 'new-thread' && shellBots(options()).find(bot => bot?.kind === 'general');
+    if (general) {
+      event.preventDefault();
+      if (globalThis.location) globalThis.location.hash = botHref(general);
+      let tries = 0;
+      // The bot page renders after the route change and may redraw once, so wait until its box is shown and kept focus.
+      const focus = () => {
+        const box = [...root.querySelectorAll('#content textarea[name="text"]')].find(item => item.getClientRects().length);
+        if (box && root.ownerDocument?.activeElement !== box) box.focus();
+        if (++tries < 40 && (!box || tries < 10)) setTimeout(focus, 50);
+      };
+      setTimeout(focus, 0);
     }
     if (action === 'mic') {
       event.preventDefault();

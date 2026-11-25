@@ -15,7 +15,8 @@ test('one checklist has every prerequisite, state, reason and exactly one owner 
   for(const id of ids) {
     const row = new RegExp(`<li data-ready="${id}"[^]*?<\\/li>`).exec(html)?.[0] || '';
     assert.match(row,new RegExp(`data-state="${ready[id].state}"`));
-    assert.equal((row.match(/<a /g)||[]).length,1,row);
+    // A done step keeps one way to change it; a step that does not apply has nothing to do.
+    assert.equal((row.match(/<a /g)||[]).length,ready[id].state==='not_needed'?0:1,row);
     assert.match(row,/<p>[^]+<\/p>/);
   }
   assert.match(html,/Notifications[^]*Not needed[^]*optional/i);
@@ -33,6 +34,7 @@ test('missing prerequisites reuse recovery wording and lead to the actual setup 
     const row=new RegExp(`<li data-ready="${id}"[^]*?<\\/li>`).exec(html)[0];
     assert.ok(row.includes(reason),row);assert.ok(row.includes(`href="${href}"`),row);
     assert.match(row,/Needs you/);
+    assert.match(row,/<b>(Choose a model|Add the model key|Add a machine|Approve the machine|Connect an agent)<\/b>/);
     assert.equal((row.match(/<a /g)||[]).length,1,row);
   }
 });

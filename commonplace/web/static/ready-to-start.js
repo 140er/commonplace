@@ -2,7 +2,9 @@ import {escape as e} from './api.js';
 import {setupText} from './bot-setup.js';
 import {modelStep, machineStep} from './coworker-setup.js';
 
-const titles = {model: 'Model chosen', key: 'Model key', machine: 'Machine or runner', connection: 'Agent connection', trust: 'Machine trust and approval', notifications: 'Notifications'};
+const titles = {model: 'Model', key: 'Model key', machine: 'Machine or runner', connection: 'Agent connection', trust: 'Machine trust and approval', notifications: 'Notifications'};
+// An open step is named as the thing to do.
+const todo = {model: 'Choose a model', key: 'Add the model key', machine: 'Add a machine', connection: 'Connect an agent', trust: 'Approve the machine', notifications: 'Notifications'};
 const states = {done: 'Done', needs_you: 'Needs you', not_needed: 'Not needed'};
 const reasons = {
   model: {done: 'A chat model is chosen and turned on.'},
@@ -33,9 +35,11 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
       : id === 'trust' ? 'Approve the machine and allow the project connection to start work.'
       : row.code === 'choose_model_first' ? 'Choose a model first so its key requirement can be checked.'
       : setupText(row.code, canConfigure);
-    const copy = step ? `${e(step.before)}${canConfigure ? action(id) : 'the project settings'}${e(step.after)}` : `${e(reason)}${canConfigure ? ` ${action(id)}` : ''}`;
+    // A step that does not apply has nothing to do, so it gets no action link.
+    const link = canConfigure && state !== 'not_needed';
+    const copy = step ? `${e(step.before)}${canConfigure ? action(id) : 'the project settings'}${e(step.after)}` : `${e(reason)}${link ? ` ${action(id)}` : ''}`;
     const waits = state === 'needs_you' && row.code === 'choose_model_first';
-    return { state, waits, html: `<li data-ready="${id}" data-state="${state}"${waits ? ' data-waits="model"' : ''}><div><b>${title}</b><span class="ready-state">${waits ? 'Needs you, after the model' : states[state]}</span></div><p>${copy}${!canConfigure ? ' Ask the project owner to change setup.' : ''}</p></li>` };
+    return { state, waits, html: `<li data-ready="${id}" data-state="${state}"${waits ? ' data-waits="model"' : ''}><div><b>${state === 'needs_you' ? todo[id] : title}</b><span class="ready-state">${waits ? 'Needs you, after the model' : states[state]}</span></div><p>${copy}${!canConfigure ? ' Ask the project owner to change setup.' : ''}</p></li>` };
   });
   // What needs you comes first; the rows that are fine stay listed, quieter, below it.
   const open = rows.filter(row => row.state === 'needs_you' && !row.waits).length;
