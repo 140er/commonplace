@@ -1,0 +1,13 @@
+{
+  "name": "commonplace-even-g2-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Holds the Commonplace token for the G2 glasses plugin and forwards an allowlist of hub routes.",
+  "type": "module",
+  "bin": { "cmmn-g2-bridge": "bin/cmmn-g2-bridge.mjs" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node bin/cmmn-g2-bridge.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

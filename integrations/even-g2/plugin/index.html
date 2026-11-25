@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+    <title>Commonplace for G2</title>
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: #1f1f1f;
+        color: #e5e5e5;
+        font: 15px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        touch-action: manipulation;
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior: none;
+      }
+      main { max-width: 640px; margin: 0 auto; padding: 20px 16px 32px; box-sizing: border-box; }
+      h1 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+      h2 { font-size: 13px; font-weight: 600; color: #9a9a9a; text-transform: uppercase; letter-spacing: .04em; margin: 20px 0 8px; }
+      .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #2f2f2f; }
+      .row span:first-child { color: #9a9a9a; }
+      .ok { color: #7ddc8a; } .bad { color: #ff8a80; } .wait { color: #e5c07b; }
+      pre { background: #121212; color: #7ddc8a; border: 1px solid #2f2f2f; border-radius: 10px; padding: 12px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, Menlo, monospace; margin: 0; }
+      label { display: block; color: #9a9a9a; font-size: 13px; margin-bottom: 4px; }
+      input { width: 100%; box-sizing: border-box; background: #121212; color: #e5e5e5; border: 1px solid #3a3a3a; border-radius: 8px; padding: 10px; font: inherit; }
+      button { background: #2e2e2e; color: #e5e5e5; border: 1px solid #3a3a3a; border-radius: 8px; padding: 9px 12px; font: inherit; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .hint { color: #7b7b7b; font-size: 13px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
