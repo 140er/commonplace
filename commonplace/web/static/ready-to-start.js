@@ -21,7 +21,8 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
   const projectLink = (label, focus = "connection") => board
     ? `<a href="#/board/${encodeURIComponent(board)}" data-action="coordinator" data-board="${e(board)}" data-ready-focus="${focus}">${label}</a>`
     : `<a href="#/settings">${label}</a>`;
-  const action = id => ['model', 'key'].includes(id) ? projectLink(board ? 'Project settings' : 'Workspace settings', 'chat')
+  // The chat model is chosen in a project's settings, under Chat answers; a bot without a project starts at Projects.
+  const action = id => ['model', 'key'].includes(id) ? board ? projectLink('Project settings', 'chat') : '<a href="#/boards">a project’s settings</a>'
     : id === 'connection' ? projectLink('Connect app')
     : id === 'trust' && readiness[id]?.code === 'trust_missing' ? projectLink('Start permissions', 'trust')
     : id === 'notifications' ? '<a href="#/settings">Notification settings</a>'

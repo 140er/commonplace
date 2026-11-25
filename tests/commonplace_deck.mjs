@@ -261,7 +261,7 @@ test("Settings carries the workspace tools in the Deck look only, with Admin for
   assert.deepEqual(on.map(([where]) => where), ["afterbegin", "afterbegin", "afterbegin"]);
   assert.match(on[1][1], /Notifications[\s\S]*Connections[\s\S]*Workspace/);
   assert.deepEqual([...on[0][1].matchAll(/href="(#\/[a-z]+)"/g)].map((m) => m[1]), ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]);
-  assert.match(on[0][1], />Needs me<\/a>/);
+  assert.match(on[0][1], />Waiting on you<\/a>/);
   assert.doesNotMatch(on[0][1], /class="count /, "counts belong to the action navigation only");
   for (const can_admin of [false, undefined, "true"]) assert.doesNotMatch(make(true, { can_admin })[0][1], /#\/admin/);
   assert.doesNotMatch(deck.toolsHTML(), /<style|style="/);

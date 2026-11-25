@@ -45,7 +45,8 @@ test('members see the same states and ask-the-owner guidance without action link
 });
 test('personal bots do not demand a machine for chat and have one model settings action',()=>{
   const html=render({...ready,machine:{state:'not_needed'},connection:{state:'not_needed'},trust:{state:'not_needed'},model:{state:'needs_you',code:'needs_configuration'}},true,null);
-  assert.match(html,/href="#\/settings"/);
+  // Without a project the model step points at a project's settings (where Chat answers lives), never workspace Settings.
+  assert.match(html,/href="#\/boards">a project’s settings<\/a>, under Chat answers/);
   assert.doesNotMatch(html,/data-action="coordinator"/);
 });
 test('bot status is replaced even when ready; unknown states retain safe existing guidance',()=>{
