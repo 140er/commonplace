@@ -1,7 +1,7 @@
 """Reject placeholder git author and committer identities.
 
-The pre-push hook and CI both call this module, so ``git push --no-verify``
-still fails on the pull request.
+The pre-push hook calls this module before running the quick check.
+The range command checks an explicit set of commits.
 
     python -m commonplace.guards.identity --range origin/develop..HEAD
     python -m commonplace.guards.identity --pre-push origin <url>   # hook; reads stdin
