@@ -120,8 +120,16 @@ export function createBridge(rawConfig) {
     })
   }
 
+  // Without a key the bridge serves loopback only, so the Host must name loopback
+  // too: a DNS-rebound page or a LAN-facing proxy in front of it cannot pass.
+  function loopbackHost(req) {
+    const port = req.socket.localPort
+    const host = String(req.headers.host ?? '').toLowerCase()
+    return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host)
+  }
+
   function authorized(req) {
-    if (!key) return true
+    if (!key) return loopbackHost(req)
     const given = req.headers['x-bridge-key']
     return typeof given === 'string' && sameSecret(given, key)
   }
@@ -207,7 +215,7 @@ export function createBridge(rawConfig) {
         if (!authorized(req)) {
           label = 'unpaired'
           status = 401
-          send(res, 401, { error: 'bridge key missing or wrong' })
+          send(res, 401, { error: key ? 'bridge key missing or wrong' : 'loopback Host required' })
         } else if (url.pathname === '/bridge/info') {
           label = 'info'
           send(res, 200, { hub: config.hubOrigin, paired: Boolean(key) })

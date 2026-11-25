@@ -12,6 +12,7 @@ function setup(over: { cards?: ReturnType<typeof card>[]; noLog?: boolean } = {}
     events: [] as unknown[],
     seq: 40,
     noLog: over.noLog,
+    down: false,
   }
   const hub = fakeHub(state)
   const display = new FakeDisplay()
@@ -212,5 +213,65 @@ describe('connections without event-log access', () => {
     const view = display.last
     expect(view.layout === 'list' && view.head).toBe('Commonplace: 2 need you\n10:00 New ask #9: Merge the pricing copy?')
     expect(calls.filter(c => c.path.startsWith('/api/events')).length).toBe(1)
+  })
+})
+
+describe('recovery and edge cases', () => {
+  it('a quiet poll after an outage clears the offline line', async () => {
+    const { app, display, state } = setup()
+    await app.start()
+    state.down = true
+    await app.poll()
+    expect(display.last.layout === 'list' && display.last.head).toMatch(/Offline/)
+    state.down = false
+    await app.poll()
+    expect(display.last.layout === 'list' && display.last.head).not.toMatch(/Offline/)
+  })
+
+  it('a failed start is retried by the next poll, then live updates run', async () => {
+    const { app, state } = setup()
+    state.down = true
+    await app.start()
+    expect(app.ready).toBe(false)
+    state.down = false
+    await app.poll()
+    expect(app.ready).toBe(true)
+    expect(app.cursor).toBe(40)
+  })
+
+  it('diff mode also notices updated and finished cards', async () => {
+    const { app, display, state } = setup({ noLog: true })
+    await app.start()
+    state.needs = needs([card({ version: 4 })])
+    await app.poll()
+    expect(display.last.layout === 'list' && display.last.head).toMatch(/Updated #6:/)
+    state.needs = needs([])
+    await app.poll()
+    expect(display.last.layout === 'list' && display.last.head).toMatch(/Done elsewhere #6:/)
+  })
+
+  it('a click on a row that moved under a rebuild opens the named row or nothing', async () => {
+    const a = card({ number: 6, title: 'First' })
+    const b = card({ number: 7, title: 'Second' })
+    const { app, display, calls } = setup({ cards: [a, b] })
+    await app.start()
+    const rows = display.last.layout === 'list' ? display.last.items : []
+    await app.input({ type: 'click', index: 0, name: rows[1] })
+    expect(calls.at(-1)?.path).toBe('/api/cards/7')
+    await app.input({ type: 'double' })
+    await app.input({ type: 'click', index: 0, name: 'ASK #99 gone' })
+    expect(calls.at(-1)?.path).not.toBe('/api/cards/99')
+    expect(display.last.layout).toBe('list')
+  })
+
+  it('caps answer options to the firmware list and keeps the confirm prompt visible', async () => {
+    const many = card({ ask_options: Array.from({ length: 25 }, (_, i) => `Option ${i} ` + 'long words '.repeat(30)) })
+    const { app, display } = setup({ cards: [many] })
+    await app.start()
+    await app.input({ type: 'click', index: 0 })
+    await app.input({ type: 'click' })
+    expect(display.last.layout === 'list' && display.last.items.length).toBe(20)
+    await app.input({ type: 'click', index: 0 })
+    expect(display.last.layout === 'text' && display.last.body).toMatch(/Press again to confirm\.$/)
   })
 })

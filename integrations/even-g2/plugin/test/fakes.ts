@@ -35,7 +35,7 @@ export function needs(cards: Card[] = [card()]): NeedsMe {
 }
 
 /** A fake bridge: routes to handlers, records every request. */
-export function fakeHub(state: { needs: NeedsMe; cards: Record<number, Card>; events: unknown[]; seq: number; noLog?: boolean }) {
+export function fakeHub(state: { needs: NeedsMe; cards: Record<number, Card>; events: unknown[]; seq: number; noLog?: boolean; down?: boolean }) {
   const calls: Array<{ method: string; path: string; body?: unknown; headers: Record<string, string> }> = []
   const respond = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -44,6 +44,7 @@ export function fakeHub(state: { needs: NeedsMe; cards: Record<number, Card>; ev
     const method = init?.method ?? 'GET'
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     calls.push({ method, path, body, headers: (init?.headers ?? {}) as Record<string, string> })
+    if (state.down) throw new TypeError('network down')
     if (path === '/bridge/info') return respond(200, { hub: 'http://hub.test', paired: false })
     if (path === '/api/me') return respond(200, { actor: 'conn:g2', people: {} })
     if (path === '/api/needs-me') return respond(200, state.needs)

@@ -152,6 +152,31 @@ test('a bridge key, when set, is required on API calls', async () => {
   })
 })
 
+test('without a key only a loopback Host is served (DNS rebinding, LAN proxies)', async () => {
+  const { request } = await import('node:http')
+  const get = (port, host) =>
+    new Promise((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port, path: '/api/needs-me', headers: { Host: host } }, res => {
+        res.resume()
+        resolve(res.statusCode)
+      })
+      req.on('error', reject)
+      req.end()
+    })
+  await withBridge({}, async base => {
+    const port = new URL(base).port
+    seen.length = 0
+    assert.equal(await get(port, `evil.example:${port}`), 401)
+    assert.equal(await get(port, `192.168.1.20:5173`), 401)
+    assert.equal(seen.length, 0)
+    assert.equal(await get(port, `localhost:${port}`), 200)
+  })
+  await withBridge({ key: KEY }, async base => {
+    const r = await fetch(base + '/api/needs-me', { headers: { 'X-Bridge-Key': KEY } })
+    assert.equal(r.status, 200)
+  })
+})
+
 test('CORS headers only for configured origins', async () => {
   await withBridge({ allowedOrigins: ['http://localhost:5173'] }, async base => {
     const ok = await fetch(base + '/api/needs-me', { headers: { Origin: 'http://localhost:5173' } })

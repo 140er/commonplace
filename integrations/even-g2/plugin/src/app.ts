@@ -18,11 +18,11 @@ import {
   type Activity,
   type HomeItem,
 } from './model'
-import { LINE_H, MAX_ITEMS, SCREEN_W, fitItem, fitLine, paginate } from './text'
+import { LINE_H, MAX_ITEMS, SCREEN_W, fitItem, fitLine, paginate, wrap } from './text'
 import type { Board, Card, NeedsMe } from './types'
 
 export type Input =
-  | { type: 'click'; index?: number }
+  | { type: 'click'; index?: number; name?: string }
   | { type: 'double' }
   | { type: 'up' }
   | { type: 'down' }
@@ -100,6 +100,8 @@ export class G2App {
   hub = ''
   updated = ''
   view: View | null = null
+  /** start() finished once; until then every poll retries it (phone not on the network yet). */
+  ready = false
   private busy = false
 
   constructor(deps: AppDeps) {
@@ -128,6 +130,7 @@ export class G2App {
 
   /** First load: who is who, the event cursor, today's activity, then the home page. */
   async start(): Promise<void> {
+    this.ready = false
     await this.render()
     try {
       const [info, me] = await Promise.all([this.api.info(), this.api.me()])
@@ -135,6 +138,7 @@ export class G2App {
       this.people = me.people ?? {}
       this.activity = emptyActivity()
       await this.startEvents()
+      this.ready = true
       await this.refresh()
     } catch (err) {
       this.fail(err)
@@ -180,13 +184,17 @@ export class G2App {
 
   /** One poll of the event log: new notable events set the notice and refresh the counts. */
   async poll(): Promise<void> {
+    if (!this.ready || (this.cursor === null && this.mode === 'log')) return this.start()
     if (this.mode === 'diff') return this.pollNeeds()
-    if (this.cursor === null) return
     try {
-      const page = await this.api.eventsAfter(this.cursor)
+      const page = await this.api.eventsAfter(this.cursor!)
       // A cursor that moves backwards means the hub was restored: start over from there.
       this.cursor = page.seq
-      if (!page.events.length) return
+      if (!page.events.length) {
+        // Back from an error on a quiet hub: re-read so Home stops saying offline.
+        if (this.status === 'error') await this.refresh()
+        return
+      }
       this.activity = addActivity(this.activity, page.events, this.now())
       const notices = page.events.map(eventNotice).filter((n): n is string => n !== null)
       if (notices.length) this.notice = `${this.clock()} ${notices[notices.length - 1]}`
@@ -197,16 +205,18 @@ export class G2App {
     }
   }
 
-  /** Diff mode: a card that newly needs you sets the notice. */
+  /**
+   * Diff mode: compare Needs-me with the previous poll. A card that newly needs
+   * you, a card whose version moved (a comment or an edit), or a card that left
+   * (decided or closed elsewhere) sets the notice; a new one wins.
+   */
   private async pollNeeds(): Promise<void> {
-    const before = new Set(this.needs ? needsMeCards(this.needs).map(x => x.card.number) : [])
-    const hadNeeds = this.needs !== null
+    const before = this.needs ? needsMeCards(this.needs) : null
     await this.refresh()
-    if (!hadNeeds || !this.needs) return
-    const fresh = needsMeCards(this.needs).filter(x => !before.has(x.card.number))
-    if (!fresh.length) return
-    const { card, tag } = fresh[fresh.length - 1]
-    this.notice = `${this.clock()} ${tag === 'ASK' ? 'New ask' : 'New'} #${card.number}: ${card.title}`
+    if (!before || !this.needs || this.status !== 'ok') return
+    const notice = needsDiffNotice(before, needsMeCards(this.needs))
+    if (!notice) return
+    this.notice = `${this.clock()} ${notice}`
     await this.render()
   }
 
@@ -220,8 +230,26 @@ export class G2App {
     }
   }
 
+  /**
+   * The list row a click means. A poll may have rebuilt the list under the
+   * wearer; when the firmware's row name no longer matches, find it by name,
+   * and ignore the click if that row is gone.
+   */
+  private pick(input: { index?: number; name?: string }): number | null {
+    const index = input.index ?? 0
+    const rows = this.view?.layout === 'list' ? this.view.items : []
+    if (input.name === undefined || rows[index] === input.name) return index
+    const found = rows.indexOf(input.name)
+    return found >= 0 ? found : null
+  }
+
   private async handle(input: Input): Promise<void> {
     const screen = this.screen
+    if (input.type === 'click' && (screen.name === 'home' || screen.name === 'choose')) {
+      const index = this.pick(input)
+      if (index === null) return
+      input = { type: 'click', index }
+    }
     if (input.type === 'long') {
       if (screen.name === 'pages' && screen.card) return this.openCard(screen.card.number)
       this.screen = { name: 'home' }
@@ -352,7 +380,7 @@ export class G2App {
       case 'confirm': {
         const what =
           s.choice.kind === 'option'
-            ? [`Answer #${s.card.number} with:`, '', s.choice.label]
+            ? [`Answer #${s.card.number} with:`, '', clip(s.choice.label, 4)]
             : [`Mark #${s.card.number} as seen?`, '', `Adds the comment "${SEEN_TEXT}"`]
         const body = paginate([...what, '', 'Press again to confirm.'], TEXT_W, BODY_LINES)[0]
         return { layout: 'text', body, footer: '2x: cancel' }
@@ -369,9 +397,40 @@ export class G2App {
   }
 }
 
+type Listed = Array<{ card: Card; tag: string }>
+
+export function needsDiffNotice(before: Listed, after: Listed): string | null {
+  const old = new Map(before.map(x => [x.card.number, x.card]))
+  const now = new Set(after.map(x => x.card.number))
+  const fresh = after.filter(x => !old.has(x.card.number))
+  if (fresh.length) {
+    const { card, tag } = fresh[fresh.length - 1]
+    return `${tag === 'ASK' ? 'New ask' : 'New'} #${card.number}: ${card.title}`
+  }
+  const moved = after.filter(x => (old.get(x.card.number)?.version ?? x.card.version) < x.card.version)
+  if (moved.length) {
+    const { card } = moved[moved.length - 1]
+    return `Updated #${card.number}: ${card.title}`
+  }
+  const gone = before.filter(x => !now.has(x.card.number))
+  if (gone.length) {
+    const { card } = gone[gone.length - 1]
+    return `Done elsewhere #${card.number}: ${card.title}`
+  }
+  return null
+}
+
 export function choicesFor(card: Card): Choice[] {
-  const options: Choice[] = isDecision(card) ? card.ask_options!.map(label => ({ kind: 'option' as const, label })) : []
+  // The firmware list holds 20 items: up to 18 options plus "seen" and "cancel".
+  const labels = isDecision(card) ? card.ask_options!.slice(0, MAX_ITEMS - 2) : []
+  const options: Choice[] = labels.map(label => ({ kind: 'option' as const, label }))
   return [...options, { kind: 'seen' }, { kind: 'cancel' }]
+}
+
+/** At most `lines` wrapped lines, so the confirm prompt always stays on screen. */
+function clip(text: string, lines: number): string {
+  const wrapped = wrap(text, TEXT_W)
+  return wrapped.length <= lines ? text : `${wrapped.slice(0, lines).join(' ')}…`
 }
 
 function choiceLabel(c: Choice): string {

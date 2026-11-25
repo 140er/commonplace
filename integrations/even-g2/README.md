@@ -44,8 +44,9 @@ separate acknowledge route.
 may read the event log (`events:read` on a connection that reads every wing), it shows
 new asks, decisions and comments, plus today's activity counts. A connection made in the
 browser cannot read the event log. In that case the plugin compares Needs-me between
-polls: new items still show up within about 20 s, and the today line shows open-card
-counts instead.
+polls. New items still show up within about 20 s. A card whose version moved shows as
+`Updated #n`, for example after a comment. A card that left Needs-me shows as
+`Done elsewhere #n`. The today line shows open-card counts instead.
 
 ## Security model
 
@@ -61,6 +62,8 @@ counts instead.
   once from the pairing link (`?key=...`), stores it in the Even app's storage, and
   removes it from the address. The key only unlocks this bridge. It is not a Commonplace
   token.
+- Without a key the bridge answers only requests whose `Host` names loopback. That stops a
+  DNS-rebound web page, or a LAN-facing proxy in front of the bridge, from using it.
 - CORS headers go only to the origins in `BRIDGE_ALLOWED_ORIGINS`. They are not needed
   when the bridge serves the plugin itself.
 - Voice is not included. `/api/voice/transcribe` accepts signed-in people only, not
@@ -72,11 +75,13 @@ Steps 1, 2 and 5 are on the owner's phone or browser. An agent does 3 and 4 on t
 host (for example a home server on Tailscale).
 
 **1. Make the glasses connection (owner, browser, 2 minutes).**
-In Commonplace, open Settings → Agents. Name it `g2-glasses`, set the client to `Other`,
-and tick the consent that lets it answer Needs-me questions. Then press **Create token**.
+In Commonplace, open Settings → Agents. Name it `g2-glasses`, set the client to "Other
+app" (or "Generic MCP" in the classic view), and tick the consent that lets it answer Needs-me questions. Then press **Create token**.
 The token is shown once. Hand it to the agent through a secret prompt that writes it to a
 file on the bridge host (for example `~/.config/cmmn-g2/token`, mode 600), never through
-chat. A connection made this way gets the Needs-me live-update mode described above.
+chat. A connection made this way gets the Needs-me live-update mode described above. Its token
+lasts 90 days. To renew it, create a new token and replace the file. The bridge reads the
+file at start, so restart it afterwards.
 
 **2. Turn on Developer Mode (owner, phone, once).**
 Sign in at <https://hub.evenrealities.com> with the same account as the Even app, then
@@ -97,7 +102,7 @@ BRIDGE_STATIC_DIR=plugin/dist \
 node bridge/bin/cmmn-g2-bridge.mjs
 ```
 
-Check it from another machine: `curl http://<ip>:8790/bridge/health` returns `{"ok": true}`.
+Check it from another machine: `curl http://<ip>:8790/bridge/health` returns `{"ok":true}`.
 Each request is logged as one line (method, route, status, time), with no headers,
 bodies or token.
 
@@ -133,7 +138,7 @@ If something is off, check these first:
 cd integrations/even-g2
 scripts/local-hub.sh /tmp/g2-hub 8796       # throwaway hub with seeded asks (never a real hub)
 CMMN_HUB_URL=http://127.0.0.1:8796 CMMN_TOKEN_FILE=/tmp/g2-hub/g2.token node bridge/bin/cmmn-g2-bridge.mjs &
-(cd plugin && npm ci && npx vite &)          # dev server on :5173; /api and /bridge proxy to the bridge
+(cd plugin && npm ci && npx vite &)          # dev server on 127.0.0.1:5173; /api and /bridge proxy to the bridge
 scripts/sim.sh start http://127.0.0.1:5173  # Even Hub simulator, headless, automation API on :9898
 scripts/sim.sh press down; scripts/sim.sh press click; scripts/sim.sh shot /tmp/card.png
 python3 scripts/seed_local_hub.py http://127.0.0.1:8796 /tmp/g2-hub/agent.token late   # a new ask arrives
@@ -142,6 +147,8 @@ python3 scripts/seed_local_hub.py http://127.0.0.1:8796 /tmp/g2-hub/agent.token 
 `local-hub.sh` runs from a Commonplace checkout with its Python environment (set
 `PYTHON=` to choose one). Its glasses token may read the event log and has the decide
 consent. To try the browser-connection mode, make a connection in the local app instead.
+Vite listens on loopback only. To open it from a phone, set `G2_DEV_HOST=0.0.0.0` and
+start the bridge with `BRIDGE_KEY_FILE`, so the network cannot answer cards through it.
 The simulator needs WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`) and `xvfb-run` on Linux.
 
 Tests:

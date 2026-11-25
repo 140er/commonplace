@@ -76,7 +76,9 @@ export class GlassesDisplay implements Display {
 
   render(view: View): Promise<void> {
     // Serialize: a fast double gesture must not interleave two page writes.
-    const run = this.queue.then(() => this.draw(view)).catch(err => {
+    const run = this.queue.then(() => this.draw(view)).then(() => {
+      this.available = true
+    }, err => {
       this.available = false
       console.error('glasses render failed', err)
     })
@@ -103,7 +105,9 @@ export class GlassesDisplay implements Display {
       if (result !== 0) throw new Error(`createStartUpPageContainer returned ${result}`)
       this.created = true
     } else {
-      await this.bridge.rebuildPageContainer(new RebuildPageContainer(layout))
+      if (!(await this.bridge.rebuildPageContainer(new RebuildPageContainer(layout)))) {
+        throw new Error('rebuildPageContainer refused the page')
+      }
     }
     this.shown = view
   }

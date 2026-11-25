@@ -15,7 +15,13 @@ export function toInput(event: EvenHubEvent): Input | 'exit' | null {
   const type = envelope.eventType ?? OsEventTypeList.CLICK_EVENT
   switch (type) {
     case OsEventTypeList.CLICK_EVENT:
-      return event.listEvent ? { type: 'click', index: event.listEvent.currentSelectItemIndex ?? 0 } : { type: 'click' }
+      return event.listEvent
+        ? {
+            type: 'click',
+            index: event.listEvent.currentSelectItemIndex ?? 0,
+            ...(event.listEvent.currentSelectItemName ? { name: event.listEvent.currentSelectItemName } : {}),
+          }
+        : { type: 'click' }
     case OsEventTypeList.DOUBLE_CLICK_EVENT:
       return { type: 'double' }
     case OsEventTypeList.SCROLL_TOP_EVENT:

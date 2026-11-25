@@ -2,13 +2,18 @@ import { defineConfig } from 'vite'
 
 // Dev: the plugin calls same-origin /api and /bridge; Vite forwards them to the
 // G2 bridge, which holds the Commonplace token. Nothing secret is bundled.
+// Vite listens on loopback only. To load it from a phone (G2_DEV_HOST=0.0.0.0),
+// give the bridge a key too, or anyone on the network could answer cards.
 const bridge = process.env.G2_BRIDGE_URL ?? 'http://127.0.0.1:8790'
 
 export default defineConfig({
   server: {
-    host: true,
+    host: process.env.G2_DEV_HOST ?? '127.0.0.1',
     port: 5173,
-    proxy: { '/api': bridge, '/bridge': bridge },
+    proxy: {
+      '/api': { target: bridge, changeOrigin: true },
+      '/bridge': { target: bridge, changeOrigin: true },
+    },
   },
   build: { target: 'es2022' },
 })
