@@ -1,0 +1,170 @@
+/* Deck page system: the last stylesheet, so it settles what the per-screen files leave open.
+   Calm graphite surfaces, one type scale, one left edge for every page, and art only where it says something.
+   Inert in the classic look. Contrast on --ground/--s1: ink 15:1, ink2 9:1, ink3 5.6:1. */
+:root[data-ui="deck"] {
+  --ground: #0e0e10;
+  --rail: #0e0e10;
+  --stage: #0e0e10;
+  --s1: #151518;
+  --s1-solid: #151518;
+  --card: #151518;
+  --s2: #1c1c20;
+  --s3: #26262b;
+  --line: rgba(255,255,255,0.07);
+  --line2: rgba(255,255,255,0.12);
+  --ink: #ededf0;
+  --ink2: #b9b9c2;
+  --ink3: #8f8f9a;
+  --ink4: #686872;
+  --violet: #8f7cff;
+  --violet-ink: #c9c0ff;
+  --amber: #f2b33d;
+  --page-top: 40px; --page-side: 48px;
+  --page-width: 1040px;
+  --title-size: 24px;
+}
+:root[data-ui="deck"] body { -webkit-font-smoothing: antialiased; }
+
+/* ---------- Stage: the scene is Home's alone; work screens sit on a plain ground ---------- */
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .shell > .center { padding: 0; }
+  :root[data-ui="deck"] .shell > .center .deck-stage { inset: 0; border: 0; border-radius: 0; }
+  :root[data-ui="deck"] .center > #content { border-radius: 0; }
+}
+:root[data-ui="deck"] .deck-stage[data-dimmed="true"] { display: none; }
+:root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .22; }
+:root[data-ui="deck"] .bh-head { margin-bottom: 28px; }
+:root[data-ui="deck"] .bh-head h1 { margin: 0 0 6px; font-size: 28px; }
+:root[data-ui="deck"] .bh-head p { margin: 0; color: var(--ink2); font-size: 15px; line-height: 1.5; }
+
+/* ---------- Rail ---------- */
+:root[data-ui="deck"] .rail[data-deck="bar"] { border-right: 1px solid var(--line); }
+:root[data-ui="deck"] .deck-mark { color: var(--violet); }
+:root[data-ui="deck"] .rail .deck-new-thread { margin: 4px 10px 14px; height: 36px; border: 1px solid var(--line2); background: transparent; }
+:root[data-ui="deck"] .rail .deck-new-thread:hover { background: var(--s2); }
+:root[data-ui="deck"] .deck-links { margin-bottom: 8px; }
+:root[data-ui="deck"] .rail .nav { min-height: 34px; font-size: 14px; }
+:root[data-ui="deck"] .rail .nav[aria-current], :root[data-ui="deck"] .rail .deck-links .nav[aria-current] { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .rail .nav[aria-current] .i { color: var(--violet-ink); }
+:root[data-ui="deck"] .deck-rail-scroll { border-top: 1px solid var(--line); padding-top: 4px; }
+:root[data-ui="deck"] .deck-rail-heading { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--ink3); }
+:root[data-ui="deck"] .deck-rail-heading[hidden] { display: none; }
+:root[data-ui="deck"] .deck-bot-name { font-weight: 500; }
+:root[data-ui="deck"] .deck-bot-avatar { background: var(--s2); color: var(--ink2); border: 1px solid var(--line2); }
+:root[data-ui="deck"] .rail .rail-foot { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 10px; }
+:root[data-ui="deck"] .rail .rail-foot > .nav { width: 100%; padding: 0 10px; gap: 10px; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .user-links { bottom: 52px; }
+:root[data-ui="deck"] .rail .me .mark { background: var(--s2); color: var(--ink2); border: 1px solid var(--line2); }
+
+/* ---------- One page frame: same left edge, width and title on every screen ---------- */
+:root[data-ui="deck"] .center h1 { font-size: var(--title-size); line-height: 1.25; font-weight: 600; letter-spacing: -0.015em; color: var(--ink); }
+:root[data-ui="deck"] :is(.bt-page, .bh-content) { margin-inline: 0; }
+:root[data-ui="deck"] .bt-page { width: min(var(--page-width), 100%); }
+:root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); margin-inline: 0; padding: var(--page-top) var(--page-side) 32px; }
+:root[data-ui="deck"] .bots-roster { width: min(calc(var(--page-width) + 2 * var(--page-side)), 100%); margin-inline: 0; }
+:root[data-ui="deck"] .deck-memory { max-width: var(--page-width); margin: 0; }
+@media (min-width: 700px) {
+  /* Screens titled by the shell head (Projects, Rules, Console, Admin, Needs me) start on the same edge as the rest. */
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) { padding: calc(var(--page-top) - 8px) var(--page-side) 0; min-height: 0; }
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding: 20px var(--page-side) 32px; }
+  :root[data-ui="deck"] #content > :is(.queue, .rules-view, .console-view) { padding: 0; max-width: var(--page-width); }
+  :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); }
+  :root[data-ui="deck"] #content > :is(.workbench-board, .bt-scroll, .bh-wrap, .bots, .deck-compute) { max-width: none; }
+  :root[data-ui="deck"] #content:has(> .pl-head), :root[data-ui="deck"] #content:has(> .deck-compute), :root[data-ui="deck"] #content:has(> .deck-memory) { padding-left: var(--page-side); padding-right: var(--page-side); }
+  :root[data-ui="deck"] .deck-board { padding-left: var(--page-side); padding-right: var(--page-side); }
+}
+
+/* ---------- Decorative art: only where a page is empty, never as a rule or a heading ornament ---------- */
+:root[data-ui="deck"] .cp-art:is([data-art="rule"], [data-art="header"], [data-art="column"], [data-art="clear"], [data-art="rail"]) { display: none; }
+
+/* ---------- Empty states read as a sentence, not a placeholder ---------- */
+:root[data-ui="deck"] .deck-board .empty-col { padding: 14px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink3); font-size: 13px; text-align: left; }
+:root[data-ui="deck"] .bt-empty { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); color: var(--ink2); font-size: 14px; }
+:root[data-ui="deck"] .bt-empty::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--cyan); }
+
+/* ---------- Board: the title gets the width; moving a card is a quiet action under it ---------- */
+:root[data-ui="deck"] .deck-board .card h3 { padding-right: 0; }
+:root[data-ui="deck"] .deck-board .card-top { position: static; order: 3; display: flex; justify-content: flex-end; margin-top: -4px; }
+:root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 26px; padding: 0 8px; background: transparent; color: var(--ink3); border: 1px solid var(--line); }
+:root[data-ui="deck"] .deck-board .card-top .card-more:hover { color: var(--ink); background: var(--s2); }
+@media (hover: hover) and (min-width: 700px) {
+  :root[data-ui="deck"] .deck-board .card .card-top { position: absolute; right: 8px; bottom: 8px; margin: 0; opacity: 0; transition: opacity 120ms; }
+  :root[data-ui="deck"] .deck-board .card:is(:hover, :focus-within) .card-top { opacity: 1; }
+}
+:root[data-ui="deck"] .deck-board .card:hover { border-color: var(--line2); }
+
+/* ---------- Sign-in: numbered steps you can actually read ---------- */
+:root[data-ui="deck"] .steps3 { counter-reset: step; }
+:root[data-ui="deck"] .steps3 > li { counter-increment: step; }
+:root[data-ui="deck"] .steps3 > li::before { content: counter(step); display: grid; place-items: center; color: var(--ground); font-size: 12px; font-weight: 700; }
+
+/* ---------- Settings forms: fields line up on their labels; consent text reads as a list ---------- */
+:root[data-ui="deck"] .capy-settings .agent-form { align-items: start; gap: 14px 16px; }
+:root[data-ui="deck"] .capy-settings .agent-form > label.agent-consent { flex: 1 1 100%; flex-direction: row; align-items: flex-start; gap: 10px; color: var(--ink2); font-size: 13.5px; line-height: 1.5; }
+:root[data-ui="deck"] .capy-settings .agent-form > label.agent-consent input { margin-top: 3px; flex: none; }
+
+/* ---------- Lists of projects and rules: rows on one surface, words instead of counters ---------- */
+:root[data-ui="deck"] #content > .queue { display: flex; flex-direction: column; gap: 0; }
+:root[data-ui="deck"] #content > .queue > .item { margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-top-width: 0; border-radius: 0; background: var(--s1); box-shadow: none; }
+:root[data-ui="deck"] #content > .queue > .item:first-child { border-top-width: 1px; border-radius: var(--radius-card) var(--radius-card) 0 0; }
+:root[data-ui="deck"] #content > .queue > .item:last-child { border-radius: 0 0 var(--radius-card) var(--radius-card); }
+:root[data-ui="deck"] #content > .queue > .item:only-child { border-radius: var(--radius-card); }
+:root[data-ui="deck"] #content > .queue > .item:hover { background: var(--s2); }
+:root[data-ui="deck"] #content > .queue > .item h3 { margin: 0 0 2px; font-size: 15px; font-weight: 600; }
+:root[data-ui="deck"] #content > .queue > .item h3 a { color: var(--ink); text-decoration: none; }
+:root[data-ui="deck"] #content > .queue > .item h3 a::after { content: ""; position: absolute; inset: 0; }
+:root[data-ui="deck"] #content > .queue > .item { position: relative; }
+:root[data-ui="deck"] #content > .queue > .item .meta { color: var(--ink3); font-size: 13px; }
+:root[data-ui="deck"] .rules-empty { max-width: 560px; padding: 16px 18px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink2); background: transparent; }
+
+/* ---------- Bot conversation: one column for the checklist, the stream and the composer ---------- */
+@media (min-width: 700px) {
+  /* The rail already lists every bot; the strip keeps only the one you are talking to. */
+  :root[data-ui="deck"] .deck-bot-chips .deck-bot-chip:not([aria-current]) { display: none; }
+}
+:root[data-ui="deck"] .bots-thread > [data-region="model"]:not(:empty) { width: min(760px, calc(100% - 32px)); margin: 16px auto 0; max-height: 52%; overflow: auto; }
+:root[data-ui="deck"] .bots-compose { display: flex; align-items: flex-start; justify-content: center; gap: 8px; }
+:root[data-ui="deck"] .bots-compose > .bots-box { flex: 1; max-width: 760px; }
+:root[data-ui="deck"] .bots-compose > .deck-composer-mic { margin-top: 6px; }
+
+/* ---------- Ready to start: what needs you leads, the rest is a quiet list ---------- */
+:root[data-ui="deck"] .ready-to-start { margin: 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); font-size: 14px; }
+:root[data-ui="deck"] .ready-to-start h2 { margin: 0; font-size: 16px; font-weight: 600; }
+:root[data-ui="deck"] .ready-summary { margin: 4px 0 12px; color: var(--ink2); }
+:root[data-ui="deck"] .ready-to-start li { padding: 10px 0; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .ready-to-start li > div { justify-content: flex-start; align-items: baseline; }
+:root[data-ui="deck"] .ready-to-start li b { font-weight: 600; }
+:root[data-ui="deck"] .ready-to-start .ready-state { margin-left: auto; font-size: 12.5px; color: var(--ink3); }
+:root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] .ready-state { color: var(--amber); font-weight: 600; }
+:root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] p { color: var(--ink2); }
+:root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) { padding: 7px 0; color: var(--ink3); }
+:root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) b { font-weight: 500; color: var(--ink2); }
+:root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) p { margin-top: 2px; font-size: 12.5px; }
+
+/* ---------- Today: the keyboard legend only when there is something to act on, and only with a keyboard ---------- */
+:root[data-ui="deck"] .bt-list:has(.bt-empty) + .bt-keys { display: none; }
+@media (hover: none) { :root[data-ui="deck"] .bt-keys { display: none; } }
+:root[data-ui="deck"] .bt-keys { color: var(--ink3); font-size: 12px; }
+
+/* ---------- Settings: one readable column; Appearance is a section like the others ---------- */
+:root[data-ui="deck"] .settings.capy-settings { grid-template-columns: minmax(0, 1fr); max-width: calc(760px + 2 * var(--page-side)); }
+:root[data-ui="deck"] .capy-settings .deck-appearance { position: static; }
+:root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { padding: var(--page-top) var(--page-side) 0; }
+:root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding: 0; }
+:root[data-ui="deck"] .settings.capy-settings { padding-top: 16px; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav { gap: 2px; padding: 3px; border-radius: 10px; background: var(--s1); border: 1px solid var(--line); width: fit-content; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav button { background: transparent; min-height: 32px; }
+:root[data-ui="deck"] .look-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--s2); }
+:root[data-ui="deck"] .look-switch .opt { min-height: 32px; min-width: 96px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font: inherit; font-size: 13.5px; }
+:root[data-ui="deck"] .look-switch .opt[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
+
+@media (max-width: 699px) {
+  :root[data-ui="deck"] { --page-top: 20px; --page-side: 16px; }
+  :root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .18; }
+  :root[data-ui="deck"] .look-switch .opt { min-height: 44px; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui="deck"] .deck-board .card .card-top { transition: none; }
+}
