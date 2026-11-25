@@ -44,8 +44,14 @@ def open_bot(browser, team, user, bot, size):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.goto(f"{origin}/app/?ui=deck#/bots/{bot}")
-    page.locator(".deck-bot-settings").wait_for()
+    page.locator(".deck-bot-more-btn").wait_for()
     return context, page
+
+
+def open_settings(page):
+    """Settings and memory sit in the bar's more menu."""
+    page.locator(".deck-bot-more-btn").click()
+    page.locator(".deck-bot-settings").click()
 
 
 def capture(page, label, size):
@@ -142,7 +148,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
     page.on("pageerror", lambda error: errors.append(str(error)))
     member_context = None
     try:
-        page.locator(".deck-bot-settings").click()
+        open_settings(page)
         page.get_by_role("button", name="Add a person", exact=True).click()
         page.get_by_label("Find a person by name").fill(LONG_NAME)
         assert len(LONG_NAME) > 40 and len(LONG_NAME.split()) == 2
@@ -176,7 +182,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
         expect(page.locator(".bot-access")).not_to_contain_text("Access saved.")
         page.get_by_role("button", name="People & permissions", exact=True).click()
         member_context, member = open_bot(browser, team, team.blake, bot, size)
-        member.locator(".deck-bot-settings").click()
+        open_settings(member)
         expect(member.locator("[data-member-access]")).to_contain_text("You can talk privately")
         expect(
             member.locator("[data-permission-editor], [data-bots-action=sharing-picker]")
@@ -224,14 +230,14 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
             "Hello from my private conversation"
         )
         # Read-only permission remains usable even when there is no private thread.
-        page.locator(".deck-bot-settings").click()
+        open_settings(page)
         page.get_by_role("button", name="Change access", exact=True).click()
         page.get_by_label("Can talk to this bot", exact=True).uncheck()
         page.get_by_role("button", name="Save access", exact=True).click()
         expect(page.locator("[data-permission-editor]")).to_have_count(0)
         member.reload()
         expect(member.locator(".bots-compose textarea")).to_have_count(0)
-        member.locator(".deck-bot-settings").click()
+        open_settings(member)
         expect(member.locator("[data-member-access]")).to_contain_text("You cannot send messages")
         page.get_by_role("button", name="Change access", exact=True).click()
         page.get_by_role("button", name="Revoke access", exact=True).click()
@@ -341,7 +347,7 @@ def test_learning_sharing_requires_a_project_preview_and_a_separate_confirmation
     )
     context, page = open_bot(browser, team, team.avery, bot, size)
     try:
-        page.locator(".deck-bot-settings").click()
+        open_settings(page)
         page.get_by_role("button", name="Learning & sharing", exact=True).click()
         expect(page.get_by_role("button", name="Share with a project", exact=True)).to_be_visible()
         capture(page, "learning", size)

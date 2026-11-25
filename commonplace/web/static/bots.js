@@ -86,13 +86,18 @@ export function modelNoteHTML({ model, readiness, board, canConfigure, error }, 
 
 const gone = (e) => `<p class="bb-gone">${e(BOTS_COPY.gone)}</p>`;
 
+const cardIcon = '<svg class="i bb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h5"/></svg>';
+const arrowUp = '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+const dots = '<svg class="i" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></svg>';
+
 export function workHTML(b, ctx, e) {
   const n = card(b.card);
   if (b.gone) return gone(e);
   const key = `work:${n}:${ctx.mid ?? ""}`;
   const open = ctx.open?.has(key) === true;
   const links = (Array.isArray(b.links) ? b.links : []).map((l) => ({ label: l?.label, href: link(l?.url) })).filter((l) => l.href);
-  return `<div class="bb work" data-status="${e(b.status)}"><button type="button" class="bb-head" data-bots-action="toggle" data-key="${e(key)}" aria-expanded="${open}">${own(STATUS, b.status) ? `<span class="chip ${e(b.status)}">${own(STATUS, b.status)}</span>` : ""}<span class="bb-title">${marked(b.title ?? "", e)}</span>${chevron}</button>${open ? `<div class="bb-body">${b.note ? `<p class="bb-note">${marked(b.note, e)}</p>` : ""}${links.length ? `<ul class="bb-links">${links.map((l) => `<li><a href="${e(l.href)}" target="_blank" rel="noopener noreferrer">${e(l.label || l.href)}</a></li>`).join("")}</ul>` : ""}${n ? `<a class="bb-open" href="#/card/${n}">Open</a>` : ""}</div>` : ""}</div>`;
+  const body = open && (b.note || links.length) ? `<div class="bb-body">${b.note ? `<p class="bb-note">${marked(b.note, e)}</p>` : ""}${links.length ? `<ul class="bb-links">${links.map((l) => `<li><a href="${e(l.href)}" target="_blank" rel="noopener noreferrer">${e(l.label || l.href)}</a></li>`).join("")}</ul>` : ""}</div>` : "";
+  return `<div class="bb work" data-status="${e(b.status)}"><button type="button" class="bb-head" data-bots-action="toggle" data-key="${e(key)}" aria-expanded="${open}">${cardIcon}<span class="bb-title">${marked(b.title ?? "", e)}</span>${own(STATUS, b.status) ? `<span class="chip ${e(b.status)}">${own(STATUS, b.status)}</span>` : ""}${chevron}</button>${n ? `<a class="bb-open" href="#/card/${n}">Open</a>` : ""}${body}</div>`;
 }
 
 export function decisionHTML(b, ctx, e) {
@@ -262,13 +267,23 @@ export function headHTML(bot, e) {
 }
 
 export function coworkersNavHTML(bot = '-') {
-  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers">Coworkers</a>`;
+  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers" role="menuitem">Coworkers</a>`;
 }
 
-export function stripHTML(bots, bot, e) {
-  // Keep the selected bot available even if the roster request has not finished yet.
-  const list = bots.some((b) => b.id === bot.id) ? bots : [bot, ...bots];
-  return `<nav class="deck-bots-strip" aria-label="Bots"><a class="bots-back" href="#/bots" aria-label="Back to bots">${back}</a><div class="deck-bot-chips">${list.map((b) => `<a class="deck-bot-chip" href="#/bots/${enc(b.id)}"${b.id === bot.id ? ' aria-current="page"' : ""}><span class="bot-av" aria-hidden="true">${e(initial(b.name))}</span><span>${e(b.name)}</span>${b.state === "needs_you" ? '<span class="deck-bot-wait" role="img" aria-label="Waiting on you"></span>' : ""}</a>`).join("")}</div><button type="button" class="deck-bot-settings" data-bots-action="sheet" aria-label="${e(bot.name)} settings and memory" title="Bot settings and memory"><span class="deck-bot-settings-name">${e(bot.name)}</span>${chevron}</button>${bot.board ? `<a class="deck-project-link" href="#/bots/${enc(bot.id)}" data-bots-action="project"><span class="deck-project-long">What ${e(bot.name)} is doing</span><span class="deck-project-short">Project</span>${chevron}</a>` : ""}</nav>`;
+/** What the bot is doing in a few words: its state, then its job. */
+export function statusLine(bot) {
+  const word = own({ needs_you: "Waiting on you", working: "Working" }, bot.state, "");
+  const job = oneLine(bot.job);
+  if (word && job) return `${word} · ${job}`;
+  return word || job || (bot.board ? "Project bot" : "Personal bot");
+}
+
+/** The thread bar: avatar, name, one line of status, open cards, and a "more" menu with the settings, project and Coworkers actions. */
+export function stripHTML(bots, bot, e, { openCards = null, menuOpen = false } = {}) {
+  const cards = Number.isSafeInteger(openCards) && openCards >= 0 ? `<a class="deck-bot-cards" href="#/bots/${enc(bot.id)}" data-bots-action="project">${openCards} open ${openCards === 1 ? "card" : "cards"}</a>` : "";
+  const wait = bot.state === "needs_you" ? '<span class="deck-bot-wait" role="img" aria-label="Waiting on you"></span>' : "";
+  const project = bot.board ? `<a class="deck-project-link" href="#/bots/${enc(bot.id)}" data-bots-action="project" role="menuitem"><span class="deck-project-long">What ${e(bot.name)} is doing</span><span class="deck-project-short">Project</span></a>` : "";
+  return `<nav class="deck-bots-strip" aria-label="Bots"><a class="bots-back" href="#/bots" aria-label="Back to bots">${back}</a><span class="deck-bot-id"><span class="bot-av" aria-hidden="true">${e(initial(bot.name))}</span><span class="deck-bot-names"><b class="deck-bot-title">${e(bot.name)}${wait}</b><span class="deck-bot-status">${e(statusLine(bot))}</span></span></span>${bot.board ? cards : ""}<span class="deck-bot-more"><button type="button" class="deck-bot-more-btn" data-bots-action="more" aria-haspopup="menu" aria-expanded="${menuOpen}" aria-label="More about ${e(bot.name)}" title="More">${dots}</button><div class="deck-bot-menu" role="menu"${menuOpen ? "" : " hidden"}><button type="button" class="deck-bot-settings" role="menuitem" data-bots-action="sheet" aria-label="${e(bot.name)} settings and memory" title="Bot settings and memory">Settings and memory</button>${project}${coworkersNavHTML(bot.id)}</div></span></nav>`;
 }
 
 /** Mirror bots.blocks.work_status over the person's existing project read projection. */
@@ -304,14 +319,15 @@ export function projectHTML(sheet, bot, e, now = new Date()) {
   return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body deck-project"><header><div><h2 id="sheet-h">What ${e(bot.name)} is doing</h2>${bot.job ? `<p>${e(bot.job)}</p>` : ""}</div><button type="button" class="bb-opt" data-bots-action="close" data-focus>Close</button></header>${sheet.loading ? `<p class="bots-note">${e(BOTS_COPY.loading)}</p>` : sheet.error ? '<p class="bots-note" role="alert">This project’s work is unavailable. Close and try again.</p>' : rows || '<p class="bots-note">No open work or work finished this week.</p>'}</div></div>`;
 }
 
-export function composerHTML(bot, e) {
-  return `<div class="bots-box"><textarea name="text" rows="1" maxlength="${MAX_TEXT}" aria-label="Message to ${e(bot.name)}" placeholder="Message ${e(bot.name)}" enterkeyhint="send"></textarea><span data-region="send"></span></div>`;
+export function composerHTML(bot, e, { model = "" } = {}) {
+  const pill = model ? `<span class="bots-pill" data-bots-model>${e(model)}</span>` : "";
+  return `<div class="bots-box"><textarea name="text" rows="1" maxlength="${MAX_TEXT}" aria-label="Message to ${e(bot.name)}" placeholder="Reply to ${e(bot.name)}" enterkeyhint="send"></textarea><div class="bots-controls cb-compose-bar">${pill}<span data-region="send"></span></div></div>`;
 }
 
 export function sendButtonHTML({ busy, canStop }) {
   return busy
     ? `<button type="button" class="bots-send stop" data-bots-action="stop"${canStop ? "" : " disabled"}>Stop</button>`
-    : '<button type="submit" class="bots-send">Send</button>';
+    : `<button type="submit" class="bots-send">${arrowUp}<span class="bots-send-text">Send</span></button>`;
 }
 
 function detailsHTML(sheet, bot, e) {
@@ -403,7 +419,7 @@ export function createBots({
     botId: null, bot: null, messages: [], waiting: [], running: false, more: false, ready: false,
     open: new Set(), busy: new Set(), editing: new Set(), waitingOpen: false, notice: null,
     turn: null, unsent: null, sheet: null, threads: [], threadId: null,
-    drafts: new Map(), readSent: new Map(),
+    drafts: new Map(), readSent: new Map(), moreOpen: false, openCards: null,
   };
   let active = false, generation = 0, ticks = 0, loadingEarlier = false;
   const timers = { thread: null, roster: null };
@@ -432,7 +448,9 @@ export function createBots({
   function paintMessages({ force = false } = {}) {
     const node = region("messages");
     if (!node) return;
-    const stick = force || atBottom(node), top = node.scrollTop;
+    const thread = node.closest?.(".bots-thread"), stick = force || atBottom(node), top = node.scrollTop;
+    // While the setup checklist shows, the whole conversation scrolls (deck-system.css); keep it at the newest end too.
+    const threadStick = Boolean(thread) && (force || atBottom(thread));
     const parts = [];
     if (!s.botId) parts.push(`<li class="bots-empty">${e(BOTS_COPY.pick)}</li>`);
     else if (!s.ready) parts.push(`<li class="bots-empty">${e(s.notice?.gone ? BOTS_COPY.unavailable : BOTS_COPY.loading)}</li>`);
@@ -445,6 +463,11 @@ export function createBots({
     }
     node.innerHTML = parts.join("");
     node.scrollTop = stick ? node.scrollHeight : top;
+    if (threadStick) {
+      const bottom = () => { if (thread.scrollHeight > thread.clientHeight) thread.scrollTop = thread.scrollHeight; };
+      bottom();
+      globalThis.requestAnimationFrame?.(bottom);
+    }
   }
   function paintWaiting() {
     const node = region("waiting");
@@ -479,7 +502,7 @@ export function createBots({
     const composer = region("composer");
     paintHead();
     if (composer) {
-      composer.innerHTML = s.bot && canTalk() ? composerHTML(s.bot, e) : "";
+      composer.innerHTML = s.bot && canTalk() ? composerHTML(s.bot, e, { model: s.model?.ready === true ? oneLine(s.model.label) : "" }) : "";
       const box = composer.querySelector?.('textarea[name="text"]');
       if (box && s.drafts.get(draftKey())) { box.value = s.drafts.get(draftKey()); fit(box); }
       takeDraft();
@@ -491,7 +514,7 @@ export function createBots({
   }
   function paintHead() {
     const head = region("head");
-    if (head) head.innerHTML = s.bot ? deck() ? stripHTML(s.bots, s.bot, e) + coworkersNavHTML(s.bot.id) + threadsHTML(s.bot, s.threads, s.threadId, e) : headHTML(s.bot, e) : "";
+    if (head) head.innerHTML = s.bot ? deck() ? stripHTML(s.bots, s.bot, e, { openCards: s.openCards, menuOpen: s.moreOpen }) + threadsHTML(s.bot, s.threads, s.threadId, e) : headHTML(s.bot, e) : "";
   }
   function takeDraft() {
     const box = composerBox();
@@ -602,6 +625,18 @@ export function createBots({
     paintThread();
     markRead();
     scheduleThread(token);
+    void loadOpenCards(token, id);
+  }
+  /** The count on the thread bar: this project's cards that are not done. Quiet when the project cannot be read. */
+  async function loadOpenCards(token, id) {
+    const board = s.bot?.board;
+    if (!deck() || !board) return;
+    try {
+      const result = await api(`/api/boards/${enc(board)}/cards`);
+      if (!alive(token) || s.botId !== id) return;
+      const open = [...(result.cards || []), ...(result.children || [])].filter((card) => card?.status !== "done").length;
+      if (open !== s.openCards) { s.openCards = open; paintHead(); }
+    } catch { /* the bar simply shows no count */ }
   }
   async function reloadTail(token = generation) {
     if (!s.botId) return;
@@ -986,7 +1021,8 @@ export function createBots({
     if (s.sheet === sheet) await loadLearned(sheet);
     await reloadTail();
   }
-  function closeSheet() { const project = s.sheet?.kind === "project"; s.sheet = null; paintSheet(); region("head")?.querySelector?.(deck() ? project ? ".deck-project-link" : ".deck-bot-settings" : ".bots-name")?.focus?.(); }
+  function closeSheet() { const project = s.sheet?.kind === "project"; s.sheet = null; paintSheet(); const head = region("head"); (deck() ? (project && head?.querySelector?.(".deck-bot-cards")) || head?.querySelector?.(".deck-bot-more-btn") : head?.querySelector?.(".bots-name"))?.focus?.(); }
+  function closeMore({ focus = false } = {}) { if (!s.moreOpen) return; s.moreOpen = false; paintHead(); if (focus) region("head")?.querySelector?.(".deck-bot-more-btn")?.focus?.(); }
   async function previewLearningShare(form) {
     const sheet = s.sheet;
     if (sheet?.kind !== "learned" || !sheet.deck || !sheet.canShare || sheet.busy || !sheet.shareItem) return;
@@ -1067,6 +1103,8 @@ export function createBots({
   function click(el) {
     const d = el?.dataset || {};
     if (s.sheet?.saved) { s.sheet.saved = false; region("sheet")?.querySelector?.("[data-access-saved]")?.remove?.(); }
+    if (d.botsAction === "more") { s.moreOpen = !s.moreOpen; paintHead(); return; }
+    closeMore();
     switch (d.botsAction) {
       case "new": void openSheet("new"); break;
       case "sheet": void openSheet("bot"); break;
@@ -1125,7 +1163,7 @@ export function createBots({
   }
   function onClick(event) {
     const el = event.target?.closest?.("[data-bots-action]");
-    if (!el) return;
+    if (!el) { if (s.moreOpen && !event.target?.closest?.(".deck-bot-more")) closeMore(); return; }
     event.preventDefault?.();
     click(el);
   }
@@ -1163,6 +1201,7 @@ export function createBots({
     if (box.value) s.drafts.set(draftKey(), box.value); else s.drafts.delete(draftKey());
   }
   function onKeydown(event) {
+    if (event.key === "Escape" && s.moreOpen && !s.sheet) { event.preventDefault?.(); closeMore({ focus: true }); return; }
     if (event.key === "Escape" && s.sheet) { event.preventDefault?.(); closeSheet(); return; }
     const box = event.target;
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing && box?.name === "text" && box.closest?.('[data-region="composer"]')) {
@@ -1227,7 +1266,7 @@ export function createBots({
         // Another thread: a local stream for the old one stops; the server finishes the turn and stores it.
         s.turn?.controller.abort();
         s.turn = null; s.unsent = null; s.sheet = null; s.notice = null;
-        s.botId = id; s.bot = id ? s.bots.find((b) => b.id === id) || null : null; s.threadId = null; s.threads = [];
+        s.botId = id; s.bot = id ? s.bots.find((b) => b.id === id) || null : null; s.threadId = null; s.threads = []; s.moreOpen = false; s.openCards = null;
         s.messages = []; s.waiting = []; s.running = false; s.more = false; s.ready = false; s.waitingOpen = false;
         ticks = 0;
       }

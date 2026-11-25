@@ -84,17 +84,39 @@ test('a failed thread load keeps its draft for a retry', async () => {
   h.ui.stop();
 });
 
-test('strip links every bot, highlights the open bot, and offers only a project bot the glance', () => {
+test('thread bar names the bot with one line of status, and keeps settings, project and Coworkers in a more menu', () => {
   const bots = [bot('atlas', { board: 'northwind', state: 'needs_you' }), bot('harbor')];
-  const html = stripHTML(bots, bots[0], e);
-  for (const id of ['atlas', 'harbor']) assert.match(html, new RegExp(`href="#/bots/${id}"`));
-  assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
+  const html = stripHTML(bots, bots[0], e, { openCards: 3 });
+  assert.match(html, /<b class="deck-bot-title">Atlas/);
+  assert.match(html, /class="deck-bot-status">Waiting on you · Website and sign-in</);
   assert.match(html, /aria-label="Waiting on you"/);
-  assert.match(html, /What Atlas is doing/);
-  assert.doesNotMatch(stripHTML(bots, bots[1], e), /deck-project-link/);
+  assert.match(html, /data-bots-action="project">3 open cards</);
+  assert.match(html, /data-bots-action="more" aria-haspopup="menu" aria-expanded="false"/);
+  assert.match(html, /class="deck-bot-menu" role="menu" hidden>/);
+  for (const part of ['data-bots-action="sheet"', 'What Atlas is doing', 'href="#/bots/atlas/coworkers"']) assert.ok(html.includes(part), part);
+  assert.doesNotMatch(html, /deck-bot-chip/, 'the sidebar lists every bot, the bar has no chip row');
+  assert.match(stripHTML(bots, bots[0], e, { menuOpen: true }), /aria-expanded="true"[^]*class="deck-bot-menu" role="menu">/);
+  assert.doesNotMatch(stripHTML(bots, bots[0], e), /open cards/);
+  const plain = stripHTML(bots, bots[1], e, { openCards: 2 });
+  assert.doesNotMatch(plain, /deck-project-link|open card/);
+  assert.match(plain, /class="deck-bot-status">Website and sign-in</);
   const bad = bot('a"<>', { name: '<img>', board: 'p' });
   assert.doesNotMatch(stripHTML([bad], bad, e), /<img>|style="|<style/);
   assert.match(stripHTML([], bad, e), /What &lt;img&gt; is doing/);
+});
+
+test('the more menu opens, closes on a choice, outside click and Escape', async () => {
+  const h = harness({ readProject: async () => ({ cards: [{ title: 'A', status: 'todo' }, { title: 'B', status: 'done' }], children: [] }) });
+  await h.ui.show('atlas'); await settle();
+  assert.match(h.regions.head.innerHTML, /data-bots-action="project">1 open card</);
+  assert.equal(h.ui.state.openCards, 1);
+  h.ui.click({ dataset: { botsAction: 'more' } });
+  assert.match(h.regions.head.innerHTML, /aria-expanded="true"/);
+  h.ui.keydown({ key: 'Escape', preventDefault() {} });
+  assert.match(h.regions.head.innerHTML, /aria-expanded="false"/);
+  h.ui.click({ dataset: { botsAction: 'more' } }); h.ui.click({ dataset: { botsAction: 'sheet' } });
+  assert.match(h.regions.head.innerHTML, /aria-expanded="false"/);
+  h.ui.stop();
 });
 
 test('tile additions are hidden in classic and expose job and state words for Deck', () => {
@@ -151,7 +173,8 @@ test('glance reads the person’s project API once, includes children, and close
   await h.ui.show('atlas');
   h.ui.click({ dataset: { botsAction: 'project' } }); await settle();
   assert.ok(h.regions.sheet.innerHTML.includes('Parent work') && h.regions.sheet.innerHTML.includes('Child work'));
-  assert.deepEqual(h.calls.filter(([path]) => path.startsWith('/api/boards/')), [['/api/boards/northwind/cards', 'GET']]);
+  // One read for the open-card count on the bar when the thread loads, one for the glance when it is opened.
+  assert.deepEqual(h.calls.filter(([path]) => path.startsWith('/api/boards/')), [['/api/boards/northwind/cards', 'GET'], ['/api/boards/northwind/cards', 'GET']]);
   h.ui.keydown({ key: 'Escape', preventDefault() {} });
   assert.equal(h.regions.sheet.innerHTML, ''); h.ui.stop();
 });
@@ -183,11 +206,10 @@ test('new CSS is entirely Deck-scoped, token-based, and loaded for the Bots rout
     for (const selector of match[1].split(',')) assert.match(selector.trim(), /^:root\[data-ui="deck"\]/);
   }
   assert.doesNotMatch(css, /#[\da-f]{3,8}\b|linear-gradient|backdrop-filter/i);
-  assert.match(css, /repeat\(3, minmax\(0, 1fr\)\)/);
-  assert.match(css, /repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /max-width: 699px/);
   assert.match(css, /100% - 760px/);
-  assert.match(css, /deck-bot-state\[hidden\][^}]*display: block !important/);
+  assert.match(css, /\.bots-send \{[^}]*border-radius: 50%; background: var\(--send\)/);
+  assert.doesNotMatch(css, /italic|box-shadow: 0|gradient|var\(--(?:bg|text|surface|well|accent-weak|wait)\b/);
   assert.match(css, /bb\.decision\[data-state="open"\]::before[^]*content: "Waiting on you"/);
   assert.match(read('index.html'), /href="\/app\/deck.css"/);
   assert.match(read('route-styles.js'), /bots: \[.*'deck-bots\.css'/);
