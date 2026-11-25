@@ -3,6 +3,12 @@
 :root[data-ui="deck"] .settings.capy-settings { flex: 1; width: 100%; max-width: 1000px; min-height: 0; margin-inline: auto; overflow: auto; gap: 20px; align-items: start; padding-bottom: 20px; }
 :root[data-ui="deck"] .capy-settings .deck-settings-main { gap: 14px; }
 :root[data-ui="deck"] .capy-settings .settings-section { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
+/* A card with nothing to do folds to one quiet line. */
+:root[data-ui="deck"] .capy-settings .settings-section.deck-quiet-line { padding: 0 2px; border: 0; background: transparent; }
+:root[data-ui="deck"] .capy-settings .settings-section.deck-quiet-line > p { margin: 0; color: var(--ink3); font-size: 13.5px; }
+:root[data-ui="deck"] .capy-settings .settings-section.deck-quiet-line > h2.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+:root[data-ui="deck"] .capy-settings .settings-section.deck-quiet-line a { color: var(--violet); text-decoration: none; }
+:root[data-ui="deck"] .capy-settings .settings-section.deck-quiet-line a:hover { text-decoration: underline; }
 :root[data-ui="deck"] .capy-settings .settings-section h2 { margin: 0 0 4px; color: var(--ink); font-size: 15px; font-weight: 600; line-height: 22px; }
 :root[data-ui="deck"] .capy-settings .settings-section > p { color: var(--ink3); font-size: 14px; line-height: 1.5; margin: 0 0 12px; }
 :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { flex-direction: column; align-items: stretch; gap: 4px; padding: 36px max(40px, calc((100% - 1000px) / 2)) 4px; }

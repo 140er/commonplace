@@ -222,4 +222,5 @@ test('Add a note and Import memory files are one action group; Map, Saved thread
   const css = readFileSync(new URL('../commonplace/web/static/deck-memory.css', import.meta.url), 'utf8');
   assert.match(css, /\.memory-actions \{ position: absolute; top: 18px; right: 0;/);
   assert.match(css.slice(css.indexOf('@media (max-width: 699px)')), /\.memory-actions \{ position: static;/);
+  assert.match(css, /\.deck-memory \.memory-tools \.btn \{[^}]*border: 1px solid var\(--line3\)[^}]*background: var\(--s2\)[^}]*color: var\(--ink\)/, 'the tools read as buttons, not captions');
 });

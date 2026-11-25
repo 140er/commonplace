@@ -10,6 +10,9 @@
 .bots-roster { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); border-right: 1px solid var(--line); }
 .bots-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 60px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
 .bots-bar h1 { font-size: 17px; line-height: 24px; font-weight: 650; }
+/* New chat is a Deck action: the shell opens the General bot for it. */
+.bots-new-chat { display: none; }
+.bots-actions { display: flex; align-items: center; gap: 8px; }
 .bots-new { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); font-weight: 600; }
 .bots-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0; padding: 0; }
 .bots-note { padding: 16px; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
@@ -101,6 +104,8 @@
 
 .wait { flex: none; border-top: 1px solid var(--line); background: var(--wait-bg); }
 .wait-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px; padding: 0 16px; border: 0; background: none; color: var(--wait); font-weight: 650; }
+.wait-text { flex: 1 1 auto; min-width: 0; text-align: left; }
+.wait-act { display: inline-flex; align-items: center; gap: 6px; flex: none; margin-left: 12px; }
 .wait-toggle[aria-expanded="true"] .i { transform: rotate(180deg); }
 .wait-list { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; padding: 0 16px 12px; }
 .wait-list .bb { width: 100%; }

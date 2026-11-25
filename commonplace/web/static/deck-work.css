@@ -12,7 +12,8 @@
 .deck-work .wk-main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .deck-work .wk-health { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 14px 20px 0; color: var(--ink2); font-size: 13px; }
 .deck-work .wk-health > span { display: inline-flex; align-items: baseline; gap: 7px; }
-.deck-work .wk-health .wk-dot { align-self: center; }
+.deck-work .wk-health .wk-ico { align-self: center; flex: none; width: 14px; height: 14px; color: var(--ink3); }
+.deck-work .wk-health .wk-ico.ok { color: var(--cyan); }
 .deck-work .wk-health a, .deck-work .wk-note a { color: var(--violet); text-decoration: none; }
 .deck-work .wk-health a:hover { text-decoration: underline; }
 .deck-work .wk-note { margin: 0; padding: 14px 20px 0; color: var(--ink2); font-size: 13px; }

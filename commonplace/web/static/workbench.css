@@ -275,6 +275,8 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 .card-previews .run-state { color: var(--text); font-weight: 600; }
 .card-previews [data-state="failed"] .run-state { color: var(--block); }
 .card-previews .run-reason { font-size: 12.5px; line-height: 19px; color: var(--text-2); overflow-wrap: anywhere; }
+.card-previews .preview-usage > summary { cursor: pointer; font-size: 12.5px; line-height: 19px; color: var(--text-2); }
+.card-previews .preview-usage > .run-reason { margin: 4px 0 0; }
 .card-previews .preview-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .card-previews .preview-confirm { width: 100%; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .card-previews .run-start { width: 100%; display: flex; flex-direction: column; gap: 6px; }

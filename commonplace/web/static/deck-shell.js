@@ -43,6 +43,7 @@ const paths = {
   console: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m5 7 2 1.5L5 10M8.5 10.5h3"/>',
   pipeline: '<circle cx="4" cy="8" r="1.6"/><circle cx="12" cy="8" r="1.6"/><path d="M5.6 8h4.8"/>',
   admin: '<path d="M8 2 3 4v4c0 3 2.2 5.2 5 6 2.8-.8 5-3 5-6V4z"/>',
+  close: '<path d="m4 4 8 8M12 4l-8 8"/>',
   mic: '<rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7v1a4.5 4.5 0 0 0 9 0V7M8 12.5V15m-3 0h6"/>',
 };
 const icon = name => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.bots}</svg>`;
@@ -113,7 +114,14 @@ export function shellThreads({ directory = {} } = {}) {
 }
 // Everything that is not one of the places: reachable from the account menu (desktop) and the account sheet (phone), same rows in both.
 // Projects is not here: it is the sidebar heading on desktop and a part of Work on a phone.
-const accountLinks = options => { const { can_admin, can_manage_instance } = options, at = String(options.hash || ''); return `<a href="#/settings" data-nav="settings"${current(options.section === 'settings')}>Settings</a><a href="#/compute" data-nav="compute"${current(at === '#/compute' || at.startsWith('#/compute/'))}>Cloud workspaces</a><a href="#/rules">Rules</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Server admin</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="switch-workspace">Switch workspace</button><button data-action="logout">Sign out</button>`; };
+// The account menu and the phone's More sheet list the same places, in three labelled groups.
+const menuGroup = (label, items) => items ? `<p class="deck-menu-group">${label}</p>${items}` : '';
+const accountLinks = options => {
+  const { can_admin, can_manage_instance } = options, at = String(options.hash || '');
+  return menuGroup('Workspace', `<a href="#/settings" data-nav="settings"${current(options.section === 'settings')}>Settings</a><a href="#/compute" data-nav="compute"${current(at === '#/compute' || at.startsWith('#/compute/'))}>Cloud workspaces</a><a href="#/rules">Rules</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}`)
+    + menuGroup('Server', can_manage_instance === true ? '<a href="#/instance-admin">Server admin</a>' : '')
+    + menuGroup('Account', '<button data-action="shortcuts">Shortcuts</button><button data-action="switch-workspace">Switch workspace</button><button data-action="logout">Sign out</button>');
+};
 const roleLabel = options => ({ owner: 'Owner', member: 'Member' }[options.role]);
 // The routes that live in the account menu and the phone More sheet, so the phone's menu button can show the person's place.
 const MORE_ROUTES = /^#\/(?:settings|compute|rules|console|pipeline|admin|instance-admin)(?:[/?]|$)/;
@@ -139,7 +147,7 @@ export function renderShellBar(options) {
   </nav>`;
 }
 // Pages that are not one of the places still need a phone title, because the page heading hides on a phone.
-const PAGE_TITLES = { '#/bots/-/coworkers': 'Bots', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
+const PAGE_TITLES = { '#/bots/-/coworkers': 'Bot conversations', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
 export function renderShellTop(options) {
   const { hash = '', user = '', board = null } = options;
   const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];
@@ -148,7 +156,7 @@ export function renderShellTop(options) {
 }
 // The phone has no sidebar, so every place outside the three tabs lives in this sheet, opened from the account button.
 // Any click inside it (a link, a button or the scrim) closes it; the shell's click handler does the work.
-export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel"><p class="deck-more-account"><b>${e(options.user || 'Account')}</b> · ${roleLabel(options) ? `${roleLabel(options)}, ` : ''}${e(options.workspace || 'Commonplace')}</p>${accountLinks(options)}</div></div>`;
+export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel"><span class="deck-more-grabber" aria-hidden="true"></span><button type="button" class="deck-more-close" data-deck-shell-action="more-close" aria-label="Close">${icon('close')}</button><p class="deck-more-account"><b>${e(options.user || 'Account')}</b> · ${roleLabel(options) ? `${roleLabel(options)}, ` : ''}${e(options.workspace || 'Commonplace')}</p>${accountLinks(options)}</div></div>`;
 export function renderShellTabs(options) {
   const tabs = phoneTabs(options);
   return `<nav class="m-tabs" data-deck="tabs" data-count="${tabs.length}" aria-label="Main">${tabs.map(({ id, label, href, on }) => `<a href="${href}" data-nav="${id}"${current(on)}>${icon(id)}${label}${id === 'home' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}</nav>`;

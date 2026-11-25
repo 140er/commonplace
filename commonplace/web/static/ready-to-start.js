@@ -4,7 +4,7 @@ import {modelStep, machineStep} from './coworker-setup.js';
 
 const titles = {model: 'Model', key: 'Model key', machine: 'Machine or runner', connection: 'Agent connection', trust: 'Machine trust and approval', notifications: 'Notifications'};
 // An open step is named as the thing to do.
-const todo = {model: 'Choose a model', key: 'Add the model key', machine: 'Add a machine', connection: 'Connect an agent', trust: 'Approve the machine', notifications: 'Notifications'};
+const todo = {model: 'Choose a model', key: 'Add the model key', machine: 'Add a machine', connection: 'Connect an app', trust: 'Approve the machine', notifications: 'Notifications'};
 const states = {done: 'Done', needs_you: 'Needs you', not_needed: 'Not needed'};
 const reasons = {
   model: {done: 'A chat model is chosen and turned on.'},
@@ -22,7 +22,7 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
     ? `<a href="#/board/${encodeURIComponent(board)}" data-action="coordinator" data-board="${e(board)}" data-ready-focus="${focus}">${label}</a>`
     : `<a href="#/settings">${label}</a>`;
   const action = id => ['model', 'key'].includes(id) ? projectLink(board ? 'Project settings' : 'Workspace settings', 'chat')
-    : id === 'connection' ? projectLink('Connect agent')
+    : id === 'connection' ? projectLink('Connect app')
     : id === 'trust' && readiness[id]?.code === 'trust_missing' ? projectLink('Start permissions', 'trust')
     : id === 'notifications' ? '<a href="#/settings">Notification settings</a>'
     : `<a href="#/admin">${id === 'machine' ? 'Add machine' : 'Approve machine'}</a>`;
@@ -31,7 +31,7 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
     let reason = reasons[id]?.[state];
     const step = state === 'needs_you' && modelStep(row.code);
     if (!reason) reason = id === 'machine' ? machineStep.trim()
-      : id === 'connection' ? row.code === 'connection_unused' ? 'The connection exists; open the agent app and use its setup.' : 'Connect an agent to this project.'
+      : id === 'connection' ? row.code === 'connection_unused' ? 'The connection exists; open the agent app and use its setup.' : 'Connect an app to this project.'
       : id === 'trust' ? 'Approve the machine and allow the project connection to start work.'
       : row.code === 'choose_model_first' ? 'Choose a model first so its key requirement can be checked.'
       : setupText(row.code, canConfigure);
@@ -43,13 +43,15 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
   });
   // What needs you comes first; the rows that are fine stay listed, quieter, below it.
   const open = rows.filter(row => row.state === 'needs_you' && !row.waits).length;
-  const summary = open ? `${open === 1 ? 'One setup step needs' : `${open} setup steps need`} you before this bot can work.` : 'Everything needed to start is in place.';
+  const later = rows.filter(row => row.waits).length;
+  const needs = open === 1 ? 'One setup step needs' : `${open} setup steps need`;
+  const summary = open ? later ? `${needs} you; ${later === 1 ? '1 more waits' : `${later} more wait`} on the model.` : `${needs} you before this bot can work.` : 'Everything needed to start is in place.';
   const ordered = [...rows.filter(row => row.state === 'needs_you' && !row.waits), ...rows.filter(row => row.waits), ...rows.filter(row => row.state !== 'needs_you')];
   // The first open step is the next action; the steps that do not apply now are listed last, quietly.
   const html = ordered.map((row, index) => index === 0 && row.state === 'needs_you' ? row.html.replace('data-state="needs_you"', 'data-state="needs_you" data-next') : row.html);
   // Steps that wait on another one, are done or do not apply fold away behind one line, so the steps you can take now
   // and the reply box keep the room.
-  const pending = open, rest = html.slice(pending), later = rows.filter(row => row.waits).length;
+  const pending = open, rest = html.slice(pending);
   const what = later ? (rest.length > later ? 'later, done or not needed' : 'after the model') : 'done or not needed';
   const folded = rest.length ? `<details class="ready-rest"><summary>${rest.length === 1 ? '1 more step' : `${rest.length} more steps`}: ${what}</summary><ul>${rest.join('')}</ul></details>` : '';
   return `<section class="ready-to-start" role="region" aria-label="Ready to start?" data-open="${open}"><h2>Ready to start?</h2><p class="ready-summary">${summary}${open ? ' Start with the first one.' : ''}</p>${pending ? `<ul>${html.slice(0, pending).join('')}</ul>` : ''}${folded}</section>`;

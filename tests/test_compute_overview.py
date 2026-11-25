@@ -815,7 +815,7 @@ def test_no_sentence_promises_a_control_the_screen_does_not_have(api, fleet):
     runner_item = by_name(result)["runner-copy"]
     assert runner_item["status"]["detail"].startswith("Draining. " + overview.DRAIN_SCOPE)
     assert overview.DRAIN_SCOPE == (
-        "No new card runs start here. Chat and Coworker sessions can still start here."
+        "No new card runs start here. Chat and bot sessions can still start here."
     )
     assert overview.NO_RESUME in runner_item["status"]["detail"]
 

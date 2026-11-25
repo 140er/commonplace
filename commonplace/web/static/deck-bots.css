@@ -99,6 +99,8 @@
 :root[data-ui="deck"] .bots-thread > [data-region="waiting"] { order: 2; width: min(760px, calc(100% - 32px)); margin: 0 auto 8px; }
 :root[data-ui="deck"] .bots-thread > [data-region="notice"] { order: 3; width: min(760px, calc(100% - 32px)); margin-inline: auto; }
 :root[data-ui="deck"] .wait { border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--line)); border-radius: var(--radius-card); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+:root[data-ui="deck"] .bots .wait-toggle .wait-act { color: var(--ink2); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+:root[data-ui="deck"] .bots .wait-toggle:hover .wait-act { color: var(--ink); }
 :root[data-ui="deck"] .bots .wait-toggle { min-height: 40px; padding-inline: 14px; color: var(--amber); font-size: 13.5px; font-weight: 600; }
 :root[data-ui="deck"] .wait-list { padding: 0 12px 12px; }
 :root[data-ui="deck"] .wait-list .bb { width: 100%; }

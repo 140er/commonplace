@@ -95,7 +95,7 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
     <ol class="steps3">
       <li><div><b>Name your first project</b><span>A project is one board, one chat and its memory.</span></div></li>
       <li><div><b>Add a card or ask in chat</b><span>Cards are the work. Agents pick them up.</span></div></li>
-      <li><div><b>Connect an agent</b><span>We show you how, step by step.</span></div></li>
+      <li><div><b>Connect an app</b><span>We show you how, step by step.</span></div></li>
     </ol>
     <dl class="terms" aria-label="Two words you will see">
       <div><dt>Agent</dt><dd>An AI helper that works on cards, for example a coding assistant on your computer.</dd></div>

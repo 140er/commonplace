@@ -13,9 +13,9 @@ const comment = (extra = {}) => ({
   reply: null, reply_posted: false, note: null, reason: null, reason_text: '', next: '', ...extra,
 });
 const answers = [
-  { choice: 'again', label: 'Two more rounds', explain: 'The Coworker gets two more rounds on these comments and on any that still wait.' },
-  { choice: 'mine', label: 'I will do it myself', explain: 'The Coworker stops answering this pull request\'s comments. The card moves to Backlog, so no Coworker picks it up while you work on them.' },
-  { choice: 'dismiss', label: 'Ignore', explain: 'The waiting comments are set aside and nobody acts on them. The card goes back to its Coworker.' },
+  { choice: 'again', label: 'Two more rounds', explain: 'The bot gets two more rounds on these comments and on any that still wait.' },
+  { choice: 'mine', label: 'I will do it myself', explain: 'The bot stops answering this pull request\'s comments. The card moves to Backlog, so no bot picks it up while you work on them.' },
+  { choice: 'dismiss', label: 'Ignore', explain: 'The waiting comments are set aside and nobody acts on them. The card goes back to its bot.' },
 ];
 const view = (comments, extra = {}) => {
   const counts = { new: 0, working: 0, addressed: 0, answered: 0, needs_you: 0, skipped: 0 };
@@ -84,11 +84,11 @@ async function partialAnswer(reason) {
 }
 const ALL = [
   comment(),
-  comment({ id: 2, status: 'working', status_text: 'The Coworker is working on it', round: 1 }),
+  comment({ id: 2, status: 'working', status_text: 'The bot is working on it', round: 1 }),
   comment({ id: 3, status: 'addressed', status_text: 'Fixed', fix_commit: SHA, fix_confirmed: true, reply: 'Renamed.', round: 1 }),
   comment({ id: 4, kind: 'conversation', path: null, line: null, status: 'answered', status_text: 'Answered', reply: 'It is read by two functions.', reply_posted: true }),
-  comment({ id: 5, status: 'needs_you', status_text: 'Needs you', reason: 'coworker_asks', reason_text: 'The Coworker needs a decision it cannot make.', next: 'Read its note and decide.', note: 'Choosing a language is a product decision.' }),
-  comment({ id: 6, status: 'skipped', status_text: 'Not for the Coworker', reason: 'author_not_trusted', reason_text: 'Written by someone the workspace does not act on.', next: 'Add them as a trusted reviewer, or ignore.' }),
+  comment({ id: 5, status: 'needs_you', status_text: 'Needs you', reason: 'coworker_asks', reason_text: 'The bot needs a decision it cannot make.', next: 'Read its note and decide.', note: 'Choosing a language is a product decision.' }),
+  comment({ id: 6, status: 'skipped', status_text: 'Not for the bot', reason: 'author_not_trusted', reason_text: 'Written by someone the workspace does not act on.', next: 'Add them as a trusted reviewer, or ignore.' }),
 ];
 
 const cases = {
@@ -105,11 +105,11 @@ const cases = {
   },
   states() {
     const html = cardReviewsHTML(view(ALL));
-    for (const text of ['New', 'The Coworker is working on it', 'Fixed', 'Answered', 'Needs you', 'Not for the Coworker',
+    for (const text of ['New', 'The bot is working on it', 'Fixed', 'Answered', 'Needs you', 'Not for the bot',
       'Fixed in commit', `href="https://github.com/acme/widgets/commit/${SHA}"`, '>bbbbbbb<', 'Proposed reply (not posted)', 'Reply on GitHub',
-      'The Coworker says:', 'Choosing a language is a product decision.', 'The Coworker needs a decision it cannot make. Read its note and decide.',
+      'The bot says:', 'Choosing a language is a product decision.', 'The bot needs a decision it cannot make. Read its note and decide.',
       'Written by someone the workspace does not act on. Add them as a trusted reviewer, or ignore.', 'Line comment by <b>reviewer1</b> on <code>app.py:1</code>',
-      'Comment by <b>reviewer1</b>', '6 comments: 1 fixed, 1 answered, 1 need you, 1 waiting, 1 being worked on, 1 not for the Coworker',
+      'Comment by <b>reviewer1</b>', '6 comments: 1 fixed, 1 answered, 1 need you, 1 waiting, 1 being worked on, 1 not for the bot',
       'Round 1 of 2 used.', 'Replies are shown here first and are not posted on GitHub']) {
       assert.ok(html.includes(text), `missing: ${text}`);
     }
@@ -117,7 +117,7 @@ const cases = {
   },
   waiting() {
     // A fix GitHub does not show yet says so; a comment back to new says why.
-    const html = cardReviewsHTML(view([comment({ status: 'working', status_text: 'The Coworker is working on it', fix_commit: SHA, fix_confirmed: false }), comment({ id: 2, reason: 'run_failed', reason_text: 'The run ended without reporting every comment.', next: 'The comments return to new once; after the second time they ask a person.' })]));
+    const html = cardReviewsHTML(view([comment({ status: 'working', status_text: 'The bot is working on it', fix_commit: SHA, fix_confirmed: false }), comment({ id: 2, reason: 'run_failed', reason_text: 'The run ended without reporting every comment.', next: 'The comments return to new once; after the second time they ask a person.' })]));
     assert.ok(html.includes('Waiting for GitHub to show that commit on the pull request.'));
     assert.ok(html.includes('The run ended without reporting every comment.'));
   },
@@ -136,7 +136,7 @@ const cases = {
   off() {
     // The owner is told where to switch it on, and that place is a real link.
     const html = cardReviewsHTML(view([], { loop: { enabled: false, rounds: 2 }, pr_info: null }));
-    assert.ok(html.includes('The Coworker does not answer review comments in this project yet.'));
+    assert.ok(html.includes('The bot does not answer review comments in this project yet.'));
     assert.ok(html.includes('href="#/board/atlas/settings"') && html.includes('Open project settings') && html.includes('under Review comments'));
   },
   empty() {
@@ -145,8 +145,8 @@ const cases = {
   },
   rounds() {
     assert.equal(roundWords({ rounds_used: 2, rounds_allowed: 2 }), 'Round 2 of 2 used. No rounds are left: new comments wait for a workspace owner\'s answer.');
-    assert.equal(roundWords({ loop_stopped: true }), 'A person is handling this pull request\'s comments; the Coworker does not answer them.');
-    assert.equal(replyWords({ reply_mode: 'post' }), 'The Coworker posts its replies on the pull request.');
+    assert.equal(roundWords({ loop_stopped: true }), 'A person is handling this pull request\'s comments; the bot does not answer them.');
+    assert.equal(replyWords({ reply_mode: 'post' }), 'The bot posts its replies on the pull request.');
     assert.equal(summaryWords({}), '');
   },
   long() {
@@ -220,7 +220,7 @@ const cases = {
     assert.equal(status.textContent, 'Saving your answer…');
     await wait(); await wait();
     assert.deepEqual(sent, [['/api/pr-review/cards/7/decision', { choice: 'again' }]]);
-    assert.equal(status.textContent, 'Done. The comments go back to the Coworker for another round.');
+    assert.equal(status.textContent, 'Done. The comments go back to the bot for another round.');
     assert.ok(!body.innerHTML.includes('data-review-answer'));
     // The buttons are gone: focus lands on the heading, never nowhere.
     assert.equal(focused(), 'data-review-heading=reviews');

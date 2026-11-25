@@ -34,7 +34,7 @@ test('missing prerequisites reuse recovery wording and lead to the actual setup 
     const row=new RegExp(`<li data-ready="${id}"[^]*?<\\/li>`).exec(html)[0];
     assert.ok(row.includes(reason),row);assert.ok(row.includes(`href="${href}"`),row);
     assert.match(row,/Needs you/);
-    assert.match(row,/<b>(Choose a model|Add the model key|Add a machine|Approve the machine|Connect an agent)<\/b>/);
+    assert.match(row,/<b>(Choose a model|Add the model key|Add a machine|Approve the machine|Connect an app)<\/b>/);
     assert.equal((row.match(/<a /g)||[]).length,1,row);
   }
 });
@@ -57,4 +57,10 @@ test('bot status is replaced even when ready; unknown states retain safe existin
 test('checklist actions focus their setup section through the existing shell handoff',()=>{
   for(const focus of ['chat','connection','trust']) assert.equal(settingsOptions({action:'coordinator',dataset:{readyFocus:focus}}).focus,focus);
   assert.equal(settingsOptions({action:'coordinator',dataset:{readyFocus:'future'}}).focus,undefined);
+});
+
+test('the headline counts the steps that wait on the model apart from the ones that need you now',()=>{
+  const waiting={...ready,model:{state:'needs_you',code:'needs_configuration'},key:{state:'needs_you',code:'choose_model_first'},machine:{state:'needs_you',code:'runner_not_configured'},connection:{state:'needs_you',code:'connection_missing'}};
+  assert.match(render(waiting),/<p class="ready-summary">3 setup steps need you; 1 more waits on the model\. Start with the first one\.<\/p>/);
+  assert.match(render({...ready,machine:{state:'needs_you',code:'runner_not_configured'}}),/<p class="ready-summary">One setup step needs you before this bot can work\./);
 });

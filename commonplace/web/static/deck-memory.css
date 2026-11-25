@@ -41,10 +41,11 @@
 :root[data-ui="deck"] .memory-room-count { color: var(--ink3); font-weight: 400; }
 :root[data-ui="deck"] .memory-actions { position: absolute; top: 18px; right: 0; display: flex; align-items: center; gap: 8px; }
 :root[data-ui="deck"] .memory-actions .btn { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; }
-/* Map, Saved threads and Organise memory are places to go, not filters: a quiet row of their own under the search. */
-:root[data-ui="deck"] .memory-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 0 0 14px; }
-:root[data-ui="deck"] .deck-memory .memory-tools .btn { display: inline-flex; align-items: center; min-height: 28px; padding: 0 8px; background: transparent; color: var(--ink3); font-size: 12.5px; text-decoration: none; }
-:root[data-ui="deck"] .deck-memory .memory-tools .btn:hover { background: var(--s2); color: var(--ink); }
+/* Map, Saved threads and Organise memory are places to go, not filters: a row of their own under the search, as quiet
+   secondary buttons (the look of the other secondary buttons, smaller) so they read as clickable, not as captions. */
+:root[data-ui="deck"] .memory-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+:root[data-ui="deck"] .deck-memory .memory-tools .btn { display: inline-flex; align-items: center; min-height: 30px; padding: 0 12px; border: 1px solid var(--line3); border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font-size: 12.5px; font-weight: 550; text-decoration: none; cursor: pointer; }
+:root[data-ui="deck"] .deck-memory .memory-tools .btn:hover { border-color: var(--ink3); }
 :root[data-ui="deck"] .memory-filters { flex: none; color: var(--ink3); font-size: 12.5px; }
 :root[data-ui="deck"] .memory-filters summary { display: list-item; list-style-position: inside; white-space: nowrap; cursor: pointer; width: fit-content; min-height: 32px; padding: 6px 10px; border-radius: var(--radius-control); background: var(--card); box-sizing: border-box; }
 :root[data-ui="deck"] .memory-filters summary::marker { color: var(--ink3); }

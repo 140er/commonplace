@@ -236,6 +236,7 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
         ) == ["rgb(36, 49, 64)", "8px"]
         page.locator('[data-deck-setting="phone-push"]').click()
-        assert "Connect a notification service" in page.locator("#phone-push").inner_text()
+        assert "not set up on this server" in page.locator("#phone-push").inner_text()
+        assert page.locator("#phone-push.deck-quiet-line").count() == 1
     finally:
         context.close()

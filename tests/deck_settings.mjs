@@ -72,12 +72,19 @@ test('permission labels ignore prototype members and use notification outcomes',
 });
 test('notification guidance distinguishes the owner and tolerates a missing connection heading', () => {
   for (const owner of [false,true]) {
-    const notice = {textContent:'Not set up on this server.'};
+    const added = [];
+    const notice = {textContent:'Not set up on this server.',insertAdjacentHTML:(where,html)=>added.push(html)};
+    const heading = {classList:{add:name=>added.push(`h2.${name}`)}};
+    const section = {querySelector:q=>q==='h2'?heading:notice,classList:{add:name=>added.push(`section.${name}`)}};
     const connection = {querySelector:()=>null};
-    const box = {querySelector:q=>q==='#phone-push'?{querySelector:()=>notice}:q==='.agents-settings'?connection:null,
+    const box = {querySelector:q=>q==='#phone-push'?section:q==='.agents-settings'?connection:null,
       querySelectorAll:()=>[],prepend(){},insertAdjacentHTML(){}};
     assert.doesNotThrow(()=>arrangeSettings(box,{owner}));
-    assert.equal(notice.textContent.startsWith('Ask the workspace owner'),!owner);
+    // One quiet line, not a card; only the owner gets the link to the Admin page.
+    assert.ok(notice.textContent.startsWith('Phone notifications are not set up on this server.'));
+    assert.equal(notice.textContent.includes('Ask the workspace owner'),!owner);
+    assert.equal(added.filter(item=>item.includes('<a href="#/admin">Set up notifications in Admin</a>')).length,owner?1:0);
+    assert.ok(added.includes('section.deck-quiet-line')&&added.includes('h2.sr'));
   }
 });
 test('Settings keeps one scroll listener when a render replaces its navigation', () => {

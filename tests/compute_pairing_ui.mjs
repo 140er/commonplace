@@ -34,7 +34,7 @@ const reasons = {
 };
 const ownerOptions = {
   kinds: [
-    { id: 'runner', label: 'Runner machine', description: 'A machine that runs Coworkers.', available: true },
+    { id: 'runner', label: 'Runner machine', description: 'A machine that runs bots.', available: true },
     { id: 'target', label: 'Script target', description: 'A machine that runs approved scripts over SSH.', available: false, reason: 'kind_unavailable' },
   ],
   setup_enabled: true, code_minutes: 15, offline_after_seconds: 900, reasons, steps: ['prerequisites', 'files', 'service', 'check'],
@@ -487,7 +487,7 @@ const cases = {
     assert.match(t, /This is a read-only view of the machines being added\. Only the workspace owner adds a machine and approves it\./);
     assert.doesNotMatch(t, /To add one you copy one command/); assert.doesNotMatch(t, /There is no switch here/);
     const o = fixture(); await o.open();
-    assert.match(text(o.section()), /A runner machine is a computer for Coworkers\./);
+    assert.match(text(o.section()), /A runner machine is a computer for bots\./);
     assert.match(text(o.section()), /listed under Runner machines in Admin, with the same state; cloud workspaces are below/);
     assert.match(text(o.section()), /There is no switch here to turn machine setup off\./);
     assert.equal((text(o.section()).match(/There is no switch here/g) || []).length, 1);

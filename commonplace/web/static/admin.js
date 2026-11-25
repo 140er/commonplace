@@ -29,9 +29,9 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
 
   function runtimeContent(data) {
     const flag = data.orchestration, agents = data.orchestrators, machines = data.machines;
-    let html = flag.state === 'ready' ? `<p>Coworker management ${flag.enabled ? 'enabled' : 'disabled'}</p>` : sourceError('runtime', 'Coworker management', flag);
-    html += '<h3>Bots</h3><p>Activity records token use, not a running process.</p>';
-    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [{ wrapAfterColon: true, text: r.name || '—' }, { wrapAfterColon: true, text: r.coordinator || r.seat_name || '—' }, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Bots', agents);
+    let html = flag.state === 'ready' ? `<p>Bot management ${flag.enabled ? 'on' : 'off'}</p>` : sourceError('runtime', 'Bot management', flag);
+    html += '<h3>Bots</h3><p>Shows what was used, not what is running now.</p>';
+    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Runs on', 'Configuration', 'Connection', 'Activity', 'Last used', 'Can start on demand'], agents.items.map(r => [{ wrapAfterColon: true, text: r.name || '—' }, { wrapAfterColon: true, text: r.coordinator || r.seat_name || '—' }, ({coordinator:'Project bot',seat:'Seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Yes' : 'No plan for this'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Bots', agents);
     if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Bots', agents);
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
     html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Setup', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.guided ? r.guided.label : r.enabled ? 'enabled' : 'disabled', r.guided && !r.revoked_at ? 'Bots do not run on it in this version.' : `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, r.guided && !r.revoked_at ? 'Not used in this version' : `Limit: ${r.max_in_flight} run${r.max_in_flight === 1 ? '' : 's'} at once; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
@@ -89,7 +89,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
 
   function limitsContent(data) {
     return '<p>Workspace concurrency cap: not configured. Project and machine limits apply separately.</p>' +
-      (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, ({orchestration_slots:'Coworker management slots',distinct_doing_agents:'Distinct doing agents'})[r.counting_mode]])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
+      (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, ({orchestration_slots:'Bot management slots',distinct_doing_agents:'Distinct doing agents'})[r.counting_mode]])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
       '<h3>Machine grants</h3>' + (data.machines.length ? rows(['Machine', 'In flight', 'Starts/hour'], data.machines.map(r => [r.id, r.max_in_flight, r.max_starts_per_hour])) : '<p>No machine grants configured.</p>') + moreButton('limits', 'machines', data.pagination?.machines);
   }
 
@@ -129,7 +129,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     }
     const line = (name, text) => `<small>${e(name)} ${value(text)}</small>`;
     const cells = (name, html) => `<td data-label="${e(name)}"><div>${html}</div></td>`;
-    return `<p>${e(data.count)} connection${data.count === 1 ? '' : 's'} · Activity records token use, not a running process.</p>` +
+    return `<p>${e(data.count)} connection${data.count === 1 ? '' : 's'} · Shows what was used, not what is running now.</p>` +
       (data.connections.length ? `<table><thead><tr>${['Agent', 'Permissions', 'State', 'Activity'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${data.connections.map(c => `<tr>${
         cells('Agent', `<b>${value(c.name)}</b>${line('Client', c.client)}${line('Auth', c.auth)}${line('User', c.user_id)}`) +
         cells('Permissions', `<span>${value(c.trust)}</span>${line('Scopes', c.scopes.join(', '))}${line('Read wings', c.read_wings.join(', '))}`) +

@@ -1,7 +1,7 @@
 // Frozen console interface; implemented by U6.
 export const CONSOLE_COPY = Object.freeze({
   "loading": "Loading agents…",
-  "noAgentsOwner": "No agents connected yet.",
+  "noAgentsOwner": "No apps connected yet.",
   "noAgentsMember": "No agents act as you in this workspace.",
   "showTools": "Show tool calls",
   "stopTools": "Stop showing tool calls",

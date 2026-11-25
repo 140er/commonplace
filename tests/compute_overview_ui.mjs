@@ -972,7 +972,7 @@ const cases = {
       const shown = text(html);
       assert.ok(html.indexOf('compute-overview') > -1 && html.indexOf('compute-overview') < html.indexOf('compute-workspaces'), 'the overview comes first');
       assert.match(shown, owner ? /2 runners, 1 target machine, 2 cloud workspaces/ : /1 cloud workspace\./);
-      assert.match(shown, /Where your Coworkers run: an overview of everything first/);
+      assert.match(shown, /Where your bots run: an overview of everything first/);
       assert.equal((html.match(/id="compute-overview"/g) || []).length, 1);
       ui.stop();
       assert.equal(html, '');

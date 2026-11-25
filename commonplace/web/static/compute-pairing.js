@@ -26,7 +26,7 @@ const MODES = {
 const QUIET_MODES = new Set(["auto", "full-access"]);
 const AUTO_WARNING = "In a later version this setting would let agents on the machine run without asking before each action; in this version nothing runs on it. Only choose it for a machine you would trust with every project listed.";
 const MEMBER_INTRO = "This is a read-only view of the machines being added. Only the workspace owner adds a machine and approves it.";
-const OWNER_INTRO = "A runner machine is a computer for Coworkers. To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added it is also listed under Runner machines in Admin, with the same state; cloud workspaces are below.";
+const OWNER_INTRO = "A runner machine is a computer for bots. To add one you copy one command, run it on the machine, and approve it here. Nothing is copied by hand and no SSH keys are involved. Once it is added it is also listed under Runner machines in Admin, with the same state; cloud workspaces are below.";
 const NO_OFF_SWITCH = "There is no switch here to turn machine setup off.";
 const FORM_NOTE = "These settings are recorded for later; nothing uses them in this version.";
 const GRANTS_NOTE = "Approving records the access listed above; nothing uses it in this version.";
@@ -192,7 +192,7 @@ export function createPairing(ctx) {
     return `<form class="compute-editor compute-pr-form" data-pr-form novalidate aria-labelledby="compute-pr-heading">`
       + '<h3 id="compute-pr-heading" tabindex="-1">What kind of machine?</h3>'
       + `<fieldset class="compute-pr-kinds"><legend class="compute-ws-legend">Kind of machine</legend>`
-      + `<label class="compute-check"><input type="radio" name="pr_kind" value="runner" checked><span><strong>${e(runner?.label || "Runner machine")}</strong><small>${e(runner?.description || "A machine that runs Coworkers.")}</small></span></label>`
+      + `<label class="compute-check"><input type="radio" name="pr_kind" value="runner" checked><span><strong>${e(runner?.label || "Runner machine")}</strong><small>${e(runner?.description || "A machine that runs bots.")}</small></span></label>`
       + `<label class="compute-check"><input type="radio" name="pr_kind" value="target" disabled aria-describedby="pr-target-note"><span><strong>${e(target?.label || "Script target")}</strong><small id="pr-target-note">${e(target?.description || "A machine that runs approved scripts over SSH.")} Not available yet: ${e(text("reasons", "kind_unavailable", "Script targets cannot be set up from the app yet.").replace(/^Script targets cannot be set up from the app yet\.?$/, "it cannot be set up from the app yet."))}</small></span></label></fieldset>`
       + `<p class="compute-plain" data-pr-form-note>${e(FORM_NOTE)}</p>`
       + `<div class="compute-summary compute-ws-summary" data-pr-summary role="alert" tabindex="-1">${summaryHTML()}</div>`

@@ -65,10 +65,7 @@ def test_a_coworker_publishes_and_the_preview_is_ready_for_people_of_the_workspa
     status, body, _ = previews(h, h.member, card=number)
     assert status == 200 and [p["id"] for p in body["previews"]] == [shown["id"]]
     assert body["usage"] == {"ready": 1, "bytes": shown["size_bytes"]}
-    assert (
-        body["limits"]["max_ready"] == 25
-        and "until a person or the Coworker" in body["rule"]["text"]
-    )
+    assert body["limits"]["max_ready"] == 25 and "until a person or the bot" in body["rule"]["text"]
 
 
 def test_files_and_rows_survive_without_the_publishing_session(console_hub):

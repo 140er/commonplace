@@ -21,6 +21,8 @@ const enc = encodeURIComponent;
 
 
 const MOVED = 'Moved to review.';
+// On a phone an answer longer than this takes the whole row, so its words do not wrap inside a half-width button.
+export const LONG_ANSWER = 18;
 const answerable = card => (card.actions || []).some(action => ['answer', 'accept'].includes(action));
 /** The two kinds the filter chips split the list into: a question to answer, or work to review and approve. */
 export const kindOf = card => card.review_kind === 'completion' || (card.actions || []).some(action => ['approve', 'accept', 'reject'].includes(action)) ? 'review' : 'question';
@@ -52,7 +54,7 @@ export function answersHTML(card, { busy = false } = {}, escape = e) {
   // Peer answers carry equal weight; only an action the item itself recommends (accepting finished work, or the
   // one main action) is styled as primary. The first button keeps bt-approve so the A key still answers it.
   const recommended = ([, attrs]) => attrs.includes('data-bt-action="approve"') || buttons.length === 1 || !options.length;
-  const html = buttons.map((entry, at) => button(`${at === 0 ? 'bt-approve ' : ''}${recommended(entry) && at === 0 ? 'bt-primary' : 'bt-secondary'}`, entry[1], entry[2])).join('');
+  const html = buttons.map((entry, at) => button(`${at === 0 ? 'bt-approve ' : ''}${recommended(entry) && at === 0 ? 'bt-primary' : 'bt-secondary'}${displayText(entry[2]).length > LONG_ANSWER ? ' bt-long' : ''}`, entry[1], entry[2])).join('');
   // Finished work and cards that cannot be answered here open the card; a question offers a typed Reply instead.
   const quiet = !buttons.length || buttons[0][2] === 'Open' ? '' : kindOf(card) === 'review' || !answerable(card) ? button('bt-quiet', 'data-bt-open', 'See the work') : options.length ? button('bt-quiet bt-desktop-reply', 'data-bt-action="reply"', 'Reply') + button('bt-quiet', 'data-bt-open', 'See the work') : button('bt-quiet', 'data-bt-open', 'See the work');
   return `<div class="bt-actions">${html}${quiet}</div>`;

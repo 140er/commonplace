@@ -116,6 +116,9 @@ test('the health line counts ready bots and links Cloud workspaces when no machi
   assert.match(text(healthHTML([{ id: 'a', readiness: { model: { state: 'done' } } }])), /^1 bot ready No computer is connected, so bots can plan but not run code\. Connect one in Cloud workspaces$/);
   assert.match(healthHTML([{ id: 'a', readiness: { model: { state: 'done' } } }]), /<a href="#\/compute">Connect one in Cloud workspaces<\/a>/);
   assert.match(text(healthHTML([])), /^No bots are ready yet No computer is connected/);
+  const both = healthHTML([]);
+  assert.equal((both.match(/<svg class="wk-ico/g) || []).length, 2, 'each status line has its own icon, not a list bullet');
+  assert.doesNotMatch(both, /wk-dot/);
   assert.equal(healthHTML(null), '', 'no roster, no health line');
 });
 

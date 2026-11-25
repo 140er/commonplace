@@ -114,9 +114,10 @@
   :root[data-ui="deck"] body .shell .deck-work > .wk-bar { height: auto; min-height: 52px; padding: 10px 0; }
   :root[data-ui="deck"] body .shell .deck-work .wk-health { padding-inline: 0; }
 }
-/* The account menu groups its places, then the workspace switch, then signing out. */
-:root[data-ui="deck"] :is(.user-links, .deck-more-panel) :is([data-action="shortcuts"], [data-action="logout"]) { margin-top: 5px; position: relative; }
-:root[data-ui="deck"] :is(.user-links, .deck-more-panel) :is([data-action="shortcuts"], [data-action="logout"])::before { content: ""; position: absolute; left: 8px; right: 8px; top: -3px; border-top: 1px solid var(--line); }
+/* The account menu and the phone sheet group their places under small labels: Workspace, Server, Account. */
+:root[data-ui="deck"] :is(.user-links, .deck-more-panel) .deck-menu-group { margin: 0; padding: 10px 12px 2px; color: var(--ink3); font-size: 11.5px; font-weight: 600; line-height: 16px; letter-spacing: .04em; text-transform: uppercase; }
+:root[data-ui="deck"] .user-links .deck-menu-group { padding-inline: 10px; }
+:root[data-ui="deck"] .user-links .deck-menu-group:first-child, :root[data-ui="deck"] .deck-more-account + .deck-menu-group { padding-top: 6px; }
 
 /* ---------- Every page has the same 52px bar with its title, as in T3 Code; the page's own controls follow ---------- */
 /* The shell writes every page's title into .head; it becomes the bar. A bot thread has its own bot bar instead.
@@ -169,6 +170,9 @@
 /* ---------- One primary style, form controls in the palette, no leftover pixel art ---------- */
 :root[data-ui="deck"] body .btn.primary, :root[data-ui="deck"] body button.btn.primary { background: var(--violet); border-color: var(--violet); color: var(--ground); }
 :root[data-ui="deck"] body .btn.primary:hover { background: var(--violet-ink); filter: brightness(1.08); }
+/* Create token is the one primary action of the connections form. */
+:root[data-ui="deck"] body .agents-settings button.blockbtn[data-agent-mutation] { background: var(--violet); border-color: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] body .agents-settings button.blockbtn[data-agent-mutation]:hover:not(:disabled) { background: var(--violet-ink); filter: brightness(1.08); }
 :root[data-ui="deck"] input[type="checkbox"], :root[data-ui="deck"] input[type="radio"] { accent-color: var(--violet); }
 /* Settings checkboxes: an unchecked box is outlined in --control-line (over 3:1 on the card), a checked one is violet. */
 :root[data-ui="deck"] .capy-settings input[type="checkbox"] { appearance: none; display: inline-grid; place-content: center; flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; border: 1.5px solid var(--control-line); border-radius: 5px; background: var(--s2); cursor: pointer; }
@@ -204,6 +208,10 @@
   /* The More sheet (a bottom sheet in deck-shell.css) is headed by the account line. */
   :root[data-ui="deck"] .deck-more-account { margin: 0; padding: 14px 12px 10px; border-bottom: 1px solid var(--line); color: var(--ink2); font-size: 13px; }
   :root[data-ui="deck"] .deck-more-account b { color: var(--ink); font-weight: 600; }
+  /* A grabber at the top and a close button: the sheet also closes on Escape and on a tap outside it. */
+  :root[data-ui="deck"] .deck-more-grabber { display: block; width: 36px; height: 4px; margin: 8px auto 0; border-radius: 2px; background: var(--line3); }
+  :root[data-ui="deck"] body .deck-more-panel .deck-more-close { position: absolute; top: 6px; right: 6px; z-index: 1; width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+  :root[data-ui="deck"] .deck-more-panel .deck-more-account { padding-right: 56px; }
   /* The menu button reads like a tab: dim until the person is on a page that lives in the sheet. */
   :root[data-ui="deck"] .m-top .deck-phone-avatar { color: var(--ink3); }
   :root[data-ui="deck"] .m-top .deck-phone-avatar[aria-current] { color: var(--ink); border-color: var(--line3); background: var(--s2); }
@@ -422,7 +430,7 @@
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) { display: flex; flex-direction: column; }
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-actions { order: 1; margin-bottom: 12px; }
   :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-enroll { order: 2; }
-  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-map { order: 3; max-height: 220px; overflow: hidden; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-map { order: 3; max-height: 220px; margin-top: 16px; overflow: hidden; }
     :root[data-ui="deck"] .look-switch .opt { min-height: 44px; }
   :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }
   :root[data-ui="deck"] .bh-head { margin-bottom: 20px; }

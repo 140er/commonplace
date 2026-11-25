@@ -82,7 +82,9 @@
 :root[data-ui="deck"] .dc-facts dd { margin: 0; overflow-wrap: anywhere; }
 :root[data-ui="deck"] .dc-version { font: 12px/1.5 var(--mono); }
 :root[data-ui="deck"] .dc-more > summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--ink2); font-size: 13.5px; }
-:root[data-ui="deck"] .dc-enroll { width: calc(100% - 314px); padding: 18px; margin-top: 14px; }
+:root[data-ui="deck"] .dc-enroll { width: calc(100% - 314px); padding: 18px; margin-top: 16px; }
+/* The route card sits in the map's left column, one 16px gap under the card above it. */
+:root[data-ui="deck"] body #content > [data-compute-routes] { box-sizing: border-box; padding-right: 314px; margin-top: 16px; }
 :root[data-ui="deck"] .dc-enroll h2 { font-size: 13.5px; font-weight: 600; }
 :root[data-ui="deck"] .dc-enroll p { font-size: 13.5px; line-height: 1.5; color: var(--ink2); margin: 10px 0; }
 :root[data-ui="deck"] .dc-observed { font-size: 12.5px; color: var(--ink3); }
@@ -96,6 +98,7 @@
 @media (max-width: 999px) {
   :root[data-ui="deck"] .deck-compute .topo { grid-template-columns: minmax(0,1fr); }
   :root[data-ui="deck"] .dc-enroll { width: 100%; }
+  :root[data-ui="deck"] body #content > [data-compute-routes] { padding-right: 0; }
 }
 @media (max-width: 699px) {
   :root[data-ui="deck"] .shell #content.deck-workspace.dw-map { padding: 16px 16px 88px; }

@@ -25,7 +25,7 @@ test('the places are Waiting on you, Work, Bots and Settings, and every older de
     const html = renderDeckBar({ hash });
     assert.deepEqual(links(html).map(([id]) => id), ['home', 'work', 'bots', 'settings', 'compute', 'settings'], 'Waiting, Work, Bots, then the account menu (Settings first), then the footer Settings gear');
     for (const href of ['#/memory', '#/compute', '#/rules', '#/console', '#/pipeline']) assert.match(html, new RegExp(`href="${href}"`));
-    assert.match(html, /<div class="user-links"><a href="#\/settings" data-nav="settings"[^>]*>Settings<\/a>/, 'the account menu opens with a labelled Settings row');
+    assert.match(html, /<div class="user-links"><p class="deck-menu-group">Workspace<\/p><a href="#\/settings" data-nav="settings"[^>]*>Settings<\/a>/, 'the account menu opens with the Workspace group and a labelled Settings row');
     assert.doesNotMatch(html, /href="#\/boards"/, 'Projects is the sidebar heading, not an account menu row');
   }
   assert.equal(deckSection('#/bots/personal/coworkers'), 'bots');
@@ -169,7 +169,15 @@ test('phone: every place outside the three tabs is in the account sheet, with it
   assert.match(sheet, /data-action="logout"/);
   assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/compute', '#/rules', '#/console', '#/pipeline']);
   assert.deepEqual(sheetLinks(sheet), sheetLinks(bar.slice(bar.indexOf('class="user-links"'))), 'the sheet and the desktop account menu offer the same rows');
-  assert.match(renderDeckMore({ user: 'Maya', role: 'owner', workspace: 'Home' }), /<div class="deck-more-panel"><p class="deck-more-account"><b>Maya<\/b> · Owner, Home<\/p><a href="#\/settings"/, 'the sheet is headed by the account line, as the sidebar footer is');
+  assert.match(renderDeckMore({ user: 'Maya', role: 'owner', workspace: 'Home' }), /<div class="deck-more-panel"><span class="deck-more-grabber" aria-hidden="true"><\/span><button type="button" class="deck-more-close" data-deck-shell-action="more-close" aria-label="Close">[^]*?<\/button><p class="deck-more-account"><b>Maya<\/b> · Owner, Home<\/p><p class="deck-menu-group">Workspace<\/p><a href="#\/settings"/, 'the sheet has a grabber and a close button, and is headed by the account line, as the sidebar footer is');
+  const groupsOf = html => [...html.matchAll(/<p class="deck-menu-group">([^<]+)<\/p>/g)].map(m => m[1]);
+  assert.deepEqual(groupsOf(sheet), ['Workspace', 'Server', 'Account'], 'the sheet groups its places');
+  assert.deepEqual(groupsOf(bar), ['Workspace', 'Server', 'Account'], 'the account menu groups its places the same way');
+  assert.deepEqual(groupsOf(renderDeckMore({ hash: '#/' })), ['Workspace', 'Account'], 'Server is shown only to instance admins');
+  const placed = (html, group) => html.slice(html.indexOf(`>${group}</p>`)).split('<p class="deck-menu-group">')[0];
+  assert.match(placed(sheet, 'Workspace'), /Settings[^]*Cloud workspaces[^]*Rules[^]*Console[^]*Pipeline[^]*Admin/);
+  assert.match(placed(sheet, 'Server'), /Server admin/);
+  assert.match(placed(sheet, 'Account'), /Shortcuts[^]*Switch workspace[^]*Sign out/);
   assert.doesNotMatch(sheet, /href="#\/boards"/, 'Projects is part of Work on a phone');
   assert.match(bar, /href="#\/memory"/, 'Memory is a place in the sidebar');
 });
@@ -213,9 +221,10 @@ test('the account menu and sheet call the server console "Server admin", and its
   }
   assert.match(renderDeckTop({ hash: '#/instance-admin' }), /<b>Server admin<\/b>/);
   assert.match(renderDeckTop({ hash: '#/admin' }), /<b>Admin<\/b>/);
+  assert.match(renderDeckTop({ hash: '#/bots/-/coworkers' }), /<b>Bot conversations<\/b>/, 'the phone title of the bot conversations page is not "Bots"');
+  assert.match(renderDeckTop({ hash: '#/bots' }), /<b>Bots<\/b>/);
   const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
-  assert.match(app, /const DECK_TITLES = \{ "Workspace administration": "Admin", "Instance console": "Server admin" \};/);
-  assert.match(app, /dataset\.ui === "deck"\) text = DECK_TITLES\[text\] \|\| text;/);
+  assert.match(app, /dataset\?\.ui === "deck"\) text = \{ "Workspace administration": "Admin", "Instance console": "Server admin" \}\[text\] \|\| text;/);
 });
 
 test('the Projects pages mark the sidebar Projects heading, not Work, while a phone keeps Work selected', () => {

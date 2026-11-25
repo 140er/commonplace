@@ -604,8 +604,8 @@ def list_page(items, workspace_id, section, kind, after, key):
 
 def runtime(gateway, workspace_id, context, after):
     labels = {
-        "orchestration": "Coworker management",
-        "orchestrators": "Coworkers",
+        "orchestration": "Bot management",
+        "orchestrators": "Bots",
         "machines": "Machines",
     }
     result = {}

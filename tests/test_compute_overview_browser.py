@@ -491,15 +491,15 @@ def test_details_open_in_place_with_focus_and_escape(served, ui, size):
             (
                 "night-runner",
                 [
-                    "No new card runs start here. Chat and Coworker sessions can still start here. 1 run in progress will finish.",
-                    "Draining: No new card runs start here. Chat and Coworker sessions can still start here.",
+                    "No new card runs start here. Chat and bot sessions can still start here. 1 run in progress will finish.",
+                    "Draining: No new card runs start here. Chat and bot sessions can still start here.",
                 ],
                 "24-detail-draining",
             ),
             (
                 "idle-runner",
                 [
-                    "No new card runs start here. Chat and Coworker sessions can still start here. None is in progress.",
+                    "No new card runs start here. Chat and bot sessions can still start here. None is in progress.",
                     "Resuming is not available in this version.",
                     "Drain started. No new card runs start here.",
                 ],
@@ -1348,7 +1348,7 @@ def test_loading_empty_and_failed_states_say_what_is_happening(served_empty, ui,
             "the headline says it once"
         )
         assert "runner machine" not in page.locator("[data-ov-slot=state]").inner_text()
-        assert "A runner machine is a computer for Coworkers" in (
+        assert "A runner machine is a computer for bots" in (
             page.locator(".compute-ov").text_content() or ""
         )
         assert page.locator(f"{ROOT} .compute-ov-row").count() == 0

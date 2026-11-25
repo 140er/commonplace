@@ -15,6 +15,7 @@ import { scrollFades, sharePermission } from "./deck-coworker-sharing.js";
 export const BOTS_COPY = Object.freeze({
   title: "Bots",
   newBot: "New bot",
+  newChat: "New chat",
   empty: "No bots yet. Create one to get started.",
   pick: "Choose a bot, or create a new one.",
   hint: (name) => `Tell ${name} what you need. Ask a question, or ask for work and ${name} files it for you.`,
@@ -22,12 +23,14 @@ export const BOTS_COPY = Object.freeze({
   earlier: "Earlier messages",
   waiting: (n) => `${n} waiting on you`,
   waitingEverywhere: (n) => `${n} waiting on you across your projects`,
+  showWaiting: (n) => `Show ${n} waiting`,
+  hideWaiting: "Hide",
   gone: "That work is no longer available to you.",
   offline: "Could not reach the server. Retrying…",
   unavailable: "This bot is no longer available.",
   stopped: "Stopped.",
-  orchestrator: "Coworker",
-  coworker: "Coworker",
+  orchestrator: "Bot",
+  coworker: "Bot",
   learnedGone: "That item is gone.",
 });
 
@@ -260,7 +263,7 @@ export function liveHTML(live, ctx, e) {
 
 export function waitingHTML(waiting, open, ctx, e) {
   if (!waiting.length) return "";
-  return `<div class="wait"><button type="button" class="wait-toggle" data-bots-action="waiting" aria-expanded="${open}">${e(ctx?.general ? BOTS_COPY.waitingEverywhere(waiting.length) : BOTS_COPY.waiting(waiting.length))}${chevron}</button>${open ? `<div class="wait-list">${waiting.map((b) => decisionHTML(b, ctx, e)).join("")}</div>` : ""}</div>`;
+  return `<div class="wait"><button type="button" class="wait-toggle" data-bots-action="waiting" aria-expanded="${open}"><span class="wait-text">${e(ctx?.general ? BOTS_COPY.waitingEverywhere(waiting.length) : BOTS_COPY.waiting(waiting.length))}</span><span class="wait-act">${e(open ? BOTS_COPY.hideWaiting : BOTS_COPY.showWaiting(waiting.length))}${chevron}</span></button>${open ? `<div class="wait-list">${waiting.map((b) => decisionHTML(b, ctx, e)).join("")}</div>` : ""}</div>`;
 }
 
 export function headHTML(bot, e) {
@@ -268,7 +271,7 @@ export function headHTML(bot, e) {
 }
 
 export function coworkersNavHTML(bot = '-') {
-  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers" role="menuitem">Coworkers</a>`;
+  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers" role="menuitem">Bot conversations</a>`;
 }
 
 /** What the bot is doing in a few words: its state, then its job. */
@@ -378,7 +381,7 @@ export function sheetHTML(sheet, bot, e) {
 
 const shellHTML = `<div class="bots" data-pane="roster">
   <section class="bots-roster" aria-labelledby="bots-h">
-    <header class="bots-bar"><h1 id="bots-h">${BOTS_COPY.title}</h1><p class="deck-bots-intro" hidden>One thread per bot. Coworkers run under each one.</p><button type="button" class="bots-new" data-bots-action="new">${BOTS_COPY.newBot}</button></header>
+    <header class="bots-bar"><h1 id="bots-h">${BOTS_COPY.title}</h1><p class="deck-bots-intro" hidden>One thread per bot.</p><span class="bots-actions"><a class="bots-new-chat" href="#/bots" data-deck-shell-action="new-thread">${BOTS_COPY.newChat}</a><button type="button" class="bots-new" data-bots-action="new">${BOTS_COPY.newBot}</button></span></header>
     <ul class="bots-list" data-region="roster"></ul>
   </section>
   <section class="bots-thread" aria-label="Conversation">

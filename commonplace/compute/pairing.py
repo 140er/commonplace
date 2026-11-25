@@ -720,7 +720,7 @@ def options(db, gateway, principal, *, owner):
             {
                 "id": "runner",
                 "label": "Runner machine",
-                "description": "A machine that runs Coworkers.",
+                "description": "A machine that runs bots.",
                 "available": True,
             },
             {

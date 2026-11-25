@@ -73,7 +73,7 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
     item = runner(api, made)
     assert item["status"]["code"] == "draining" and item["status"]["tone"] == "wait"
     assert item["status"]["detail"] == (
-        "Draining. No new card runs start here. Chat and Coworker sessions can still start here. "
+        "Draining. No new card runs start here. Chat and bot sessions can still start here. "
         "1 run in progress will finish. Resuming is not available in this version."
     )
     assert [b["code"] for b in item["health"]["blockers"]] == ["draining"]
@@ -81,9 +81,7 @@ def test_runs_already_started_are_left_alone_and_the_status_says_draining_until_
         conn.execute("UPDATE runner_jobs SET state='failed'")
     assert runner(api, made)["status"]["code"] == "drained"
     drained = runner(api, made)["status"]["detail"]
-    assert (
-        "No new card runs start here. Chat and Coworker sessions can still start here." in drained
-    )
+    assert "No new card runs start here. Chat and bot sessions can still start here." in drained
     assert "Resume to use it again" not in drained
 
 
@@ -245,7 +243,7 @@ def test_the_drain_flag_and_its_log_line_are_one_transaction(api, fleet):
     # The activity list says so in words.
     texts = [e["text"] for e in runner(api, made)["activity"]]
     assert (
-        "Drain started. No new card runs start here. Chat and Coworker sessions can still start here."
+        "Drain started. No new card runs start here. Chat and bot sessions can still start here."
         in texts
     )
 
@@ -357,7 +355,7 @@ def test_drain_is_stated_to_stop_card_runs_only(api, fleet):
     fleet.seen(made, 5)
     act(api, made, "drain")
     detail = runner(api, made)
-    scope = "No new card runs start here. Chat and Coworker sessions can still start here."
+    scope = "No new card runs start here. Chat and bot sessions can still start here."
     assert detail["status"]["detail"].startswith("Drained. " + scope)
     # Chat and Coworker leases do not read the flag: pinned here so the sentence cannot drift from the code.
     import inspect

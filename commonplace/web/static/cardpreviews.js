@@ -62,7 +62,7 @@ const mib = (bytes) => {
   return value < MIB ? `${Math.max(value ? 1 : 0, Math.round(value / 1024))} KiB` : `${Math.round(value / MIB * 10) / 10} MiB`;
 };
 // The publisher as the card names it; a connection with no display name reads as words ("Release coworker"), not as an id.
-const plainName = (name) => { const words = String(name).replace(/[-_]+/g, " ").trim(); return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "a Coworker"; };
+const plainName = (name) => { const words = String(name).replace(/[-_]+/g, " ").trim(); return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "a bot"; };
 const byWords = (preview) => {
   if (preview.by === "person") return "a person";
   const ref = `conn:${preview.published_by || ""}`, named = actor(ref);
@@ -107,7 +107,7 @@ function previewHTML(preview, { canDelete = false, confirming = "" } = {}) {
 function usageHTML(found) {
   const usage = found?.usage, limits = found?.limits;
   if (!usage || !limits) return "";
-  return `<p class="run-reason" data-preview-usage>${e(usage.ready)} of ${e(limits.max_ready)} previews served in this workspace · ${e(mib(usage.bytes))} of ${e(mib(limits.max_workspace_bytes))} used (stopped previews still count).</p>`;
+  return `<details class="preview-usage" data-preview-usage><summary>Details</summary><p class="run-reason">${e(usage.ready)} of ${e(limits.max_ready)} previews served in this workspace · ${e(mib(usage.bytes))} of ${e(mib(limits.max_workspace_bytes))} used (stopped previews still count).</p></details>`;
 }
 
 // What a person needs to know about the address and the kind of page, once, under the list.
@@ -134,7 +134,7 @@ export function cardPreviewsHTML(found, confirming = "") {
   const options = { canDelete: Boolean(found?.can_delete), confirming };
   const list = previews.length
     ? `<ul class="run-list">${previews.map((preview) => previewHTML(preview, options)).join("")}</ul>`
-    : `<p class="run-empty" data-preview-empty>No preview yet. When a Coworker publishes one for this card, it appears here and stays after it finishes working.</p>`;
+    : `<p class="run-empty" data-preview-empty>No previews yet. When a bot publishes one for this card, it appears here and stays after it finishes working.</p>`;
   return `${list}${noteHTML(found)}${usageHTML(found)}`;
 }
 

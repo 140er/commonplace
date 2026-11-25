@@ -23,11 +23,11 @@ WAITING = (NEW, WORKING, NEEDS_YOU)
 
 WORDS = {
     NEW: "New",
-    WORKING: "The Coworker is working on it",
+    WORKING: "The bot is working on it",
     ADDRESSED: "Fixed",
     ANSWERED: "Answered",
     NEEDS_YOU: "Needs you",
-    SKIPPED: "Not for the Coworker",
+    SKIPPED: "Not for the bot",
 }
 
 # code -> (plain text, next step). A comment's ``reason_text`` and ``next`` come from here.
@@ -53,12 +53,12 @@ REASONS = {
         "Try again in a moment; nothing was lost.",
     ),
     "no_coworker": (
-        "No Coworker is set up to take this card.",
-        "Start a Coworker on the card.",
+        "No bot is set up to take this card.",
+        "Start a bot on the card.",
     ),
     "no_coworker_config": (
-        "This board has no Coworker set up to start work by itself.",
-        "Start a Coworker on the card, or set one up for the board.",
+        "This board has no bot set up to start work by itself.",
+        "Start a bot on the card, or set one up for the board.",
     ),
     "machine_unavailable": (
         "The machine that ran this card is offline or switched off.",
@@ -74,10 +74,10 @@ REASONS = {
     ),
     "run_lost": (
         "The run did not report back and was lost twice.",
-        "Start the Coworker again, or handle the comments yourself.",
+        "Start the bot again, or handle the comments yourself.",
     ),
     "commit_not_found": (
-        "The Coworker named a commit that is not on the PR.",
+        "The bot named a commit that is not on the PR.",
         "Look at the branch; retry or handle it yourself.",
     ),
     "files_unknown": (
@@ -101,7 +101,7 @@ REASONS = {
         "Handle the comments yourself.",
     ),
     "head_moved": (
-        "Someone pushed to the PR while the Coworker worked; the fix cannot be placed.",
+        "Someone pushed to the PR while the bot worked; the fix cannot be placed.",
         "Retry on the new head, or handle it yourself.",
     ),
     "reply_not_posted": (
@@ -117,11 +117,11 @@ REASONS = {
         "Choose: two more rounds, handle it yourself, or dismiss.",
     ),
     "waiting_on_person": (
-        "The card is waiting for a person's answer, so the Coworker is not started on it.",
-        "Answer the card; the comments then go to the Coworker.",
+        "The card is waiting for a person's answer, so the bot is not started on it.",
+        "Answer the card; the comments then go to the bot.",
     ),
     "card_done": (
-        "The card is done, so the Coworker is not started on it.",
+        "The card is done, so the bot is not started on it.",
         "Reopen the card, or handle the comments yourself.",
     ),
     "loop_owner_unavailable": (
@@ -129,7 +129,7 @@ REASONS = {
         "Switch the review loop off and on again as a workspace owner.",
     ),
     "card_not_startable": (
-        "The card cannot be handed back to the Coworker right now.",
+        "The card cannot be handed back to the bot right now.",
         "Open the card for the reason, or handle the comments yourself.",
     ),
     "author_not_trusted": (
@@ -137,7 +137,7 @@ REASONS = {
         "Add them as a trusted reviewer, or ignore.",
     ),
     "own_reply": (
-        "Written by the Coworker itself.",
+        "Written by the bot itself.",
         "Nothing to do.",
     ),
     "verdict_line": (
@@ -153,7 +153,7 @@ REASONS = {
         "Nothing to do.",
     ),
     "coworker_asks": (
-        "The Coworker needs a decision it cannot make.",
+        "The bot needs a decision it cannot make.",
         "Read its note and decide.",
     ),
     "handled_by_person": (

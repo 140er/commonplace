@@ -147,6 +147,13 @@ test('phone: answer buttons are 44px tall and share a row, the quiet button take
   assert.match(phone, /\.bt-actions \.bt-quiet \{ flex: 0 0 100%; min-height: 44px/);
   assert.doesNotMatch(css, /font-style: *italic|gradient/);
 });
+test('phone: an answer longer than 18 characters takes the whole row, a short one shares it', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-home-today.css', import.meta.url), 'utf8');
+  assert.match(css.slice(css.indexOf('@media (max-width: 699px)')), /\.bt-actions \.bt-secondary\.bt-long \{ flex: 1 1 100%; \}/);
+  const html = answersHTML({ ...card, actions: ['answer'], ask_options: ['Fix the footer menu first', 'Skip it'] }, {}, e);
+  assert.match(html, /class="bt-approve bt-secondary bt-long"[^>]*data-bt-choice="0"[^>]*>Fix the footer menu first</);
+  assert.match(html, /class="bt-secondary"[^>]*data-bt-choice="1"[^>]*>Skip it</);
+});
 test('the answers are the card buttons: first is main, an accepting option approves, every offered answer is a button', () => {
   const ask = { ...card, actions: ['answer'], ask_options: ['One', 'Two', 'Three', 'Four'] };
   const html = answersHTML(ask, {}, e);
@@ -154,7 +161,7 @@ test('the answers are the card buttons: first is main, an accepting option appro
   assert.match(html, /bt-approve bt-secondary[^>]*data-bt-choice="0"[^>]*>One</); assert.doesNotMatch(html, /bt-primary/, "peer answers carry equal weight");
   assert.match(html, /data-bt-action="reply"[^>]*>Reply</);
   const done = answersHTML({ ...card, actions: ['accept', 'answer'], review_kind: 'completion', ask_options: ['Accept the completed work', 'Return for more work'] }, {}, e);
-  assert.match(done, /bt-primary" data-bt-action="approve"[^>]*>Accept the completed work</);
+  assert.match(done, /bt-primary( bt-long)?" data-bt-action="approve"[^>]*>Accept the completed work</);
   assert.match(done, /data-bt-choice="1"[^>]*>Return for more work</);
   assert.match(done, /data-bt-open[^>]*>See the work</);
   assert.match(answersHTML(ask, { busy: true }, e), /data-bt-choice="0" disabled/);

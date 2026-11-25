@@ -53,6 +53,12 @@ export function laneHTML([group, label, tone, empty], list, expanded) {
   return `<section class="wk-lane" data-lane="${group}" aria-label="${e(label)}"><h2 class="wk-lane-name"><i class="wk-dot${tone ? ` ${tone}` : ''}" aria-hidden="true"></i>${e(label)} <b${group === 'todo' && list.length ? ' class="wk-waits"' : ''}>${list.length}</b></h2>${cards}</section>`;
 }
 
+// The same stroke icons the sidebar uses: a bot for the bot count, a chip for the machine.
+const statusIcon = (name, tone = '') => `<svg class="wk-ico${tone ? ` ${tone}` : ''}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${{
+  bots: '<rect x="2.5" y="5" width="11" height="8" rx="2"/><path d="M8 5V2.8M5.8 9h.1M10.2 9h.1"/>',
+  compute: '<rect x="4" y="4" width="8" height="8" rx="1"/><path d="M6 1v3m4-3v3M6 12v3m4-3v3M1 6h3m-3 4h3m8-4h3m-3 4h3"/>',
+}[name]}</svg>`;
+
 /** The health line: how many bots can take work, and a plain sentence when no machine is connected. */
 export function healthHTML(bots) {
   if (!Array.isArray(bots)) return '';
@@ -60,7 +66,7 @@ export function healthHTML(bots) {
   const ready = live.filter(bot => Object.values(bot.readiness || {}).every(row => !row?.state || row.state === 'done' || row.state === 'not_needed')).length;
   const machine = live.some(bot => bot.readiness?.machine?.state === 'done');
   const count = ready ? `${ready} ${ready === 1 ? 'bot' : 'bots'} ready` : 'No bots are ready yet';
-  return `<p class="wk-health" data-wk-health><span><i class="wk-dot${ready ? ' ok' : ''}" aria-hidden="true"></i>${count}</span>${machine ? '' : `<span><i class="wk-dot" aria-hidden="true"></i><span>${NO_MACHINE} <a href="#/compute">Connect one in Cloud workspaces</a></span></span>`}</p>`;
+  return `<p class="wk-health" data-wk-health><span>${statusIcon('bots', ready ? 'ok' : '')}${count}</span>${machine ? '' : `<span>${statusIcon('compute')}<span>${NO_MACHINE} <a href="#/compute">Connect one in Cloud workspaces</a></span></span>`}</p>`;
 }
 
 export function chipsHTML(boards, counts, project, cards = new Map()) {

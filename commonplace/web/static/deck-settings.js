@@ -88,8 +88,14 @@ export function arrangeSettings(box, { owner = false } = {}) {
   const policy = box.querySelector('#tool-policy h2');
   if (policy) policy.textContent = 'Action permissions';
   const unavailable = phone?.querySelector('p');
-  if (unavailable?.textContent === 'Not set up on this server.')
-    unavailable.textContent = `${owner ? 'Connect' : 'Ask the workspace owner to connect'} a notification service and enable phone notifications on the server. Then return here to turn them on for your phone.`;
+  // No notification service on this server: the card has no action, so it folds to one quiet line. The owner's next step is a link.
+  if (unavailable?.textContent === 'Not set up on this server.') {
+    unavailable.textContent = 'Phone notifications are not set up on this server.';
+    if (owner) unavailable.insertAdjacentHTML?.('beforeend', ' <a href="#/admin">Set up notifications in Admin</a>');
+    else unavailable.textContent += ' Ask the workspace owner to set them up.';
+    phone.classList?.add('deck-quiet-line');
+    phone.querySelector('h2')?.classList?.add('sr');
+  }
   const nav = box.querySelector('#deck-settings-nav');
   if (connections) box.prepend?.(connections);
   if (phone) box.prepend?.(phone);

@@ -483,7 +483,7 @@ export function createWorkspaces(ctx) {
     const create = canManage && rows !== null && !mode && options && !full() ? `<button type="button" class="btn primary" data-ws-action="create"${busy ? ' aria-disabled="true"' : ""}>New cloud workspace</button>` : "";
     const cap = canManage && full() ? `<p class="compute-quiet" id="ws-create-reason">${e(GENERAL.limit_reached(options, allStarted()))}</p>` : "";
     return `<header><h2 id="compute-workspaces" tabindex="-1">Your cloud workspaces</h2>${create}</header>${cap}`
-      + '<p class="compute-plain">A cloud workspace is meant to be a separate place on one of your machines where Coworkers can run. You choose its image (the software it starts from), CPU, memory and storage. For now this screen only saves those settings; nothing starts yet.</p>';
+      + '<p class="compute-plain">A cloud workspace is meant to be a separate place on one of your machines where bots can run. You choose its image (the software it starts from), CPU, memory and storage. For now this screen only saves those settings; nothing starts yet.</p>';
   }
   function inner() {
     if (rows === null && !loadError) return '<p class="compute-empty" role="status">Loading cloud workspaces…</p>';

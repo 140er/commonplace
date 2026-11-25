@@ -820,7 +820,7 @@ def rule_text(held) -> str:
     if held["max_age_days"]:
         parts.append(f"{held['max_age_days']} days after it was last made live")
     if not parts:
-        return "Previews are served until a person or the Coworker that published them stops them."
+        return "Previews are served until a person or the bot that published them stops them."
     when = " and ".join(parts) + (", whichever comes first" if len(parts) == 2 else "")
     return f"A preview stops being served {when}. Its files are kept."
 

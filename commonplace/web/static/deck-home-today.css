@@ -161,6 +161,7 @@
   :root[data-ui="deck"] .bt-fact, :root[data-ui="deck"] .bt-keys { display: none; }
   :root[data-ui="deck"] .bt-actions .bt-primary, :root[data-ui="deck"] .bt-actions .bt-secondary { flex: 1 1 0; min-width: 0; min-height: 44px; padding-inline: 12px; }
   :root[data-ui="deck"] .bt-actions .bt-quiet { flex: 0 0 100%; min-height: 44px; margin-left: 0; }
+  :root[data-ui="deck"] .bt-actions .bt-primary.bt-long, :root[data-ui="deck"] .bt-actions .bt-secondary.bt-long { flex: 1 1 100%; }
   :root[data-ui="deck"] .bt-recent summary { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {

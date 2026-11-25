@@ -199,7 +199,7 @@ def _connect_dialog(p):
         p.locator("dialog[open] .btn.primary, [aria-modal='true'] .btn.primary").first.click()
         p.wait_for_selector("dialog[open] [data-project-token]", timeout=5000)
     else:
-        p.locator("button", has_text="Connect agent").first.click()
+        p.locator("button", has_text="Connect app").first.click()
     p.wait_for_selector("dialog[open], [aria-modal='true']:not([hidden])", timeout=5000)
     settle(p, 500)
     return direct

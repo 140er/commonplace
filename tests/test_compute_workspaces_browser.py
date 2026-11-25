@@ -311,7 +311,7 @@ def test_owner_creates_edits_and_reads_status(served, ui, size):
         expect(section).to_contain_text("Nothing here yet. Choose New cloud workspace")
         assert (
             section.get_by_text(
-                "a separate place on one of your machines where Coworkers can run"
+                "a separate place on one of your machines where bots can run"
             ).count()
             == 1
         )

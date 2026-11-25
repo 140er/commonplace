@@ -63,7 +63,7 @@ async function pendingSettings(pending, fail = false) {
     assert.equal(resolvers.length, expected, "prerequisite requests must still be pending");
     const heading = host.querySelector("[data-project-heading]");
     assert.match(heading.innerHTML || "", /Atlas Coworker/, "the card must render before prerequisite reads settle");
-    assert.match(heading.innerHTML, /Connect agent/);
+    assert.match(heading.innerHTML, /Connect app/);
     await click(host, "[data-project-connect]");
     assert.ok(calls.some(call => call.path.endsWith("/orchestrator/connect") && call.method === "POST"), "Connect must work while sections load");
     assert.match(node(host, "[data-project-connect-status]").textContent, /Could not connect/);
@@ -219,7 +219,7 @@ const cases = {
   async settings_screen() {
     const render = exists("projectSettingsHTML");
     const html = render(project, e, {origin: "#/needs"});
-    for (const text of ["Atlas", "Coworker", "Chat answers", "Agents", "Connect an agent on a computer", "Project memory"]) assert.ok(html.includes(text), text);
+    for (const text of ["Atlas", "Coworker", "Chat answers", "Agents", "Connect an app on a computer", "Project memory"]) assert.ok(html.includes(text), text);
     assert.match(html, /data-project-back/); assert.match(html, /data-project-chat/); assert.match(html, /data-project-limit/);
     const restart = render(project, e, {origin: "#/board/atlas/chat", restart: true});
     assert.match(restart, /How to restart the agent/); assert.match(restart, /Check again/);

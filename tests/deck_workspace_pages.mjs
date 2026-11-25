@@ -50,9 +50,9 @@ test('Deck Bot navigation is parent-scoped and forwarded worker replies use Cowo
   assert.deepEqual(hrefs(coworkersNavHTML()), ['#/bots/-/coworkers']);
   const message = { id: 'm1', role: 'event', blocks: [{ type: 'orchestrator' }] };
   const deck = messageHTML(message, { deck: true }, e);
-  assert.match(deck, />Coworker</);
+  assert.match(deck, />Bot</);
   assert.doesNotMatch(deck + renderDeckBar() + renderDeckTabs(), /orchestrator/i);
-  assert.match(messageHTML(message, { deck: false }, e), />Coworker</, 'classic and Deck use the same product term');
+  assert.match(messageHTML(message, { deck: false }, e), />Bot</, 'classic and Deck use the same product term');
 });
 
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
