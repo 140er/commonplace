@@ -17,21 +17,19 @@ CHAT_SCOPE = "bots:chat"
 CONFIRM_SCOPE = "bots:confirm"
 LEARNED_SCOPE = "bots:learned"
 SCOPES = (CHAT_SCOPE, CONFIRM_SCOPE, LEARNED_SCOPE)
-# One source for the consent copy: the OAuth form and Settings → Agents show these.
+# One source for the consent copy: the OAuth form and Settings → Connected apps show these.
 CHAT_TEXT = (
-    "Allow this app to use your bots as you (scope bots:chat): read your chats, send "
-    "messages, stop replies and manage your bots' memory. Every change is recorded with "
-    "this connection, it can reach only your own bots, and you can stop this at any time "
-    "under Agents."
+    "Let this app use your bots as you: read your chats, send messages, stop replies and "
+    "manage your bots' memory. Every change is recorded with this connection, it can reach "
+    "only your own bots, and you can stop this at any time under Connected apps."
 )
 CONFIRM_TEXT = (
-    "Also allow this app to confirm what a bot proposes (scope bots:confirm), the same as "
-    "tapping a confirm button yourself. It needs bots:chat and you can stop it separately."
+    "Also let this app confirm what a bot proposes, the same as tapping a confirm button "
+    "yourself. It needs the permission above, and you can stop it separately."
 )
 LEARNED_TEXT = (
-    "Also allow this app to read what your bots learned about you (scope bots:learned). It can "
-    "only list those items, never change or delete them. It needs bots:chat and you can stop "
-    "it separately."
+    "Also let this app read what your bots learned about you. It can only list those items, "
+    "never change or delete them. It needs the first permission, and you can stop it separately."
 )
 NOT_MEMBER_TEXT = "Only a member of this workspace can let an app use their bots."
 NOT_YOURS_TEXT = "This connection belongs to someone else. Only your own apps can use your bots."

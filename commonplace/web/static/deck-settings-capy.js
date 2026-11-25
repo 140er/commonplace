@@ -110,6 +110,11 @@ export function arrangeCapySettings(box, { api, context = () => ({}) } = {}) {
   if (policy) policy.textContent = 'What bots may do without asking';
   const connections = main.querySelector('#deck-connections h2');
   if (connections) connections.textContent = 'Connected apps';
+  // Each section link says what its heading says.
+  for (const [id, label] of [['deck-connections', 'Connected apps'], ['tool-policy', 'What bots may do']]) {
+    const link = nav?.querySelector?.(`[data-deck-setting="${id}"]`);
+    if (link) link.textContent = label;
+  }
   if (!main.querySelector('#deck-bot-sharing')) {
     const sharing = doc.createElement('section');
     sharing.className = 'settings-section'; sharing.id = 'deck-bot-sharing';

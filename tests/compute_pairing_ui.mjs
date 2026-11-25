@@ -48,7 +48,7 @@ const sentences = {
   waiting: ['Waiting for the machine', 'The code is ready. Nothing has connected yet.', 'Run the command on the machine. The code stops working after 15 minutes.'],
   connected: ['Waiting for your approval', 'The machine used the code and connected. It cannot do anything until you approve it.', "Compare the machine's name and fingerprint, then approve or choose This is not my machine."],
   approved: ['Approved', 'You approved this machine. It is finishing its setup.', 'Nothing to do here. This page updates when the machine reports that its checks passed.'],
-  ready: ['Set up and checked', 'The machine passed its setup checks. This page cannot see whether it is switched on right now.', 'Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version.'],
+  ready: ['Set up and checked', 'The machine passed its setup checks. This page cannot see whether it is switched on right now.', 'Nothing more to do here. This version only checks the machine: Bots do not run on it in this version.'],
   failed: ['Not finished', 'A setup step failed on the machine.', 'Open it to see the cause, then choose Set up again.'],
   expired: ['Code expired', 'The code was not used within 15 minutes and no longer works.', 'Choose Set up again for a new command.'],
   cancelled: ['Cancelled', 'This setup was cancelled before the machine connected. The code no longer works.', 'Choose Set up again for a new command.'],
@@ -142,7 +142,7 @@ const cases = {
   async 'program-delivery'() {
     const f = fixture({ options: { ...ownerOptions, program_delivery: true } }); await f.open();
     assert.match(text(f.section()), /installs this site's pinned runner program and dependencies/);
-    assert.match(text(f.section()), /Coworkers do not run on it in this version/);
+    assert.match(text(f.section()), /Bots do not run on it in this version/);
     assert.doesNotMatch(text(f.section()), /does not install the runner program itself/);
     const legacy = fixture(); await legacy.open();
     assert.match(text(legacy.section()), /does not install the runner program itself/);
@@ -496,7 +496,7 @@ const cases = {
   async 'ready-row'() {
     const f = fixture({ pairings: [item('ready'), item('ready', { id: 'pair_4444444444444444', label: 'attested-box', binding_state: 'owner_attested' })] }); await f.open();
     const t = text(f.section());
-    assert.equal((t.match(/Coworkers do not run on it in this version\./g) || []).length, 3, 'the section note and both ready rows keep the limitation, including after attestation');
+    assert.equal((t.match(/Bots do not run on it in this version\./g) || []).length, 3, 'the section note and both ready rows keep the limitation, including after attestation');
     assert.equal((t.match(/It only checks a machine/g) || []).length, 1, 'and the section note (which says what is confirmed, and where) is not repeated per row');
     assert.doesNotMatch(t, /Needs me/, 'no row promises a card in Needs me');
   },
@@ -600,7 +600,7 @@ const cases = {
     f.state.pairings = [item('ready', { version: 2 })]; await f.tick();
     t = text(f.section());
     assert.match(t, /Set up and checked/); assert.doesNotMatch(t, /Needs me/);
-    assert.match(t, /Nothing more to do here\. This version only checks the machine: Coworkers do not run on it in this version\./);
+    assert.match(t, /Nothing more to do here\. This version only checks the machine: Bots do not run on it in this version\./);
     assert.doesNotMatch(t, /\b(running|runs now|is running|ready to run)\b/i, 'nothing says that anything runs');
     assert.equal(f.timers.size, 0);
   },

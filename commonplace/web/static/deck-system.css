@@ -440,3 +440,7 @@
 :root[data-ui="deck"] .ready-to-start .ready-rest > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); margin-right: 4px; transition: transform .15s; }
 :root[data-ui="deck"] .ready-to-start .ready-rest[open] > summary::before { transform: rotate(45deg); }
 :root[data-ui="deck"] .ready-to-start .ready-rest > summary:hover { color: var(--ink); }
+
+/* Work cards: a long project name and state wrap onto the next line instead of being cut. */
+:root[data-ui="deck"] body .deck-work .wk-meta { flex-wrap: wrap; row-gap: 2px; }
+:root[data-ui="deck"] body .deck-work .wk-name { white-space: normal; overflow: visible; }

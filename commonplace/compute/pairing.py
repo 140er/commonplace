@@ -83,8 +83,8 @@ STATES = {
     "ready": (
         "Set up and checked",
         "The machine passed its setup checks. This page cannot see whether it is switched on right now.",
-        "Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version.",
-        "This machine is set up and checked. Coworkers do not run on it in this version.",
+        "Nothing more to do here. This version only checks the machine: Bots do not run on it in this version.",
+        "This machine is set up and checked. Bots do not run on it in this version.",
     ),
     "offline": (
         "Offline",
@@ -441,7 +441,7 @@ def pending_words(pending):
         return (
             "waiting_approval",
             WAITING_LABEL,
-            f"It connected and waits for your approval in {ADD_A_MACHINE}. Coworkers do not run on it in this version.",
+            f"It connected and waits for your approval in {ADD_A_MACHINE}. Bots do not run on it in this version.",
             f"Once it has finished its setup and printed its fingerprint, compare it with the line 'Machine fingerprint:' in its window, then approve the machine in {ADD_A_MACHINE} or choose This is not my machine.",
         )
     what = (
@@ -454,7 +454,7 @@ def pending_words(pending):
     return (
         "not_finished",
         NOT_FINISHED_LABEL,
-        f"{what} Set up again or remove it in {ADD_A_MACHINE}. Coworkers do not run on it in this version.",
+        f"{what} Set up again or remove it in {ADD_A_MACHINE}. Bots do not run on it in this version.",
         f"Open {ADD_A_MACHINE}. Choose Set up again, or Remove this machine.",
     )
 

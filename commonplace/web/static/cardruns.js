@@ -49,12 +49,12 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent yet. Add one in Cloud workspaces; for now a machine only checks itself, and Coworkers do not run on it.",
+  no_machine: "No machine is ready to run an agent yet. Add one in Cloud workspaces; for now a machine only checks itself, and bots do not run on it.",
   machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
   binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
-  setup_waiting: "The machine you added connected and waits for your approval. Coworkers do not run on it in this version.",
-  setup_unfinished: "The machine you added is not finished. Coworkers do not run on it in this version.",
-  setup_only: "The machine you added only checks itself in this version. Coworkers do not run on it in this version.",
+  setup_waiting: "The machine you added connected and waits for your approval. Bots do not run on it in this version.",
+  setup_unfinished: "The machine you added is not finished. Bots do not run on it in this version.",
+  setup_only: "The machine you added only checks itself in this version. Bots do not run on it in this version.",
   origin_not_released: "This card came from outside the workspace and has not been released for agents. Release it first, then start an agent.",
   not_writable: "The machine's worker may not write on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
   outside_worker_wing: "The machine's worker may not work on this project's wing. Give the machine that wing in Admin > Runner machines (Edit wings).",
@@ -69,10 +69,10 @@ const START_REFUSALS = {
   at_cap: "This project already has as many agents working as it may. Start another when one finishes, or raise the limit in Project settings.",
   plan_pending: "This card carries the plan label. Approve the plan first, then start an agent.",
   model_unresolved: "No model is set for the agent's role. Choose one in Project settings.",
-  config_changed: "The project's Coworker config changed just now. Try again.",
-  config_mismatch: "This project starts agents from its Coworker config, so the machine, project and topic cannot be changed here.",
-  use_orch_card_start: "This project starts agents from its Coworker config. Only a signed-in workspace owner can start one from the card.",
-  not_configured: "This project has no Coworker config. Choose a machine, project and topic.",
+  config_changed: "The project's bot setup changed just now. Try again.",
+  config_mismatch: "This project starts agents from its bot setup, so the machine, project and topic cannot be changed here.",
+  use_orch_card_start: "This project starts agents from its bot setup. Only a signed-in workspace owner can start one from the card.",
+  not_configured: "This project has no bot setup. Choose a machine, project and topic.",
 };
 // Where the person goes for the one working next step of a refusal.
 const ADD_LINK = ["#/compute", "Open Add a machine"], ADMIN_LINK = ["#/admin", "Open Admin > Runner machines"];
@@ -106,7 +106,7 @@ function startHTML(start, jobs) {
   const [first] = start.machines || [];
   if (!first) return "";
   const field = (name, label, list) => `<label class="run-start-field">${label}<select name="${name}">${choices(list)}</select></label>`;
-  return `<form class="run-start" data-run-start><p>This project has no Coworker config. Choose where the agent runs.</p><div class="run-start-row"><label class="run-start-field">Machine<select name="machine">${start.machines.map((m) => `<option value="${e(m.id)}">${e(m.label)}</option>`).join("")}</select></label>${field("project", "Project", first.projects)}${field("topic", "Topic", first.topics)}</div>${button}</form>`;
+  return `<form class="run-start" data-run-start><p>This project has no bot setup. Choose where the agent runs.</p><div class="run-start-row"><label class="run-start-field">Machine<select name="machine">${start.machines.map((m) => `<option value="${e(m.id)}">${e(m.label)}</option>`).join("")}</select></label>${field("project", "Project", first.projects)}${field("topic", "Topic", first.topics)}</div>${button}</form>`;
 }
 
 const ago = (at) => {

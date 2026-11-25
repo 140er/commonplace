@@ -57,7 +57,7 @@ def test_checked_guided_state_is_authoritative_without_connection_telemetry(
         "set_up",
         pairing.SET_UP_LABEL,
     )
-    assert "Coworkers do not run on it in this version" in item["status"]["detail"]
+    assert "Bots do not run on it in this version" in item["status"]["detail"]
     assert item["intake"]["reasons"] == ["setup_only"]
     assert item["intake"]["allowed"] == "No: this setup only checks the machine"
     assert "Not used in this version" in item["usage"]["runs"]["text"]

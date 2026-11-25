@@ -47,8 +47,10 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
   const ordered = [...rows.filter(row => row.state === 'needs_you' && !row.waits), ...rows.filter(row => row.waits), ...rows.filter(row => row.state !== 'needs_you')];
   // The first open step is the next action; the steps that do not apply now are listed last, quietly.
   const html = ordered.map((row, index) => index === 0 && row.state === 'needs_you' ? row.html.replace('data-state="needs_you"', 'data-state="needs_you" data-next') : row.html);
-  // Steps that are done or do not apply fold away behind one line, so the open steps and the reply box keep the room.
-  const pending = rows.filter(row => row.state === 'needs_you').length, rest = html.slice(pending);
-  const folded = rest.length ? `<details class="ready-rest"><summary>${rest.length === 1 ? '1 more step' : `${rest.length} more steps`}: done or not needed</summary><ul>${rest.join('')}</ul></details>` : '';
+  // Steps that wait on another one, are done or do not apply fold away behind one line, so the steps you can take now
+  // and the reply box keep the room.
+  const pending = open, rest = html.slice(pending), later = rows.filter(row => row.waits).length;
+  const what = later ? (rest.length > later ? 'later, done or not needed' : 'after the model') : 'done or not needed';
+  const folded = rest.length ? `<details class="ready-rest"><summary>${rest.length === 1 ? '1 more step' : `${rest.length} more steps`}: ${what}</summary><ul>${rest.join('')}</ul></details>` : '';
   return `<section class="ready-to-start" role="region" aria-label="Ready to start?" data-open="${open}"><h2>Ready to start?</h2><p class="ready-summary">${summary}${open ? ' Start with the first one.' : ''}</p>${pending ? `<ul>${html.slice(0, pending).join('')}</ul>` : ''}${folded}</section>`;
 }

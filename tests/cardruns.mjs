@@ -231,7 +231,7 @@ const cases = {
     // A machine from the setup guide only checks itself: the refusal says which step it is at and links the Add a machine card.
     for (const refusal of ['setup_waiting', 'setup_unfinished', 'setup_only']) {
       const html = cardRunsHTML([], '', { configured: refusal === 'setup_only', refusal, machines: [] });
-      assert.ok(html.includes('Coworkers do not run on it in this version.'), refusal);
+      assert.ok(html.includes('Bots do not run on it in this version.'), refusal);
       assert.ok(html.includes('href="#/compute"') && html.includes('Open Add a machine'), refusal);
       assert.ok(!/Workspace settings|Runner machines|attest|Needs me/i.test(html), `no dead end for a guided machine (${refusal})`);
     }

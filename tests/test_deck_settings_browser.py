@@ -145,7 +145,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
         # One Settings tab, then one shortcut: two taps from any main destination.
         for label, target in [
             ("Notifications", "phone-push"),
-            ("Connections", "deck-connections"),
+            ("Connected apps", "deck-connections"),
             ("Workspace", "deck-tools"),
         ]:
             shortcuts.get_by_role("button", name=label, exact=True).click()
@@ -155,7 +155,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             top = page.locator(f"#{target}").bounding_box()["y"]
             assert frame["y"] <= top <= frame["y"] + frame["height"] - 44
             assert shortcuts.locator('[aria-current="location"]').inner_text() == label
-        shortcuts.get_by_role("button", name="Action permissions", exact=True).click()
+        shortcuts.get_by_role("button", name="What bots may do", exact=True).click()
         # Every former section and form is still reachable; only two headings change.
         old_sections = [
             "Free plan",
@@ -211,7 +211,7 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
         field.fill("notif")
         assert (
             page.locator('#deck-settings-nav [aria-current="location"]').inner_text()
-            == "Action permissions"
+            == "What bots may do"
         )
         assert page.locator('[data-tool-policy-row="webhook_add"]').is_visible()
         result_box = page.locator('[data-tool-policy-row="webhook_add"]').bounding_box()

@@ -1540,19 +1540,19 @@ GUIDED = {
     "connected": (
         "waiting_approval",
         "Waiting for your approval",
-        "It connected and waits for your approval in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
+        "It connected and waits for your approval in Add a machine in Cloud workspaces. Bots do not run on it in this version.",
         "No: not approved yet",
     ),
     "failed": (
         "not_finished",
         "Not finished",
-        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
+        "A setup step failed: The background service did not start. Set up again or remove it in Add a machine in Cloud workspaces. Bots do not run on it in this version.",
         "No: setup not finished",
     ),
     "stalled": (
         "not_finished",
         "Not finished",
-        "This setup has not finished. Set up again or remove it in Add a machine in Cloud workspaces. Coworkers do not run on it in this version.",
+        "This setup has not finished. Set up again or remove it in Add a machine in Cloud workspaces. Bots do not run on it in this version.",
         "No: setup not finished",
     ),
 }
@@ -1633,7 +1633,7 @@ def test_an_attested_unfinished_setup_is_never_leased_work_and_the_overview_says
     item = by_name(read(api))["guided-attested"]
     assert (item["status"]["code"], item["status"]["label"]) == ("finishing_setup", "Approved")
     assert item["intake"]["allowed"] == "No: setup not finished"
-    assert "Coworkers do not run on it in this version" in item["status"]["detail"]
+    assert "Bots do not run on it in this version" in item["status"]["detail"]
     machine = registry.get_machine(api.env.db, api.env.workspace, made["machine_id"])
     assert machine["enabled"] == 1 and machine["binding_state"] == "owner_attested"
     fleet.job(made, "queued", task=32000, project="other", binding_epoch=machine["binding_epoch"])

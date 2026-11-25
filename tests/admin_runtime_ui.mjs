@@ -40,7 +40,7 @@ try {
     await flush();
     const html = section(host.innerHTML, 'runtime');
     for (const item of items) assert.ok(html.includes(item.guided.label));
-    assert.equal((html.match(/Coworkers do not run on it in this version/g) || []).length, 3);
+    assert.equal((html.match(/Bots do not run on it in this version/g) || []).length, 3);
     assert.doesNotMatch(html, /disabled|unbound|99 starts|9 in flight|requester-add|requester-remove|Machine requesters/);
   } else if(process.argv[2]==='labels') {
     find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Coworker:common / place',source:'coordinator',connected:true,activity:'working'},{id:2,name:'Beta',source:'seat',connected:false},{id:3,name:'Gamma',source:'not_configured',connected:false}],count:3},machines:{state:'ready',items:[],count:0}});

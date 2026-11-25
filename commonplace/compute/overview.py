@@ -191,9 +191,7 @@ def _cap_text(machine, facts):
 # for a run to finish) or "report" (the hub would hand it work once it reports).
 REASON_KINDS = ("no", "not_now", "slot", "report")
 ATTEST_STEP = "Attest it in Admin > Runner machines."
-SETUP_ONLY_BLOCKER = (
-    "This setup only checks the machine. Coworkers do not run on it in this version."
-)
+SETUP_ONLY_BLOCKER = "This setup only checks the machine. Bots do not run on it in this version."
 
 
 ADD_A_MACHINE = pairing.ADD_A_MACHINE
@@ -207,7 +205,7 @@ def pending_reason(pending):
     (chip, sentence, next step) are the pairing's own (``pairing.pending_words``), the same on every screen."""
     code, label, sentence, step = pairing.pending_words(pending)
     if pending.get("accepted"):
-        sentence += " Coworkers do not run on it in this version."
+        sentence += " Bots do not run on it in this version."
     if code == "finishing_setup":
         return {
             "code": code,
@@ -1064,7 +1062,7 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "set_up",
             "quiet",
             pairing.SET_UP_LABEL,
-            f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Coworkers do not run on it in this version.",
+            f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Bots do not run on it in this version.",
         )
     if reason == "never_reported":
         return _status(
