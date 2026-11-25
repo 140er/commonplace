@@ -41,8 +41,13 @@ export function groupActivity(rows) {
   }
   return runs.map(row => row.repeat ? { ...row, text: row.text === 'Memory was saved' ? `${row.repeat} memories were saved` : `${row.text} (${row.repeat} times)` } : row);
 }
-export function activityHTML(row, e, open = false) {
+/** The dot's tone: amber for a question, blue for work in progress, green for something settled or remembered. */
+const toneOf = text => /\basked\b|waiting for/i.test(text) ? 'wait' : /\b(?:kept|saved|approved|answered|replied|recorded|turned down|held)\b|memor(?:y|ies)/i.test(text) ? 'ok' : /\b(?:started|made progress|updated)\b/i.test(text) ? 'work' : '';
+/** One "Since you last looked" row: a dot, the bot's name in bold followed by what happened, and the time. */
+export function activityHTML(row, e, open = false, names = []) {
   const fresh = row.fresh && Date.now() - Date.parse(row.at) < 4000;
-  const content = row.items ? `<details data-bt-group="${e(row.id)}"${open ? ' open' : ''}><summary>${e(displayText(row.text))}</summary><ul class="bt-group-items">${row.items.map(item => `<li>${e(displayText(item.title || item.text))}</li>`).join('')}</ul></details>` : `<span>${e(displayText(row.text))}</span>`;
-  return `<li${fresh ? ` class="bt-new-activity" data-at="${e(row.at)}"` : ''}>${timeHTML(row.at, e)}${content}</li>`;
+  const text = displayText(row.text), name = [...names].sort((a, b) => b.length - a.length).find(name => name && text.startsWith(`${name} `));
+  const line = name ? `<b>${e(name)}</b>${e(text.slice(name.length))}` : e(text);
+  const content = row.items ? `<details data-bt-group="${e(row.id)}"${open ? ' open' : ''}><summary>${line}</summary><ul class="bt-group-items">${row.items.map(item => `<li>${e(displayText(item.title || item.text))}</li>`).join('')}</ul></details>` : `<span class="bt-recent-text">${line}</span>`;
+  return `<li${fresh ? ` class="bt-new-activity" data-at="${e(row.at)}"` : ''}><span class="bt-dot" data-tone="${toneOf(text)}" aria-hidden="true"></span>${content}${timeHTML(row.at, e)}</li>`;
 }

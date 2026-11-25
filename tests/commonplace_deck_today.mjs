@@ -56,7 +56,7 @@ test('the narrow composer uses a short placeholder with ellipsis handling', () =
 test('registered Today is first and home; an off switch never imports or mounts it', async () => {
   assert.equal(deckHome(), '#/');
   assert.equal(deckSections()[0][0], 'today');
-  assert.equal((await SCREENS.today()).TITLE, 'Today');
+  assert.equal((await SCREENS.today()).TITLE, 'Waiting on you');
   let loads = 0;
   const ui = createDeck({ screens: { today: () => { loads++; } }, storage: { getItem: () => 'classic' }, doc: {} });
   assert.equal(ui.owns('#/today'), false);
