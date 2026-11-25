@@ -17,6 +17,7 @@ import { timingSafeEqual, createHash } from 'node:crypto'
 import { checkBody, filterQuery, matchRoute } from './allowlist.mjs'
 
 const MAX_BODY = 16 * 1024
+const MAX_UPSTREAM = 4 * 1024 * 1024
 const UPSTREAM_TIMEOUT_MS = 15_000
 const TOKEN_RE = /^cmmn_[A-Za-z0-9_-]{43}$/
 
@@ -157,7 +158,9 @@ export function createBridge(rawConfig) {
       return [502, { error: 'hub unreachable', reason: String(why) }, route.name]
     }
     const type = (upstream.headers.get('content-type') ?? '').toLowerCase()
-    const text = redact(await upstream.text())
+    const raw = await upstream.text()
+    if (raw.length > MAX_UPSTREAM) return [502, { error: 'hub reply too large' }, route.name]
+    const text = redact(raw)
     if (upstream.status >= 300 && upstream.status < 400) {
       return [502, { error: 'hub redirected; check CMMN_HUB_URL' }, route.name]
     }
@@ -167,10 +170,10 @@ export function createBridge(rawConfig) {
 
   async function serveStatic(req, res, url) {
     if (!staticRoot || req.method !== 'GET') return false
-    const rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)
-    const file = normalize(join(staticRoot, rel))
-    if (file !== staticRoot && !file.startsWith(staticRoot + sep)) return false
     try {
+      const rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)
+      const file = normalize(join(staticRoot, rel))
+      if (file !== staticRoot && !file.startsWith(staticRoot + sep)) return false
       if (!(await stat(file)).isFile()) return false
       const body = await readFile(file)
       res.writeHead(200, {

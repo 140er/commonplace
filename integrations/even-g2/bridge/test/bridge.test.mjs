@@ -90,7 +90,7 @@ test('routes outside the allowlist are refused before reaching the hub', async (
     ]
     for (const [method, path] of refused) {
       const r = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : '{}' })
-      assert.ok([404, 405].includes(r.status) || r.status === 404, `${method} ${path} -> ${r.status}`)
+      assert.equal(r.status, 404, `${method} ${path}`)
     }
     assert.equal(seen.length, 0, JSON.stringify(seen))
   })
@@ -193,7 +193,7 @@ test('config is refused without a hub, a well-formed token, or a key beyond loop
   assert.throws(() => checkConfig({ hubUrl: hubUrl, token: 'nope' }), err => !String(err).includes('nope'))
   assert.throws(() => checkConfig({ hubUrl, token: TOKEN, host: '0.0.0.0' }), /bridge key/)
   assert.throws(() => checkConfig({ hubUrl, token: TOKEN, host: '0.0.0.0', key: 'short' }), /24/)
-  assert.ok(checkConfig({ hubUrl, token: TOKEN, host: '100.64.0.1', key: KEY }))
+  assert.ok(checkConfig({ hubUrl, token: TOKEN, host: '192.0.2.1', key: KEY }))
 })
 
 test('the allowlist is exactly the read, decide and comment routes', () => {

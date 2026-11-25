@@ -106,7 +106,7 @@ bodies or token.
 ```bash
 URL=$(BRIDGE_KEY_FILE=~/.config/cmmn-g2/bridge-key node bridge/bin/cmmn-g2-bridge.mjs --pair-url http://<ip>:8790/)
 (cd plugin && npx evenhub qr --url "$URL")            # QR code in the terminal
-npx -y qrcode -o /tmp/g2-pair.png "$URL"              # or as an image to send privately
+npx -y qrcode@1.5.4 -o ~/.config/cmmn-g2/pair.png "$URL"   # or as an image (private dir) to send privately
 ```
 
 The QR code carries the pairing key. Send it only privately and do not paste the URL in

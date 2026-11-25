@@ -1,5 +1,6 @@
 // Pure view-model helpers: hub data in, short display strings out.
 
+import { MAX_ITEMS } from './text'
 import type { Board, Card, HubEvent, NeedsMe } from './types'
 
 export interface HomeItem {
@@ -155,7 +156,8 @@ export function homeItems(
   boards: Board[] = [],
 ): HomeItem[] {
   const items: HomeItem[] = []
-  const cards = needs ? needsMeCards(needs) : []
+  // Two rows stay reserved for Today and Agents within the firmware's 20-item list.
+  const cards = needs ? needsMeCards(needs).slice(0, MAX_ITEMS - 2) : []
   for (const { card, tag } of cards) {
     items.push({ kind: 'card', number: card.number, label: `${tag} #${card.number} ${card.title}` })
   }

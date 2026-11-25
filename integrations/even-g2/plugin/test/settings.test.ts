@@ -13,10 +13,10 @@ describe('bridge settings', () => {
     let replaced = ''
     const settings = await loadSettings(
       store,
-      { search: '?key=abc&bridge=http://100.64.0.2:8790/x&v=1', pathname: '/', hash: '' } as Location,
+      { search: '?key=abc&bridge=http://192.0.2.2:8790/x&v=1', pathname: '/', hash: '' } as Location,
       { replaceState: (_s: unknown, _t: string, url: string) => void (replaced = url) } as unknown as History,
     )
-    expect(settings).toEqual({ url: 'http://100.64.0.2:8790', key: 'abc' })
+    expect(settings).toEqual({ url: 'http://192.0.2.2:8790', key: 'abc' })
     expect(replaced).toBe('/?v=1')
     expect(parseSettings(store.data['cmmn.g2.bridge'])).toEqual(settings)
   })

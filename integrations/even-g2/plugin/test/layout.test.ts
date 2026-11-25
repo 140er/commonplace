@@ -39,6 +39,13 @@ describe('model', () => {
     expect(needsMeCards(n).map(x => `${x.tag}${x.card.number}`)).toEqual(['ASK1', 'REVIEW2'])
   })
 
+  it('keeps Today and Agents within the 20-item list', () => {
+    const many = needs(Array.from({ length: 30 }, (_, i) => card({ number: i + 1 })))
+    const items = homeItems(many, emptyActivity(), agentStatus([], null))
+    expect(items.length).toBe(20)
+    expect(items.slice(-2).map(i => i.kind)).toEqual(['today', 'agents'])
+  })
+
   it('home says so when nothing needs you', () => {
     const items = homeItems(needs([]), emptyActivity(), agentStatus([], null))
     expect(items.map(i => i.label)).toEqual(['Nothing needs you right now', 'Today: quiet so far', 'Agents: 0 working'])

@@ -36,7 +36,7 @@ export class PhoneView {
       <h2>Bridge</h2>
       <form id="settings">
         <label for="url">Bridge URL (empty: this page's own address)</label>
-        <input id="url" name="url" inputmode="url" autocomplete="off" placeholder="http://100.64.0.10:8790" />
+        <input id="url" name="url" inputmode="url" autocomplete="off" placeholder="http://192.0.2.10:8790" />
         <label for="key" style="margin-top:10px">Pairing key (from the bridge, not a Commonplace token)</label>
         <input id="key" name="key" type="password" autocomplete="off" />
         <div class="buttons"><button type="submit">Save and reconnect</button></div>
