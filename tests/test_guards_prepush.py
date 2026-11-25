@@ -5,10 +5,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from commonplace.guards import prepush
+from commonplace.guards.stacks import CommandResult, PlannedCommand
 
 
 def _git(repo, *args):
@@ -377,13 +379,43 @@ def test_main_with_only_a_delete_has_nothing_to_check(repo, monkeypatch, capsys)
 
 def test_ci_flag_runs_the_hook_entrypoint(repo, monkeypatch, capsys):
     _fake_ruff(repo)
+    for name in prepush.GUARD_TESTS:
+        _write(repo / name, "def test_guard():\n    assert True\n")
     monkeypatch.chdir(repo)
     code = prepush.main(["--ci", "--base", "main", "--budget", "20"])
     err = capsys.readouterr().err
     assert code == 0, err
     assert "commonplace CI gate" in err
     assert "CI GATE PASSED" in err
+    assert "5 test files" in err
     assert "not the full test suite and not CI" not in err
+
+
+@pytest.mark.parametrize("guard", prepush.GUARD_TESTS)
+@pytest.mark.parametrize("invalid_kind", ["missing", "directory"])
+def test_ci_fails_before_running_tests_when_a_mandatory_guard_is_not_a_file(
+    repo, monkeypatch, guard, invalid_kind
+):
+    for name in prepush.GUARD_TESTS:
+        _write(repo / name)
+    path = repo / guard
+    path.unlink()
+    if invalid_kind == "directory":
+        path.mkdir()
+    command = PlannedCommand(name="pytest", argv=(sys.executable, "-m", "pytest"))
+    run = Mock(return_value=CommandResult(command, "passed", 0.0, "", []))
+    monkeypatch.setattr(prepush, "run_command", run)
+
+    report, text = _run(repo, changed=["README.md"], guards=True, strict=True)
+
+    assert report.exit_code == 1
+    tests = next(outcome for outcome in report.outcomes if outcome.name == "tests")
+    assert tests.status == "failed"
+    assert guard in tests.detail
+    assert "mandatory guard" in tests.detail
+    assert "CI GATE FAILED" in text
+    assert "CI GATE PASSED" not in text
+    run.assert_not_called()
 
 
 def test_a_bad_budget_value_does_not_block_the_push(repo, monkeypatch, capsys):

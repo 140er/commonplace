@@ -63,6 +63,7 @@ class ChangedTests:
 
     files: tuple[str, ...]
     unmapped: tuple[str, ...]
+    missing_guards: tuple[str, ...] = ()
 
 
 def _module_names(path: str) -> list[str]:
@@ -119,17 +120,19 @@ def select_tests(
 def gate_tests(
     repo_root: Path | str, changed: Iterable[str], *, guards: bool, tests_dir: str = TESTS_DIR
 ) -> ChangedTests:
-    """Affected tests, and, when ``guards`` is set, the four guard files that exist.
+    """Affected tests, and, when ``guards`` is set, all four mandatory guard files.
 
     Affected files stay first so a short budget starts them before the guard files.
+    Missing or nonregular guard files are reported before tests can run.
     """
     selected = select_tests(repo_root, changed, tests_dir)
     if not guards:
         return selected
     root = Path(repo_root)
     have = set(selected.files)
-    extra = tuple(path for path in GUARD_TESTS if path not in have and (root / path).is_file())
-    return ChangedTests(selected.files + extra, selected.unmapped)
+    extra = tuple(path for path in GUARD_TESTS if path not in have)
+    missing = tuple(path for path in GUARD_TESTS if not (root / path).is_file())
+    return ChangedTests(selected.files + extra, selected.unmapped, missing)
 
 
 # ── budget and tools ───────────────────────────────────────────────────
@@ -323,6 +326,13 @@ def _started_files(output: str, files: Iterable[str]) -> list[str]:
 
 
 def _test_step(top: Path, selection: ChangedTests, budget: Budget, env: dict[str, str]):
+    if selection.missing_guards:
+        return StepOutcome(
+            "tests",
+            _FAILED,
+            detail="mandatory guard files missing or not regular files: "
+            + _listed(selection.missing_guards),
+        )
     rerun = " ".join(
         shlex.quote(part) for part in ("python", "-m", "pytest", *FAST_TEST_ARGS, *selection.files)
     )
