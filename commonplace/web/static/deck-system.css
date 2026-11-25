@@ -77,9 +77,15 @@
 
 /* ---------- Board: the title gets the width; moving a card is a quiet action under it ---------- */
 :root[data-ui="deck"] .deck-board .card h3 { padding-right: 0; }
-:root[data-ui="deck"] .deck-board .card-top { position: absolute; right: 8px; bottom: 8px; top: auto; display: flex; }
-/* The meta line stops short of the Move action that shares its row. */
-:root[data-ui="deck"] .deck-board .card-meta { padding-right: 84px; min-width: 0; }
+/* Title across the card; the meta line and Move to… share the row under it, and the meta wraps rather than hides. */
+:root[data-ui="deck"] .shell .deck-board .card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+:root[data-ui="deck"] .deck-board .card > h3 { grid-column: 1 / -1; grid-row: 1; }
+:root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: wrap; }
+:root[data-ui="deck"] .deck-board .card > .card-top { position: static; grid-column: 2; grid-row: 2; display: flex; }
+:root[data-ui="deck"] .deck-board .card > :not(h3, .card-meta, .card-top) { grid-column: 1 / -1; }
+@media (min-width: 700px) and (hover: hover) {
+  :root[data-ui="deck"] .shell .deck-board .card-top .card-more { height: auto; min-height: 26px; padding: 0 8px; font-size: 12px; }
+}
 :root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 26px; padding: 0 8px; background: transparent; color: var(--ink3); border: 1px solid var(--line); }
 :root[data-ui="deck"] .deck-board .card-top .card-more:hover { color: var(--ink); background: var(--s2); }
 }
@@ -117,6 +123,8 @@
 @media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
 :root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
 :root[data-ui="deck"] .admin-workspace { color: var(--ink2); }
+:root[data-ui="deck"] .admin.settings h3 { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+:root[data-ui="deck"] #content > .admin.settings { padding-inline: 0; }
 /* A heading focused so screen readers land on it is not a control; it needs no focus box. */
 :root[data-ui="deck"] :is(h1, h2, h3)[tabindex="-1"]:focus { outline: none; }
 @media (min-width: 700px) {
@@ -169,7 +177,15 @@
 @media (hover: none) { :root[data-ui="deck"] .bt-keys { display: none; } }
 :root[data-ui="deck"] .bt-keys { color: var(--ink3); font-size: 12px; }
 
-/* ---------- Settings: one page with an index; Appearance keeps its preview column on wide screens ---------- */
+/* ---------- Settings: one page with an index; Appearance is the last section, full width like the rest ---------- */
+:root[data-ui="deck"] .settings.capy-settings { grid-template-columns: minmax(0, 1fr); max-width: calc(820px + 2 * var(--page-side)); }
+:root[data-ui="deck"] .capy-settings .deck-appearance { position: static; }
+@media (min-width: 900px) {
+  /* The preview sits beside its controls instead of above them. */
+  :root[data-ui="deck"] .capy-settings .deck-appearance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 24px; align-items: start; grid-auto-flow: row dense; }
+  :root[data-ui="deck"] .capy-settings .deck-appearance > :is(h2, p, .appearance-preview, .appearance-scenes) { grid-column: 1; }
+  :root[data-ui="deck"] .capy-settings .deck-appearance > :is(.appearance-pattern, .appearance-slider, .appearance-save) { grid-column: 2; }
+}
 :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { padding: var(--page-top) var(--page-side) 0; }
 @media (min-width: 700px) { :root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding: 0; } }
 :root[data-ui="deck"] .settings.capy-settings { padding-top: 16px; }
@@ -185,6 +201,9 @@
 
 @media (max-width: 699px) {
   :root[data-ui="deck"] { --page-top: 20px; --page-side: 16px; }
+  :root[data-ui="deck"] .m-top[data-deck="top"] > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The voice button is a tool, not a destination: quiet next to the tabs. */
+  :root[data-ui="deck"] .deck-tab-mic { background: var(--s2); color: var(--ink); border: 1px solid var(--line2); }
   :root[data-ui="deck"] .deck-stage[data-dimmed="false"] { opacity: .18; }
   :root[data-ui="deck"] .look-switch .opt { min-height: 44px; }
   :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }

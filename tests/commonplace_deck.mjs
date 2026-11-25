@@ -143,7 +143,7 @@ test("the bar offers Bots and Settings, and a Deck screen only once it is regist
   assert.match(full, /class="deck-brand" href="#\/"/);
   assert.equal(deck.deckHome({}), "#/bots");
   assert.equal(deck.deckHome({ today() {} }), "#/today");
-  for (const [hash, section] of [["#/rules", "settings"], ["#/admin", "settings"], ["#/settings", "settings"], ["#/compute", "compute"], ["#/board/x", ""], ["#/memory?q=a", ""], ["", ""]]) assert.equal(deck.deckSection(hash), section, hash);
+  for (const [hash, section] of [["#/rules", ""], ["#/admin", ""], ["#/settings", "settings"], ["#/compute", "compute"], ["#/board/x", ""], ["#/memory?q=a", ""], ["", ""]]) assert.equal(deck.deckSection(hash), section, hash);
 });
 
 test("the bar keeps the shell's actions, escapes names and shows Admin to admins only", () => {
@@ -157,11 +157,12 @@ test("the bar keeps the shell's actions, escapes names and shows Admin to admins
   assert.doesNotMatch(html, /<style|style="/);
 });
 
-test("phone: a title bar and one tab per offered section", () => {
+test("phone: a title bar and the phone tabs, Today only when its screen is registered", () => {
   const tabs = deck.renderDeckTabs({ needs: 2, hash: "#/settings", screens: { compute() {} } });
-  assert.deepEqual([...tabs.matchAll(/href="#\/([a-z]+)"/g)].map((m) => m[1]), ["bots", "compute", "settings"]);
+  assert.deepEqual([...tabs.matchAll(/href="#\/([a-z]+)" data-nav/g)].map((m) => m[1]), ["board", "bots", "memory"]);
   assert.match(tabs, /data-count="3"/);
-  assert.match(tabs, /data-nav="settings" aria-current="page"/);
+  assert.match(tabs, /class="deck-tab-more"[^>]*aria-current="page"/, "Settings lives in More, so More is current there");
+  assert.match(deck.renderDeckMore({ hash: "#/settings", screens: { compute() {} } }), /<a href="#\/settings" data-nav="settings" aria-current="page">/);
   assert.doesNotMatch(tabs, /class="count /, 'no waiting badge moves to Bots when Today is absent');
   assert.doesNotMatch(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
   assert.doesNotMatch(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
@@ -177,7 +178,7 @@ test("the shell gets the Deck bar, title and tabs unless classic is chosen", () 
   s.setItem(deck.UI_KEY, "deck");
   assert.match(ui.bar({ workspace: "Northwind", needs: 2, boards: [], view: "bots" }), /^<nav class="rail" data-deck="bar"[\s\S]*data-nav="today"[\s\S]*Northwind/);
   assert.match(ui.top(), /data-deck="top"/);
-  assert.match(ui.tabs({ needs: 1 }), /data-deck="tabs" data-count="3"/);
+  assert.match(ui.tabs({ needs: 1 }), /data-deck="tabs" data-count="4"/);
 });
 
 test("createDeck mounts a registered screen once, refreshes it, and stops it on leave", async () => {

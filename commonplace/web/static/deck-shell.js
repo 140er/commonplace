@@ -4,10 +4,14 @@ import { botPage } from './routes.js';
 import { artHTML } from './deck-art.js';
 
 export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['settings', 'Settings']];
-// A tab on a phone has room for about ten letters: the long name stays its accessible name, the visible text is short.
-const SHORT = { compute: 'Workspaces' };
-const tabLabel = (id, label) => SHORT[id] || label;
-const tabName = (id, label) => SHORT[id] ? ` aria-label="${label}"` : '';
+// The phone tab bar: the four places used most, in a thumb's order. Cloud workspaces and Settings live in the More sheet.
+// One list, so changing the bar is a one-line edit. Today is offered only when its screen is registered.
+export const PHONE_TABS = [['today', 'Today', '#/today'], ['board', 'Board', '#/board'], ['bots', 'Bots', '#/bots'], ['memory', 'Memory', '#/memory']];
+const PHONE_MORE = [['compute', 'Cloud workspaces', '#/compute'], ['settings', 'Settings', '#/settings']];
+const tabOn = (id, hash, section) => id === 'board' ? /^#\/(board|card)(?:\/|$|\?)/.test(hash) : id === 'memory' ? hash.startsWith('#/memory') : section === id;
+export const phoneTabs = ({ sections = [], section = '', hash = '' } = {}) => PHONE_TABS
+  .filter(([id]) => id !== 'today' || sections.some(([offered]) => offered === 'today'))
+  .map(([id, label, href]) => ({ id, label, href, on: tabOn(id, hash, section) }));
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
 const rows = value => Array.isArray(value) ? value : [];
 const enc = encodeURIComponent;
@@ -120,7 +124,7 @@ export function renderShellBar(options) {
     <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
     <div class="deck-links">${places.slice(0, at).map(([, html]) => html).join('')}${work}${places.slice(at).map(([, html]) => html).join('')}</div>
     <div class="deck-rail-scroll"><h2 class="deck-rail-heading">Your bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>
-    <h2 class="deck-rail-heading"><button class="deck-ws-switch" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)} workspace${icon('chevron')}</button></h2><div class="deck-rail-tools">${workspaceLinks(options).map(([href, label, name]) => `<a class="nav" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon(name)}${label}</a>`).join('')}</div></div>
+    <h2 class="deck-rail-heading"><button class="deck-ws-switch" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Workspace · ${e(workspace)}${icon('chevron')}</button></h2><div class="deck-rail-tools">${workspaceLinks(options).map(([href, label, name]) => `<a class="nav" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon(name)}${label}</a>`).join('')}</div></div>
     <div class="rail-foot">${settings ? link(settings) : ''}<details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${options.can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button></div></details></div>
   </nav>`;
 }
@@ -129,17 +133,17 @@ const PAGE_TITLES = { '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs':
 export function renderShellTop(options) {
   const { hash = '', section, user = '', board = null } = options;
   const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];
-  const label = page || (section ? tabLabel(section, SECTIONS.find(([id]) => id === section)?.[1] || '') : '') || (hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
+  const label = page || SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
   const boardPage = label === 'Board' && (!!board?.slug || /^#\/board(?:\/[^/?#]+)?(?:\?.*)?$/.test(hash));
   return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a>${boardPage ? '' : `<b>${label}</b>`}<span class="spacer"></span><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
 }
 // The phone has no rail, so every destination the rail and account menu offer lives in this sheet (rendered beside the tabs).
 // Any click inside it (a link, a button or the scrim) closes it; the shell's click handler does the work.
-export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel">${options.homeOn === false ? '' : `<a href="#/" data-nav="home"${current(isHome(options.hash))}>${icon('home')}Home</a>`}<a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
+export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel">${options.homeOn === false ? '' : `<a href="#/" data-nav="home"${current(isHome(options.hash))}>${icon('home')}Home</a>`}${PHONE_MORE.filter(([id]) => (options.sections || SECTIONS).some(([offered]) => offered === id)).map(([id, label, href]) => `<a href="${href}" data-nav="${id}"${current(options.section === id)}>${icon(id)}${label}</a>`).join('')}${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
 export function renderShellTabs(options) {
-  const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
-  const more = !section && !['#/', '#/home'].includes(hash);
-  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}${tabName(id, label)}>${icon(id)}${tabLabel(id, label)}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}<button type="button" class="deck-tab-more" data-deck-shell-action="more" aria-haspopup="dialog" aria-expanded="${options.moreOpen === true}" aria-controls="deck-more"${current(more)}>${icon('more')}More</button>${mic ? micButton('deck-tab-mic') : ''}</nav>`;
+  const { hash = '' } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
+  const tabs = phoneTabs(options), more = !['#/', '#/home'].includes(hash) && !tabs.some(tab => tab.on);
+  return `<nav class="m-tabs" data-deck="tabs" data-count="${tabs.length}" data-mic="${mic}" aria-label="Main">${tabs.map(({ id, label, href, on }) => `<a href="${href}" data-nav="${id}"${current(on)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}<button type="button" class="deck-tab-more" data-deck-shell-action="more" aria-haspopup="dialog" aria-expanded="${options.moreOpen === true}" aria-controls="deck-more"${current(more)}>${icon('more')}More</button>${mic ? micButton('deck-tab-mic') : ''}</nav>`;
 }
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';

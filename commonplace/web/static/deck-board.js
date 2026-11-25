@@ -36,6 +36,8 @@ const botName = (card, options) => boardCopy(cardBot(card, options)?.name || car
 const avatar = name => `<span class="deck-board-avatar" aria-hidden="true">${e(Array.from(name)[0] || '?')}</span>`;
 const dot = tone => `<i class="deck-board-dot ${tone}" aria-hidden="true"></i>`;
 export const boardGroup = (card, me, needs) => needsOwner(card, me, needs) ? 'todo' : card.status === 'done' ? 'done' : card.status === 'review' ? 'review' : 'doing';
+// An empty column says what lands in it, so an empty board explains itself.
+export const EMPTY_COLUMN = { todo: 'Nothing waits on you. Questions and approvals land here.', doing: 'No card is being worked on.', review: 'Nothing is waiting for review.', done: 'Nothing shipped yet.' };
 const columns = [['todo', 'Needs you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
 function cardHTML(card, options, first) {
   const selected = options.selected === card.number, name = botName(card, options);
@@ -58,7 +60,7 @@ export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = t
   const note = everywhere != null && everywhere !== count('todo') ? `<p class="deck-board-needs-note" data-needs-note>${everywhere} ${everywhere === 1 ? 'card is' : 'cards are'} waiting on you across all projects; ${count('todo')} ${count('todo') === 1 ? 'is' : 'are'} in this one.</p>` : '';
   const columnHTML = columns.map(([status, name, tone]) => {
     const list = cards.filter(card => (!filter.startsWith('state:') || filter === `state:${status}`) && (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status);
-    return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || `<p class="empty-col">${artHTML('column')}Nothing here yet</p>`}</div></section>`;
+    return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || `<p class="empty-col">${artHTML('column')}${EMPTY_COLUMN[status]}</p>`}</div></section>`;
   }).join('');
   const stateFilters = [['all','All'], ...columns.map(([status,name]) => [`state:${status}`,name])];
   const add = '<button class="btn deck-board-add" data-action="new-card">Add card</button>';

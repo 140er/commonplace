@@ -52,7 +52,7 @@ export function applyDeck({ doc = globalThis.document, loc = globalThis.location
 export function deckSection(hash = '') {
   const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
   if (name === 'bots' || name === 'today' || name === 'compute') return name;
-  return ['settings', 'rules', 'admin'].includes(name) ? 'settings' : '';
+  return name === 'settings' ? 'settings' : '';
 }
 export const deckSections = (screens = SCREENS) => SECTIONS.filter(([id]) => id === 'bots' || id === 'settings' || screens[id]);
 /** Home is the undimmed hero; older screen registries keep their fallback. */

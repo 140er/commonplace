@@ -146,7 +146,7 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         assert await page.locator(".bh-form [data-voice=mic]").count() == 1
                         await page.locator(".bh-form [data-voice=mic]").evaluate("e => e.remove()")
                         await page.locator(".bh-form .deck-composer-mic").wait_for(state="visible")
-                        for entry in ["bots", "compute", "settings", "today"]:
+                        for entry in ["bots", "memory", "today"]:
                             await tabs.locator(f'[data-nav="{entry}"]').click()
                             await page.wait_for_function(
                                 "hash => location.hash === hash", arg=f"#/{entry}"

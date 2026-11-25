@@ -1342,21 +1342,17 @@ def test_deck_calls_the_page_cloud_workspaces_and_keeps_the_route_card_on_the_ma
                 page = context.new_page()
                 page.set_default_timeout(20000)
                 page.goto(f"{fx.origin}/app/?ui=deck#/compute")
-                bar = "nav.m-tabs" if phone else "nav.rail"
-                entry = page.locator(f'{bar} a[data-nav="compute"]')
-                # The phone tab has room for the short word; its accessible name is the full one.
-                expect(entry).to_have_attribute(
-                    "aria-label", "Cloud workspaces"
-                ) if phone else expect(entry).to_contain_text("Cloud workspaces")
                 if phone:
-                    expect(entry).to_contain_text("Workspaces")
-                    expect(entry).to_be_visible()  # laid out before its text is measured
-                    lines = entry.evaluate(
-                        "el => { const text = [...el.childNodes].find(n => n.nodeType === 3);"
-                        " const r = document.createRange(); r.selectNodeContents(text);"
-                        " return new Set([...r.getClientRects()].map(b => Math.round(b.top))).size; }"
+                    # On a phone Cloud workspaces sits in the More sheet under its full name.
+                    page.locator(".deck-tab-more").click()
+                    entry = page.locator('#deck-more a[data-nav="compute"]')
+                    expect(entry).to_be_visible()
+                    expect(entry).to_contain_text("Cloud workspaces")
+                    page.keyboard.press("Escape")
+                else:
+                    expect(page.locator('nav.rail a[data-nav="compute"]')).to_contain_text(
+                        "Cloud workspaces"
                     )
-                    assert lines == 1, "the tab word is on one line, not split"
                 expect(page.locator("h1").first).to_have_text("Cloud workspaces")
                 tabs = page.get_by_role("navigation", name="Cloud workspaces views")
                 if owner:

@@ -107,18 +107,12 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             assert not any(name in option.lower() for name in ["claude", "codex", "cursor", "grok"])
         main = page.locator(".deck-settings-main").bounding_box()
         panel = page.locator(".deck-appearance").bounding_box()
-        if width == 1440:
-            assert panel["x"] > main["x"] + main["width"]
-            assert (
-                page.locator(".deck-appearance").evaluate("el=>getComputedStyle(el).position")
-                == "sticky"
-            )
-        else:
-            assert panel["y"] >= main["y"] + main["height"]
-            assert (
-                page.locator(".deck-appearance").evaluate("el=>getComputedStyle(el).position")
-                == "static"
-            )
+        # Appearance is the last section of the one Settings column at every width.
+        assert panel["y"] >= main["y"] + main["height"]
+        assert (
+            page.locator(".deck-appearance").evaluate("el=>getComputedStyle(el).position")
+            == "static"
+        )
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         assert page.locator(".settings").evaluate("el=>el.scrollWidth <= el.clientWidth")
         row = page.locator('[data-tool-policy-row="shell.exec"]')

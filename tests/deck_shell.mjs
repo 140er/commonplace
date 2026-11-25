@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { renderDeckBar, renderDeckTop, renderDeckTabs, renderDeckMore, deckSections, deckSection } from '../commonplace/web/static/deck.js';
+import { PHONE_TABS } from '../commonplace/web/static/deck-shell.js';
 
 const entries = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['settings', 'Settings']];
 const links = html => [...html.matchAll(/href="([^"]+)" data-nav="([^"]+)"/g)].map(m => [m[2], m[1]]);
@@ -66,10 +67,10 @@ test('older lists render directly under Bots and no invented state or unread cou
   assert.doesNotMatch(escaped, /<script>|data-state="arbitrary"/);
 });
 
-test('phone chrome has four destinations, Today badge, avatar wait dot and a mic only without a composer', () => {
+test('phone chrome has the four phone tabs, Today badge, avatar wait dot and a mic only without a composer', () => {
   for (const hash of ['#/today', '#/bots/x/coworkers', '#/board', '#/compute', '#/memory', '#/settings']) {
     const tabs = renderDeckTabs({ hash, needs: 2, hasComposer: false });
-    assert.deepEqual(links(tabs), entries.map(([id]) => [id, `#/${id}`]));
+    assert.deepEqual(links(tabs), PHONE_TABS.map(([id, , href]) => [id, href]));
     assert.match(tabs, /data-deck-shell-action="mic"/);
   }
   for (const hash of ['#/today', '#/bots/x', '#/bots/x/coworkers', '#/board/work/chat', '#/memory']) assert.doesNotMatch(renderDeckTabs({ hash, hasComposer: true }), /data-deck-shell-action="mic"/);
@@ -169,13 +170,16 @@ test('phone: every rail and account destination is reachable from the More sheet
   const bar = renderDeckBar({ hash: '#/today', can_admin: true, can_manage_instance: true });
   const railTools = ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules', '#/admin', '#/instance-admin'];
   for (const href of railTools) assert.ok(bar.includes(`href="${href}"`), `rail offers ${href}`);
-  assert.deepEqual(sheetLinks(sheet), railTools, 'the sheet offers each of them, with the same routes');
+  // Board and Memory are phone tabs; the sheet holds every other rail place, Cloud workspaces and Settings first.
+  const phone = new Set(PHONE_TABS.map(([, , href]) => href));
+  assert.deepEqual(sheetLinks(sheet), ['#/', '#/compute', '#/settings', ...railTools.filter(href => href !== '#/' && !phone.has(href))], 'the bar and the sheet together offer every rail place');
   assert.match(sheet, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> waiting on you/);
   assert.match(sheet, /data-action="switch-workspace"/);
   assert.match(sheet, /data-action="logout"/);
-  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/today' })), ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules']);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/today' })), ['#/', '#/compute', '#/settings', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules']);
   assert.doesNotMatch(renderDeckBar({ hash: '#/today', needs: 3 }), /deck-more|waiting on you<\/span><\/span><\/a><a href="#\/boards"/);
-  assert.match(renderDeckTabs({ hash: '#/memory' }), /class="deck-tab-more"[^>]*aria-current="page"/);
+  assert.match(renderDeckTabs({ hash: '#/settings' }), /class="deck-tab-more"[^>]*aria-current="page"/);
+  assert.match(renderDeckTabs({ hash: '#/memory' }), /data-nav="memory" aria-current="page"/);
   assert.doesNotMatch(renderDeckTabs({ hash: '#/today' }), /class="deck-tab-more"[^>]*aria-current/);
 });
 

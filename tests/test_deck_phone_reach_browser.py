@@ -12,8 +12,8 @@ from tests.test_commonplace_board_authority import fresh as authority_fresh
 from tests.test_deck_phone_navigation_browser import open_app
 
 DESTINATIONS = {
-    "Board": "#/board",
-    "Memory": "#/memory",
+    "Cloud workspaces": "#/compute",
+    "Settings": "#/settings",
     "Needs me": "#/needs",
     "Projects": "#/boards",
     "Console": "#/console",

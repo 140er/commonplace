@@ -6,7 +6,7 @@ import { artHTML } from '../commonplace/web/static/deck-art.js';
 import { ART } from '../commonplace/web/static/deck-art-data.js';
 import { botsHTML, emptyCardsHTML } from '../commonplace/web/static/deck-today-capy.js';
 import { capyRosterHTML } from '../commonplace/web/static/deck-coworkers.js';
-import { deckBoardView } from '../commonplace/web/static/deck-board.js';
+import { deckBoardView, EMPTY_COLUMN } from '../commonplace/web/static/deck-board.js';
 import { renderDeckMemory } from '../commonplace/web/static/deck-memory.js';
 import { showLoading } from '../commonplace/web/static/loading.js';
 import { renderImport } from '../commonplace/web/static/memory-import.js';
@@ -64,7 +64,7 @@ test('an empty Board column shows art; a column with cards does not', () => {
   for (const item of arts(empty)) assert.match(item, /data-art="column" aria-hidden="true"/);
   const cells = [...empty.matchAll(/<p class="empty-col">([^]*?)<\/p>/g)].map(match => match[1]);
   assert.ok(cells.length >= 1);
-  for (const cell of cells) assert.equal(text(cell), 'Nothing here yet');
+  assert.deepEqual(cells.map(text), Object.values(EMPTY_COLUMN), 'each empty column says what lands in it');
   const full = deckBoardView({ cards: [{ number: 1, version: 1, board: 'product', title: 'One', status: 'doing', need: 'working', events: [] }], board, me: 'user:owner', bots: [] });
   assert.ok(arts(full).length < arts(empty).length);
 });

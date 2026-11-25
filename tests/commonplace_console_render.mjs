@@ -7,7 +7,7 @@ const ui = await import(`data:text/javascript;base64,${Buffer.from(source).toStr
 const e = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const COPY = {
   loading: "Loading agents…",
-  noAgentsOwner: "No agents connected yet. Connect one in Settings, under Connected apps.",
+  noAgentsOwner: "No agents connected yet.",
   noAgentsMember: "No agents act as you in this workspace.",
   showTools: "Show tool calls",
   stopTools: "Stop showing tool calls",
