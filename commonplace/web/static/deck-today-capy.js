@@ -54,7 +54,7 @@ export function answersHTML(card, { busy = false } = {}, escape = e) {
   const recommended = ([, attrs]) => attrs.includes('data-bt-action="approve"') || buttons.length === 1 || !options.length;
   const html = buttons.map((entry, at) => button(`${at === 0 ? 'bt-approve ' : ''}${recommended(entry) && at === 0 ? 'bt-primary' : 'bt-secondary'}`, entry[1], entry[2])).join('');
   // Finished work and cards that cannot be answered here open the card; a question offers a typed Reply instead.
-  const quiet = !buttons.length || buttons[0][2] === 'Open' ? '' : kindOf(card) === 'review' || !answerable(card) ? button('bt-quiet', 'data-bt-open', 'See the work') : options.length ? button('bt-quiet bt-desktop-reply', 'data-bt-action="reply"', 'Reply') : '';
+  const quiet = !buttons.length || buttons[0][2] === 'Open' ? '' : kindOf(card) === 'review' || !answerable(card) ? button('bt-quiet', 'data-bt-open', 'See the work') : options.length ? button('bt-quiet bt-desktop-reply', 'data-bt-action="reply"', 'Reply') + button('bt-quiet', 'data-bt-open', 'See the work') : button('bt-quiet', 'data-bt-open', 'See the work');
   return `<div class="bt-actions">${html}${quiet}</div>`;
 }
 

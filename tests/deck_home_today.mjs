@@ -158,7 +158,9 @@ test('the answers are the card buttons: first is main, an accepting option appro
   assert.match(done, /data-bt-choice="1"[^>]*>Return for more work</);
   assert.match(done, /data-bt-open[^>]*>See the work</);
   assert.match(answersHTML(ask, { busy: true }, e), /data-bt-choice="0" disabled/);
-  assert.doesNotMatch(answersHTML({ ...card, actions: ['answer'], ask_options: [] }, {}, e), /data-bt-choice|bt-quiet/);
+  const open = answersHTML({ ...card, actions: ['answer'], ask_options: [] }, {}, e);
+  assert.doesNotMatch(open, /data-bt-choice/);
+  assert.match(open, /data-bt-open[^>]*>See the work</, 'every question can open its card');
 });
 test('the chips count the listed cards and the list kinds', () => {
   const list = [card, { ...card, number: 8, actions: ['answer'], ask_options: ['A'] }, { ...card, number: 9, actions: ['accept'], review_kind: 'completion' }];
