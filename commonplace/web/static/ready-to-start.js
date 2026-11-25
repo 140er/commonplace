@@ -43,7 +43,7 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
   });
   // What needs you comes first; the rows that are fine stay listed, quieter, below it.
   const open = rows.filter(row => row.state === 'needs_you' && !row.waits).length;
-  const summary = open ? `${open === 1 ? 'One step needs' : `${open} steps need`} you before work can start.` : 'Everything needed to start is in place.';
+  const summary = open ? `${open === 1 ? 'One setup step needs' : `${open} setup steps need`} you before this bot can work.` : 'Everything needed to start is in place.';
   const ordered = [...rows.filter(row => row.state === 'needs_you' && !row.waits), ...rows.filter(row => row.waits), ...rows.filter(row => row.state !== 'needs_you')];
   // The first open step is the next action; the steps that do not apply now are listed last, quietly.
   const html = ordered.map((row, index) => index === 0 && row.state === 'needs_you' ? row.html.replace('data-state="needs_you"', 'data-state="needs_you" data-next') : row.html);

@@ -11,6 +11,8 @@ import { createDeckAppearance } from './deck-appearance.js';
 import { SECTIONS, placeOf, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
 import { arrangeSettings, selectSettings } from './deck-settings.js';
 import { needsMeCount } from './needs-me.js';
+// Same rule as the rail's role line: an explicit role wins, otherwise a workspace admin is its owner.
+const isOwner = me => me?.role ? me.role === 'owner' : me?.can_admin === true;
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
@@ -101,7 +103,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
       const { me, needs } = context() || {};
       box.insertAdjacentHTML('afterbegin', toolsHTML({ needs: needsMeCount(needs), can_admin: me?.can_admin }));
     }
-    if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
+    if (deckOn(storage)) arrangeSettings(box, { owner: isOwner(context()?.me) });
     if (!box.querySelector('#look')) box.insertAdjacentHTML('afterbegin', lookHTML(deckOn(storage)));
     appearance.settings(box);
     if (deckOn(storage)) arrangeCapySettings(box, { api, context });
