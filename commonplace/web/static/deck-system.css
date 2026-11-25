@@ -77,7 +77,9 @@
 
 /* ---------- Board: the title gets the width; moving a card is a quiet action under it ---------- */
 :root[data-ui="deck"] .deck-board .card h3 { padding-right: 0; }
-:root[data-ui="deck"] .deck-board .card-top { position: static; order: 3; display: flex; justify-content: flex-end; margin-top: -4px; }
+:root[data-ui="deck"] .deck-board .card-top { position: absolute; right: 8px; bottom: 8px; top: auto; display: flex; }
+/* The meta line stops short of the Move action that shares its row. */
+:root[data-ui="deck"] .deck-board .card-meta { padding-right: 84px; min-width: 0; }
 :root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 26px; padding: 0 8px; background: transparent; color: var(--ink3); border: 1px solid var(--line); }
 :root[data-ui="deck"] .deck-board .card-top .card-more:hover { color: var(--ink); background: var(--s2); }
 }
@@ -111,6 +113,7 @@
 /* One unnamed group of bots needs no heading under the page title "Bots"; it stays for screen readers. */
 :root[data-ui="deck"] .cb-folder:only-child > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 :root[data-ui="deck"] .needs-me:has(.empty) .keys { display: none; }
+:root[data-ui="deck"] :is(.cb-state-word, .bt-state-word) { margin-left: 6px; color: var(--ink3); font-size: 12px; font-weight: 400; }
 @media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
 :root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
 :root[data-ui="deck"] .admin-workspace { color: var(--ink2); }
@@ -126,12 +129,14 @@
   /* The rail already lists every bot; the strip keeps only the one you are talking to. */
   :root[data-ui="deck"] .deck-bot-chips .deck-bot-chip:not([aria-current]) { display: none; }
 }
-:root[data-ui="deck"] .bots-thread > [data-region="model"]:not(:empty) { width: min(760px, calc(100% - 32px)); margin: 16px auto 0; flex: none; }
+:root[data-ui="deck"] .bots-thread > [data-region="model"]:not(:empty) { width: min(760px, calc(100% - 32px)); margin: 16px auto 0; padding: 0; flex: none; max-height: none; overflow: visible; }
+/* Until setup is done the conversation cannot start, so its "tell the bot" hint gives its room to the checklist. */
+:root[data-ui="deck"] .bots-thread:has(.ready-to-start:not([data-open="0"])) .bots-empty { display: none; }
 /* While setup is incomplete the whole conversation scrolls, so every checklist row stays reachable above the composer. */
 :root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) { overflow-y: auto; overscroll-behavior: contain; }
-:root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) > .bots-stream { flex: 1 0 auto; min-height: 120px; overflow: visible; }
+:root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) > .bots-stream { flex: 1 0 auto; min-height: 24px; overflow: visible; }
 :root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) > .bots-compose { position: sticky; bottom: 0; z-index: 2; }
-:root[data-ui="deck"] [data-cb-composer] { background: var(--ground); box-shadow: 0 -12px 0 var(--ground); }
+:root[data-ui="deck"] .cb-detail:has(.ready-to-start:not([data-open="0"])) [data-cb-composer] { position: static; }
 :root[data-ui="deck"] .bots-compose { display: flex; align-items: flex-start; justify-content: center; gap: 8px; }
 :root[data-ui="deck"] .bots-compose > .bots-box { flex: 1; max-width: 760px; }
 :root[data-ui="deck"] .bots-compose > .deck-composer-mic { margin-top: 6px; }
@@ -149,6 +154,15 @@
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) { padding: 7px 0; color: var(--ink3); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) b { font-weight: 500; color: var(--ink2); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) p { margin-top: 2px; font-size: 12.5px; }
+/* Rows that are fine sit two to a line on wide screens, so the steps that need you are all on screen at once. */
+:root[data-ui="deck"] .ready-to-start ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+:root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] { grid-column: 1 / -1; }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .ready-to-start ul { grid-template-columns: minmax(0, 1fr); }
+  :root[data-ui="deck"] .ready-to-start { padding: 14px 16px; }
+  :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] { padding: 8px 0; }
+  :root[data-ui="deck"] .ready-to-start a { padding: 0; }
+}
 
 /* ---------- Today: the keyboard legend only when there is something to act on, and only with a keyboard ---------- */
 :root[data-ui="deck"] .bt-list:has(.bt-empty) + .bt-keys { display: none; }
@@ -176,7 +190,8 @@
   :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }
   :root[data-ui="deck"] .bh-head { margin-bottom: 20px; }
   :root[data-ui="deck"] .shell .center .bh-head h1 { display: block; font-size: 22px; }
-  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  :root[data-ui="deck"] .capy-settings #deck-settings-nav button { flex: none; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; flex-wrap: wrap; column-gap: 16px; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { flex-basis: 100%; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav button { flex: none; min-height: 44px; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 40px; }
 }
