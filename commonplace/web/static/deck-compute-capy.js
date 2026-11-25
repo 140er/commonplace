@@ -60,7 +60,7 @@ export function decorateComputePanel(html, summary, phone = false) {
   if (headEnd < 0 || footStart < headEnd + header.length || copyStart < footStart) return html;
   const start = html.slice(0, headEnd + header.length);
   const body = html.slice(headEnd + header.length, footStart);
-  const footer = html.slice(footStart).replace(readOnly, 'Bots propose changes here. You approve them in Today.');
+  const footer = html.slice(footStart).replace(readOnly, 'Bots propose changes here. You approve them in Waiting on you.');
   let result = `${start}${summary}<details class="dc-more"><summary>Device details</summary>${body}</details>${footer}`;
   if (phone) result = result.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, PHONE_CLOSE);
   return result;

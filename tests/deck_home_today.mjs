@@ -147,10 +147,10 @@ test('phone: answer buttons are 44px tall and share a row, the quiet button take
   assert.match(phone, /\.bt-actions \.bt-quiet \{ flex: 0 0 100%; min-height: 44px/);
   assert.doesNotMatch(css, /font-style: *italic|gradient/);
 });
-test('the answers are the card buttons: first is main, an accepting option approves, more than three keep the Reply dialog', () => {
+test('the answers are the card buttons: first is main, an accepting option approves, every offered answer is a button', () => {
   const ask = { ...card, actions: ['answer'], ask_options: ['One', 'Two', 'Three', 'Four'] };
   const html = answersHTML(ask, {}, e);
-  assert.equal((html.match(/data-bt-choice=/g) || []).length, 3);
+  assert.equal((html.match(/data-bt-choice=/g) || []).length, 4, "every offered answer is a button");
   assert.match(html, /bt-primary[^>]*data-bt-choice="0"[^>]*>One</);
   assert.match(html, /data-bt-action="reply"[^>]*>Reply</);
   const done = answersHTML({ ...card, actions: ['accept', 'answer'], review_kind: 'completion', ask_options: ['Accept the completed work', 'Return for more work'] }, {}, e);

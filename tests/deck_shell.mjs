@@ -81,7 +81,7 @@ test('phone chrome has the three phone tabs, the Waiting count, an account butto
   assert.match(renderDeckTop({ hash: '#/board/work', board: { slug: 'work', name: 'Work site' } }), /<b>Work site<\/b>/);
   const css = readFileSync(new URL('../commonplace/web/static/deck-system.css', import.meta.url), 'utf8');
   assert.match(css, /grid-template-columns: 236px minmax\(0, 1fr\)/);
-  assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(css, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
 });
 
 test('shell refreshes only readable lists, keeps folder collapse and rejects stale account responses', async () => {
@@ -160,13 +160,14 @@ test('phone: every place outside the three tabs is in the account sheet, with it
   assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
   assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
   const bar = renderDeckBar({ hash: '#/', can_admin: true, can_manage_instance: true });
-  const places = ['#/settings', '#/memory', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
+  const places = ['#/settings', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
   for (const href of places) assert.ok(bar.includes(`href="${href}"`), `the sidebar offers ${href}`);
   assert.deepEqual(sheetLinks(sheet), places, 'the sheet offers each of them, with the same routes');
   assert.match(sheet, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> waiting on you/);
   assert.match(sheet, /data-action="switch-workspace"/);
   assert.match(sheet, /data-action="logout"/);
-  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/memory', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline']);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline']);
+  assert.match(bar, /href="#\/memory"/, 'Memory is a place in the sidebar');
 });
 
 test('the More button opens and closes the sheet, any tap inside closes it, Escape returns focus', async () => {

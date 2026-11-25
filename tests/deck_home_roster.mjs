@@ -117,7 +117,7 @@ test('the rail has a Waiting on you entry that links home and marks itself curre
 
 test('the phone keeps three tabs and puts Settings first in the account sheet', () => {
   const tabs = renderShellTabs({ ...options('#/'), section: 'home' });
-  assert.equal((tabs.match(/<a /g) || []).length, 3, 'Waiting, Chats, Work');
+  assert.equal((tabs.match(/<a /g) || []).length, 4, 'Waiting, Chats, Work, Memory');
   assert.match(tabs, /href="#\/" data-nav="home" aria-current="page"/);
   const sheet = renderShellMore(options('#/'));
   assert.match(sheet, /<div class="deck-more-panel"><a href="#\/settings" data-nav="settings">/);

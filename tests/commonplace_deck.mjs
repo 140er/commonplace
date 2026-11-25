@@ -144,7 +144,7 @@ test("the bar offers Bots and Settings, and a Deck screen only once it is regist
   assert.equal(deck.deckHome({}), "#/bots");
   assert.equal(deck.deckHome({ today() {} }), "#/today");
   assert.equal(deck.deckHome(), "#/");
-  for (const [hash, section] of [["#/rules", ""], ["#/admin", ""], ["#/settings", "settings"], ["#/compute", ""], ["#/board/x", "work"], ["#/memory?q=a", ""], ["", "home"]]) assert.equal(deck.deckSection(hash), section, hash);
+  for (const [hash, section] of [["#/rules", ""], ["#/admin", ""], ["#/settings", "settings"], ["#/compute", ""], ["#/board/x", "work"], ["#/memory?q=a", "memory"], ["", "home"]]) assert.equal(deck.deckSection(hash), section, hash);
 });
 
 test("the bar keeps the shell's actions, escapes names and shows Admin to admins only", () => {
@@ -160,8 +160,8 @@ test("the bar keeps the shell's actions, escapes names and shows Admin to admins
 
 test("phone: a title bar and the three phone tabs; Settings opens from the account sheet", () => {
   const tabs = deck.renderDeckTabs({ needs: 2, hash: "#/settings" });
-  assert.deepEqual([...tabs.matchAll(/href="(#\/[a-z]*)" data-nav/g)].map((m) => m[1]), ["#/", "#/bots", "#/work"]);
-  assert.match(tabs, /data-count="3"/);
+  assert.deepEqual([...tabs.matchAll(/href="(#\/[a-z]*)" data-nav/g)].map((m) => m[1]), ["#/", "#/bots", "#/work", "#/memory"]);
+  assert.match(tabs, /data-count="4"/);
   assert.doesNotMatch(tabs, /aria-current/, "Settings is not a tab");
   assert.match(deck.renderDeckMore({ hash: "#/settings" }), /<a href="#\/settings" data-nav="settings" aria-current="page">/);
   assert.match(tabs, /data-nav="home"[^>]*>[\s\S]*?class="count need">2/);
@@ -178,7 +178,7 @@ test("the shell gets the Deck bar, title and tabs unless classic is chosen", () 
   s.setItem(deck.UI_KEY, "deck");
   assert.match(ui.bar({ workspace: "Northwind", needs: 2, boards: [], view: "bots" }), /^<nav class="rail" data-deck="bar"[\s\S]*data-nav="bots"[\s\S]*Northwind/);
   assert.match(ui.top(), /data-deck="top"/);
-  assert.match(ui.tabs({ needs: 1 }), /data-deck="tabs" data-count="3"/);
+  assert.match(ui.tabs({ needs: 1 }), /data-deck="tabs" data-count="4"/);
 });
 
 test("createDeck mounts a registered screen once, refreshes it, and stops it on leave", async () => {

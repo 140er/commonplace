@@ -80,13 +80,18 @@
 :root[data-ui="deck"] .deck-settings-link { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: var(--radius-control); color: var(--ink2); }
 :root[data-ui="deck"] .deck-settings-link:hover, :root[data-ui="deck"] .deck-settings-link[aria-current] { background: var(--s2); color: var(--ink); }
 
+/* ---------- Bots list: one bordered list, a row per bot ---------- */
+:root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
+:root[data-ui="deck"] .bots-roster .cb-folder > ul > li + li { border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .bots-roster .cb-folder > ul > li > a { border-radius: 0; }
+
 /* ---------- Phone: T3's mobile header and three tabs ---------- */
 @media (max-width: 699px) {
   :root[data-ui="deck"] .m-top[data-deck="top"], :root[data-ui="deck"] #phone-bar .m-top[data-deck="top"] { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; height: 56px; min-height: 56px; padding: 0 10px; gap: 4px; background: var(--ground); border-bottom: 1px solid var(--line); }
   :root[data-ui="deck"] .m-top[data-deck="top"] > b { text-align: center; font-size: 16px; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   :root[data-ui="deck"] .m-top .deck-phone-avatar, :root[data-ui="deck"] .m-top .iconbtn { width: 40px; height: 40px; min-height: 40px; border: 1px solid var(--line); border-radius: 50%; background: var(--s1); color: var(--ink); font-size: 12px; font-weight: 700; display: grid; place-items: center; background-clip: border-box; }
   :root[data-ui="deck"] .m-top .iconbtn .i { width: 17px; height: 17px; }
-  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); height: calc(64px + env(safe-area-inset-bottom)); padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); gap: 0; background: var(--rail); border-top: 1px solid var(--line); }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); height: calc(64px + env(safe-area-inset-bottom)); padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); gap: 0; background: var(--rail); border-top: 1px solid var(--line); }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 48px; color: var(--ink3); font-size: 11.5px; font-weight: 600; }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs a[aria-current] { color: var(--ink); background: none; }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs .i { width: 21px; height: 21px; }
@@ -117,7 +122,10 @@
   /* One centred column for every page, as in a T3 thread; Work and boards use the full width for their lanes. */
   :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); margin-inline: auto; width: 100%; }
   :root[data-ui="deck"] #content > :is(.bt-scroll, .bh-wrap, .bots) { max-width: none; }
-  :root[data-ui="deck"] .shell #content :is(.bt-page, .bots-roster, .deck-board) { width: auto; max-width: var(--page-width); }
+  :root[data-ui="deck"] .shell #content :is(.bt-page, .bots-roster, .deck-board) { width: 100%; max-width: var(--page-width); }
+  :root[data-ui="deck"] .shell #content .bots[data-pane="roster"] > .bots-roster { max-width: 760px; }
+  /* On a board every card is in that project already; the avatar letter says which bot, the name would repeat. */
+  :root[data-ui="deck"] .shell .deck-board .card-meta > .deck-board-bot { display: none; }
   :root[data-ui="deck"] .shell #content .deck-compute { max-width: var(--page-width); }
   :root[data-ui="deck"] #content:has(> .pl-head), :root[data-ui="deck"] #content:has(> .deck-compute), :root[data-ui="deck"] #content:has(> .deck-memory) { padding-left: var(--page-side); padding-right: var(--page-side); }
   /* The shell already pads #content; screens that pad themselves would double the edge. */

@@ -229,7 +229,7 @@ test('panel decoration falls back intact if any upstream marker changes', async 
   }
   const decorated = decorateComputePanel(html, '<div>Facts</div>');
   assert.match(decorated, /<div>Facts<\/div><details[^>]*><summary>Device details<\/summary><div>Tabs and body<\/div><\/details><p/);
-  assert.match(decorated, /Bots propose changes here. You approve them in Today./);
+  assert.match(decorated, /Bots propose changes here. You approve them in Waiting on you./);
   const reordered = '<p class="td-foot">Read-only. Changes go through agent proposals.</p><header>Machine</header>';
   assert.equal(decorateComputePanel(reordered, ''), reordered);
 });

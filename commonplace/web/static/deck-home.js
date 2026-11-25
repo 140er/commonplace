@@ -12,7 +12,7 @@ const enc = encodeURIComponent;
 export const waitingHint = needs => {
   if (!needsKnown(needs)) return '';
   const n = needsMeCount(needs);
-  return n > 0 ? `<a href="#/today"><i class="bt-dot" data-tone="waiting" aria-hidden="true"></i>${n} waiting on you in Today</a>` : 'Nothing is waiting on you';
+  return n > 0 ? `<a href="#/today"><i class="bt-dot" data-tone="waiting" aria-hidden="true"></i>${n} waiting on you</a>` : 'Nothing is waiting on you';
 };
 /** The roster note under the composer. "No bots yet" is only true once a read succeeded and came back empty. */
 export const rosterNote = (status, count = 0) => status === 'loading' ? 'Loading bots…'

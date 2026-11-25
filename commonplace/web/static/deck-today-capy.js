@@ -42,7 +42,8 @@ export function answersHTML(card, { busy = false } = {}, escape = e) {
   if (actions.includes('answer') && options.length) {
     // An option that accepts finished work goes through Approve; any other option is sent as the chosen answer.
     const accepted = actions.includes('accept') ? actionRequest(card, 'approve', { key: 'probe' })?.options.body.choice : undefined;
-    options.slice(0, 3).forEach((option, index) => buttons.push(option === accepted ? [index, 'data-bt-action="approve"', option] : [index, `data-bt-action="reply" data-bt-choice="${index}"`, option]));
+    // Every choice the bot offered is a button: a hidden fourth answer would be an answer you cannot give.
+    options.forEach((option, index) => buttons.push(option === accepted ? [index, 'data-bt-action="approve"', option] : [index, `data-bt-action="reply" data-bt-choice="${index}"`, option]));
   } else {
     const main = primaryAction(card);
     buttons.push([0, `data-bt-action="${main.action}"`, main.label]);

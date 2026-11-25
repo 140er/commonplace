@@ -76,7 +76,7 @@ test('Today, Home, the badges and the Board report the same count for the same q
   assert.equal(summaryLine(needs), `${expected} answers needed`);
   assert.equal(summaryLine({ asks: [question] }), '1 answer needed');
   assert.equal(summaryLine({ count: 0 }), 'Nothing needs you');
-  assert.match(waitingHint(needs), new RegExp(`>${expected} waiting on you in Today<`));
+  assert.match(waitingHint(needs), new RegExp(`>${expected} waiting on you<`));
   const shown = { needs: needsMeCount(needs), bots: [{ id: 'a', name: 'A' }] };
   assert.match(renderDeckTabs(shown), new RegExp(`class="count need">${expected}`));
   assert.match(renderDeckBar(shown), new RegExp(`class="count need">${expected}`));
