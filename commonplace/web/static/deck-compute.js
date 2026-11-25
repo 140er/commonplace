@@ -262,7 +262,7 @@ export function mount(context) {
   }
   function actions() {
     const host = region('actions');
-    if (host) host.innerHTML = '<button class="dc-action" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
+    if (host) host.innerHTML = '<button class="dc-action dc-primary" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action" type="button" data-compute-action="map">Map it with a bot</button>' : '');
   }
   const tabs = root.parentElement?.querySelector(':scope > .dw-tabs');
   let tabsHome = null;

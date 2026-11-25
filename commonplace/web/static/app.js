@@ -504,7 +504,10 @@ function showError(text, { drawer = false } = {}) {
   const target = drawer ? panel?.querySelector(".ctx-body, form.assignment-removal") || panel : panel;
   if (target && !panel.hidden && text) target.insertAdjacentHTML("afterbegin", `<div class="message${drawer ? "" : " error"}" role="alert" data-panel-error>${e(text)}</div>`);
 }
+// The Deck look names these two pages as its account menu does; the classic look keeps the longer titles.
+const DECK_TITLES = { "Workspace administration": "Admin", "Instance console": "Server admin" };
 function title(text, actions = "") {
+  if (document.documentElement.dataset.ui === "deck") text = DECK_TITLES[text] || text;
   root.querySelector("#title").textContent = text;
   // A redraw keeps focus on the same header control (Details, Chat).
   const head = root.querySelector("#head-actions"), active = document.activeElement, keep = active?.closest?.("#head-actions") && active.id;

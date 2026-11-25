@@ -199,3 +199,51 @@ test('phone CSS: five tab columns and a sheet fixed inside the viewport', () => 
   assert.match(css, /\.deck-more \{[^}]*position: fixed; inset: 0/);
   assert.match(css, /\.deck-more-panel \{[^}]*left: 8px; right: 8px; bottom: calc\(76px/);
 });
+
+test('the account menu and sheet call the server console "Server admin", and its page title agrees', () => {
+  const opts = { hash: '#/', can_admin: true, can_manage_instance: true };
+  for (const html of [renderDeckBar(opts), renderDeckMore(opts)]) {
+    assert.match(html, /<a href="#\/instance-admin">Server admin<\/a>/);
+    assert.doesNotMatch(html, /Instance console/);
+  }
+  assert.match(renderDeckTop({ hash: '#/instance-admin' }), /<b>Server admin<\/b>/);
+  assert.match(renderDeckTop({ hash: '#/admin' }), /<b>Admin<\/b>/);
+  const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
+  assert.match(app, /const DECK_TITLES = \{ "Workspace administration": "Admin", "Instance console": "Server admin" \};/);
+  assert.match(app, /dataset\.ui === "deck"\) text = DECK_TITLES\[text\] \|\| text;/);
+});
+
+test('the Projects pages mark the sidebar Projects heading, not Work, while a phone keeps Work selected', () => {
+  const boards = [{ slug: 'demo', name: 'Demo' }];
+  for (const hash of ['#/boards', '#/start']) {
+    const bar = renderDeckBar({ hash, boards, sections: entries });
+    assert.match(bar, /<a class="deck-rail-heading deck-projects-heading" href="#\/boards" aria-current="page">Projects<\/a>/, hash);
+    assert.doesNotMatch(bar, /data-nav="work" aria-current/, hash);
+    assert.doesNotMatch(bar, /data-current/, 'the account row is not the current place either');
+    assert.match(renderDeckTabs({ hash }), /href="#\/work" data-nav="work" aria-current="page"/, `${hash}: the phone tab stays on Work`);
+  }
+  // With no project yet the heading still shows on the Projects page, so a nav item matches it.
+  assert.match(renderDeckBar({ hash: '#/boards', boards: [], sections: entries }), /deck-projects-heading" href="#\/boards" aria-current="page"/);
+  assert.doesNotMatch(renderDeckBar({ hash: '#/work', boards, sections: entries }), /deck-projects-heading[^>]*aria-current/);
+  assert.match(renderDeckBar({ hash: '#/work', boards, sections: entries }), /data-nav="work" aria-current="page"/);
+});
+
+test('review fixes in the stylesheets: full-width bot bar, shared page column, readable checkboxes, one-line phone crumbs', () => {
+  const read = name => readFileSync(new URL(`../commonplace/web/static/${name}`, import.meta.url), 'utf8');
+  const system = read('deck-system.css');
+  // A bot thread's bar bleeds to the same edges as every page bar and keeps its 1px rule inside 52px.
+  assert.match(system, /#content > \.bots\[data-pane="thread"\] \{ width: auto; max-width: none; margin-inline: calc\(-1 \* var\(--page-side\)\); \}/);
+  assert.match(system, /\.bots \.bots-thread > \.bots-head \{ box-sizing: border-box; height: 52px; min-height: 52px; \}/);
+  assert.match(system, /\.bots-head \.deck-bots-strip \{ height: 51px; \}/);
+  // Rules, Console and Pipeline use the shared page column, not a 560px one.
+  for (const css of [system, read('deck-pipeline.css')]) assert.doesNotMatch(css, /560px/);
+  assert.match(system, /\.console-empty \{[^}]*max-width: var\(--page-width\)/);
+  assert.match(system, /\.rules-empty \{ max-width: var\(--page-width\)/);
+  assert.match(read('deck-pipeline.css'), /\.pl-empty \{[^}]*max-width: var\(--page-width\)/);
+  // Unchecked settings boxes are outlined in --control-line (over 3:1 on the card); checked stays violet.
+  assert.match(system, /\.capy-settings input\[type="checkbox"\] \{[^}]*appearance: none;[^}]*border: 1\.5px solid var\(--control-line\)/);
+  assert.match(system, /\.capy-settings input\[type="checkbox"\]:checked \{ border-color: var\(--violet\); background: var\(--violet\); \}/);
+  // The phone bar names where you are, so the coworkers breadcrumb goes there.
+  const coworkers = read('deck-coworkers.css');
+  assert.match(coworkers.slice(coworkers.indexOf('@media (max-width: 699px)')), /\.cb-crumbs \{ display: none; \}/);
+});

@@ -50,7 +50,7 @@ test('owner, last message is the owner\'s own with no reply: says it was theirs'
 test('owner, bot never ran and has only owner-held cards: plainly nothing recorded, board one click away', async () => {
   const html = await projectBot({ state: 'idle', last: null });
   assert.match(text(html), /^Idle No run recorded for this bot yet\. Open the board$/); never(html);
-  assert.match(rowText(html), /^Idle · No run recorded for this bot yet\.$/);
+  assert.match(rowText(html), /^Idle$/); // the reason is said once, in the Working on box
 });
 test('member of a shared bot, nothing of theirs recorded: says why the owner\'s work is not shown', async () => {
   const html = await projectBot({ state: 'idle', last: null, mine: false, perms: { talk: true, see_shared: false } });

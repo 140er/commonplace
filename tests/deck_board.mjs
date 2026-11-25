@@ -34,7 +34,7 @@ test('only personal action cards get the amber edge; routine waits never do', ()
 });
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
-  for(const label of ['Summary','Bot','Assigned to','Version','Progress','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
+  for(const label of ['Summary','Bot','Assigned to','Version','Status: Needs you','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
   assert.match(html,/<code[^>]*>abc1234<\/code>/);
   assert.doesNotMatch(visible(html),/~\/|review\.json|Evidence:|P-7|#7/);
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
@@ -198,8 +198,14 @@ test('Board phone chrome names the project and keeps the menu and search control
   assert.match(renderDeckTop({hash:'#/board/product/chat'}), /<b>Board<\/b>/, 'chat chrome stays unchanged');
   assert.match(htmlFor({}), /<h1>Board<\/h1>/);
 });
-test('drawer progress parent uses its state text without a duplicate state dot', () => {
+test('a card with no steps yet shows one labelled status line, not a Progress heading over a lone row', () => {
   const html = renderDetails({...base,need:'you'},options);
+  assert.match(html, /<p class="deck-card-status"><span>Status:<\/span> <span class="waiting">Needs you<\/span><\/p>/);
+  assert.doesNotMatch(html, /<h3>Progress<\/h3>|<li class="current">/);
+});
+test('drawer progress parent uses its state text without a duplicate state dot', () => {
+  const html = renderDetails({...base,need:'you',events:[{kind:'claim'}]},options);
+  assert.match(html, /<h3>Progress<\/h3>/);
   const parent = html.match(/<li class="current">([\s\S]*?)<\/li>/)?.[1];
   assert.ok(parent);
   assert.doesNotMatch(parent, /deck-board-dot|<i/);
@@ -208,6 +214,9 @@ test('drawer progress parent uses its state text without a duplicate state dot',
 test('desktop filter group gets twelve extra pixels before Add card', () => {
   const css = readFileSync(new URL('../commonplace/web/static/deck-board.css',import.meta.url),'utf8');
   assert.match(css, /\.deck-board-filters\s*\{[^}]*margin-right:\s*12px/);
+  // The columns are right below, so the status chips show on a phone only.
+  assert.match(css, /@media \(min-width: 700px\) \{[^}]*\.deck-board-filters \{ display: none; \}/);
+  assert.match(css, /\.deck-card-drawer \.ctx-body \{[^}]*mask-image: linear-gradient\(to bottom/);
 });
 const TITLES = ['#12 foo', 'foo #12 bar', '#599 retest', 'PR #7 and #8, see #9'];
 test('Deck shows a card title exactly as typed, #NNN tokens included', async () => {

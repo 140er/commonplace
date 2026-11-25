@@ -176,13 +176,8 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         suffix = "phone" if size[0] == 390 else "desktop"
         assert page.locator(".deck-board-heading h1").inner_text() == "Board"
         if size[0] == 1440:
-            filters = page.locator(".deck-board-filters").bounding_box()
-            add = page.locator(".board-tools .deck-board-add").bounding_box()
-            assert abs(add["x"] - filters["x"] - filters["width"] - 20) < 1
-            page.locator('[data-board-filter="state:review"]').click()
-            assert page.locator(".deck-board .card").count() == 1
-            assert page.locator(".deck-board .card").get_attribute("data-card") == "4"
-            page.locator('[data-board-filter="all"]').click()
+            # The four columns are right below, so the status chips are phone-only.
+            assert not page.locator(".deck-board-filters").is_visible()
             page.locator(".board-tools .deck-board-menu summary").click()
             assert page.locator('.board-tools [data-action="coordinator"]').is_visible()
             assert page.locator('.board-tools [data-board-filter="mine"]').is_visible()

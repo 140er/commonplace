@@ -126,6 +126,8 @@
   :root[data-ui="deck"] .bots-bar .bots-new { grid-row: 1; }
   :root[data-ui="deck"] .cb-bot-row { min-height: 60px; padding: 8px 10px; }
   :root[data-ui="deck"] .shell #content.capy-coworkers { padding: 16px 16px 32px; }
+  /* The phone bar already says where you are, and its back control leads out. */
+  :root[data-ui="deck"] .cb-crumbs { display: none; }
   :root[data-ui="deck"] .cb-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   :root[data-ui="deck"] .cb-tabs :is(a, button), :root[data-ui="deck"] .cb-modes button { min-height: 44px; }
   :root[data-ui="deck"] .cb-send:not([data-wide]) { width: 40px; height: 40px; }

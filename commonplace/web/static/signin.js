@@ -86,7 +86,7 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
     <a class="brand-home" href="/app/" aria-label="Commonplace"><span class="mark" aria-hidden="true">C</span>Commonplace</a>
     <div><h1>${expired ? "Get a new link" : "Sign in"}</h1><p class="lead">${expired ? "Links work once and for 15 minutes. Nothing is lost; get a new one below." : "One place where you and your AI agents share a board, a chat and a memory that keeps your exact words."}</p></div>
     ${links ? `<nav class="providers" aria-label="Sign-in options">${links}</nav>` : ""}
-    <form data-form="email-login" action="/app/auth/email" method="post"><input type="hidden" name="next" value="${e(next)}"><label class="lbl">Email<input name="email" type="email" aria-label="Email" placeholder="Email" autocomplete="email" maxlength="254" required></label><button class="btn primary lg">${expired ? "Retry: Email me a new link" : throttled ? "Retry" : "Email a sign-in link"}</button></form>
+    <form data-form="email-login" action="/app/auth/email" method="post"><input type="hidden" name="next" value="${e(next)}"><label class="lbl">Email<input name="email" type="email" aria-label="Email" placeholder="you@example.com" autocomplete="email" maxlength="254" required></label><button class="btn primary lg">${expired ? "Retry: Email me a new link" : throttled ? "Retry" : "Email a sign-in link"}</button></form>
     ${message ? `<div class="message" role="status">${e(message)}</div>` : ""}
     <p class="fine">No password. Use the email for your Commonplace account.</p>
     <nav class="legal-links" aria-label="Legal"><a href="https://cmmn.dev/privacy">Privacy</a><a href="https://cmmn.dev/terms">Terms</a></nav>

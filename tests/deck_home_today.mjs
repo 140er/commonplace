@@ -194,3 +194,9 @@ test('phone: the mic keeps a gap to the tabs and the key hint is for keyboards o
   const bench = readFileSync(new URL('../commonplace/web/static/workbench.css', import.meta.url), 'utf8');
   assert.match(bench, /@media \(pointer: coarse\), \(max-width: 699px\) \{\s*\.workbench-board form\[data-board-add\] \.composer-keys \{ display: none/);
 });
+
+test('the key line says H puts an item on hold', () => {
+  const source = readFileSync(new URL('../commonplace/web/static/deck-today-capy.js', import.meta.url), 'utf8');
+  assert.match(source, /Keys: J and K move between items, R replies, H puts an item on hold</);
+  assert.doesNotMatch(source, /H holds an item/);
+});

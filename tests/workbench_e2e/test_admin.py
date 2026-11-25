@@ -45,9 +45,7 @@ def test_admin_owner_cold_reload_retry_and_responsive_navigation(hub, chromium, 
         page.route("**/api/admin/**/connections", connections)
         page.goto(origin + "/app/#/admin", wait_until="domcontentloaded")
         if width >= 700:
-            expect(
-                page.get_by_role("heading", name="Workspace administration", exact=True)
-            ).to_be_visible()
+            expect(page.get_by_role("heading", name="Admin", exact=True)).to_be_visible()
         else:
             expect(page.locator(".admin")).to_be_visible()
         expect(

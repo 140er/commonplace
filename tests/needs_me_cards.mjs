@@ -93,7 +93,9 @@ test('Today, Home, the badges and the Board report the same count for the same q
     assert.doesNotMatch(html.split('id="col-doing"')[0], /data-card="20"/, 'a card the queue does not list is not "Needs you"');
     assert.doesNotMatch(html, /data-needs-note/, 'one project holding the whole queue needs no explanation');
     const other = boardView({ board: { slug: 'other', name: 'Other' }, me: 'user:owner', bots: [], deck: true, cards: cards.slice(0, 2) });
-    assert.match(other, /data-needs-note>7 cards are waiting on you across all projects; 2 are in this one\./);
+    assert.match(other, /data-needs-note>2 here and 5 in other projects need you\./);
+    const none = boardView({ board: { slug: 'other', name: 'Other' }, me: 'user:owner', bots: [], deck: true, cards: [] });
+    assert.match(none, /data-needs-note>7 cards in other projects need you\./);
   } finally { setNeedsQueue(null); }
 });
 

@@ -671,9 +671,10 @@ test('empty workspace keeps just the hub, and an unavailable general bot hides o
   assert.match(f.root.html, /No machines yet/);
   assert.equal(f.regions.get('empty').hidden, false);
   assert.equal(f.regions.get('summary').textContent, '');
-  assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add a machine/);
+  assert.match(f.regions.get('actions').innerHTML, /class="dc-action dc-primary" type="button" data-compute-action="add-machine">Add a machine/);
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-site">Add site/);
-  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
+  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot|Map it with a bot/);
+  assert.equal((f.root.html.match(/Add a machine/g) || []).length, 0, 'the one Add a machine action is the header button, not repeated in the page');
   f.ui.stop();
 });
 
@@ -682,6 +683,7 @@ test('one-click handoffs store the draft and navigate; never send a message', as
   globalThis.sessionStorage = { setItem: (key, value) => saved.push([key, JSON.parse(value)]) };
   try {
     const f = harness(); await flush();
+    assert.match(f.regions.get('actions').innerHTML, /data-compute-action="map">Map it with a bot</);
     f.click({ computeAction: 'map' });
     assert.deepEqual(saved, [['cmmn.deck.draft', { bot: 'general', text: 'Map my machines and sites.' }]]);
     assert.deepEqual(f.nav, ['#/bots/general']);

@@ -86,6 +86,8 @@
 :root[data-ui="deck"] .rail[data-deck="bar"] .me > .i { width: 12px; height: 12px; margin-left: auto; color: var(--ink3); transform: rotate(-90deg); }
 /* The Bots heading is a link to the list, never styled as a selected row. */
 :root[data-ui="deck"] a.deck-rail-heading[aria-current] { background: none; color: var(--ink); }
+/* The Projects heading is a place of its own: it reads as the selected row on the Projects pages. */
+:root[data-ui="deck"] a.deck-projects-heading[aria-current] { background: var(--s2); }
 /* Recent activity: neutral marks, the latest five only. */
 :root[data-ui="deck"] .bt-recent .bt-dot { background: var(--ink4); animation: none; }
 :root[data-ui="deck"] .bt-recent li:nth-child(n+6) { display: none; }
@@ -162,6 +164,11 @@
 :root[data-ui="deck"] body .btn.primary, :root[data-ui="deck"] body button.btn.primary { background: var(--violet); border-color: var(--violet); color: var(--ground); }
 :root[data-ui="deck"] body .btn.primary:hover { background: var(--violet-ink); filter: brightness(1.08); }
 :root[data-ui="deck"] input[type="checkbox"], :root[data-ui="deck"] input[type="radio"] { accent-color: var(--violet); }
+/* Settings checkboxes: an unchecked box is outlined in --control-line (over 3:1 on the card), a checked one is violet. */
+:root[data-ui="deck"] .capy-settings input[type="checkbox"] { appearance: none; display: inline-grid; place-content: center; flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; border: 1.5px solid var(--control-line); border-radius: 5px; background: var(--s2); cursor: pointer; }
+:root[data-ui="deck"] .capy-settings input[type="checkbox"]:checked { border-color: var(--violet); background: var(--violet); }
+:root[data-ui="deck"] .capy-settings input[type="checkbox"]:checked::after { content: ""; width: 4px; height: 8px; margin-top: -1px; border: solid var(--ground); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+:root[data-ui="deck"] .capy-settings input[type="checkbox"]:disabled { opacity: 0.5; cursor: default; }
 :root[data-ui="deck"] body .shell .look-switch .opt[aria-pressed="true"] { background: var(--violet); color: var(--ground); }
 :root[data-ui="deck"] .pl-empty .cp-art { display: none; }
 
@@ -219,6 +226,12 @@
   /* On a board every card is in that project already; the avatar letter says which bot, the name would repeat. */
   :root[data-ui="deck"] .shell .deck-board .card-meta > .deck-board-bot { display: none; }
   :root[data-ui="deck"] .shell #content .deck-compute { max-width: var(--page-width); }
+  /* A bot thread's bar is the same full-width 52px bar as every other page's: the centred page column above would
+     otherwise cancel the shell-padding bleed, and the 1px rule sits inside the 52px, not below it. */
+  :root[data-ui="deck"] .shell #content > .bots[data-pane="thread"] { width: auto; max-width: none; margin-inline: calc(-1 * var(--page-side)); }
+  :root[data-ui="deck"] .bots .bots-thread > .bots-head { box-sizing: border-box; height: 52px; min-height: 52px; }
+  :root[data-ui="deck"] .bots .bots-thread > .bots-head:has(.bot-thread-audience) { height: auto; }
+  :root[data-ui="deck"] .bots-head .deck-bots-strip { height: 51px; }
   :root[data-ui="deck"] #content:has(> .pl-head), :root[data-ui="deck"] #content:has(> .deck-compute), :root[data-ui="deck"] #content:has(> .deck-memory) { padding-left: var(--page-side); padding-right: var(--page-side); }
   /* The shell already pads #content; screens that pad themselves would double the edge. */
   :root[data-ui="deck"] .shell #content .bt-page { padding-inline: 0; margin-inline: 0; }
@@ -252,7 +265,7 @@
 :root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
 :root[data-ui="deck"] .deck-board-intro .deck-board-switch { display: inline-flex; align-items: center; min-height: 24px; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line2); border-radius: var(--radius-control); color: var(--ink2); text-decoration: none; font-size: 12.5px; }
 :root[data-ui="deck"] .deck-board-intro .deck-board-switch:hover { color: var(--ink); background: var(--s2); }
-:root[data-ui="deck"] .console-empty { grid-column: 1 / -1; align-self: start; justify-self: start; width: min(560px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 560px; padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
+:root[data-ui="deck"] .console-empty { grid-column: 1 / -1; align-self: start; justify-self: start; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: var(--page-width); padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
 :root[data-ui="deck"] .console-empty .console-message { margin: 0; color: var(--ink); font-size: 15px; font-weight: 600; }
 :root[data-ui="deck"] .console-empty-next { margin: 0 0 6px; color: var(--ink2); }
 :root[data-ui="deck"] .deck-board .card > .card-top { position: static; grid-column: 2; grid-row: 2; display: flex; }
@@ -287,7 +300,7 @@
 :root[data-ui="deck"] #content > .queue > .item h3 a::after { content: ""; position: absolute; inset: 0; }
 :root[data-ui="deck"] #content > .queue > .item { position: relative; }
 :root[data-ui="deck"] #content > .queue > .item .meta { color: var(--ink3); font-size: 13px; }
-:root[data-ui="deck"] .rules-empty { max-width: 560px; padding: 16px 18px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink2); background: transparent; }
+:root[data-ui="deck"] .rules-empty { max-width: var(--page-width); padding: 16px 18px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink2); background: transparent; }
 
 /* ---------- Small clarity fixes ---------- */
 /* One unnamed group of bots needs no heading under the page title "Bots"; it stays for screen readers. */
@@ -299,6 +312,8 @@
 @media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
 :root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
 :root[data-ui="deck"] .admin-workspace { color: var(--ink2); }
+/* A project named "Coworker:common / place" wraps at the colon or a space, never inside a word. */
+:root[data-ui="deck"] .admin td[data-label="Project"] { overflow-wrap: normal; word-break: normal; }
 :root[data-ui="deck"] .admin.settings h3 { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
 :root[data-ui="deck"] #content > .admin.settings { padding-inline: 0; }
 /* A heading focused so screen readers land on it is not a control; it needs no focus box. */

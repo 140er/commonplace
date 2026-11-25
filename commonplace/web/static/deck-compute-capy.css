@@ -8,6 +8,8 @@
 :root[data-ui="deck"] .deck-compute .dc-actions { grid-area: 1 / 2 / 3 / 3; align-self: end; }
 :root[data-ui="deck"] .deck-compute .dc-action { min-height: 36px; padding: 0 12px; border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font-size: 13.5px; }
 :root[data-ui="deck"] .deck-compute .dc-action:hover { background: var(--s3); }
+:root[data-ui="deck"] .deck-compute .dc-action.dc-primary { background: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] .deck-compute .dc-action.dc-primary:hover { background: var(--violet); filter: brightness(1.08); }
 /* Available width = canvas + 14px gutter + 300px inspector. */
 :root[data-ui="deck"] .deck-compute .topo { grid-template-columns: minmax(0,1fr) 300px; gap: 0 14px; }
 :root[data-ui="deck"] .deck-compute :is(.topo-stage,.topo-detail,.dc-enroll) { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: none; }

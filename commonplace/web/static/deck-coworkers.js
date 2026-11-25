@@ -145,7 +145,8 @@ export function rowSummary(worker, detail = {}) {
   if (own) return own;
   const loaded = worker.conversation && String(detail.conversation?.id) === String(worker.conversation.id);
   const status = workStatus(worker, loaded ? detail : {}, {});
-  if (worker.conversation && !loaded && status.headline === 'Idle') return 'Open it to see what it did last.';
+  // The roster row says "Idle" and no more; why nothing is recorded is said once, in the Working on box.
+  if (status.headline === 'Idle') return worker.conversation && !loaded ? 'Open it to see what it did last.' : 'Idle';
   const line = status.text ? `${status.headline} · ${status.text}` : status.headline;
   return line.length > 100 ? `${line.slice(0, 99)}…` : line;
 }
@@ -207,6 +208,8 @@ export function sendBlock(detail = {}, mode = 'chat') {
   return '';
 }
 export function composerHTML(detail = {}, { mode = 'chat', text = '', busy = false, pending = false, coworker = detail.conversation?.title || 'Coworker' } = {}) {
+  // No conversation open: there is nothing to type into, so the box is not shown, only the way to open one.
+  if (!detail.conversation) return '<p class="cb-compose-reason cb-compose-off" id="cb-reason" role="status">Send is off until a conversation is open. <a href="#/bots/-/coworkers/conversations">Open a conversation</a> to send a message.</p>';
   const conversation = detail.conversation, enabled = Boolean(conversation), steer = canSteer(detail), placeholder = `${mode === 'steer' ? 'Steer' : 'Message'} ${name(coworker)}`;
   const block = sendBlock(detail, mode), reason = !enabled ? '<p class="cb-compose-reason" id="cb-reason" role="status">Send is off until a conversation is open. <a href="#/bots/-/coworkers/conversations">Open a conversation</a> to send a message.</p>' : block ? `<p class="cb-compose-reason" id="cb-reason" role="status">${e(block)}</p>` : '';
   const describe = reason ? ' aria-describedby="cb-reason"' : '';

@@ -36,7 +36,8 @@ test('current observations override graph values, stale observations cannot impl
 
 test('Add a machine leads to the existing Admin enrollment, with no second setup form', () => {
   const html = addMachineHTML();
-  assert.match(html, /Add a machine/); assert.match(html, /href="#\/admin"/); assert.match(html, /Then choose which bots may use it/);
+  // The page's one Add a machine action is the header button; this card explains the setup and links to it.
+  assert.match(html, /Connecting a machine/); assert.match(html, /Open machine setup/); assert.doesNotMatch(html, /Add a machine/); assert.match(html, /href="#\/admin"/); assert.match(html, /Then choose which bots may use it/);
   assert.doesNotMatch(html, /Add runner|workspace administration/);
   assert.doesNotMatch(html, /<form|<input|curl|token|POST/);
 });
@@ -218,6 +219,13 @@ test('compact node states have distinct geometry and accessible status words', a
     }
     assert.doesNotMatch(draw({ status: 'none' }), /dc-node-status/);
   }
+});
+
+test('the hub panel names its kind once: "Hub", not "Hub · Hub"', async () => {
+  const { decorateComputePanel } = await import('../commonplace/web/static/deck-compute-capy.js');
+  const panel = sub => `<header class="td-head"><div><h2 class="td-title">Commonplace</h2><p class="td-sub">${sub}</p></div></header><div>Body</div><p class="td-foot">Read-only. Changes go through agent proposals.</p>`;
+  assert.match(decorateComputePanel(panel('Hub · Hub'), '<div>Facts</div>'), /<p class="td-sub">Hub<\/p>/);
+  assert.match(decorateComputePanel(panel('Server · Ready · stale'), '<div>Facts</div>'), /<p class="td-sub">Server · Ready · stale<\/p>/);
 });
 
 test('panel decoration falls back intact if any upstream marker changes', async () => {

@@ -209,3 +209,17 @@ test('a failed read records why, so the page can say it', async () => {
   const page = await searchMemory({ api, boards: [{ ...board, wing: '' }], query: 'exact' });
   assert.deepEqual(page.errors, [{ board: 'work', source: 'project', reason: 'busy' }]);
 });
+
+test('Add a note and Import memory files are one action group; Map, Saved threads and Organise memory are a separate quiet row', () => {
+  const html = renderMemory(state);
+  const actions = html.match(/<div class="memory-actions">([^]*?)<\/div>/)[1];
+  assert.match(actions, /data-memory-action="note"[^>]*>Add a note[^]*data-memory-action="import"/);
+  assert.ok(html.indexOf('class="memory-actions"') < html.indexOf('data-memory-search'), 'the group sits in the page header, above the search');
+  const tools = html.match(/<div class="memory-tools"[^>]*>([^]*?)<\/div>/)[1];
+  for (const name of ['map', 'history', 'organise']) assert.match(tools, new RegExp(`memory-${name}-launch`));
+  const filterbar = html.match(/<div class="memory-filterbar">[^]*?<span class="memory-status"[^]*?<\/span>([^]*?)<\/form>/)[1];
+  assert.doesNotMatch(filterbar, /memory-(map|history|organise)-launch|Saved threads|Organise memory/, 'the chip row holds filters only');
+  const css = readFileSync(new URL('../commonplace/web/static/deck-memory.css', import.meta.url), 'utf8');
+  assert.match(css, /\.memory-actions \{ position: absolute; top: 18px; right: 0;/);
+  assert.match(css.slice(css.indexOf('@media (max-width: 699px)')), /\.memory-actions \{ position: static;/);
+});

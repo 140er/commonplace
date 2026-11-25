@@ -8,7 +8,7 @@ const PHONE_CLOSE = '<button type="button" class="dc-back" data-td="close" aria-
 
 export const ENROLL_ROUTE = '#/admin';
 export const COMPUTE_COPY = {
-  add: 'Add a machine',
+  add: 'Connecting a machine',
   intro: 'Your machines and how your bots reach them. Drag to arrange.',
   setup: 'Run one command on the machine, then accept the connection. It connects out, so you open no ports.',
 };
@@ -53,12 +53,15 @@ export function computePanel(options, record, phone = false, running = '') {
   return decorateComputePanel(panelHTML(options), summary, phone);
 }
 
+// The hub's kind and role are both "Hub": the sub line names it once.
+const onceEach = html => html.replace(/(<p class="td-sub">)([^<]*)(<\/p>)/, (_all, open, line, close) => open + line.split(' · ').filter((part, i, parts) => parts.findIndex(other => other.toLowerCase() === part.toLowerCase()) === i).join(' · ') + close);
+
 export function decorateComputePanel(html, summary, phone = false) {
   const header = '</header>', foot = '<p class="td-foot">', readOnly = 'Read-only. Changes go through agent proposals.';
   const headEnd = html.indexOf(header), footStart = html.indexOf(foot), copyStart = html.indexOf(readOnly, footStart);
   // Preserve the original panel if its upstream structure or copy has changed.
   if (headEnd < 0 || footStart < headEnd + header.length || copyStart < footStart) return html;
-  const start = html.slice(0, headEnd + header.length);
+  const start = onceEach(html.slice(0, headEnd + header.length));
   const body = html.slice(headEnd + header.length, footStart);
   const footer = html.slice(footStart).replace(readOnly, 'Bots propose changes here. You approve them in Waiting on you.');
   let result = `${start}${summary}<details class="dc-more"><summary>Device details</summary>${body}</details>${footer}`;
@@ -67,7 +70,7 @@ export function decorateComputePanel(html, summary, phone = false) {
 }
 
 export function addMachineHTML() {
-  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><a class="dc-action" href="${ENROLL_ROUTE}">Add a machine</a><p class="dc-observed">Then choose which bots may use it.</p></section>`;
+  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><a class="dc-action" href="${ENROLL_ROUTE}">Open machine setup</a><p class="dc-observed">Then choose which bots may use it.</p></section>`;
 }
 
 /** The media query is observable without a browser. CSS is a second, immediate fallback. */

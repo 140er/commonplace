@@ -43,10 +43,11 @@ try {
     assert.equal((html.match(/Coworkers do not run on it in this version/g) || []).length, 3);
     assert.doesNotMatch(html, /disabled|unbound|99 starts|9 in flight|requester-add|requester-remove|Machine requesters/);
   } else if(process.argv[2]==='labels') {
-    find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Alpha',source:'coordinator',connected:true,activity:'working'},{id:2,name:'Beta',source:'seat',connected:false},{id:3,name:'Gamma',source:'not_configured',connected:false}],count:3},machines:{state:'ready',items:[],count:0}});
+    find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Coworker:common / place',source:'coordinator',connected:true,activity:'working'},{id:2,name:'Beta',source:'seat',connected:false},{id:3,name:'Gamma',source:'not_configured',connected:false}],count:3},machines:{state:'ready',items:[],count:0}});
     find('limits').resolve({workspace_id:'ws-one',projects:[{id:1,name:'Alpha',counting_mode:'distinct_doing_agents'},{id:2,name:'Beta',counting_mode:'orchestration_slots'}],machines:[]});await flush();
     const html=section(host.innerHTML,'runtime');
     assert.match(html,/Not connected/);assert.match(html,/>Connected</);
+    assert.ok(html.includes('Coworker:<wbr>common / place'), 'a project name may wrap at its colon, never inside a word');
     assert.match(html,/Activity records token use, not a running process/);
     assert.match(html,/Coordinator/);assert.match(html,/Stored seat/);assert.match(html,/Not configured/);
     assert.doesNotMatch(host.innerHTML,/distinct_doing_agents|orchestration_slots|not_configured/);
