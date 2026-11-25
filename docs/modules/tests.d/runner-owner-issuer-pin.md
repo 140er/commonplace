@@ -5,6 +5,7 @@
 - **Promises:**
 
   - Behavioral RED witnesses cover the missing plan field and unpinned producer acceptance. Negative cases retain separate enrollment, owner pin and hub trust roots without enabling work.
+  - Successful owner-pin fixtures create new source files privately before writing, independent of inherited file-creation policy.
 
 - **How it fails:**
 
