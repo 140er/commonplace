@@ -216,7 +216,9 @@ test('desktop filter group gets twelve extra pixels before Add card', () => {
   assert.match(css, /\.deck-board-filters\s*\{[^}]*margin-right:\s*12px/);
   // The columns are right below, so the status chips show on a phone only.
   assert.match(css, /@media \(min-width: 700px\) \{[^}]*\.deck-board-filters \{ display: none; \}/);
-  assert.match(css, /\.deck-card-drawer \.ctx-body \{[^}]*mask-image: linear-gradient\(to bottom/);
+  // The drawer text never fades; a rule above the footer marks where the scrolling body ends.
+  assert.doesNotMatch(css, /\.deck-card-drawer \.ctx-body \{[^}]*mask-image/);
+  assert.match(css, /\.deck-card-drawer \.ctx-foot \{[^}]*border-top: 1px solid var\(--line\)/);
 });
 const TITLES = ['#12 foo', 'foo #12 bar', '#599 retest', 'PR #7 and #8, see #9'];
 test('Deck shows a card title exactly as typed, #NNN tokens included', async () => {

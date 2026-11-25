@@ -104,7 +104,9 @@
   /* The answers own their rows; Reply and See the work always start a row of their own under them. */
   :root[data-ui="deck"] .bt-actions::after { content: ""; flex-basis: 100%; order: 1; }
   :root[data-ui="deck"] .bt-actions button.bt-quiet { order: 2; flex: 1 1 40%; margin-left: 0; }
-  :root[data-ui="deck"] .capy-settings #deck-settings-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  /* Settings sections and Board states are few: on a phone they wrap, so none hides past the edge. */
+  :root[data-ui="deck"] body .capy-settings #deck-settings-nav { flex-wrap: wrap; overflow: visible; mask-image: none; padding-right: 0; }
+  :root[data-ui="deck"] body .deck-board-states { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; padding-right: 0; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { display: none; }
   /* Work's project filters are few: they wrap instead of running off the edge. */
   :root[data-ui="deck"] .deck-work .wk-chips { flex-wrap: wrap; overflow: visible; mask-image: none; padding-right: 0; }
@@ -142,6 +144,8 @@
   :root[data-ui="deck"] body .shell .center #content.deck-workspace.dw-map { padding-top: 20px; }
   :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 16px; }
   :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 0; }
+  /* The board scrolls with the page, so a long column runs on below the fold instead of being cut inside a box. */
+  :root[data-ui="deck"] body .shell #content .deck-board .board { overflow: visible; height: auto; max-height: none; padding-bottom: 32px; }
   :root[data-ui="deck"] body .shell #content .deck-memory { padding-top: 0; }
   /* The bar holds the title, so Memory's actions sit on the intro line, clear of the search box. */
   :root[data-ui="deck"] body .shell #content .deck-memory .memory-heading { min-height: 32px; align-items: center; margin-bottom: 16px; }
@@ -157,7 +161,7 @@
 :root[data-ui="deck"] body .shell .bt-actions .bt-secondary:hover:not(:disabled) { border-color: var(--ink3); }
 @media (max-width: 699px) {
   /* Rows that scroll sideways fade at the edge, so the next option reads as more to come. */
-  :root[data-ui="deck"] :is(.memory-rooms, .capy-settings #deck-settings-nav) { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); padding-right: 32px; }
+  :root[data-ui="deck"] :is(.memory-rooms) { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); padding-right: 32px; }
 }
 
 /* Reply and See the work sit together at the end of the answer row. */
@@ -414,3 +418,11 @@
   :root[data-ui="deck"] .capy-settings #deck-settings-nav button { flex: none; min-height: 44px; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 40px; }
 }
+
+/* Setup steps that are done or do not apply fold behind one quiet line. */
+:root[data-ui="deck"] .ready-to-start .ready-rest { margin-top: 6px; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 2px; color: var(--ink2); font-size: 13px; cursor: pointer; list-style: none; }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary::-webkit-details-marker { display: none; }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); margin-right: 4px; transition: transform .15s; }
+:root[data-ui="deck"] .ready-to-start .ready-rest[open] > summary::before { transform: rotate(45deg); }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary:hover { color: var(--ink); }
