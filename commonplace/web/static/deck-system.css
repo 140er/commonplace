@@ -275,7 +275,6 @@
 }
 :root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 26px; padding: 0 8px; background: transparent; color: var(--ink2); border: 1px solid var(--line3); }
 :root[data-ui="deck"] .deck-board .card-top .card-more:hover { color: var(--ink); background: var(--s2); }
-}
 :root[data-ui="deck"] .deck-board .card:hover { border-color: var(--line2); }
 
 /* ---------- Sign-in: numbered steps you can actually read ---------- */

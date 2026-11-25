@@ -164,13 +164,13 @@ def test_admin_runtime_panels_retry_independently(hub, runtime, chromium, width)
         expect(
             page.locator('[data-admin-panel="stuck"]').get_by_text("Task 1", exact=False)
         ).to_be_visible()
-        expect(page.get_by_text("Needs-me unavailable. Retry.", exact=True)).to_be_visible()
+        expect(page.get_by_text("Waiting on you unavailable. Retry.", exact=True)).to_be_visible()
         expect(
             page.get_by_text("Workspace concurrency cap: not configured.", exact=False)
         ).to_be_visible()
         page.get_by_role("button", name="Retry Machines", exact=True).click()
         expect(page.get_by_text("Machine 1", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Retry Needs-me", exact=True).click()
+        page.get_by_role("button", name="Retry Waiting on you", exact=True).click()
         expect(page.get_by_text("1 card waiting", exact=True)).to_be_visible()
         assert page.locator('[data-admin-panel="needs"] a[href="#/card/1"]').count() == 2
         assert "hidden queue body" not in page.locator(".admin").inner_text()

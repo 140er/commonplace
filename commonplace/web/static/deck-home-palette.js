@@ -1,8 +1,9 @@
 // Product navigation uses the shell's existing destinations and authorized roster.
 export function deckPaletteItems({ board, bots = [] } = {}) {
   return [
-    { id: 'new-thread', label: 'New thread', group: 'Actions', href: '#/', key: '/' },
-    ...[['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['memory', 'Memory'], ['board', 'Board'], ['settings', 'Settings']].map(([id, label]) => ({ id, label, group: 'Go to', href: id === 'board' ? board?.slug ? `#/board/${encodeURIComponent(board.slug)}` : '#/boards' : `#/${id}` })),
+    { id: 'new-thread', label: 'New chat', group: 'Actions', href: '#/bots', key: '/' },
+    // The same names as the sidebar.
+    ...[['today', 'Waiting on you'], ['work', 'Work'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['memory', 'Memory'], ['board', 'Board'], ['settings', 'Settings']].map(([id, label]) => ({ id, label, group: 'Go to', href: id === 'today' ? '#/' : id === 'board' ? board?.slug ? `#/board/${encodeURIComponent(board.slug)}` : '#/boards' : `#/${id}` })),
     ...bots.filter(bot => !bot.frozen && !bot.lifecycle).map(bot => ({ id: `bot-${bot.id}`, label: bot.name, group: 'Your bots', href: `#/bots/${encodeURIComponent(bot.id)}` })),
   ];
 }

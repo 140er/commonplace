@@ -4,7 +4,7 @@ export { boundedRequest } from "./request-deadline.js";
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Agents and connections',
   runtime: 'Coworkers and runners/machines', limits: 'Agent limits',
-  stuck: 'Needs-me and stuck cards', deploy: 'Deployment and health', backups: 'Backups', 'index-stats': 'Memory index',
+  stuck: 'Waiting on you and stuck cards', deploy: 'Deployment and health', backups: 'Backups', 'index-stats': 'Memory index',
 };
 
 export function createAdmin({ mount, api, e, current, runners = null, invites = null, timers = globalThis }) {
@@ -153,7 +153,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     target.innerHTML = `<div class="admin settings"><p class="admin-workspace">Workspace: <b>${e(current().workspace_name || '')}</b></p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
       if (!sections.has(key) || (key === 'index-stats' && !instanceOwner())) return '';
       if (key === 'deploy') return `<section class="settings-section" data-admin-section="deploy"><h2>${e(title)}</h2>${panel('deploy')}${panel('health')}</section>`;
-      return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Needs-me</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;
+      return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Waiting on you</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;
     }).join('')}</div>`;
     if (refresh) target.querySelector(`[data-admin-section="${refresh}"][data-admin-action="refresh"]`)?.focus({ preventScroll: true });
     else if (href) [...target.querySelectorAll('a[href]')].find(link => link.getAttribute('href') === href)?.focus({ preventScroll: true });

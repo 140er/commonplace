@@ -27,7 +27,7 @@ try {
     assert.match(host.innerHTML,/href="#\/card\/7"/);assert.doesNotMatch(host.innerHTML,/BODY MUST STAY HIDDEN|example.invalid|<now>/);
     assert.match(host.innerHTML,/Decision &lt;now&gt;/);
     ui.refreshSection('needs');find('needs-me').reject(new Error('private-canary'));await flush();
-    assert.match(host.innerHTML,/Needs-me unavailable\. Retry\./);
+    assert.match(host.innerHTML,/Waiting on you unavailable\. Retry\./);
     assert.match(host.innerHTML,/Card &lt;8&gt;/);assert.doesNotMatch(host.innerHTML,/private-canary/);
     click('needs');find('needs-me').resolve({count:0});await flush();
     assert.match(host.innerHTML,/No cards waiting/);
