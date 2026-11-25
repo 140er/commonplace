@@ -133,7 +133,7 @@ const PAGE_TITLES = { '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs':
 export function renderShellTop(options) {
   const { hash = '', user = '', board = null } = options;
   const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];
-  const label = isHome(hash) || hash === '#/today' ? 'Waiting on you' : board?.name || (hash.startsWith('#/board') ? 'Board' : page || 'Commonplace');
+  const label = isHome(hash) || hash === '#/today' ? 'Waiting on you' : page || board?.name || (hash.startsWith('#/board') ? 'Board' : 'Commonplace');
   return `<header class="m-top" data-deck="top"><button type="button" class="deck-phone-avatar" data-deck-shell-action="more" aria-haspopup="dialog" aria-controls="deck-more" aria-label="Account and more" data-deck-waiting="false">${e(initials(user))}</button><b>${e(label)}</b><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button></header>`;
 }
 // The phone has no sidebar, so every place outside the three tabs lives in this sheet, opened from the account button.

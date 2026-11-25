@@ -99,20 +99,23 @@
 :root[data-ui="deck"] .center h1 { font-size: var(--title-size); line-height: 1.25; font-weight: 600; letter-spacing: -0.015em; color: var(--ink); }
 :root[data-ui="deck"] :is(.bt-page, .bh-content) { margin-inline: 0; }
 :root[data-ui="deck"] .bt-page { width: min(var(--page-width), 100%); }
-:root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); margin-inline: 0; padding: var(--page-top) var(--page-side) 32px; }
-:root[data-ui="deck"] .bots-roster { width: min(calc(var(--page-width) + 2 * var(--page-side)), 100%); margin-inline: 0; }
+:root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); margin-inline: auto; padding: var(--page-top) var(--page-side) 32px; }
+:root[data-ui="deck"] .bots-roster { width: min(calc(var(--page-width) + 2 * var(--page-side)), 100%); margin-inline: auto; }
+:root[data-ui="deck"] .bots[data-pane="roster"] { grid-template-columns: minmax(0, 1fr); }
+:root[data-ui="deck"] .bots[data-pane="roster"] > .bots-roster { width: min(760px, 100%); }
 :root[data-ui="deck"] .shell #content .deck-memory { max-width: var(--page-width); margin: 0; }
 @media (min-width: 700px) {
   /* Screens titled by the shell head (Projects, Rules, Console, Admin, Needs me) start on the same edge as the rest. */
   :root[data-ui="deck"] .shell .center > .head:not([hidden]) { padding: calc(var(--page-top) - 8px) var(--page-side) 0; min-height: 0; }
   /* Header actions end where the page body ends. */
-  :root[data-ui="deck"] .shell .center > .head:not([hidden]) { max-width: calc(var(--page-width) + 2 * var(--page-side)); }
-  :root[data-ui="deck"] #content :is(.console-view, .admin.settings) { padding-left: 0; padding-right: 0; margin-left: 0; }
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) { max-width: calc(var(--page-width) + 2 * var(--page-side)); width: 100%; margin-inline: auto; }
+  :root[data-ui="deck"] #content :is(.console-view, .admin.settings) { padding-left: 0; padding-right: 0; }
   :root[data-ui="deck"] #content > .console-view .console-message { margin-left: 0; padding-left: 0; }
   :root[data-ui="deck"] #content:has(> .pl-head) { padding-top: calc(var(--page-top) - 8px); }
   :root[data-ui="deck"] .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding: 20px var(--page-side) 32px; }
   :root[data-ui="deck"] #content > :is(.queue, .rules-view, .console-view) { padding: 0; max-width: var(--page-width); }
-  :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); }
+  /* One centred column for every page, as in a T3 thread; Work and boards use the full width for their lanes. */
+  :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); margin-inline: auto; width: 100%; }
   :root[data-ui="deck"] #content > :is(.bt-scroll, .bh-wrap, .bots) { max-width: none; }
   :root[data-ui="deck"] .shell #content :is(.bt-page, .bots-roster, .deck-board) { width: auto; max-width: var(--page-width); }
   :root[data-ui="deck"] .shell #content .deck-compute { max-width: var(--page-width); }
@@ -120,7 +123,7 @@
   /* The shell already pads #content; screens that pad themselves would double the edge. */
   :root[data-ui="deck"] .shell #content .bt-page { padding-inline: 0; margin-inline: 0; }
   :root[data-ui="deck"] .shell #content :is(.bots-roster, .deck-board) { padding-inline: 0; }
-  :root[data-ui="deck"] .shell #content .deck-memory { margin-left: 0; }
+  :root[data-ui="deck"] .shell #content .deck-memory { margin-inline: auto; }
   :root[data-ui="deck"] .shell .deck-workspace { padding-inline: var(--page-side); }
   /* The card drawer floats over the board, so opening a card never resizes the rail or moves the board. */
   :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) { grid-template-columns: 252px minmax(0, 1fr); }
