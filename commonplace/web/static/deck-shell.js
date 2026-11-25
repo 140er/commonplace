@@ -99,18 +99,28 @@ const accountLinks = (options, { count = false } = {}) => { const { can_admin, c
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
   const role = { owner: 'Owner', member: 'Member' }[options.role];
+  const link = ([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`;
+  const main = sections.filter(([id]) => id !== 'settings'), settings = sections.find(([id]) => id === 'settings');
+  // One list of places, in the order people use them; the bot tree and threads follow, Settings and the account sit at the foot.
+  const places = [['home', options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(isHome(hash))}>${icon('home')}Home</a>`],
+    ...main.map(entry => [entry[0], link(entry)])];
+  const work = `<a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>`;
+  const at = Math.max(places.findIndex(([id]) => id === 'today') + 1, 1);
+  const threads = shellThreads(options);
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
     <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button></div>
     <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
-    <div class="deck-links">${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(isHome(hash))}>${icon('home')}Home</a>`}${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`).join('')}</div>
-    <div class="deck-rail-scroll"><button class="deck-rail-heading ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)} workspace</button><a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>
-    <h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading">Threads</h2><div data-deck-threads>${shellThreads(options)}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
-    <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details></div>
+    <div class="deck-links">${places.slice(0, at).map(([, html]) => html).join('')}${work}${places.slice(at).map(([, html]) => html).join('')}</div>
+    <div class="deck-rail-scroll"><h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
+    <div class="rail-foot">${settings ? link(settings) : ''}<details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}<button data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">Switch workspace</button></div></details></div>
   </nav>`;
 }
+// Pages outside the four sections still need a phone title, because Deck hides the page heading on a phone.
+const PAGE_TITLES = { '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Instance console' };
 export function renderShellTop(options) {
   const { hash = '', section, user = '', board = null } = options;
-  const label = SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/memory') ? 'Memory' : hash === '#/pipeline' ? 'Pipeline' : hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
+  const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];
+  const label = page || SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
   const boardPage = label === 'Board' && (!!board?.slug || /^#\/board(?:\/[^/?#]+)?(?:\?.*)?$/.test(hash));
   return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a>${boardPage ? '' : `<b>${label}</b>`}<span class="spacer"></span><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
 }
@@ -163,6 +173,8 @@ export function createDeckShell({ root, api, context, on }) {
     const tree = root?.querySelector?.('[data-deck-bots]'), threads = root?.querySelector?.('[data-deck-threads]');
     if (tree && tree.innerHTML !== shellTrees(options())) tree.innerHTML = shellTrees(options());
     if (threads && threads.innerHTML !== shellThreads(options())) threads.innerHTML = shellThreads(options());
+    const heading = root?.querySelector?.('[data-deck-threads-heading]');
+    if (heading) heading.hidden = !threads?.innerHTML;
     const unread = root?.querySelector?.('[data-deck-unread]');
     if (unread) unread.innerHTML = badge(shellUnread(options()), 'unread', 'unread');
     const status = root?.querySelector?.('[data-deck-rail-error]');
