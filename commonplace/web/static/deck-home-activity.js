@@ -28,10 +28,18 @@ export function groupActivity(rows) {
       if (!row.request || !group.items.some(item => item.request === row.request)) group.items.push(row);
     } else groups.push({ ...row, firstId: row.id, items: [row] });
   }
-  return groups.map(group => {
+  const grouped = groups.map(group => {
     if (group.items.length === 1) return group.items[0];
     return { ...group, id: JSON.stringify([group.askBot.id, group.firstId]), text: `${group.askBot.name} asked ${group.items.length} things` };
   });
+  // A run of the same plain line (four "Memory was saved" in a row) reads as one line with its count.
+  const runs = [];
+  for (const row of grouped) {
+    const last = runs.at(-1);
+    if (last && !row.items && !row.request && !row.fresh && !last.items && !last.request && !last.fresh && last.text === row.text) last.repeat = (last.repeat || 1) + 1;
+    else runs.push({ ...row });
+  }
+  return runs.map(row => row.repeat ? { ...row, text: row.text === 'Memory was saved' ? `${row.repeat} memories were saved` : `${row.text} (${row.repeat} times)` } : row);
 }
 export function activityHTML(row, e, open = false) {
   const fresh = row.fresh && Date.now() - Date.parse(row.at) < 4000;

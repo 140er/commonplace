@@ -15,7 +15,10 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
   const operational = key => ['deploy','health','backups','backup-online','backup-offline','index-stats'].includes(key);
   const instanceOwner = () => current()?.can_admin_instance === true && !instanceBlocked;
   const label = key => ({health:'Health','backup-online':'Online backup','backup-offline':'Offline backup',users:'Users',connections:'Connections',needs:'Needs-me',stuck:'Stuck',runtime:'Runtime',limits:'Agent limits'})[key] || SECTIONS[key];
-  const value = v => e(v == null || v === '' ? '—' : v);
+  // Recorded times read as dates; the exact instant stays in the datetime attribute.
+  const stamp = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) && Number.isFinite(Date.parse(v))
+    ? `<time datetime="${e(v)}" title="${e(v)}">${e(new Date(v).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</time>` : null;
+  const value = v => stamp(v) ?? e(v == null || v === '' ? '—' : v);
   const rows = (headers, items) => `<table><thead><tr>${headers.map(h => `<th scope="col">${e(h)}</th>`).join('')}</tr></thead><tbody>${items.map(cells => `<tr>${cells.map((v, i) => `<td data-label="${e(headers[i])}">${value(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 
   const cardLink = card => Number.isSafeInteger(card.number) && card.number > 0
