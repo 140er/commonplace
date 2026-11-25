@@ -157,6 +157,11 @@
 :root[data-ui="deck"] body .shell .look-switch .opt[aria-pressed="true"] { background: var(--violet); color: var(--ground); }
 :root[data-ui="deck"] .pl-empty .cp-art { display: none; }
 
+/* Each page's creating action is a primary button; the account row is clearly current on its pages. */
+:root[data-ui="deck"] body .shell :is(.deck-board-add, [data-rule-action="new"]) { background: var(--violet); border-color: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] body .rail[data-deck="bar"] .me[data-current] { background: var(--s2); box-shadow: inset 2px 0 0 var(--violet); }
+:root[data-ui="deck"] body .shell .deck-work .wk-lanes { padding-inline: 0; }
+
 /* ---------- Bots list: one bordered list, a row per bot ---------- */
 :root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
 :root[data-ui="deck"] .bots-roster .cb-folder > ul > li + li { border-top: 1px solid var(--line); }

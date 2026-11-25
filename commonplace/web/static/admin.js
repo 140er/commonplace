@@ -14,7 +14,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
   const eligible = () => live && owner() && current()?.workspace === workspace;
   const operational = key => ['deploy','health','backups','backup-online','backup-offline','index-stats'].includes(key);
   const instanceOwner = () => current()?.can_admin_instance === true && !instanceBlocked;
-  const label = key => ({health:'Health','backup-online':'Online backup','backup-offline':'Offline backup',users:'Users',connections:'Connections',needs:'Needs-me',stuck:'Stuck',runtime:'Runtime',limits:'Agent limits'})[key] || SECTIONS[key];
+  const label = key => ({health:'Health','backup-online':'Online backup','backup-offline':'Offline backup',users:'Users',connections:'Connections',needs:'Waiting on you',stuck:'Stuck',runtime:'Runtime',limits:'Agent limits'})[key] || SECTIONS[key];
   // Recorded times read as dates; the exact instant stays in the datetime attribute.
   const stamp = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) && Number.isFinite(Date.parse(v))
     ? `<time datetime="${e(v)}" title="${e(v)}">${e(new Date(v).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</time>` : null;
