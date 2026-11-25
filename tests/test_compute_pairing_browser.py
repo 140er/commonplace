@@ -721,7 +721,7 @@ def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_gui
             page,
             label,
             "no-machine",
-            "Add one under Add a machine in Cloud workspaces",
+            "Add one in Cloud workspaces",
             "Open Cloud workspaces",
             "#/compute",
         )

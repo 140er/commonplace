@@ -24,19 +24,21 @@ REFUSAL = "only a signed-in workspace owner can answer this"
 HIDDEN = "tool not allowed for this connection"
 FULL = "memory:read memory:write cards:decide"
 # Literal copies: this file must run (and fail behaviourally) on a base without the scope.
-SCOPE_TEXT = (
-    "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
-    "Every answer is recorded with this connection, and you can stop this at any time "
-    "under Agents. It can answer only questions addressed to you, never another "
-    "person's, and only on boards you can write to."
+SCOPE_TEXT = "Let this app answer what is waiting on you, as you."
+SCOPE_DETAIL = (
+    "Every answer is recorded with this connection, and you can stop this at any time under "
+    "Connected apps. It can answer only questions addressed to you, never another person's, "
+    "and only on boards you can write to. Permission: cards:decide."
 )
-OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
-TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
-AGENT_TEXT = "Agent, runner and Coworker connections cannot answer Needs-me questions."
+OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer what is waiting on them."
+TOP_LEVEL_TEXT = (
+    "Only a top-level connection of the workspace owner can answer what is waiting on them."
+)
+AGENT_TEXT = "Agent, runner and bot connections cannot answer what is waiting on you."
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
 NOT_YOURS_TEXT = (
-    "This connection belongs to another member. Only your own apps can answer your "
-    "Needs-me questions."
+    "This connection belongs to another member. Only your own apps can answer what is "
+    "waiting on you."
 )
 OAUTH_GRANT_TEXT = "An OAuth app gets this only through a fresh sign-in consent."
 AUDIT_ACTION = "card.decide.delegated"
@@ -806,12 +808,14 @@ def test_r7_consent_copy_has_one_source_and_names_the_scope(world):
     w = world
     grant = oauth_grant(w.hub)
     label = re.search(r'name="grant_decide" value="1"> ([^<]+)</label>', grant.page)[1]
-    assert unescape(label) == SCOPE_TEXT and "cards:decide" in SCOPE_TEXT
-    assert SCOPE_TEXT.endswith("only on boards you can write to.")
+    # The visible words are plain; the mechanics and the permission id sit under Details.
+    assert unescape(label) == SCOPE_TEXT and "cards:decide" not in SCOPE_TEXT
+    assert SCOPE_DETAIL in unescape(grant.page) and "Details</summary>" in grant.page
     status, listing = api(w.hub, w.cookie, "GET", "/api/connections")
     assert status == 200 and listing["decide_consent"] == SCOPE_TEXT
+    assert listing["decide_detail"] == SCOPE_DETAIL
     static = Path(__file__).parents[1] / "commonplace" / "web" / "static" / "agents.js"
-    assert "answer your Needs-me questions as you" not in static.read_text()
+    assert "Needs-me" not in static.read_text()
 
 
 # ── refresh, spellings, runners, other workspaces ──

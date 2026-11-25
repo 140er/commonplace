@@ -13,10 +13,10 @@ test('overview groups one divided list per section, counts real coworkers and ma
   const html = capyRosterHTML({ bots, conversations: [{ bot_ids: ['a'] }] });
   assert.equal((html.match(/class="cb-folder"/g) || []).length, 2);
   assert.equal((html.match(/aria-label="Private bot"/g) || []).length, 1);
-  assert.match(html, /1 coworker</); assert.match(html, /3 coworkers</); assert.match(html, /2<span class="sr"> unread/);
+  assert.match(html, /1 bot</); assert.match(html, /3 bots</); assert.match(html, /2<span class="sr"> unread/);
   assert.match(html, /href="#\/bots\/a"/); assert.doesNotMatch(html, /href="#\/bots\/a\/coworkers"/);
   assert.doesNotMatch(capyRosterHTML({ bots: [{ id: 'x', name: 'X' }] }), /Private bot|cb-unread/);
-  assert.match(capyRosterHTML({ bots: [{ id: 'p', name: 'Project', board: 'p' }] }), /1 coworker</);
+  assert.match(capyRosterHTML({ bots: [{ id: 'p', name: 'Project', board: 'p' }] }), /1 bot</);
 });
 test('absent owns and log never produce simulated rows or panels', () => {
   assert.equal(ownedPaths(), null); assert.equal(liveLog(), null);

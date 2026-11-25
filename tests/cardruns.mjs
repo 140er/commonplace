@@ -238,7 +238,7 @@ const cases = {
     assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_waiting', machines: [] }).includes('waits for your approval'));
     assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_unfinished', machines: [] }).includes('is not finished'));
     // No machine at all points at Add a machine in Cloud workspaces, never at an Admin form.
-    assert.ok(refused.includes('Add one under Add a machine in Cloud workspaces') && refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
+    assert.ok(refused.includes('Add one in Cloud workspaces') && refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
     // An Admin-enrolled machine is attested where that screen really is, and the text says where the provider instance id comes from.
     for (const refusal of ['machine_unavailable', 'binding_not_attested', 'not_writable', 'outside_worker_wing', 'worker_unavailable']) {
       const html = cardRunsHTML([], '', { configured: true, refusal });

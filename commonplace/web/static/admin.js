@@ -3,7 +3,7 @@ export { boundedRequest } from "./request-deadline.js";
 /** Read-first workspace administration, with independently bounded section loads. The one write is the owner's machine requester list. */
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Agents and connections',
-  runtime: 'Coworkers and runners/machines', limits: 'Agent limits',
+  runtime: 'Bots and machines', limits: 'Agent limits',
   stuck: 'Waiting on you and stuck cards', deploy: 'Deployment and health', backups: 'Backups', 'index-stats': 'Memory index',
 };
 
@@ -30,9 +30,9 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
   function runtimeContent(data) {
     const flag = data.orchestration, agents = data.orchestrators, machines = data.machines;
     let html = flag.state === 'ready' ? `<p>Coworker management ${flag.enabled ? 'enabled' : 'disabled'}</p>` : sourceError('runtime', 'Coworker management', flag);
-    html += '<h3>Coworkers</h3><p>Activity records token use, not a running process.</p>';
-    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [{ wrapAfterColon: true, text: r.name || '—' }, r.coordinator || r.seat_name, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Coworkers', agents);
-    if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Coworkers', agents);
+    html += '<h3>Bots</h3><p>Activity records token use, not a running process.</p>';
+    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [{ wrapAfterColon: true, text: r.name || '—' }, { wrapAfterColon: true, text: r.coordinator || r.seat_name || '—' }, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Bots', agents);
+    if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Bots', agents);
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
     html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Setup', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.guided ? r.guided.label : r.enabled ? 'enabled' : 'disabled', r.guided && !r.revoked_at ? 'Coworkers do not run on it in this version.' : `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, r.guided && !r.revoked_at ? 'Not used in this version' : `Limit: ${r.max_in_flight} run${r.max_in_flight === 1 ? '' : 's'} at once; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready' && machines.error) html += sourceError('runtime', 'Machines', machines);
@@ -150,7 +150,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     const inside = active && target.contains?.(active);
     const refresh = inside && active.dataset?.adminAction === 'refresh' ? active.dataset.adminSection : null;
     const href = inside && active.tagName === 'A' ? active.getAttribute('href') : null;
-    target.innerHTML = `<div class="admin settings"><p class="admin-workspace">Workspace: <b>${e(current().workspace_name || '')}</b></p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
+    target.innerHTML = `<div class="admin settings"><p class="admin-workspace">Workspace: <b>${e(current().workspace_name || '')}</b></p><a class="admin-manage" href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
       if (!sections.has(key) || (key === 'index-stats' && !instanceOwner())) return '';
       if (key === 'deploy') return `<section class="settings-section" data-admin-section="deploy"><h2>${e(title)}</h2>${panel('deploy')}${panel('health')}</section>`;
       return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Waiting on you</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;

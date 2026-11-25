@@ -99,7 +99,7 @@ export function agoWords(at, now = Date.now()) {
 /** The one plain status line. "Not reported" is only said when a machine's own read says it cannot report. */
 export function statusText(model, now = Date.now()) {
   if (!model?.known) {
-    if (!model?.asked) return 'No enrolled runner machine is known here, so there is no running work to count.';
+    if (!model?.asked) return 'No machines yet. Add one to run bots’ code on it.';
     if (model.unread === model.asked) return 'Running work could not be read just now. It is read again on the next refresh.';
     return 'Running work is not reported for these machines yet, so it cannot be counted here.';
   }

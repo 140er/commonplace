@@ -91,12 +91,12 @@ test('while the conversation loads the page says loading, and when it cannot loa
   let release; const gate = new Promise(resolve => { release = resolve; });
   const h = page(async path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] } : path === '/api/coworkers' ? { bots: [], conversations: [room] } : path.endsWith('/room') ? (await gate, { conversation: room, jobs: [] }) : { models: {} });
   await settle();
-  assert.match(text(h.body.innerHTML), /^Loading Reading what this Coworker did last/); assert.doesNotMatch(h.body.innerHTML, /<b>Idle<\/b>/);
+  assert.match(text(h.body.innerHTML), /^Loading Reading what this bot did last/); assert.doesNotMatch(h.body.innerHTML, /<b>Idle<\/b>/);
   release(); await settle();
   assert.match(text(h.body.innerHTML), /^Idle No run recorded/); h.ui.stop();
   const failed = page(path => { if (path === '/api/bots') return { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] }; if (path === '/api/coworkers') return { bots: [], conversations: [room] }; if (path.endsWith('/room')) throw Object.assign(new Error('boom'), { status: 500 }); return { models: {} }; });
   await settle();
-  assert.match(text(failed.body.innerHTML), /^Not available This Coworker's work could not be read just now\./); failed.ui.stop();
+  assert.match(text(failed.body.innerHTML), /^Not available This bot's work could not be read just now\./); failed.ui.stop();
 });
 test('a running job still wins over everything and links its card (no regression of the status line)', async () => {
   const html = await conversationBot({ state: 'needs_you', waiting: 3 }, () => ({ conversation: room, jobs: [{ id: 3, conversation_id: 'room', state: 'running', task_progress: progress() }] }));

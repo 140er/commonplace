@@ -102,7 +102,7 @@ export function shellTrees(options = {}) {
     const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
     return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${states[bot.state]?.[1] === 'waiting' || (bot.kind === 'general' ? needsCards(options.needsQueue || {}).length > 0 : bot.board && needsCards(options.needsQueue || {}).some(card => card?.board === bot.board)) ? '<span class="deck-state-dot" data-state="waiting" role="img" aria-label="Waiting on you" title="Waiting on you"></span>' : ''}${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
-      const title = worker.name || worker.title || conversation?.title || 'Coworker';
+      const title = worker.name || worker.title || conversation?.title || 'Bot';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
       return `<li><a class="deck-tree-row" href="${href}"${current(hash === href)}><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`;
     }).join('')}</ul></div>`;
@@ -135,7 +135,7 @@ export function renderShellBar(options) {
   </nav>`;
 }
 // Pages that are not one of the places still need a phone title, because the page heading hides on a phone.
-const PAGE_TITLES = { '#/bots/-/coworkers': 'Coworkers', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
+const PAGE_TITLES = { '#/bots/-/coworkers': 'Bots', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
 export function renderShellTop(options) {
   const { hash = '', user = '', board = null } = options;
   const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];

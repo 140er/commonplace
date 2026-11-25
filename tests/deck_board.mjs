@@ -34,7 +34,7 @@ test('only personal action cards get the amber edge; routine waits never do', ()
 });
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
-  for(const label of ['Summary','Bot','Assigned to','Version','Status: Needs you','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
+  for(const label of ['Summary','Bot','Assigned to','Version','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
   assert.match(html,/<code[^>]*>abc1234<\/code>/);
   assert.doesNotMatch(visible(html),/~\/|review\.json|Evidence:|P-7|#7/);
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
@@ -198,9 +198,11 @@ test('Board phone chrome names the project and keeps the menu and search control
   assert.match(renderDeckTop({hash:'#/board/product/chat'}), /<b>Board<\/b>/, 'chat chrome stays unchanged');
   assert.match(htmlFor({}), /<h1>Board<\/h1>/);
 });
-test('a card with no steps yet shows one labelled status line, not a Progress heading over a lone row', () => {
+test('a card with no steps yet says its state once (the header pill), with no Status line and no Progress heading over a lone row', () => {
   const html = renderDetails({...base,need:'you'},options);
-  assert.match(html, /<p class="deck-card-status"><span>Status:<\/span> <span class="waiting">Needs you<\/span><\/p>/);
+  assert.match(html, /<div class="deck-card-state"><i class="deck-board-dot waiting"[^>]*><\/i>Needs you/);
+  assert.equal((html.match(/Needs you/g) || []).length, 1, 'the state is said once');
+  assert.doesNotMatch(html, /deck-card-status|Status:/);
   assert.doesNotMatch(html, /<h3>Progress<\/h3>|<li class="current">/);
 });
 test('drawer progress parent uses its state text without a duplicate state dot', () => {

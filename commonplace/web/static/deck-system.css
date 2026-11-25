@@ -67,7 +67,7 @@
 :root[data-ui="deck"] .deck-state-dot[data-state="busy"] { background: var(--violet); }
 :root[data-ui="deck"] .deck-state-dot[data-state="waiting"] { background: var(--amber); }
 :root[data-ui="deck"] .deck-projects { display: flex; flex-direction: column; gap: 1px; }
-:root[data-ui="deck"] .deck-project-row small { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .deck-project-row small { color: var(--amber); font-size: 12px; }
 :root[data-ui="deck"] .rail .rail-foot { display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 8px; border-top: 1px solid var(--line); }
 :root[data-ui="deck"] .rail .rail-foot .user-menu { flex: 1; min-width: 0; position: relative; }
 :root[data-ui="deck"] .rail[data-deck="bar"] .me { min-height: 36px; padding: 0 8px; gap: 8px; border-radius: var(--radius-control); }
@@ -306,6 +306,11 @@
 :root[data-ui="deck"] #content > .queue > .item h3 a::after { content: ""; position: absolute; inset: 0; }
 :root[data-ui="deck"] #content > .queue > .item { position: relative; }
 :root[data-ui="deck"] #content > .queue > .item .meta { color: var(--ink3); font-size: 13px; }
+/* The waiting count reads "2 waiting" in amber, as in the sidebar; each Projects row ends in a chevron. */
+:root[data-ui="deck"] #content > .queue .meta-waiting { color: var(--amber); }
+:root[data-ui="deck"] #content > .queue.project-list > .item { padding-right: 44px; }
+:root[data-ui="deck"] #content > .queue.project-list > .item::after { content: ""; position: absolute; right: 20px; top: 50%; width: 7px; height: 7px; border-top: 1.5px solid var(--ink3); border-right: 1.5px solid var(--ink3); transform: translateY(-50%) rotate(45deg); }
+:root[data-ui="deck"] #content > .queue.project-list > .item:hover::after { border-color: var(--ink); }
 :root[data-ui="deck"] .rules-empty { max-width: var(--page-width); padding: 16px 18px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink2); background: transparent; }
 
 /* ---------- Small clarity fixes ---------- */
@@ -318,8 +323,10 @@
 @media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
 :root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
 :root[data-ui="deck"] .admin-workspace { color: var(--ink2); }
-/* A project named "Coworker:common / place" wraps at the colon or a space, never inside a word. */
-:root[data-ui="deck"] .admin td[data-label="Project"] { overflow-wrap: normal; word-break: normal; }
+/* A name like "Coworker:common / place" wraps at the colon or a space, never inside a word: every name cell. */
+:root[data-ui="deck"] .admin td:is([data-label="Project"], [data-label="Coordinator"]) { overflow-wrap: normal; word-break: normal; }
+:root[data-ui="deck"] .admin a.admin-manage { color: var(--violet); text-decoration: none; }
+:root[data-ui="deck"] .admin a.admin-manage:hover { text-decoration: underline; }
 :root[data-ui="deck"] .admin.settings h3 { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
 :root[data-ui="deck"] #content > .admin.settings { padding-inline: 0; }
 /* A heading focused so screen readers land on it is not a control; it needs no focus box. */

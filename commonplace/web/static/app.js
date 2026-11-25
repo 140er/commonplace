@@ -824,10 +824,10 @@ function boardsView() {
     const mine = needsCards().filter((card) => card?.board === b.slug), held = (status) => mine.filter((card) => card.status === status).length;
     const c = b.counts || {};
     return [["need you", mine.length], ["active", (c.todo || 0) - held("todo") + (c.doing || 0) - held("doing")], ["in review", (c.review || 0) - held("review")], ["shipped", (c.done || 0) - held("done")], ["in backlog", (c.backlog || 0) - held("backlog")]]
-      .filter(([, value]) => value > 0).map(([label, value]) => `${e(value)} ${label === "need you" ? "waiting on you" : label}`).join(" · ") || "No cards yet";
+      .filter(([, value]) => value > 0).map(([label, value]) => label === "need you" && document.documentElement.dataset.ui === "deck" ? `<span class="meta-waiting">${e(value)} waiting</span>` : `${e(value)} ${label === "need you" ? "waiting on you" : label}`).join(" · ") || "No cards yet";
   };
   title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : counted(b)}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue project-list">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : counted(b)}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }

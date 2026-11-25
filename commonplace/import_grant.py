@@ -8,14 +8,15 @@ import json
 IMPORT_SCOPE = "memory:import"
 READER_SCOPE = "memory:import:read"
 READER_TEXT = (
-    "Allow this agent to read and search your past and future conversations and memory files "
-    "imported through the connection import route in this workspace, including imports from "
-    "your other connections. Imports through the signed-in/full-ACL route, live session captures "
-    "and other people's history are excluded. To stop access, revoke this connection."
+    "Let this app read and search the conversations and memory files you have imported, "
+    "past and future."
 )
 READER_DETAIL = (
-    "Includes multipart conversations, Grok facts and native memory files, regardless of read-wing "
-    "selection. Revoke the old connection, then reconnect with this box unticked."
+    "Covers history imported through app connections in this workspace, including imports from "
+    "your other connections. History imported while signed in, live session captures and other "
+    "people's history are not included. Multipart conversations, imported facts and native memory "
+    "files count too, whichever wings this connection can read. To stop access, revoke this "
+    "connection and reconnect with this box unticked."
 )
 GRANT_PREFIX = "import-private"
 SCOPE_TEXT = (

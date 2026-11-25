@@ -10,7 +10,7 @@ export const ENROLL_ROUTE = '#/admin';
 export const COMPUTE_COPY = {
   add: 'Connecting a machine',
   intro: 'Your machines and how your bots reach them. Drag to arrange.',
-  setup: 'Run one command on the machine, then accept the connection. It connects out, so you open no ports.',
+  setup: 'Run one command on the machine, then accept the connection. It connects out, so you open no ports. Use the button at the top of this page to get the command.',
 };
 export const HEALTH_WORDS = { up: 'Healthy', degraded: 'Degraded', down: 'Unreachable', unknown: 'Not reported' };
 const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -70,7 +70,7 @@ export function decorateComputePanel(html, summary, phone = false) {
 }
 
 export function addMachineHTML() {
-  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><a class="dc-action" href="${ENROLL_ROUTE}">Open machine setup</a><p class="dc-observed">Then choose which bots may use it.</p></section>`;
+  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><p class="dc-observed">Then choose which bots may use it.</p></section>`;
 }
 
 /** The media query is observable without a browser. CSS is a second, immediate fallback. */

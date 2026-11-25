@@ -94,7 +94,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     if (epoch !== screen()) return;
     leave();
     active = { base, ui: module.mount({ root: root.querySelector('#content'), api, e, ...context(), route: base }) };
-    title(id === 'coworkers' ? 'Coworkers' : module.TITLE || 'Commonplace');
+    title(id === 'coworkers' ? 'Bots' : module.TITLE || 'Commonplace');
   }
   function settings(content) {
     const box = content?.querySelector?.('.settings');

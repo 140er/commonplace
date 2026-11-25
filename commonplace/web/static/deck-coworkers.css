@@ -89,6 +89,8 @@
 :root[data-ui="deck"] [data-cb-composer] { position: sticky; bottom: 0; margin-top: auto; }
 :root[data-ui="deck"] .cb-composer { border: 1px solid var(--line2); border-radius: 16px; padding: 12px 12px 10px 16px; background: var(--s1); }
 :root[data-ui="deck"] .cb-composer:focus-within { border-color: var(--violet); }
+/* With no conversation open, the composer's place holds one disabled composer-shaped box that says why. */
+:root[data-ui="deck"] [data-cb-composer] > .cb-compose-off { margin: 0; padding: 14px 16px; border: 1px solid var(--line2); border-radius: 16px; background: var(--s1); font-size: 13.5px; line-height: 22px; color: var(--ink2); }
 :root[data-ui="deck"] .cb-composer textarea { display: block; width: 100%; min-height: 36px; padding: 0; border: 0; border-radius: 0; box-shadow: none; resize: none; background: transparent; color: var(--ink); font: 15px/22px var(--font); }
 :root[data-ui="deck"] .cb-compose-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 :root[data-ui="deck"] .cb-modes { display: flex; gap: 6px; }

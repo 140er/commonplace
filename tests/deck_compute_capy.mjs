@@ -36,8 +36,8 @@ test('current observations override graph values, stale observations cannot impl
 
 test('Add a machine leads to the existing Admin enrollment, with no second setup form', () => {
   const html = addMachineHTML();
-  // The page's one Add a machine action is the header button; this card explains the setup and links to it.
-  assert.match(html, /Connecting a machine/); assert.match(html, /Open machine setup/); assert.doesNotMatch(html, /Add a machine/); assert.match(html, /href="#\/admin"/); assert.match(html, /Then choose which bots may use it/);
+  // The page's one Add a machine action is the header button; this card is plain instructions with no second button.
+  assert.match(html, /Connecting a machine/); assert.doesNotMatch(html, /Open machine setup|Add a machine|<a |<button|href=/); assert.match(html, /button at the top of this page/); assert.match(html, /Then choose which bots may use it/);
   assert.doesNotMatch(html, /Add runner|workspace administration/);
   assert.doesNotMatch(html, /<form|<input|curl|token|POST/);
 });

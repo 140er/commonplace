@@ -84,5 +84,5 @@ def test_the_start_refusals_name_admin_for_runner_machines_and_cloud_workspaces_
     block = _text(STATIC / "cardruns.js")
     refusals = block[block.index("const START_REFUSALS") : block.index("const START_LINKS")]
     assert "Workspace settings" not in refusals
-    assert "Add one under Add a machine in Cloud workspaces" in refusals
+    assert "Add one in Cloud workspaces" in refusals
     assert refusals.count("Admin > Runner machines") >= 4

@@ -396,6 +396,7 @@ def install(gateway):
             {
                 "connections": [connection_view(row, **view) for row in rows],
                 "decide_consent": decide_grant.SCOPE_TEXT,
+                "decide_detail": decide_grant.SCOPE_DETAIL,
                 "bots_consent": {
                     "chat": bots_grant.CHAT_TEXT,
                     "confirm": bots_grant.CONFIRM_TEXT,
