@@ -68,17 +68,17 @@ counts instead.
 
 ## First run on real glasses
 
-Steps 1, 2 and 5 are on Jeffrey's phone or browser. An agent does 3 and 4 on the bridge
+Steps 1, 2 and 5 are on the owner's phone or browser. An agent does 3 and 4 on the bridge
 host (for example a home server on Tailscale).
 
-**1. Make the glasses connection (Jeffrey, browser, 2 minutes).**
+**1. Make the glasses connection (owner, browser, 2 minutes).**
 In Commonplace, open Settings → Agents. Name it `g2-glasses`, set the client to `Other`,
 and tick the consent that lets it answer Needs-me questions. Then press **Create token**.
 The token is shown once. Hand it to the agent through a secret prompt that writes it to a
 file on the bridge host (for example `~/.config/cmmn-g2/token`, mode 600), never through
 chat. A connection made this way gets the Needs-me live-update mode described above.
 
-**2. Turn on Developer Mode (Jeffrey, phone, once).**
+**2. Turn on Developer Mode (owner, phone, once).**
 Sign in at <https://hub.evenrealities.com> with the same account as the Even app, then
 turn on Developer Mode and restart the Even app (Even app 2.2.10 or newer). The phone
 must reach the bridge host, either on the same Wi-Fi or with Tailscale on the phone.
@@ -112,7 +112,7 @@ npx -y qrcode -o /tmp/g2-pair.png "$URL"              # or as an image to send p
 The QR code carries the pairing key. Send it only privately and do not paste the URL in
 chat.
 
-**5. Scan and use it (Jeffrey, phone and glasses).**
+**5. Scan and use it (owner, phone and glasses).**
 In the Even app, open Developer Mode, choose **Scan QR**, and scan the code. The plugin
 opens. The phone shows `Connection: Connected`, the hub address, the Needs-me count, and a
 mirror of the glasses. The glasses show Home. Swipe to an `ASK`, press to read it, press
