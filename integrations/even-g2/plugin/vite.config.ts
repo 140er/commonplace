@@ -11,8 +11,9 @@ export default defineConfig({
     host: process.env.G2_DEV_HOST ?? '127.0.0.1',
     port: 5173,
     proxy: {
-      '/api': { target: bridge, changeOrigin: true },
-      '/bridge': { target: bridge, changeOrigin: true },
+      // Keep the browser's Host: a keyless bridge then refuses LAN clients of this proxy.
+      '/api': { target: bridge, changeOrigin: false },
+      '/bridge': { target: bridge, changeOrigin: false },
     },
   },
   build: { target: 'es2022' },

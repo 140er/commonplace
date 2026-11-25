@@ -68,15 +68,27 @@ async function boot() {
     if (timer) clearInterval(timer)
     timer = null
   }
+  const run = () => {
+    if (!timer) timer = setInterval(() => void app.poll(), POLL_MS)
+  }
+  let exited = false
   bridge?.onEvenHubEvent(event => {
     const input = toInput(event)
-    if (input === 'exit') stop()
-    else if (input) void app.input(input)
+    if (input === 'exit') {
+      exited = true
+      stop()
+    } else if (input === 'resume') {
+      // Back in front after an exit: draw the page again and catch up at once.
+      if (exited) glasses?.reset()
+      exited = false
+      run()
+      void app.render().then(() => app.poll())
+    } else if (input) void app.input(input)
   })
   window.addEventListener('beforeunload', stop)
 
   await app.start()
-  timer = setInterval(() => void app.poll(), POLL_MS)
+  run()
 }
 
 boot().catch(err => {

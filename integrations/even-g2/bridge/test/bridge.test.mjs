@@ -60,7 +60,7 @@ async function withBridge(extra, fn) {
 test('every allowlisted route forwards with the token upstream only', async () => {
   await withBridge({}, async (base, logs) => {
     seen.length = 0
-    for (const path of ['/api/needs-me', '/api/events?after=12', '/api/boards', '/api/boards/home/cards', '/api/cards/7']) {
+    for (const path of ['/api/needs-me', '/api/events?after=12', '/api/boards', '/api/me', '/api/cards/7']) {
       const r = await fetch(base + path)
       assert.equal(r.status, 200, path)
       const text = await r.text()
@@ -86,6 +86,8 @@ test('routes outside the allowlist are refused before reaching the hub', async (
       ['GET', '/api/cards/abc'],
       ['GET', '/api/boards/../me/cards'],
       ['POST', '/api/cards/7/approve'],
+      ['GET', '/api/needs-me/digest'],
+      ['GET', '/api/boards/home/cards'],
       ['GET', '/mcp'],
     ]
     for (const [method, path] of refused) {
@@ -114,10 +116,9 @@ test('query parameters are filtered and validated', async () => {
     assert.equal(seen.at(-1).url, '/api/needs-me')
     const bad = await fetch(base + '/api/events?after=-1')
     assert.equal(bad.status, 400)
-    const digest = await fetch(base + '/api/needs-me/digest?format=text')
-    assert.equal(await digest.text(), 'Two things need you.')
-    assert.match(digest.headers.get('content-type'), /^text\/plain/)
-    assert.equal((await fetch(base + '/api/needs-me/digest?format=ssml')).status, 400)
+    seen.length = 0
+    await fetch(base + '/api/events?after=5&limit=9999')
+    assert.equal(seen.at(-1).url, '/api/events?after=5')
   })
 })
 
@@ -131,6 +132,13 @@ test('decide and comment bodies are checked field by field', async () => {
     assert.equal((await post('/api/cards/7/decide', { choice: 'Ship' })).status, 400)
     assert.equal((await post('/api/cards/7/decide', { version: 3, choice: 'Ship', then: 'escalate' })).status, 400)
     assert.equal((await post('/api/cards/7/decide', { version: 3, choice: 'Ship', assignee: 'x' })).status, 400)
+    assert.equal((await post('/api/cards/7/decide', { version: 3, reply: 'no choice' })).status, 400)
+    // Inherited names are not declared fields: refused, never forwarded.
+    for (const key of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+      const raw = `{"version":3,"choice":"Ship","${key}":{"then":"done"}}`
+      assert.equal((await post('/api/cards/7/decide', raw)).status, 400, key)
+    }
+    assert.equal((await post('/api/cards/7/comments', { text: 'hi', version: 2 })).status, 400)
     assert.equal((await post('/api/cards/7/comments', { text: 'Seen on glasses' })).status, 200)
     assert.equal((await post('/api/cards/7/comments', { text: '   ' })).status, 400)
     assert.equal((await post('/api/cards/7/comments', '[1]')).status, 400)
@@ -167,9 +175,13 @@ test('without a key only a loopback Host is served (DNS rebinding, LAN proxies)'
     const port = new URL(base).port
     seen.length = 0
     assert.equal(await get(port, `evil.example:${port}`), 401)
+    // A LAN client of a dev proxy that keeps its Host header (Vite, changeOrigin off).
     assert.equal(await get(port, `192.168.1.20:5173`), 401)
+    assert.equal(await get(port, `localhost.evil.example:${port}`), 401)
     assert.equal(seen.length, 0)
     assert.equal(await get(port, `localhost:${port}`), 200)
+    assert.equal(await get(port, `127.0.0.1:5173`), 200)
+    assert.equal(await get(port, `[::1]:5173`), 200)
   })
   await withBridge({ key: KEY }, async base => {
     const r = await fetch(base + '/api/needs-me', { headers: { 'X-Bridge-Key': KEY } })
@@ -224,7 +236,7 @@ test('config is refused without a hub, a well-formed token, or a key beyond loop
 test('the allowlist is exactly the read, decide and comment routes', () => {
   assert.deepEqual(
     ROUTES.map(r => `${r.method} ${r.name}`),
-    ['GET needs-me', 'GET digest', 'GET events', 'GET me', 'GET boards', 'GET board-cards', 'GET card', 'POST decide', 'POST comment'],
+    ['GET needs-me', 'GET events', 'GET me', 'GET boards', 'GET card', 'POST decide', 'POST comment'],
   )
   assert.equal(matchRoute('GET', '/api/cards/0'), null)
   assert.equal(matchRoute('GET', '/api/cards/12/'), null)

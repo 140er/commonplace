@@ -112,10 +112,21 @@ export class GlassesDisplay implements Display {
     this.shown = view
   }
 
-  private upgrade(id: number, name: string, content: string) {
-    return this.bridge.textContainerUpgrade(
+  private async upgrade(id: number, name: string, content: string) {
+    const ok = await this.bridge.textContainerUpgrade(
       new TextContainerUpgrade({ containerID: id, containerName: name, content: content || ' ' }),
     )
+    if (!ok) {
+      // Forget what is shown, so the next render rebuilds the page instead of trusting stale text.
+      this.shown = null
+      throw new Error(`textContainerUpgrade refused ${name}`)
+    }
+  }
+
+  /** After the plugin page was shut down (exit) the next render creates it anew. */
+  reset() {
+    this.created = false
+    this.shown = null
   }
 
   async exit() {

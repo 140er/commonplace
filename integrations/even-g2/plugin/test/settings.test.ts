@@ -27,6 +27,15 @@ describe('bridge settings', () => {
     expect(settings).toEqual({ url: '', key: 'k' })
   })
 
+  it('a link to another bridge never carries the saved key there', async () => {
+    const store = memoryStore({ 'cmmn.g2.bridge': JSON.stringify({ url: 'http://192.0.2.2:8790', key: 'paired' }) })
+    const loc = (search: string) => ({ search, pathname: '/', hash: '' }) as Location
+    const hist = { replaceState: () => {} } as unknown as History
+    expect(await loadSettings(store, loc('?bridge=https://evil.example'), hist)).toEqual({ url: 'https://evil.example', key: '' })
+    store.data['cmmn.g2.bridge'] = JSON.stringify({ url: 'http://192.0.2.2:8790', key: 'paired' })
+    expect(await loadSettings(store, loc('?bridge=http://192.0.2.2:8790/'), hist)).toEqual({ url: 'http://192.0.2.2:8790', key: 'paired' })
+  })
+
   it('accepts only http(s) bridge origins', () => {
     expect(cleanBridgeUrl('')).toBe('')
     expect(cleanBridgeUrl(' https://g2.example:8443/path ')).toBe('https://g2.example:8443')

@@ -34,7 +34,9 @@ export async function loadSettings(store: Store, location: Location, history: Hi
   const key = params.get('key')
   const bridge = params.get('bridge')
   if (key === null && bridge === null) return saved
-  const next = { url: bridge !== null ? cleanBridgeUrl(bridge) : saved.url, key: key ?? saved.key }
+  const url = bridge !== null ? cleanBridgeUrl(bridge) : saved.url
+  // A saved key only ever goes back to the bridge it was paired with.
+  const next = { url, key: key ?? (url === saved.url ? saved.key : '') }
   await saveSettings(store, next)
   params.delete('key')
   params.delete('bridge')

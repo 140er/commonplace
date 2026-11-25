@@ -275,3 +275,15 @@ describe('recovery and edge cases', () => {
     expect(display.last.layout === 'text' && display.last.body).toMatch(/Press again to confirm\.$/)
   })
 })
+
+describe('poll scheduling', () => {
+  it('overlapping ticks share one poll and never double-count activity', async () => {
+    const { app, state, calls } = setup()
+    await app.start()
+    state.events.push({ seq: 41, at: '2026-11-26T10:00:05', kind: 'card.decided', data: { number: 6, title: 'x' } })
+    state.seq = 41
+    await Promise.all([app.poll(), app.poll(), app.poll()])
+    expect(calls.filter(c => c.path === '/api/events?after=40').length).toBe(1)
+    expect(app.activity.decided).toBe(1)
+  })
+})

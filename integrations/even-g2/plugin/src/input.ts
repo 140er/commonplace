@@ -9,7 +9,7 @@ import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk'
 
 import type { Input } from './app'
 
-export function toInput(event: EvenHubEvent): Input | 'exit' | null {
+export function toInput(event: EvenHubEvent): Input | 'exit' | 'resume' | null {
   const envelope = event.listEvent ?? event.textEvent ?? event.sysEvent
   if (!envelope) return null
   const type = envelope.eventType ?? OsEventTypeList.CLICK_EVENT
@@ -30,6 +30,8 @@ export function toInput(event: EvenHubEvent): Input | 'exit' | null {
       return { type: 'down' }
     case OsEventTypeList.LONG_PRESS_EVENT:
       return { type: 'long' }
+    case OsEventTypeList.FOREGROUND_ENTER_EVENT:
+      return 'resume'
     case OsEventTypeList.SYSTEM_EXIT_EVENT:
     case OsEventTypeList.ABNORMAL_EXIT_EVENT:
       return 'exit'

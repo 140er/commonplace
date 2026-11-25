@@ -121,11 +121,12 @@ export function createBridge(rawConfig) {
   }
 
   // Without a key the bridge serves loopback only, so the Host must name loopback
-  // too: a DNS-rebound page or a LAN-facing proxy in front of it cannot pass.
+  // too (any port, so a local dev proxy that keeps the Host still works). A
+  // DNS-rebound page or a LAN client of such a proxy carries another Host.
   function loopbackHost(req) {
-    const port = req.socket.localPort
     const host = String(req.headers.host ?? '').toLowerCase()
-    return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host)
+    const name = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]
+    return name === '127.0.0.1' || name === 'localhost' || name === '[::1]'
   }
 
   function authorized(req) {

@@ -22,6 +22,8 @@ export interface BridgeSettings {
 /** Events newer than this many seqs are read once at start for today's activity. */
 export const ACTIVITY_WINDOW = 400
 const LATEST = '9223372036854775807'
+/** A stalled network (Wi-Fi to mobile handover) must not leave a poll hanging. */
+export const REQUEST_TIMEOUT_MS = 15_000
 
 export class HubClient {
   constructor(
@@ -44,6 +46,7 @@ export class HubClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch {
       throw new BridgeError(0, 'bridge unreachable')

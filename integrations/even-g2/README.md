@@ -53,17 +53,20 @@ polls. New items still show up within about 20 s. A card whose version moved sho
 - The Commonplace token lives only in the bridge's token file. It goes upstream in
   `Authorization` and nowhere else. It is never logged or returned, and any copy of it in
   an upstream body is replaced by `[redacted]`.
-- The bridge forwards these routes and refuses everything else before any request
-  leaves: `GET needs-me`, `GET needs-me/digest`, `GET events`, `GET me`, `GET boards`,
-  `GET boards/<b>/cards`, `GET cards/<n>`, `POST cards/<n>/decide`, and
-  `POST cards/<n>/comments`. It forwards only the declared query parameters, checks body
-  fields one by one, and caps bodies at 16 KiB.
+- The bridge forwards exactly what the plugin uses and refuses everything else before any
+  request leaves: `GET needs-me`, `GET events`, `GET me`, `GET boards`, `GET cards/<n>`,
+  `POST cards/<n>/decide` (`version` and `choice` only, so the card goes back to whoever
+  asked), and `POST cards/<n>/comments` (`text` only). It forwards only the declared query
+  parameters, refuses any other body field (inherited names such as `__proto__`
+  included), and caps bodies at 16 KiB.
 - Beyond loopback the bridge requires a pairing key (`X-Bridge-Key`). The plugin gets it
   once from the pairing link (`?key=...`), stores it in the Even app's storage, and
   removes it from the address. The key only unlocks this bridge. It is not a Commonplace
   token.
-- Without a key the bridge answers only requests whose `Host` names loopback. That stops a
-  DNS-rebound web page, or a LAN-facing proxy in front of the bridge, from using it.
+- Without a key the bridge answers only requests whose `Host` names loopback (any port).
+  That stops a DNS-rebound web page, and a LAN client of the dev server, because the
+  dev-server proxy keeps the browser's `Host`. A proxy that rewrites `Host` would defeat
+  this, so put a key on any bridge that sits behind one.
 - CORS headers go only to the origins in `BRIDGE_ALLOWED_ORIGINS`. They are not needed
   when the bridge serves the plugin itself.
 - Voice is not included. `/api/voice/transcribe` accepts signed-in people only, not
@@ -110,12 +113,13 @@ bodies or token.
 
 ```bash
 URL=$(BRIDGE_KEY_FILE=~/.config/cmmn-g2/bridge-key node bridge/bin/cmmn-g2-bridge.mjs --pair-url http://<ip>:8790/)
-(cd plugin && npx evenhub qr --url "$URL")            # QR code in the terminal
-npx -y qrcode@1.5.4 -o ~/.config/cmmn-g2/pair.png "$URL"   # or as an image (private dir) to send privately
+npx -y qrcode@1.5.4 -o ~/.config/cmmn-g2/pair.png "$URL" >/dev/null   # image in the private dir
+unset URL
 ```
 
-The QR code carries the pairing key. Send it only privately and do not paste the URL in
-chat.
+The QR code carries the pairing key. Send the image only privately, and never print or
+paste the URL. That rules out `evenhub qr --url`, because it prints the URL and caches it.
+Scanning with Developer Mode only needs a QR code of the URL, which this image is.
 
 **5. Scan and use it (owner, phone and glasses).**
 In the Even app, open Developer Mode, choose **Scan QR**, and scan the code. The plugin

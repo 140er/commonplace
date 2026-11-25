@@ -182,8 +182,16 @@ export class G2App {
     await this.render()
   }
 
+  private polling: Promise<void> | null = null
+
+  /** One poll at a time: a slow one is never overlapped by the next tick. */
+  poll(): Promise<void> {
+    if (!this.polling) this.polling = this.pollOnce().finally(() => (this.polling = null))
+    return this.polling
+  }
+
   /** One poll of the event log: new notable events set the notice and refresh the counts. */
-  async poll(): Promise<void> {
+  private async pollOnce(): Promise<void> {
     if (!this.ready || (this.cursor === null && this.mode === 'log')) return this.start()
     if (this.mode === 'diff') return this.pollNeeds()
     try {

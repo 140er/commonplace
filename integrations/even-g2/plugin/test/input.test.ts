@@ -19,7 +19,8 @@ describe('gesture mapping', () => {
 
   it('ignores release, lifecycle and audio-only envelopes; exit stops the app', () => {
     expect(toInput({ sysEvent: { eventType: OsEventTypeList.LONG_PRESS_RELEASE_EVENT } as any })).toBeNull()
-    expect(toInput({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } as any })).toBeNull()
+    expect(toInput({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_EXIT_EVENT } as any })).toBeNull()
+    expect(toInput({ sysEvent: { eventType: OsEventTypeList.FOREGROUND_ENTER_EVENT } as any })).toBe('resume')
     expect(toInput({ audioEvent: {} as any })).toBeNull()
     expect(toInput({ sysEvent: { eventType: OsEventTypeList.SYSTEM_EXIT_EVENT } as any })).toBe('exit')
   })
