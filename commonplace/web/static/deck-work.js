@@ -1,14 +1,14 @@
 // Work: every project's cards in status lanes. The lanes use the Board's own grouping (boardGroup over the
 // owner queue), so "Waiting on you" here is the same list the Board and the Waiting count show.
 import { escape as e, elapsed } from './api.js';
-import { boardGroup, needsOwner, cardBot, cardTitle, boardCopy } from './deck-board.js';
+import { boardGroup, needsOwner, cardBot, cardTitle, boardCopy, stateWord } from './deck-board.js';
 
 export const TITLE = 'Work';
 export const SHOWN = 5;
 // [group, label, dot tone, what an empty lane says]
 export const LANES = [
   ['todo', 'Waiting on you', 'wait', 'Nothing waits on you.'],
-  ['doing', 'In progress', 'work', 'No card is being worked on.'],
+  ['doing', 'Active', 'work', 'No active cards.'],
   ['review', 'In review', '', 'Nothing is waiting for review.'],
   ['done', 'Shipped', 'ok', 'Nothing shipped yet.'],
 ];
@@ -32,7 +32,7 @@ export function workItems({ boards = [], cards = new Map(), bots = [], me = '' }
     for (const card of cards.get(board.slug) || []) {
       if (card.archived || (card.status === 'backlog' && !needsOwner(card, me))) continue;
       const bot = cardBot(card, { board, bots });
-      items.push({ card, board, group: boardGroup(card, me), name: boardCopy(bot?.name || '') || boardName(board) });
+      items.push({ card, board, group: boardGroup(card, me), state: stateWord(card, me), name: boardCopy(bot?.name || '') || boardName(board) });
     }
   }
   return items.sort((a, b) => stamp(b.card) - stamp(a.card) || b.card.number - a.card.number);
@@ -44,7 +44,7 @@ const when = at => {
   const age = at ? elapsed(at) : '';
   return age && age !== '—' ? `<time datetime="${e(at)}" title="${e(at)}">${e(age)}</time>` : '';
 };
-export const cardHTML = ({ card, name }) => `<a class="wk-card" href="#/card/${e(card.number)}" data-card="${e(card.number)}"><span class="wk-title">${e(cardTitle(card.title))}</span><span class="wk-meta"><span class="wk-av" aria-hidden="true">${e(initial(name))}</span><span class="wk-name">${e(name)}</span>${when(card.updated_at)}</span></a>`;
+export const cardHTML = ({ card, name, state }) => `<a class="wk-card" href="#/card/${e(card.number)}" data-card="${e(card.number)}"><span class="wk-title">${e(cardTitle(card.title))}</span><span class="wk-meta"><span class="wk-av" aria-hidden="true">${e(initial(name))}</span><span class="wk-name">${e(name)}</span>${state ? `<span class="wk-state">${e(state)}</span>` : ''}${when(card.updated_at)}</span></a>`;
 
 export function laneHTML([group, label, tone, empty], list, expanded) {
   const open = expanded.has(group), shown = open ? list : list.slice(0, SHOWN), hidden = list.length - shown.length;

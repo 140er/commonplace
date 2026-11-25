@@ -20,7 +20,7 @@ const page = (cards, options = {}) => pageHTML({ boards, cards, me, bots: [], ..
 test('the screen registers as Work and routes #/work', () => {
   assert.equal(TITLE, 'Work');
   assert.equal(typeof SCREENS.work, 'function');
-  assert.deepEqual(LANES.map(([group, label]) => [group, label]), [['todo', 'Waiting on you'], ['doing', 'In progress'], ['review', 'In review'], ['done', 'Shipped']]);
+  assert.deepEqual(LANES.map(([group, label]) => [group, label]), [['todo', 'Waiting on you'], ['doing', 'Active'], ['review', 'In review'], ['done', 'Shipped']]);
 });
 
 test('every card lands in the lane the Board gives it, and the owner queue decides Waiting on you', () => {
@@ -42,7 +42,7 @@ test('every card lands in the lane the Board gives it, and the owner queue decid
 
 test('lane labels carry their count, newest first', () => {
   const html = page(byBoard([card(1, { updated_at: '2026-11-25T08:00:00Z' }), card(2, { updated_at: '2026-11-25T09:00:00Z' }), card(3, { status: 'done' })]));
-  assert.match(lane(html, 'doing'), /In progress <b>2<\/b>/);
+  assert.match(lane(html, 'doing'), /Active <b>2<\/b>/);
   assert.match(lane(html, 'done'), /Shipped <b>1<\/b>/);
   assert.match(lane(html, 'todo'), /Waiting on you <b>0<\/b>/);
   assert.deepEqual(titles(lane(html, 'doing')), ['Card 2', 'Card 1']);
@@ -99,7 +99,7 @@ test('a lane shows its first five cards and a Show N more card that expands it i
 test('an empty lane says one quiet sentence; nothing at all shows four of them', () => {
   const html = page(byBoard());
   assert.match(lane(html, 'todo'), /<p class="wk-empty">Nothing waits on you\.<\/p>/);
-  assert.match(lane(html, 'doing'), /<p class="wk-empty">No card is being worked on\.<\/p>/);
+  assert.match(lane(html, 'doing'), /<p class="wk-empty">No active cards\.<\/p>/);
   assert.match(lane(html, 'review'), /<p class="wk-empty">Nothing is waiting for review\.<\/p>/);
   assert.match(lane(html, 'done'), /<p class="wk-empty">Nothing shipped yet\.<\/p>/);
   assert.equal((html.match(/class="wk-empty"/g) || []).length, 4);
@@ -141,7 +141,7 @@ test('a card names its bot (or the project) with an initial and how long ago it 
   assert.equal(first.name, 'Kit');
   assert.equal(second.name, 'Site', 'no bot on the project: the project name');
   const html = cardHTML(first);
-  assert.match(html, /<span class="wk-av" aria-hidden="true">K<\/span><span class="wk-name">Kit<\/span><time datetime="[^"]+" title="[^"]+">2h<\/time>/);
+  assert.match(html, /<span class="wk-av" aria-hidden="true">K<\/span><span class="wk-name">Kit<\/span>(?:<span class="wk-state">[^<]+<\/span>)?<time datetime="[^"]+" title="[^"]+">2h<\/time>/);
   assert.doesNotMatch(cardHTML({ card: card(3, { updated_at: undefined, created_at: undefined }), name: 'X' }), /<time/);
 });
 
