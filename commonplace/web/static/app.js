@@ -477,7 +477,10 @@ function navigation() {
   const needs = state.needs.count || 0;
   const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", role: state.me.role || (state.me.can_admin === true ? "owner" : "member"), user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting, boards: (state.boards || []).map((b) => ({ slug: b.slug, name: b.name })), needsQueue: state.needs };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
+  // The account menu sits in the rail; a redraw (data arriving, a route change) must not close it under the pointer.
+  const accountOpen = boardNav.querySelector?.(".user-menu")?.open === true;
   boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  if (accountOpen) root.querySelector("#board-nav .user-menu")?.setAttribute("open", "");
   root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");

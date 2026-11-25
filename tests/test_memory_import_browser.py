@@ -88,7 +88,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                 for control in metrics["controls"]:
                     assert control == {
                         "height": 44,
-                        "fill": "rgb(27, 26, 33)",
+                        "fill": "rgb(36, 49, 64)",
                         "border": "0px",
                         "radius": "8px",
                         "shadow": "none",
@@ -111,7 +111,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         "height": 4,
                         "border": "0px",
                         "outline": "none",
-                        "fill": "rgb(27, 26, 33)",
+                        "fill": "rgb(36, 49, 64)",
                     }
                 output = os.environ.get("IMPORT_SCREENSHOT_DIR")
                 if output:
@@ -157,7 +157,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                 await page.locator('[name="format"]').focus()
                 assert await page.locator('[name="format"]').evaluate(
                     "el => { const s = getComputedStyle(el); return [s.outlineColor, s.outlineStyle, s.outlineWidth]; }"
-                ) == ["rgba(255, 255, 255, 0.1)", "solid", "2px"]
+                ) == ["rgb(58, 72, 88)", "solid", "2px"]
                 await page.keyboard.press("Tab")
                 await page.keyboard.press("Tab")
                 assert await page.locator('[name="file"]').evaluate(
@@ -165,7 +165,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                 )
                 assert await page.locator(".memory-import-picker").evaluate(
                     "el => { const s = getComputedStyle(el); return [s.outlineColor, s.outlineStyle, s.outlineWidth]; }"
-                ) == ["rgba(255, 255, 255, 0.1)", "solid", "2px"]
+                ) == ["rgb(58, 72, 88)", "solid", "2px"]
                 await page.locator("#memory-import-title").focus()
                 await shot("choose")
                 await page.click('[data-import-action="close"]')

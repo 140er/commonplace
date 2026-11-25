@@ -64,7 +64,16 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
 
     def switcher():
         if look == "deck":
-            # The Deck palette lists destinations only; the switcher is its rail or top-bar button.
+            # The Deck palette lists destinations only; the switcher lives in the account menu at the
+            # foot of the sidebar, and on a phone in the sheet the header's More button opens.
+            if size[0] == 1280:
+                # The menu stays open behind the switcher dialog; open it only when it is closed.
+                if page.locator(".rail .user-menu[open]").count() == 0:
+                    page.locator(".rail .user-menu > summary").click()
+            else:
+                page.get_by_role(
+                    "button", name="More: settings, cloud workspaces and account"
+                ).click()
             page.locator('[data-action="switch-workspace"]:visible').first.click()
             expect(page.locator(".workspace-switch")).to_be_visible()
             return
@@ -133,13 +142,13 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
                 page.locator(".workspace-switch").evaluate(
                     "el => getComputedStyle(el).backgroundColor"
                 )
-                == "rgba(20, 19, 25, 0.94)"
+                == "rgb(28, 37, 48)"
             )
             assert (
                 page.locator(".workspace-switch").evaluate(
                     "el => getComputedStyle(el).borderRadius"
                 )
-                == "16px"
+                == "14px"
             )
         if look == "deck":
             page.get_by_role("button", name="Create workspace", exact=True).click()
@@ -193,7 +202,8 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
         assert all(not any(board["counts"].values()) for board in boards)
         expect(page.locator(".shell")).to_be_visible()
         if look == "deck":
-            expect(page.locator(".bh-form")).to_be_visible()
+            # Home is Waiting on you; a new workspace has nothing waiting.
+            expect(page.get_by_role("region", name="Waiting on you")).to_be_visible()
         else:
             expect(page.get_by_role("heading", name="Bots", exact=True)).to_be_visible()
         target = os.environ.get("WORKSPACE_SHOTS")

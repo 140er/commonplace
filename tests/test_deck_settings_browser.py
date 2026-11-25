@@ -188,7 +188,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
         assert page.locator(".head h1").evaluate("el => getComputedStyle(el).fontSize") == "22px"
         assert page.locator("#phone-push").evaluate(
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgba(20, 19, 25, 0.94)", "12px"]
+        ) == ["rgb(28, 37, 48)", "10px"]
         if width == 390:
             assert page.locator("#content").evaluate(
                 "el => [getComputedStyle(el).paddingLeft, getComputedStyle(el).paddingRight]"
@@ -229,7 +229,7 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         assert field.evaluate(
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgb(27, 26, 33)", "8px"]
+        ) == ["rgb(36, 49, 64)", "8px"]
         page.locator('[data-deck-setting="phone-push"]').click()
         assert "Connect a notification service" in page.locator("#phone-push").inner_text()
     finally:

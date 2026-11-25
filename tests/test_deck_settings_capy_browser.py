@@ -130,9 +130,9 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             "!document.querySelector('[data-tool-policy-mode=\"shell.exec\"]').disabled"
         )
         deny = row.get_by_role("button", name="Deny", exact=True)
-        assert deny.evaluate("el=>getComputedStyle(el).color") == "rgb(133, 131, 154)"
+        assert deny.evaluate("el=>getComputedStyle(el).color") == "rgb(134, 149, 166)"
         denied = page.locator('[data-tool-policy-row="deploy.preview"] [data-policy-state="deny"]')
-        assert denied.evaluate("el=>getComputedStyle(el).color") == "rgb(251, 113, 133)"
+        assert denied.evaluate("el=>getComputedStyle(el).color") == "rgb(231, 163, 154)"
         assert row.get_attribute("title") == "shell.exec"
         assert row.locator(".capy-policy-limit").inner_text() == "Never on production"
         assert page.get_by_text("Technical name", exact=True).count() == 0
@@ -160,7 +160,7 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         )
         assert (
             page.locator(".appearance-send").evaluate("el=>getComputedStyle(el).backgroundColor")
-            == "rgb(157, 92, 255)"
+            == "rgb(155, 187, 224)"
         )
         assert page.locator('[data-appearance-output="vignette"]').inner_text() == "60%"
         for canvas in page.locator(".appearance-scenes canvas, [data-appearance-preview]").all():
@@ -187,7 +187,7 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
                 page.locator(".deck-appearance").evaluate(
                     "el=>getComputedStyle(el).borderTopLeftRadius"
                 )
-                == "12px"
+                == "10px"
             )
         page.get_by_role("switch", name="Allow bot sharing").check()
         assert writes[-1] == {"sharing": True}
