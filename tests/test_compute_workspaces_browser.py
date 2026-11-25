@@ -864,12 +864,12 @@ def test_deck_control_borders_buttons_and_placeholders_are_readable(served):
             "() => ({root: getComputedStyle(document.documentElement).getPropertyValue('--line-strong').trim(),"
             " control: getComputedStyle(document.querySelector('.compute')).getPropertyValue('--control-line').trim()})"
         )
-        assert tokens["control"].lower() == "#6b6b73"
-        assert tokens["root"].lower() != "#6b6b73", tokens
+        assert tokens["control"].lower() == "#6b7f95"
+        assert tokens["root"].lower() != "#6b7f95", tokens
         # The token lives in Deck's own stylesheet; compute.css only uses it (with the global line as the Classic fallback).
         static = Path(__file__).resolve().parents[1] / "commonplace" / "web" / "static"
-        assert "--control-line: #6B6B73" in (static / "deck-capy.css").read_text()
-        assert "#6B6B73" not in (static / "compute.css").read_text()
+        assert "--control-line: #6b7f95" in (static / "deck-system.css").read_text()
+        assert "#6b7f95" not in (static / "compute.css").read_text().lower()
 
     _run(fx, "deck", "desktop", body)
 
@@ -1343,8 +1343,8 @@ def test_deck_calls_the_page_cloud_workspaces_and_keeps_the_route_card_on_the_ma
                 page.set_default_timeout(20000)
                 page.goto(f"{fx.origin}/app/?ui=deck#/compute")
                 if phone:
-                    # On a phone Cloud workspaces sits in the More sheet under its full name.
-                    page.locator(".deck-tab-more").click()
+                    # On a phone Cloud workspaces sits in the More sheet (the header menu) under its full name.
+                    page.locator('[data-deck-shell-action="more"]').click()
                     entry = page.locator('#deck-more a[data-nav="compute"]')
                     expect(entry).to_be_visible()
                     expect(entry).to_contain_text("Cloud workspaces")
@@ -1603,14 +1603,14 @@ def test_the_deck_phone_tab_labels_keep_their_distance_at_320(served):
                 " size: getComputedStyle(el).fontSize}; }).filter(Boolean)"
             )
             _shot(page, "deck-320-09-tab-labels")
-            assert len(labels) >= 5, labels
-            assert {item["size"] for item in labels} == {"11px"}, labels
+            assert len(labels) >= 4, labels
+            assert {item["size"] for item in labels} == {"11.5px"}, labels
             for first, second in zip(labels, labels[1:]):
                 assert second["left"] - first["right"] >= 1, (first, second)
             assert labels[0]["left"] >= 0 and labels[-1]["right"] <= 320, labels
-            workspaces = next(item for item in labels if item["text"] == "Workspaces")
-            settings = next(item for item in labels if item["text"] == "Settings")
-            assert settings["left"] - workspaces["right"] >= 1, (workspaces, settings)
+            work = next(item for item in labels if item["text"] == "Work")
+            memory = next(item for item in labels if item["text"] == "Memory")
+            assert memory["left"] - work["right"] >= 1, (work, memory)
             context.close()
         finally:
             browser.close()

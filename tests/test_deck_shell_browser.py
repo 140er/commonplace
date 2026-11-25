@@ -62,9 +62,9 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                     await page.goto(url + "#/today")
                     await page.wait_for_selector(".deck-bot-tree", state="attached")
                     await page.wait_for_function(
-                        "getComputedStyle(document.querySelector('[data-deck=bar]')).backgroundColor === 'rgb(17, 16, 21)'"
+                        "() => getComputedStyle(document.querySelector('[data-deck=bar]')).backgroundColor === 'rgb(14, 20, 27)'"
                         if width >= 700
-                        else "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
+                        else "() => document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 56"
                     )
                     await page.wait_for_function(
                         "() => document.querySelectorAll('.deck-tree-row').length >= 1"
@@ -72,88 +72,80 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                     await page.evaluate("document.fonts.ready")
                     assert await page.evaluate("document.documentElement.scrollWidth") == width
                     if width >= 700:
-                        measured = await page.wait_for_function("""() => {
-                          const rail=document.querySelector('[data-deck=bar]'), row=document.querySelector('.deck-tree-row');
-                          return rail?.getBoundingClientRect().width===252 && getComputedStyle(rail).backgroundColor==='rgb(17, 16, 21)' && row?.getBoundingClientRect().height===26;
-                        }""")
-                        assert await measured.json_value()
+                        # The sidebar is the T3 dark sidebar colour and is not a floating card any more.
+                        rail = await page.evaluate(
+                            "() => { const r=document.querySelector('[data-deck=bar]'); return {width:r.getBoundingClientRect().width, bg:getComputedStyle(r).backgroundColor}; }"
+                        )
+                        assert rail == {"width": 236, "bg": "rgb(14, 20, 27)"}, rail
+                        # No background art: the stage canvas is hidden.
                         stage = page.locator(".deck-stage")
                         await stage.wait_for(state="attached")
-                        metrics = await stage.evaluate("""e => {
-                          const box=e.getBoundingClientRect(), parent=e.parentElement.getBoundingClientRect(), style=getComputedStyle(e);
-                          return {inset:box.left-parent.left,radius:style.borderRadius,border:style.borderTopWidth,dim:e.dataset.dimmed,canvas:!!e.querySelector('canvas')};
-                        }""")
-                        assert metrics == {
-                            "inset": 8,
-                            "radius": "12px",
-                            "border": "1px",
-                            "dim": "true",
-                            "canvas": True,
-                        }
+                        assert not await stage.is_visible()
                         assert await page.locator('[data-deck-folder="Bots"]').count() == 0
                         me = await page.request.get(url.split("/app/")[0] + "/api/me")
                         assert (
                             await page.locator(".deck-owner small").text_content()
-                            == "Owner · " + (await me.json())["workspace_name"]
+                            == "Owner, " + (await me.json())["workspace_name"]
                         )
-                        await page.locator('[data-deck=bar] a[href="#/board"]').click()
+                        # The sidebar names the places: Waiting on you, Work, Bots.
+                        labels = await page.locator(
+                            ".deck-links .nav .deck-row-label"
+                        ).all_inner_texts()
+                        assert labels[:2] == ["Waiting on you", "Work"], labels
+                        await page.locator('.deck-links [data-nav="work"]').click()
+                        await page.wait_for_function("() => location.hash === '#/work'")
+                        await page.locator(".deck-project-row").first.click()
                         await page.locator(".deck-board .board").wait_for(state="visible")
                         assert await page.evaluate("location.hash") == "#/board/work"
-                        await page.locator(".deck-rail-heading.ws").click()
+                        # The account menu is redrawn with the rail; open it and click in one browser task.
+                        await page.locator(".user-menu summary").wait_for(state="visible")
+                        await page.evaluate(
+                            "() => { const menu = document.querySelector('.user-menu'); menu.open = true; menu.querySelector('[data-action=switch-workspace]').click(); }"
+                        )
                         await page.locator(".workspace-switch").wait_for(state="visible")
                         assert await page.get_by_role(
                             "button", name="Create workspace", exact=True
                         ).is_visible()
                         await page.keyboard.press("Escape")
+                        # The brand opens home, which is Waiting on you.
                         await page.locator(".deck-brand-row .deck-brand").click()
-                        await page.locator(".bh-form textarea:enabled").wait_for(state="visible")
-                        assert await page.evaluate("location.hash") == "#/"
-                        assert (
-                            await page.locator(".deck-stage").get_attribute("data-dimmed")
-                            == "false"
-                        )
-                        await page.locator('.deck-links [data-nav="today"]').click()
                         await page.locator(".bt-card").first.wait_for(state="visible")
-                        assert await page.evaluate("location.hash") == "#/today"
+                        assert await page.evaluate("location.hash") == "#/"
+                        await page.locator('.deck-links [data-nav="home"]').click()
+                        await page.locator(".bt-card").first.wait_for(state="visible")
                         await page.locator(".deck-new-bot").click()
                         await page.wait_for_selector('dialog[open], [role="dialog"]')
                         await page.keyboard.press("Escape")
-                        await page.locator('.deck-links [data-nav="bots"]').click()
+                        await page.locator('[data-deck=bar] [data-nav="bots"]').click()
                     else:
                         top = page.locator('[data-deck="top"]')
                         await page.wait_for_function(
-                            "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
+                            "() => document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 56"
                         )
-                        assert await top.locator("b").text_content() == "Today"
-                        await page.locator('[data-deck-waiting="true"]').wait_for(state="visible")
+                        assert await top.locator("b").text_content() == "Waiting on you"
+                        # What waits on you shows as a count on the Waiting tab (the More button carries no dot).
+                        await page.locator(
+                            '[data-deck="tabs"] [data-nav="home"] .count.need'
+                        ).wait_for(state="visible")
                         tabs = page.locator('[data-deck="tabs"]')
                         assert await tabs.locator("a").count() == 4
-                        await tabs.locator('[data-deck-shell-action="mic"]').wait_for(
-                            state="visible"
-                        )
-                        await top.locator(".deck-brand").click()
-                        await page.locator(".bh-form textarea:enabled").wait_for(state="visible")
-                        await page.wait_for_function(
-                            "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
-                        )
-                        assert await page.locator(".bh-form .deck-composer-mic").is_visible()
-                        await page.locator(".bh-form").evaluate(
-                            "e => e.insertAdjacentHTML('beforeend', '<button type=button data-voice=mic aria-label=Record></button>')"
-                        )
-                        await page.wait_for_function(
-                            "() => !document.querySelector('.bh-form .deck-composer-mic')"
-                        )
-                        assert await page.locator(".bh-form [data-voice=mic]").count() == 1
-                        await page.locator(".bh-form [data-voice=mic]").evaluate("e => e.remove()")
-                        await page.locator(".bh-form .deck-composer-mic").wait_for(state="visible")
-                        for entry in ["bots", "memory", "today"]:
+                        # The tab bar has no microphone: voice lives in each composer.
+                        assert await tabs.locator('[data-deck-shell-action="mic"]').count() == 0
+                        await top.locator(".deck-phone-avatar").click()
+                        await page.locator("#deck-more").wait_for(state="visible")
+                        assert await page.locator("#deck-more a").first.inner_text() == "Settings"
+                        await page.locator("#deck-more").click(position={"x": 5, "y": 5})
+                        await page.locator("#deck-more").wait_for(state="hidden")
+                        for entry, hash in [
+                            ("bots", "#/bots"),
+                            ("memory", "#/memory"),
+                            ("home", "#/"),
+                        ]:
                             await tabs.locator(f'[data-nav="{entry}"]').click()
-                            await page.wait_for_function(
-                                "hash => location.hash === hash", arg=f"#/{entry}"
-                            )
+                            await page.wait_for_function("hash => location.hash === hash", arg=hash)
                             await top.wait_for(state="visible")
                             await page.wait_for_function(
-                                "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
+                                "() => document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 56"
                             )
                             assert (
                                 await page.evaluate("document.documentElement.scrollWidth") == width
@@ -163,7 +155,9 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         personal = (await roster.json())["bots"][0]
                         await page.goto(url + "#/bots/" + personal["id"])
                         await page.wait_for_selector('.bots[data-pane="thread"]')
-                        await page.locator('[data-deck="top"]').wait_for(state="visible")
+                        # A thread's own bar (round back button and name) replaces the shell's title bar.
+                        await page.locator(".bots-back").wait_for(state="visible")
+                        assert not await page.locator('[data-deck="top"]').is_visible()
                         await page.locator('[data-deck="tabs"]').wait_for(state="visible")
                         await page.wait_for_function(
                             "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
@@ -203,9 +197,8 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         }""")
                         await page.screenshot(path=str(output / "rail-states-fixture.png"))
                     if width == 390:
-                        await page.locator(
-                            '[data-deck=tabs] [data-deck-shell-action="mic"]'
-                        ).click()
+                        await page.goto(url + "#/bots/-/coworkers")
+                        await page.locator(".cb-composer .deck-composer-mic").click()
                         metrics = await page.evaluate("""() => {
                           const tabs=document.querySelector('#phone-tabs'), error=document.querySelector('#screen-error');
                           return {tabs:tabs?.getBoundingClientRect().toJSON(), tabsStyle:tabs?.getAttribute('style'), error:error?.textContent, errorHidden:error?.hidden, errorBox:error?.getBoundingClientRect().toJSON(), scrollY, height:innerHeight};

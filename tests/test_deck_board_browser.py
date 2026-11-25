@@ -142,7 +142,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             css = card.evaluate(
                 "el=>{const s=getComputedStyle(el);return [s.backgroundColor,s.borderLeftWidth,s.borderLeftColor]}"
             )
-            assert css[0] == "rgba(20, 19, 25, 0.94)"
+            assert css[0] == "rgb(28, 37, 48)"
             assert (css[1] == "2px") == (card.get_attribute("data-card") == "1")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         if size[0] == 390:
@@ -161,8 +161,9 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             assert pill_box["y"] >= actions["y"] + actions["height"]
             assert abs(actions["y"] + actions["height"] / 2 - title["y"] - title["height"] / 2) < 1
             assert "16px" in pills.evaluate("el=>getComputedStyle(el).maskImage")
-            assert page.locator("#phone-bar b").count() == 0
-            assert page.locator("#phone-bar .deck-mark").is_visible()
+            # The phone header carries the More menu button and the page title.
+            assert page.locator("#phone-bar .deck-phone-avatar").is_visible()
+            assert page.locator("#phone-bar b").inner_text().strip() != ""
             assert page.locator("#col-todo").bounding_box()["width"] == 358
             page.locator('[data-board-column="done"]').click()
             page.wait_for_function(
@@ -211,7 +212,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
                 if control.is_visible():
                     assert control.bounding_box()["height"] >= 44
         else:
-            assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "14px"
+            assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "12px"
         assert not drawer.locator('[data-form="comment"]').is_visible()
         assert drawer.locator(".ctx-body > [data-details-description]").is_visible()
         assert drawer.locator(".ctx-body > section:has(> .activity)").is_visible()

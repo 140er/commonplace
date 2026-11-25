@@ -27,7 +27,7 @@ async def board_ready(page, url):
     await page.goto(url + "#/board/work")
     await page.wait_for_selector(".workbench-board")
     # The dock callback runs after the initial navigation render.
-    await page.wait_for_function("document.querySelector('#chat-toggle')?.isConnected")
+    await page.wait_for_function("() => document.querySelector('#chat-toggle')?.isConnected")
     await page.evaluate("document.fonts.ready")
 
 
@@ -52,7 +52,7 @@ async def assert_tabs(page):
       return {labels:[...e.querySelectorAll('a')].map(a=>a.textContent),
         bottom:e.getBoundingClientRect().bottom, width:document.documentElement.scrollWidth};
     }""")
-    assert metrics["labels"] == ["Today", "Bots", "Workspaces", "Settings"]
+    assert metrics["labels"] == ["Waiting", "Bots", "Work", "Memory"]
     assert metrics["bottom"] == pytest.approx(844)
     assert metrics["width"] == 390
 
@@ -83,7 +83,7 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
             try:
                 context, page, url = await open_app(browser, hub, fresh)
                 await board_ready(page, url)
-                for destination in ["today", "bots", "compute", "settings"]:
+                for destination in ["", "bots", "work", "memory"]:
                     await board_ready(page, url)
                     if surface == "card":
                         await page.locator(f'.card[data-card="{card["number"]}"]').click()
@@ -107,9 +107,20 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                         await page.wait_for_selector("#card-panel[hidden]", state="attached")
                         assert await page.evaluate("location.hash") == "#/board/work"
                     elif surface == "needs":
+                        # In the current look the old Needs me address opens Waiting on you, the home page.
                         await page.goto(url + "#/needs")
-                        await page.wait_for_selector(".needs-me")
-                        await assert_gutters(page, "#content")
+                        await page.wait_for_selector(".bt-bar")
+                        assert await page.evaluate("location.hash") == "#/"
+                        # Waiting on you draws its own header; it keeps a side gutter and does not overflow.
+                        await page.wait_for_function(
+                            """() => {
+                              const bar = document.querySelector('.bt-bar');
+                              const box = bar?.getBoundingClientRect();
+                              return parseFloat(getComputedStyle(bar).paddingLeft) >= 12
+                                && box.left === 0 && box.right === innerWidth
+                                && document.documentElement.scrollWidth === innerWidth;
+                            }"""
+                        )
                     else:
                         await page.wait_for_function("""() => {
                           const board = document.querySelector('.deck-board .board');
@@ -122,7 +133,9 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                         "hash => location.hash === hash", arg=f"#/{destination}"
                     )
                     await assert_tabs(page)
-                # Workspace tools remain two taps away via Settings.
+                # Settings and the workspace tools stay two taps away: More, then Settings.
+                await page.locator('[data-deck-shell-action="more"]').click()
+                await page.locator('#deck-more a[href="#/settings"]').click()
                 await page.wait_for_selector("#deck-tools")
                 for href in ["#/boards", "#/memory", "#/needs"]:
                     assert await page.locator(f'#deck-tools a[href="{href}"]').is_visible()

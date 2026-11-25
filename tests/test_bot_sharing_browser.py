@@ -67,12 +67,10 @@ def capture(page, label, size):
     assert_contrast(page, ".bot-access")
     panel = page.locator(".bot-access")
     assert panel.count() == 1
-    assert panel.evaluate("el => getComputedStyle(el.querySelector('h2')).fontSize") == "24px"
+    assert panel.evaluate("el => getComputedStyle(el.querySelector('h2')).fontSize") == "20px"
     for card in page.locator(".bot-access-card").all():
-        assert (
-            card.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(20, 19, 25, 0.94)"
-        )
-        assert card.evaluate("el => getComputedStyle(el).borderRadius") == "20px"
+        assert card.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(28, 37, 48)"
+        assert card.evaluate("el => getComputedStyle(el).borderRadius") == "10px"
     if size[0] == 390:
         assert panel.evaluate("el => getComputedStyle(el).paddingLeft") == "16px"
     measurements = panel.evaluate("""el => {
@@ -98,11 +96,11 @@ def capture(page, label, size):
         };
     }""")
     assert abs(measurements["titleTop"] - measurements["expectedTop"]) < 1, measurements
-    assert measurements["surface"] == "rgb(9, 9, 12)"
+    assert measurements["surface"] == "rgb(20, 26, 34)"
     if measurements["sectionCount"]:
         assert measurements["sectionRows"] == 1
         assert measurements["selectedVisible"]
-        assert measurements["selected"] == ["rgb(237, 237, 242)"]
+        assert measurements["selected"] == ["rgb(44, 56, 70)"]
         if measurements["sectionCount"] == 4 and size[0] == 390:
             assert measurements["tabsOverflow"]
     if measurements["checks"]:
@@ -110,10 +108,10 @@ def capture(page, label, size):
         for check in measurements["checks"]:
             assert check["size"] == check["height"] == 20
             assert check["radius"] == "6px"
-            assert check["background"] in {"rgb(27, 26, 33)", "rgb(237, 237, 242)"}
-            if check["background"] == "rgb(27, 26, 33)":
-                assert check["border"] == "rgba(255, 255, 255, 0.1)"
-    assert all(gap == 20 for gap in measurements["entryGaps"])
+            assert check["background"] in {"rgb(20, 26, 34)", "rgb(155, 187, 224)"}
+            if check["background"] == "rgb(20, 26, 34)":
+                assert check["border"] == "rgb(58, 72, 88)"
+    assert all(gap == 18 for gap in measurements["entryGaps"])
     for time in measurements["times"]:
         assert time["title"] == time["at"]
         assert time["text"].startswith(("Today ", "Yesterday ")) or ", " in time["text"]
@@ -156,7 +154,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
             page.get_by_label("Find a person by name").evaluate(
                 "el => getComputedStyle(el).outlineColor"
             )
-            == "rgba(255, 255, 255, 0.1)"
+            == "rgb(155, 187, 224)"
         )
         capture(page, "picker", size)
         page.locator("[data-people-picker] li:not([hidden]) button").click()

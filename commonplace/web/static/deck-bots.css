@@ -215,8 +215,8 @@
 :root[data-ui="deck"] .bot-access input, :root[data-ui="deck"] .bot-access textarea, :root[data-ui="deck"] .bot-access select { width: 100%; min-width: 0; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line2); border-radius: var(--radius-control); background: var(--ground); color: var(--ink); font: inherit; }
 :root[data-ui="deck"] .bot-access .bot-access-check { display: flex; flex-direction: row; align-items: center; min-height: 44px; }
 :root[data-ui="deck"] .bot-access-check input { width: 20px; min-height: 20px; height: 20px; flex: none; appearance: none; padding: 0; margin: 0; border: 1px solid var(--line2); border-radius: 6px; background: var(--ground); }
-:root[data-ui="deck"] .bot-access-check input:checked { border-color: var(--violet); background: var(--violet); }
-:root[data-ui="deck"] .bot-access-check input:checked::after { content: ""; display: block; width: 6px; height: 10px; margin: 2px 0 0 6px; border: solid var(--ground); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+:root[data-ui="deck"] .bot-access-check input:checked { border-color: var(--violet); background: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] .bot-access-check input:checked::after { content: ""; display: block; width: 6px; height: 10px; margin: 2px 0 0 6px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 :root[data-ui="deck"] .bot-access-preview { display: grid; gap: 8px; padding: 14px; border-radius: var(--radius-control); background: var(--s2); }
 :root[data-ui="deck"] .bot-access [data-access-log] ol { display: grid; gap: 18px; }
 :root[data-ui="deck"] .bot-access [data-access-log] li { display: grid; gap: 10px; }

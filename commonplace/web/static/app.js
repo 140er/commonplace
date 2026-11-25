@@ -608,8 +608,8 @@ function boardView() {
   const content = root.querySelector("#content");
   state.boardCache ||= new Map();
   const cached = state.boardCache.get(board.slug) || {};
-  // Keep the active phone column and a parked-card disclosure through polling.
-  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "";
+  // Keep the active phone column and a parked-card disclosure through polling. The Deck picks its first column with cards; Classic starts on Todo.
+  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || (state.deck?.on() === true ? "" : "todo");
   state.boardColumn = null;
   const backlog = content.querySelector(".backlog")?.open, doneAll = Boolean(content.querySelector("#col-done[data-all]"));
   boardDispose?.();
