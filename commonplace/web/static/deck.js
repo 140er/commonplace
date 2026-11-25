@@ -81,7 +81,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
   const shell = createDeckShell({ root, api, context, on: () => deckOn(storage) });
   const appearance = createDeckAppearance({ root, context, on: () => deckOn(storage), doc, storage });
   let active = null;
-  const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
+  const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)(?:\?[^#]*)?$/.exec(base || '')?.[1] || '';
   const owns = (base) => typeof screens[name(base)] === 'function' && (deckOn(storage) || (!!workspaceRoute(base) && base !== '#/compute'));
   function leave() { active?.ui?.stop?.(); active = null; }
   async function show(base, { background = false, epoch = 0 } = {}) {
