@@ -2,11 +2,12 @@
 import { escape as e, elapsed } from './api.js';
 import { botPage } from './routes.js';
 import { artHTML } from './deck-art.js';
+import { needsCards } from './needs-me.js';
 
 // The places, in the order the sidebar shows them. Waiting on you is home: what needs an answer comes first.
 export const SECTIONS = [['home', 'Waiting on you'], ['work', 'Work'], ['bots', 'Bots'], ['settings', 'Settings']];
 // The phone tab bar. One list, so changing the bar is a one-line edit.
-export const PHONE_TABS = [['home', 'Waiting', '#/'], ['bots', 'Chats', '#/bots'], ['work', 'Work', '#/work'], ['memory', 'Memory', '#/memory']];
+export const PHONE_TABS = [['home', 'Waiting', '#/'], ['bots', 'Bots', '#/bots'], ['work', 'Work', '#/work'], ['memory', 'Memory', '#/memory']];
 /** The place a route belongs to: 'home', 'work', 'bots', 'settings', or '' for the pages in the account menu. */
 export function placeOf(hash = '') {
   const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
@@ -113,8 +114,9 @@ export function shellThreads({ directory = {} } = {}) {
 // Everything that is not one of the places: reachable from the account menu (desktop) and the account sheet (phone).
 const accountLinks = (options, { count: counted = false } = {}) => { const { can_admin, can_manage_instance } = options, at = String(options.hash || ''); return `<a href="#/compute" data-nav="compute"${current(at === '#/compute' || at.startsWith('#/compute/'))}>Cloud workspaces</a><a href="#/boards">Projects</a><a href="#/rules">Rules</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="switch-workspace">Switch workspace</button><button data-action="logout">Sign out</button>`; };
 const projectRows = (options, hash) => rows(options.boards).map(board => {
-  const href = `#/board/${enc(board.slug)}`, open = Number.isSafeInteger(board.waiting) && board.waiting > 0;
-  return `<a class="nav deck-project-row" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon('folder')}<span class="deck-row-label">${e(board.name || board.slug)}</span>${open ? `<small>${board.waiting} waiting</small>` : ''}</a>`;
+  const href = `#/board/${enc(board.slug)}`, waitingHere = needsCards(options.needsQueue || {}).filter(card => card?.board === board.slug).length;
+  const open = waitingHere > 0;
+  return `<a class="nav deck-project-row" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon('folder')}<span class="deck-row-label">${e(board.name || board.slug)}</span>${open ? `<small>${waitingHere} waiting</small>` : ''}</a>`;
 }).join('');
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '' } = options, section = options.section ?? placeOf(hash);
@@ -125,12 +127,12 @@ export function renderShellBar(options) {
     <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><a class="deck-new-thread nav" href="#/bots" data-deck-shell-action="new-thread" aria-label="New chat" title="New chat">${icon('edit')}</a></div>
     <button type="button" class="deck-find" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}<span>Search</span><kbd aria-hidden="true">Ctrl K</kbd></button>
     <div class="deck-links">${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(section === 'home')}>${icon('home')}<span class="deck-row-label">Waiting on you</span>${badge(waiting(options), 'need', 'waiting on you')}</a>`}${offered('work') ? `<a class="nav" href="#/work" data-nav="work"${current(section === 'work')}>${icon('work')}<span class="deck-row-label">Work</span></a>` : ''}<a class="nav" href="#/memory"${current(section === 'memory')}>${icon('memory')}<span class="deck-row-label">Memory</span></a></div>
-    <div class="deck-rail-scroll"><div class="deck-rail-group"><a class="deck-rail-heading" href="#/bots" data-nav="bots"${current(section === 'bots' && !shellBots(options).some(bot => { const href = botHref(bot); return hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`); }))}>Bots<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span></a><a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></div><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>${projects ? `<div class="deck-rail-group"><a class="deck-rail-heading" href="#/work">Projects</a></div><div class="deck-projects">${projects}</div>` : ''}</div>
-    <div class="rail-foot"><details class="user-menu"><summary class="me"${section === '' && !isHome(hash) ? ' data-current="true"' : ''} aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role}, ` : ''}${e(workspace)}</small></span></summary><div class="user-links">${accountLinks(options)}</div></details><a class="deck-settings-link" href="#/settings" data-nav="settings"${current(section === 'settings')} aria-label="Settings" title="Settings">${icon('settings')}</a></div>
+    <div class="deck-rail-scroll"><div class="deck-rail-group"><a class="deck-rail-heading" href="#/bots" data-nav="bots"${current(section === 'bots' && !shellBots(options).some(bot => { const href = botHref(bot); return hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`); }))}>Bots<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span></a><a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></div><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>${projects ? `<div class="deck-rail-group"><a class="deck-rail-heading" href="#/boards">Projects</a></div><div class="deck-projects">${projects}</div>` : ''}</div>
+    <div class="rail-foot"><details class="user-menu"><summary class="me"${section === '' && !isHome(hash) ? ' data-current="true"' : ''} aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role}, ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details><a class="deck-settings-link" href="#/settings" data-nav="settings"${current(section === 'settings')} aria-label="Settings" title="Settings">${icon('settings')}</a></div>
   </nav>`;
 }
 // Pages that are not one of the places still need a phone title, because the page heading hides on a phone.
-const PAGE_TITLES = { '#/bots/-/coworkers': 'Coworkers', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Instance console', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Chats' };
+const PAGE_TITLES = { '#/bots/-/coworkers': 'Coworkers', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Instance console', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
 export function renderShellTop(options) {
   const { hash = '', user = '', board = null } = options;
   const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];

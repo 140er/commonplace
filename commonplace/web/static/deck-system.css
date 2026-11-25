@@ -83,6 +83,13 @@
 /* ---------- Review fixes: full-width page bars, readable answers, one-column setup in a thread ---------- */
 :root[data-ui="deck"] .shell #content > .bt-bar { width: 100%; max-width: none; margin-inline: 0; }
 :root[data-ui="deck"] .rail[data-deck="bar"] .me[data-current] { background: var(--s2); }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me > .i { width: 12px; height: 12px; margin-left: auto; color: var(--ink3); transform: rotate(-90deg); }
+/* The Bots heading is a link to the list, never styled as a selected row. */
+:root[data-ui="deck"] a.deck-rail-heading[aria-current] { background: none; color: var(--ink); }
+/* Recent activity: neutral marks, the latest five only. */
+:root[data-ui="deck"] .bt-recent .bt-dot { background: var(--ink4); animation: none; }
+:root[data-ui="deck"] .bt-recent li:nth-child(n+6) { display: none; }
+@media (min-width: 700px) { :root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); } }
 :root[data-ui="deck"] .bots-thread .ready-to-start ul, :root[data-ui="deck"] .cb-detail .ready-to-start ul { grid-template-columns: minmax(0, 1fr); }
 :root[data-ui="deck"] .console-empty .console-message { margin: 0; padding: 0; }
 :root[data-ui="deck"] .deck-work .wk-state { color: var(--ink2); }

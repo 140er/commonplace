@@ -166,7 +166,7 @@ test("phone: a title bar and the three phone tabs; Settings opens from the accou
   assert.match(deck.renderDeckMore({ hash: "#/settings" }), /<a href="#\/settings" data-nav="settings" aria-current="page">/);
   assert.match(tabs, /data-nav="home"[^>]*>[\s\S]*?class="count need">2/);
   assert.doesNotMatch(deck.renderDeckTabs({ needs: 0, botsWaiting: 5 }), /class="count /);
-  assert.match(deck.renderDeckTop({ hash: "#/bots" }), /<b>Chats<\/b>/);
+  assert.match(deck.renderDeckTop({ hash: "#/bots" }), /<b>Bots<\/b>/);
   assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
   assert.match(deck.renderDeckTop(), /data-action="palette"/);
 });
@@ -214,8 +214,8 @@ test("the Look switch is added to Settings once and flips the look", () => {
   const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
   ui.settings(content); ui.settings(content); ui.settings(null); ui.settings({ querySelector: () => null });
   assert.equal((html.match(/id="look"/g) || []).length, 1);
-  assert.match(html, /data-look="deck" aria-pressed="false">Deck[\s\S]*data-look="classic" aria-pressed="true">Classic/);
-  assert.match(deck.lookHTML(true), /data-look="deck" aria-pressed="true">Deck/);
+  assert.match(html, /data-look="deck" aria-pressed="false">Current[\s\S]*data-look="classic" aria-pressed="true">Classic/);
+  assert.match(deck.lookHTML(true), /data-look="deck" aria-pressed="true">Current/);
   const [type, click] = d.listeners[0];
   assert.equal(type, "click");
   click({ target: { closest: () => null } });
@@ -237,7 +237,7 @@ test("the Look switch shows Deck as on for a first visit and turns it off for go
   const box = { querySelector: () => null, insertAdjacentHTML: (where, markup) => { html += markup; } };
   const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
   ui.settings({ querySelector: (q) => (q === ".settings" ? box : null) });
-  assert.match(html, /data-look="deck" aria-pressed="true">Deck[\s\S]*data-look="classic" aria-pressed="false">Classic/);
+  assert.match(html, /data-look="deck" aria-pressed="true">Current[\s\S]*data-look="classic" aria-pressed="false">Classic/);
   ui.toggle();
   assert.deepEqual([ui.on(), s.getItem(deck.UI_KEY), reloads], [false, "classic", 1]);
   assert.equal(deck.deckOn(s), false, "the next visit stays classic");
