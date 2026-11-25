@@ -58,7 +58,7 @@ export function capyRosterHTML({ bots = [], conversations = [], loaded = true, s
     const unread = positive(bot.unread_count ?? bot.unread);
     const privateBot = Object.hasOwn(bot, 'private') ? bot.private === true : bot.is_private === true;
     const summary = displayCopy(bot.last?.text || bot.summary || bot.job), next = setup && /no chat model/i.test(summary) ? `<span class="cb-next">${e(setup)}</span>` : '';
-    return `<li><a class="cb-bot-row" href="${botPage(bot.id, bot.coworkerOnly)}">${avatar(bot.name, initials.get(bot))}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(summary)}</span>${next}</span>${Number.isFinite(Date.parse(bot.last?.at)) ? `<time class="cb-bot-at" datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ''}<span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'bot' : 'bots'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
+    return `<li><a class="cb-bot-row" href="${botPage(bot.id, bot.coworkerOnly)}">${avatar(bot.name, initials.get(bot))}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(summary)}</span>${next}</span>${Number.isFinite(Date.parse(bot.last?.at)) ? `<time class="cb-bot-at" datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ''}<span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'conversation' : 'conversations'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
   }).join('')}</ul></li>`).join('');
 }
 
