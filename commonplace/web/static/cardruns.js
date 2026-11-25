@@ -49,7 +49,7 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent yet. Add one in Cloud workspaces; for now a machine only checks itself, and Coworkers do not run on it.",
+  no_machine: "No machine is ready to run an agent yet. Add one under Add a machine in Cloud workspaces; for now a machine only checks itself, and Coworkers do not run on it.",
   machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
   binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
   setup_waiting: "The machine you added connected and waits for your approval. Coworkers do not run on it in this version.",

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { resolveRoute } from '../commonplace/web/static/routes.js';
 import { createDeck, renderDeckBar, renderDeckTabs } from '../commonplace/web/static/deck.js';
+import { PHONE_TABS } from '../commonplace/web/static/deck-shell.js';
 import { renderRail, renderPhoneBar, renderPhoneTabs } from '../commonplace/web/static/rail.js';
 import { workspaceRoute } from '../commonplace/web/static/routes.js';
 import { coworkerRow, mount } from '../commonplace/web/static/deck-workspace.js';
@@ -148,11 +149,15 @@ test('nested pages belong to their existing Deck section and keep four destinati
   for (const [hash, section] of [['#/compute', 'compute'], ['#/compute/management', 'compute'], ['#/bots/-/coworkers', 'bots'], ['#/bots/project-1/coworkers', 'bots'], ['#/bots/-/coworkers/conversations/c-1?message=m-2', 'bots']]) {
     const ui = createDeck({ storage: { getItem: () => 'deck' }, doc: {} });
     assert.equal(ui.owns(hash), true, hash);
-    for (const [html, lead] of [[renderDeckBar({ hash }), ['home']], [renderDeckTabs({ hash }), []]]) {
-      assert.deepEqual([...html.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), [...lead, 'today', 'bots', 'compute', 'settings']);
-      assert.match(html, new RegExp(`data-nav="${section}" aria-current="page"`));
-      assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
-    }
+    const bar = renderDeckBar({ hash });
+    assert.deepEqual([...bar.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), ['home', 'today', 'bots', 'compute', 'settings']);
+    assert.match(bar, new RegExp(`data-nav="${section}" aria-current="page"`));
+    assert.equal((bar.match(/aria-current="page"/g) || []).length, 1);
+    // The phone bar has its own tabs; a page without a tab (Cloud workspaces) marks More.
+    const tabs = renderDeckTabs({ hash });
+    assert.deepEqual([...tabs.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), PHONE_TABS.map(([id]) => id));
+    assert.match(tabs, section === 'bots' ? /data-nav="bots" aria-current="page"/ : /class="deck-tab-more"[^>]*aria-current="page"/);
+    assert.equal((tabs.match(/aria-current="page"/g) || []).length, 1);
   }
 });
 test('classic rail and phone tabs are Bots, Memory and Cloud workspaces, with the same owner map menu', () => {
