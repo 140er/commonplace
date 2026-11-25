@@ -34,7 +34,7 @@ test('only personal action cards get the amber edge; routine waits never do', ()
 });
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
-  for(const label of ['Summary','Bot','Coworker','Version','Progress','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
+  for(const label of ['Summary','Bot','Assigned to','Version','Progress','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
   assert.match(html,/<code[^>]*>abc1234<\/code>/);
   assert.doesNotMatch(visible(html),/~\/|review\.json|Evidence:|P-7|#7/);
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
@@ -129,7 +129,7 @@ test('drawer treats replacement tokens as literal card text and decision values'
     const html = renderDetails(card, options);
     assert.equal(html.match(/data-details-title>([^<]*)<\/h2>/)?.[1], e(card.title));
     assert.equal(html.match(/aria-label="Summary">[\s\S]*?<p>([^<]*)<\/p>/)?.[1], e(card.summary));
-    assert.equal(html.match(/<dt>Coworker<\/dt><dd>([^<]*)<\/dd>/)?.[1], e(card.coworker.name));
+    assert.equal(html.match(/<dt>Assigned to<\/dt><dd>([^<]*)<\/dd>/)?.[1], e(card.coworker.name));
     assert.ok(html.includes(`data-choice="${e(card.ask_options[0])}"`));
     assert.ok(html.includes(`data-choice="${e(card.ask_options[1])}"`));
     assert.equal((html.match(/<header class="detail-h">/g) || []).length, 1);

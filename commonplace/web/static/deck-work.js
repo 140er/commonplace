@@ -44,7 +44,7 @@ const when = at => {
   const age = at ? elapsed(at) : '';
   return age && age !== '—' ? `<time datetime="${e(at)}" title="${e(at)}">${e(age)}</time>` : '';
 };
-export const cardHTML = ({ card, name, state }) => `<a class="wk-card" href="#/card/${e(card.number)}" data-card="${e(card.number)}"><span class="wk-title">${e(cardTitle(card.title))}</span><span class="wk-meta"><span class="wk-av" aria-hidden="true">${e(initial(name))}</span><span class="wk-name">${e(name)}</span>${state ? `<span class="wk-state">${e(state)}</span>` : ''}${when(card.updated_at)}</span></a>`;
+export const cardHTML = ({ card, name, state }) => `<a class="wk-card" href="#/card/${e(card.number)}" data-card="${e(card.number)}"><span class="wk-title">${e(cardTitle(card.title))}</span><span class="wk-meta"><span class="wk-av" aria-hidden="true">${e(initial(name))}</span><span class="wk-name">${e(name)}</span>${state ? `<span class="wk-state">${e(state === 'Needs you' ? 'Waiting on you' : state)}</span>` : ''}${when(card.updated_at)}</span></a>`;
 
 export function laneHTML([group, label, tone, empty], list, expanded) {
   const open = expanded.has(group), shown = open ? list : list.slice(0, SHOWN), hidden = list.length - shown.length;

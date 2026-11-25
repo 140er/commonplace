@@ -109,8 +109,9 @@
 /* The shell writes every page's title into .head; it becomes the bar. A bot thread has its own bot bar instead.
    `body` raises these above the per-screen sheets, which load later. */
 @media (min-width: 700px) {
-  :root[data-ui="deck"] body .shell .center > .head, :root[data-ui="deck"] body .shell .center > .head[hidden] { display: flex; align-items: center; gap: 10px; flex: none; width: 100%; max-width: none; height: 52px; min-height: 52px; margin: 0; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--ground); }
-  :root[data-ui="deck"] body .shell .center > .head #head-actions .btn { min-height: 30px; height: 30px; padding: 0 12px; }
+  :root[data-ui="deck"] body .shell .center > .head, :root[data-ui="deck"] body .shell .center > .head:not([hidden]), :root[data-ui="deck"] body .shell .center > .head[hidden] { display: flex; align-items: center; gap: 10px; flex: none; width: 100%; max-width: none; height: 52px; min-height: 52px; margin: 0; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--ground); }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions { display: flex; align-items: center; gap: 8px; margin: 0 0 0 auto; padding: 0; }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions .btn { min-height: 30px; height: 30px; padding: 0 12px; margin: 0; }
   :root[data-ui="deck"] body .shell .center > .head h1 { font-size: 15px; line-height: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
   /* Work, Cloud workspaces, Pipeline and Coworkers hide the shell head for their own titles; on a desktop the head is
      the one bar every page shares, so it shows anyway (the global [hidden] rule is !important, hence this one). */
@@ -142,6 +143,13 @@
   /* Rows that scroll sideways fade at the edge, so the next option reads as more to come. */
   :root[data-ui="deck"] :is(.memory-rooms, .capy-settings #deck-settings-nav) { mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); padding-right: 16px; }
 }
+
+/* ---------- One primary style, form controls in the palette, no leftover pixel art ---------- */
+:root[data-ui="deck"] body .btn.primary, :root[data-ui="deck"] body button.btn.primary { background: var(--violet); border-color: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] body .btn.primary:hover { background: var(--violet-ink); filter: brightness(1.08); }
+:root[data-ui="deck"] input[type="checkbox"], :root[data-ui="deck"] input[type="radio"] { accent-color: var(--violet); }
+:root[data-ui="deck"] body .shell .look-switch .opt[aria-pressed="true"] { background: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] .pl-empty .cp-art { display: none; }
 
 /* ---------- Bots list: one bordered list, a row per bot ---------- */
 :root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
