@@ -11,9 +11,9 @@ from commonplace.guards import hooks
 
 IDENTITY = {
     "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_AUTHOR_EMAIL": "hook-fixture@users.noreply.github.com",
     "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_EMAIL": "hook-fixture@users.noreply.github.com",
 }
 # What `pre-commit install` writes: one absolute interpreter, else pre-commit on PATH.
 PRE_COMMIT_GENERATED = """#!/usr/bin/env bash
