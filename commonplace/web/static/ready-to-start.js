@@ -40,5 +40,8 @@ export function readyToStartHTML(readiness, {canConfigure = false, board = null}
   // What needs you comes first; the rows that are fine stay listed, quieter, below it.
   const open = rows.filter(row => row.state === 'needs_you' && !row.waits).length;
   const summary = open ? `${open === 1 ? 'One step needs' : `${open} steps need`} you before work can start.` : 'Everything needed to start is in place.';
-  return `<section class="ready-to-start" role="region" aria-label="Ready to start?" data-open="${open}"><h2>Ready to start?</h2><p class="ready-summary">${summary}</p><ul>${[...rows.filter(row => row.state === 'needs_you'), ...rows.filter(row => row.state !== 'needs_you')].map(row => row.html).join('')}</ul></section>`;
+  const ordered = [...rows.filter(row => row.state === 'needs_you' && !row.waits), ...rows.filter(row => row.waits), ...rows.filter(row => row.state !== 'needs_you')];
+  // The first open step is the next action; the steps that do not apply now are listed last, quietly.
+  const html = ordered.map((row, index) => index === 0 && row.state === 'needs_you' ? row.html.replace('data-state="needs_you"', 'data-state="needs_you" data-next') : row.html).join('');
+  return `<section class="ready-to-start" role="region" aria-label="Ready to start?" data-open="${open}"><h2>Ready to start?</h2><p class="ready-summary">${summary}${open ? ' Start with the first one.' : ''}</p><ul>${html}</ul></section>`;
 }

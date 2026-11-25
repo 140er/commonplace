@@ -813,8 +813,15 @@ function spaceView() {
   syncSpaceTasks(content.querySelector(".space-tasks .stack"), state.cards);
 }
 function boardsView() {
+  // Count each project the way its Board groups it: cards in the needs-me queue are "needs you", wherever their status is.
+  const counted = (b) => {
+    const mine = needsCards().filter((card) => card?.board === b.slug), held = (status) => mine.filter((card) => card.status === status).length;
+    const c = b.counts || {};
+    return [["need you", mine.length], ["active", (c.todo || 0) - held("todo") + (c.doing || 0) - held("doing")], ["in review", (c.review || 0) - held("review")], ["shipped", (c.done || 0) - held("done")], ["in backlog", (c.backlog || 0) - held("backlog")]]
+      .filter(([, value]) => value > 0).map(([label, value]) => `${e(value)} ${label === "need you" && value === 1 ? "needs you" : label}`).join(" · ") || "No cards yet";
+  };
   title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : ([["active", (b.counts?.todo || 0) + (b.counts?.doing || 0)], ["in review", b.counts?.review || 0], ["shipped", b.counts?.done || 0], ["in backlog", b.counts?.backlog || 0]].filter(([, value]) => value).map(([label, value]) => `${e(value)} ${label}`).join(" · ") || "No cards yet")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : counted(b)}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }

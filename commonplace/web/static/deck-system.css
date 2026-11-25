@@ -91,7 +91,11 @@
 /* No separator dot: when the line wraps, the state moves down whole instead of leaving a dangling "·". */
 :root[data-ui="deck"] .deck-board .card-meta > span[aria-hidden="true"]:not(.deck-board-avatar) { display: none; }
 :root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
-:root[data-ui="deck"] .deck-board-intro a { color: var(--ink2); }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch { display: inline-flex; align-items: center; min-height: 24px; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line2); border-radius: var(--radius-control); color: var(--ink2); text-decoration: none; font-size: 12.5px; }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch:hover { color: var(--ink); background: var(--s2); }
+:root[data-ui="deck"] .console-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 560px; padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
+:root[data-ui="deck"] .console-empty .console-message { margin: 0; color: var(--ink); font-size: 15px; font-weight: 600; }
+:root[data-ui="deck"] .console-empty-next { margin: 0 0 6px; color: var(--ink2); }
 :root[data-ui="deck"] .deck-board .card > .card-top { position: static; grid-column: 2; grid-row: 2; display: flex; }
 :root[data-ui="deck"] .deck-board .card > :not(h3, .card-meta, .card-top) { grid-column: 1 / -1; }
 @media (min-width: 700px) and (hover: hover) {
@@ -171,6 +175,11 @@
 :root[data-ui="deck"] .ready-to-start .ready-state { margin-left: auto; font-size: 12.5px; color: var(--ink3); }
 :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] .ready-state { color: var(--amber); font-weight: 600; }
 :root[data-ui="deck"] .ready-to-start li[data-waits] .ready-state { color: var(--ink3); font-weight: 500; }
+/* The next step reads as the one thing to do: a marked row with its link as a button. */
+:root[data-ui="deck"] .ready-to-start li[data-next] { margin: 4px -12px; padding: 12px; border: 1px solid var(--line2); border-radius: var(--radius-control); background: var(--s2); }
+:root[data-ui="deck"] .ready-to-start li[data-next] + li { border-top: 0; }
+:root[data-ui="deck"] .ready-to-start li[data-next] p a { display: inline-flex; align-items: center; min-height: 30px; margin-top: 6px; padding: 0 12px; border-radius: var(--radius-control); background: var(--ink); color: var(--ground); text-decoration: none; font-weight: 600; }
+
 :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] p { color: var(--ink2); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) { padding: 7px 0; color: var(--ink3); }
 :root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) b { font-weight: 500; color: var(--ink2); }

@@ -62,7 +62,7 @@ export function consoleView({ role, agents, selected, items, output, tools, erro
   const activity = privateAgent ? items.filter((item) => item.source !== "tool") : items;
   return `<section class="console-view" aria-label="Console">
     ${error ? `<p class="console-error" role="status">${e(CONSOLE_COPY.unavailable)}</p>` : ""}
-    ${loading && !agents.length ? `<p class="console-message" role="status">${e(CONSOLE_COPY.loading)}</p>` : !agents.length ? `<p class="console-message">${e(role === "owner" ? CONSOLE_COPY.noAgentsOwner : CONSOLE_COPY.noAgentsMember)}${role === "owner" ? ' <a href="#/settings" data-console-connect>Connect one in Settings, under Connections</a>' : ""}</p>` : `
+    ${loading && !agents.length ? `<p class="console-message" role="status">${e(CONSOLE_COPY.loading)}</p>` : !agents.length ? `<div class="console-empty"><p class="console-message">${e(role === "owner" ? CONSOLE_COPY.noAgentsOwner : CONSOLE_COPY.noAgentsMember)}</p>${role === "owner" ? '<p class="console-empty-next">Connect one in Settings, under Connections, and its tool calls and output show here.</p><a class="btn primary" href="#/settings" data-console-connect>Connect an agent</a>' : ""}</div>` : `
     <nav class="console-agents" aria-label="Agents"><ul>${agentListHTML(agents, selected, e)}</ul></nav>
     ${agent ? `<div class="console-panels">
       <section class="console-panel console-output" aria-labelledby="console-output-heading">
