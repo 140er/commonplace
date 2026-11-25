@@ -80,6 +80,20 @@
 :root[data-ui="deck"] .deck-settings-link { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: var(--radius-control); color: var(--ink2); }
 :root[data-ui="deck"] .deck-settings-link:hover, :root[data-ui="deck"] .deck-settings-link[aria-current] { background: var(--s2); color: var(--ink); }
 
+/* ---------- Review fixes: full-width page bars, readable answers, one-column setup in a thread ---------- */
+:root[data-ui="deck"] .shell #content > .bt-bar { width: 100%; max-width: none; margin-inline: 0; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me[data-current] { background: var(--s2); }
+:root[data-ui="deck"] .bots-thread .ready-to-start ul, :root[data-ui="deck"] .cb-detail .ready-to-start ul { grid-template-columns: minmax(0, 1fr); }
+:root[data-ui="deck"] .console-empty .console-message { margin: 0; padding: 0; }
+@media (max-width: 699px) {
+  /* An answer is a sentence: one per line, full width, never squeezed into two lines inside a button. */
+  :root[data-ui="deck"] .bt-actions { flex-direction: column; align-items: stretch; }
+  :root[data-ui="deck"] .bt-actions button { width: 100%; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { display: none; }
+  :root[data-ui="deck"] .deck-work .wk-chips { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: 28px; }
+}
+
 /* ---------- Bots list: one bordered list, a row per bot ---------- */
 :root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
 :root[data-ui="deck"] .bots-roster .cb-folder > ul > li + li { border-top: 1px solid var(--line); }

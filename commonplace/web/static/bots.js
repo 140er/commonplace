@@ -20,7 +20,7 @@ export const BOTS_COPY = Object.freeze({
   hint: (name) => `Tell ${name} what you need. Ask a question, or ask for work and ${name} files it for you.`,
   loading: "Loading…",
   earlier: "Earlier messages",
-  waiting: (n) => `Waiting on you (${n})`,
+  waiting: (n) => `${n} waiting on you`,
   gone: "That work is no longer available to you.",
   offline: "Could not reach the server. Retrying…",
   unavailable: "This bot is no longer available.",

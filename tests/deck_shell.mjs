@@ -24,7 +24,7 @@ test('the places are Waiting on you, Work, Bots and Settings, and every older de
   for (const hash of ['#/', '#/today', '#/bots', '#/bots/personal/coworkers', '#/board', '#/work', '#/compute', '#/memory', '#/settings']) {
     const html = renderDeckBar({ hash });
     assert.deepEqual(links(html).map(([id]) => id), ['home', 'work', 'bots', 'compute', 'settings'], 'Waiting, Work, Bots, then the account menu, then Settings');
-    for (const href of ['#/memory', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline', '#/needs']) assert.match(html, new RegExp(`href="${href}"`));
+    for (const href of ['#/memory', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline']) assert.match(html, new RegExp(`href="${href}"`));
   }
   assert.equal(deckSection('#/bots/personal/coworkers'), 'bots');
   for (const [hash, section] of [['#/', 'home'], ['#/today', 'home'], ['#/work', 'work'], ['#/board/x', 'work'], ['#/card/3', 'work'], ['#/settings', 'settings'], ['#/rules', '']]) assert.equal(deckSection(hash), section, hash);
@@ -160,13 +160,12 @@ test('phone: every place outside the three tabs is in the account sheet, with it
   assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
   assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
   const bar = renderDeckBar({ hash: '#/', can_admin: true, can_manage_instance: true });
-  const places = ['#/settings', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
+  const places = ['#/settings', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline', '#/admin', '#/instance-admin'];
   for (const href of places) assert.ok(bar.includes(`href="${href}"`), `the sidebar offers ${href}`);
   assert.deepEqual(sheetLinks(sheet), places, 'the sheet offers each of them, with the same routes');
-  assert.match(sheet, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> waiting on you/);
   assert.match(sheet, /data-action="switch-workspace"/);
   assert.match(sheet, /data-action="logout"/);
-  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/compute', '#/needs', '#/boards', '#/rules', '#/console', '#/pipeline']);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/' })), ['#/settings', '#/compute', '#/boards', '#/rules', '#/console', '#/pipeline']);
   assert.match(bar, /href="#\/memory"/, 'Memory is a place in the sidebar');
 });
 

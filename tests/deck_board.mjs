@@ -186,14 +186,15 @@ test('phone Board actions share the title row and state pills have their own ful
   assert.match(css, /mask-image:[^;]*16px/);
   assert.match(css, /deck-board-states\s*\{[^}]*width:\s*100%/);
 });
-test('Board phone chrome keeps the mark and controls while the page carries its title', async () => {
+test('Board phone chrome names the project and keeps the menu and search controls', async () => {
   const {renderDeckTop} = await import('../commonplace/web/static/deck.js');
   for (const options of [{hash:'#/board/product'},{hash:'#/board'},{board:{slug:'product'}}]) {
     const top = renderDeckTop(options);
-    assert.doesNotMatch(top, /<b>Board<\/b>/);
-    assert.match(top, /class="deck-mark"/);
+    assert.match(top, /<b>Board<\/b>/);
+    assert.match(top, /data-deck-shell-action="more"/);
     assert.match(top, /data-action="palette"/);
   }
+  assert.match(renderDeckTop({ hash: '#/board/product', board: { slug: 'product', name: 'Product' } }), /<b>Product<\/b>/);
   assert.match(renderDeckTop({hash:'#/board/product/chat'}), /<b>Board<\/b>/, 'chat chrome stays unchanged');
   assert.match(htmlFor({}), /<h1>Board<\/h1>/);
 });

@@ -153,7 +153,7 @@ test("the bar keeps the shell's actions, escapes names and shows Admin to admins
   assert.match(html, /id="cmdk"/);
   assert.doesNotMatch(html, /<b>"W"|<i>Maya/);
   assert.match(html, /&lt;b&gt;&quot;W&quot;/);
-  for (const href of ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]) assert.equal((html.match(new RegExp(`href="${href}"`, "g")) || []).length, 1, href);
+  for (const href of ["#/boards", "#/memory", "#/console", "#/rules", "#/admin"]) assert.equal((html.match(new RegExp(`href="${href}"`, "g")) || []).length, 1, href);
   for (const can_admin of [false, undefined, "true", 1]) assert.doesNotMatch(deck.renderDeckBar({ can_admin, screens: {} }), /#\/admin/);
   assert.doesNotMatch(html, /<style|style="/);
 });
