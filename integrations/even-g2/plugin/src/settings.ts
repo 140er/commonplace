@@ -34,7 +34,9 @@ export async function loadSettings(store: Store, location: Location, history: Hi
   const key = params.get('key')
   const bridge = params.get('bridge')
   if (key === null && bridge === null) return saved
-  const url = bridge !== null ? cleanBridgeUrl(bridge) : saved.url
+  // A pairing link from `--pair-url` is the bridge's own address plus `key`, so a
+  // key without `bridge=` belongs to this page's own origin, not to a saved one.
+  const url = bridge !== null ? cleanBridgeUrl(bridge) : key !== null ? '' : saved.url
   // A saved key only ever goes back to the bridge it was paired with.
   const next = { url, key: key ?? (url === saved.url ? saved.key : '') }
   await saveSettings(store, next)

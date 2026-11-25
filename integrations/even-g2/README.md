@@ -63,10 +63,11 @@ polls. New items still show up within about 20 s. A card whose version moved sho
   once from the pairing link (`?key=...`), stores it in the Even app's storage, and
   removes it from the address. The key only unlocks this bridge. It is not a Commonplace
   token.
-- Without a key the bridge answers only requests whose `Host` names loopback (any port).
-  That stops a DNS-rebound web page, and a LAN client of the dev server, because the
-  dev-server proxy keeps the browser's `Host`. A proxy that rewrites `Host` would defeat
-  this, so put a key on any bridge that sits behind one.
+- Without a key the bridge answers only loopback. The peer address, every
+  `X-Forwarded-For` hop and the `Host` name must all be loopback. That stops a DNS-rebound
+  web page, and it stops a LAN client of a LAN-facing dev server even with a forged `Host`,
+  because the dev server appends the real client address (`xfwd`). Put a key on any bridge
+  behind a proxy that does not add `X-Forwarded-For`.
 - CORS headers go only to the origins in `BRIDGE_ALLOWED_ORIGINS`. They are not needed
   when the bridge serves the plugin itself.
 - Voice is not included. `/api/voice/transcribe` accepts signed-in people only, not

@@ -162,9 +162,10 @@ test('a bridge key, when set, is required on API calls', async () => {
 
 test('without a key only a loopback Host is served (DNS rebinding, LAN proxies)', async () => {
   const { request } = await import('node:http')
-  const get = (port, host) =>
+  const get = (port, host, xff) =>
     new Promise((resolve, reject) => {
-      const req = request({ host: '127.0.0.1', port, path: '/api/needs-me', headers: { Host: host } }, res => {
+      const headers = { Host: host, ...(xff ? { 'X-Forwarded-For': xff } : {}) }
+      const req = request({ host: '127.0.0.1', port, path: '/api/needs-me', headers }, res => {
         res.resume()
         resolve(res.statusCode)
       })
@@ -178,7 +179,12 @@ test('without a key only a loopback Host is served (DNS rebinding, LAN proxies)'
     // A LAN client of a dev proxy that keeps its Host header (Vite, changeOrigin off).
     assert.equal(await get(port, `192.168.1.20:5173`), 401)
     assert.equal(await get(port, `localhost.evil.example:${port}`), 401)
+    // A LAN client of a LAN-facing dev server that forges `Host: localhost`:
+    // the proxy appends its real address (xfwd), which the client cannot remove.
+    assert.equal(await get(port, 'localhost:5173', '192.168.1.20'), 401)
+    assert.equal(await get(port, 'localhost:5173', '127.0.0.1, 10.0.0.7'), 401)
     assert.equal(seen.length, 0)
+    assert.equal(await get(port, 'localhost:5173', '127.0.0.1'), 200)
     assert.equal(await get(port, `localhost:${port}`), 200)
     assert.equal(await get(port, `127.0.0.1:5173`), 200)
     assert.equal(await get(port, `[::1]:5173`), 200)

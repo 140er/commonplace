@@ -36,6 +36,16 @@ describe('bridge settings', () => {
     expect(await loadSettings(store, loc('?bridge=http://192.0.2.2:8790/'), hist)).toEqual({ url: 'http://192.0.2.2:8790', key: 'paired' })
   })
 
+  it('a new pairing key without bridge= pairs with this page, not a saved other bridge', async () => {
+    const store = memoryStore({ 'cmmn.g2.bridge': JSON.stringify({ url: 'http://192.0.2.2:8790', key: 'old' }) })
+    const settings = await loadSettings(
+      store,
+      { search: '?key=NEW', pathname: '/', hash: '' } as Location,
+      { replaceState: () => {} } as unknown as History,
+    )
+    expect(settings).toEqual({ url: '', key: 'NEW' })
+  })
+
   it('accepts only http(s) bridge origins', () => {
     expect(cleanBridgeUrl('')).toBe('')
     expect(cleanBridgeUrl(' https://g2.example:8443/path ')).toBe('https://g2.example:8443')
