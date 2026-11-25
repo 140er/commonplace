@@ -6,7 +6,7 @@
   /* T3 Code dark roles */
   --ground: #141a22; --stage: #141a22; --rail: #0e141b;
   --surface-a: 1; --s1: #1c2530; --s1-solid: #1c2530; --card: #1c2530; --s2: #243140; --s3: #2c3846;
-  --line: #2c3846; --line2: #3a4858; --control-line: #3a4858;
+  --line: #2c3846; --line2: #3a4858; --line3: #52637a; --control-line: #3a4858;
   --ink: #e6edf4; --ink2: #a8b7c7; --ink3: #8695a6; --ink4: #627083;
   --violet: #9bbbe0; --violet-ink: #9bbbe0; --cyan: #7dcea4; --amber: #e0b15a; --red: #e7a39a; --send: #3b82f6;
   --font: Geist, ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -102,7 +102,7 @@
   :root[data-ui="deck"] .bt-actions button:last-child:not(.bt-primary) { flex-basis: 100%; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { display: none; }
-  :root[data-ui="deck"] .deck-work .wk-chips { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: 28px; }
+  :root[data-ui="deck"] .deck-work .wk-chips { mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); padding-right: 16px; }
 }
 
 /* ---------- Every page starts the same way: one title size at one height, on one centred column ---------- */
@@ -116,12 +116,21 @@
   :root[data-ui="deck"] body .shell .center #content.deck-workspace.dw-map { padding-top: var(--page-top); }
   :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 4px; }
   :root[data-ui="deck"] body .shell #content .bt-col { max-width: var(--page-width); padding-inline: 0; }
-  :root[data-ui="deck"] body .shell .look-switch .opt { white-space: nowrap; min-width: max-content; }
   :root[data-ui="deck"] body .shell .center > #content.deck-work { padding-inline: max(var(--page-side), calc((100% - var(--page-width)) / 2)); }
   :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 8px; }
   :root[data-ui="deck"] body .shell #content .deck-memory { padding-top: 8px; }
   :root[data-ui="deck"] body .shell #content > .pl-head { margin-top: 8px; }
 }
+/* ---------- Controls that must read whole at every width ---------- */
+:root[data-ui="deck"] body .shell .look-switch .opt { white-space: nowrap; min-width: max-content; }
+/* Peer answers stay equal, but each reads clearly as a button you can press. */
+:root[data-ui="deck"] body .shell .bt-actions .bt-secondary { border-color: var(--line3); color: var(--ink); background: var(--s2); }
+:root[data-ui="deck"] body .shell .bt-actions .bt-secondary:hover:not(:disabled) { border-color: var(--ink3); }
+@media (max-width: 699px) {
+  /* Rows that scroll sideways fade at the edge, so the next option reads as more to come. */
+  :root[data-ui="deck"] :is(.memory-rooms, .capy-settings #deck-settings-nav) { mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); padding-right: 16px; }
+}
+
 /* ---------- Bots list: one bordered list, a row per bot ---------- */
 :root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
 :root[data-ui="deck"] .bots-roster .cb-folder > ul > li + li { border-top: 1px solid var(--line); }
