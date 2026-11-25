@@ -117,9 +117,9 @@ def capture(page, label, size):
         assert time["text"].startswith(("Today ", "Yesterday ")) or ", " in time["text"]
     for button in measurements["primary"]:
         assert button["width"] < button["cardWidth"] / 2
-        assert button["background"] == "rgb(237, 237, 242)"
-        assert button["color"] == "rgb(9, 9, 12)"
-        assert button["radius"] == "999px"
+        assert button["background"] == "rgb(155, 187, 224)"  # the one primary colour
+        assert button["color"] == "rgb(20, 26, 34)"
+        assert button["radius"] == "8px"
         assert button["left"] == button["parentLeft"]
     target = os.environ.get("CP_UI_SHOTS")
     if target:
@@ -284,7 +284,7 @@ def test_frozen_adoption_and_enable(browser, team, size):
         expect(page.locator(".bot-access")).not_to_contain_text("Loading memory")
         disable = page.get_by_role("button", name="Disable bot", exact=True)
         expect(disable).to_be_visible()
-        assert disable.evaluate("el => getComputedStyle(el).color") == "rgb(251, 113, 133)"
+        assert disable.evaluate("el => getComputedStyle(el).color") == "rgb(231, 163, 154)"
         assert disable.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
         page.locator(".bot-access").evaluate("el => el.scrollTop = 0")
         capture(page, "name-job-memory", size)

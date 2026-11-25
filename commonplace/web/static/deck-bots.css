@@ -222,7 +222,7 @@
 :root[data-ui="deck"] .bot-access [data-access-log] li { display: grid; gap: 10px; }
 :root[data-ui="deck"] .bot-access time { color: var(--ink3); font-size: 12px; }
 :root[data-ui="deck"] .bot-access input:focus-visible, :root[data-ui="deck"] .bot-access textarea:focus-visible, :root[data-ui="deck"] .bot-access select:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
-:root[data-ui="deck"] .bot-access button:disabled { opacity: 1; color: var(--ink3); background: var(--s2); cursor: default; }
+:root[data-ui="deck"] .bot-access button:disabled { opacity: 1; color: var(--ink2); background: var(--s2); cursor: default; }
 :root[data-ui="deck"] .bot-access .learned-group .memory > li { display: grid; gap: 8px; padding-block: 12px; }
 :root[data-ui="deck"] .bot-access .learned-src { overflow-wrap: anywhere; }
 :root[data-ui="deck"] .bot-access > * { flex-shrink: 0; }

@@ -132,7 +132,8 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
                     "el => { const row = el.closest('.memory-chip-scroll'); row.scrollLeft += el.getBoundingClientRect().left - row.getBoundingClientRect().left; }"
                 )
                 box = private.bounding_box()
-                assert box["x"] >= row_box["x"]
+                # scrollLeft snaps to whole pixels, so the chip may sit a fraction left of the row edge.
+                assert box["x"] >= row_box["x"] - 1
                 assert box["x"] + box["width"] <= row_box["x"] + row_box["width"] - 15
                 expect(private).to_have_text("Private notes 1")
             scroll.evaluate("el => el.scrollLeft = el.scrollWidth")

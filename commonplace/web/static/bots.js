@@ -581,11 +581,12 @@ export function createBots({
       if (!alive(token)) return;
       s.bots = result.bots || []; s.model = result.model || null; s.readiness = result.readiness || null; s.canConfigure = result.can_configure === true;
       if (deck() && s.canConfigure) {
-        void api("/api/bots/shared").then((all) => {
+        // Awaited so a deep link to a frozen bot resolves it below instead of finding no such bot.
+        try {
+          const all = await api("/api/bots/shared");
           if (!alive(token)) return;
           for (const bot of all.bots || []) if (!s.bots.some(row => row.id === bot.id)) s.bots.push({ ...bot, mine: false, lifecycle: true, shared: true, kind: "custom" });
-          onRoster(s.bots); paintRoster();
-        }).catch(() => {});
+        } catch { /* the roster still works without the frozen bots */ }
       }
       s.loaded = true; s.error = "";
       if (s.botId) s.bot = s.bots.find((b) => b.id === s.botId) || null;

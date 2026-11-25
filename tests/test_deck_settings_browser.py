@@ -185,7 +185,12 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             page.locator(".settings").locator(selector).scroll_into_view_if_needed()
             assert page.locator(".settings").locator(selector).is_visible(), selector
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
-        assert page.locator(".head h1").evaluate("el => getComputedStyle(el).fontSize") == "22px"
+        # The page title sits in the top bar: the shared 52px desktop bar (15px) or the phone header (16px).
+        title = page.locator(".center > .head h1" if width >= 700 else "#phone-bar .m-top > b")
+        assert title.inner_text().strip() == "Settings"
+        assert title.evaluate("el => getComputedStyle(el).fontSize") == (
+            "15px" if width >= 700 else "16px"
+        )
         assert page.locator("#phone-push").evaluate(
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
         ) == ["rgb(28, 37, 48)", "10px"]
