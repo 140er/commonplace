@@ -1,0 +1,5 @@
+### G2 glasses reach the hub through a token bridge
+
+This belongs with the decisions on clients and connections. The Even Realities G2 plugin runs in a WebView inside the Even phone app and cannot hold a hub token safely or call the hub cross-origin (the gateway sends no CORS headers). A small bridge (`integrations/even-g2/bridge`) holds the connection token server-side and forwards only `needs-me`, `needs-me/digest`, `events`, `me`, `boards`, `boards/<b>/cards`, `cards/<n>`, `cards/<n>/decide` and `cards/<n>/comments`, with per-route query and body checks. No hub change was needed.
+
+A connection made in the browser has no `events:read`, so the plugin then finds new Needs-me items by comparing Needs-me between 20 s polls; a connection with workspace event access reads the event log instead. Answering needs the owner's browser consent for that connection (`cards:decide`), as for any app. Voice replies are out: `/api/voice/transcribe` serves signed-in people only.
