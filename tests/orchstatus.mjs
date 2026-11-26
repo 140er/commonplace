@@ -509,8 +509,8 @@ const cases = {
     ];
     const {host} = await mount({responses: [view({history})]});
     assert.ok(has(host, "history"));
-    assert.match(host.text, /Resumed by owner · 1 min ago/);
-    assert.match(host.text, /Stopped by owner · 5 min ago/);
+    assert.match(host.text, /Resumed by a person · 1 min ago/);
+    assert.match(host.text, /Stopped by a person · 5 min ago/);
     assert.match(host.text, /Claimed by builder-bot · 15 min ago/);
     assert.match(host.text, /mystery by x/);
   },

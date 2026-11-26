@@ -66,7 +66,7 @@ export const MISS_REASONS = Object.freeze({
 const HISTORY_EVENTS = Object.freeze({
   claim: "Claimed", force: "Taken over", release: "Gave up", force_release: "Stopped", owner_resume: "Resumed",
 });
-const PEOPLE = /^(user|person):/;
+const PEOPLE = /^(user|person):/; // a signed-in person; the checkpoint does not say whose name it is
 
 const plural = (n, one, many) => `${n >= LIST_CAP ? `${LIST_CAP}+` : n} ${n === 1 ? one : many}`;
 const person = name => String(name || "").replace(/^conn:/, "") || "an agent";
@@ -156,7 +156,7 @@ export function missesHTML(misses, e, now = Date.now()) {
 /** Who stopped, resumed or claimed the lease, and when. "" when nothing is recorded. */
 export function historyHTML(history, e, now = Date.now()) {
   if (!Array.isArray(history) || !history.length) return "";
-  const who = actor => PEOPLE.test(String(actor || "")) ? "owner" : person(actor);
+  const who = actor => PEOPLE.test(String(actor || "")) ? "a person" : person(actor);
   const item = h => `<li>${e(HISTORY_EVENTS[h.event] || h.event)} by ${e(who(h.actor))}${h.at ? ` · ${e(when(h.at, now))}` : ""}</li>`;
   return `<details data-orch-history><summary>Recent Coworker activity</summary><ul>${history.slice(0, 10).map(item).join("")}</ul></details>`;
 }

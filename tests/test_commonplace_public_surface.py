@@ -399,6 +399,8 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
         ("GET", "/api/memory/map?theme=shared"),
+        # The owner's Resume of a stopped Coworker (a web action under the authenticated /api/orch/ prefix).
+        ("POST", "/api/orch/boards/demo/roles/main/owner-resume"),
         ("GET", "/api/webhooks"),
         ("GET", "/api/webhooks/1/deliveries"),
         ("POST", "/api/webhooks/1/test"),

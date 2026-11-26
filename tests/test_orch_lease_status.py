@@ -192,8 +192,7 @@ def test_stop_and_resume_are_recorded_in_the_history(env):
     env.person("POST", RESUME, {})
     history = history_of(env)
     kinds = [row["event"] for row in history]
-    assert kinds[:2] == ["owner_resume", "force_release"] or "owner_resume" in kinds[:3]
-    assert "force_release" in kinds and "owner_resume" in kinds
+    assert kinds[:2] == ["owner_resume", "force_release"]
     owner_rows = [row for row in history if row["event"] in {"force_release", "owner_resume"}]
     assert all(row["actor"] and row["at"] for row in owner_rows)
     assert "token" not in str(history).lower()
