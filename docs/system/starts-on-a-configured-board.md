@@ -12,7 +12,7 @@
 
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
-- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory is below `min_free_memory_mb` (above 20 configured agents, it must also cover the launch reserve) (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
+- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Claims by hand read the same `orchestration.resolve` with the workspace switch off, so the accepted config's limit binds them too (card 671); Admin and project settings show the same number. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory is below `min_free_memory_mb` (above 20 configured agents, it must also cover the launch reserve) (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
 
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 

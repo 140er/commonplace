@@ -1,0 +1,4 @@
+- **Owns:** The Admin "Agent limits" table in `commonplace/web/static/admin.js` and `project_limits` in `commonplace/web/admin.py` (fields `accepted_config_version`, `accepted_config_applies`, `limit_source`), and `limitWords` / the summary line of `mountAgentLimit` in `commonplace/web/static/projects.js`.
+- **Promises:** The table shows the accepted config's limit even with the workspace switch off, says "not used" for a config without a runner section, and its Effective column equals `orchestration.resolve`, the number the project stepper and the runtime imply.
+- **How it fails:** Not applicable beyond a section error as before.
+- **Tests:** `tests/test_effective_agent_limit_671.py`, `tests/test_admin_runtime_api.py`, `tests/test_workbench_project_settings.py`.

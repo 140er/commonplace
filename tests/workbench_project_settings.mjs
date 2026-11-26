@@ -201,6 +201,16 @@ const cases = {
     await mount(host, {project: {...project, limits: {max_agents: 1}}, e, api: async () => assert.fail("under cap")});
     assert.equal(node(host, '[data-limit-step="-1"]').disabled, true);
   },
+  async limit_summary() {
+    const mount = exists("mountAgentLimit"), host = new Host();
+    const effective_limit = {configured: 1, config: 2, config_version: 2, config_applies: true, effective: 1, source: "project"};
+    await mount(host, {project: {...project, limits: {max_agents: 1}, effective_limit}, e, api: async () => assert.fail("read only")});
+    assert.equal(node(host, "[data-limit-summary]").textContent, "Project limit: 1 · Coworker config version 2 sets 2 · In effect: 1 (from the project limit)");
+    const words = exists("limitWords");
+    assert.equal(words({configured: null, config: 2, config_version: 3, config_applies: false, effective: null, source: "unlimited"}).config, "Coworker config version 3 sets 2 (not used: it has no runner section)");
+    assert.equal(words({configured: null, config: null, config_version: null, config_applies: false, effective: 3, source: "default"}).config, "No Coworker config accepted");
+    assert.equal(words(undefined), null);
+  },
   async limits_failure() {
     const mount = exists("mountAgentLimit"), host = new Host();
     await mount(host, {project, e, api: async () => { throw {status: 400}; }});

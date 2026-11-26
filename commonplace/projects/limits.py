@@ -90,7 +90,7 @@ def check(conn, board, actor, *, service=None, card_id=None):
             return
     if not actor or not actor.startswith("conn:"):
         return
-    cap = get(conn, board["id"])["max_agents"]
+    cap = _off_cap(conn, board, service)
     if cap is None:
         return
     active = working(conn, board["id"])
@@ -99,3 +99,15 @@ def check(conn, board, actor, *, service=None, card_id=None):
             f"no: {board['name']} already has its maximum of {cap} agents working; "
             "the card waits in Todo"
         )
+
+
+def _off_cap(conn, board, service):
+    """The effective limit with the workspace switch off: the same resolver Admin reads,
+    so an accepted config's limit binds claims as it binds starts."""
+    if service is None:
+        return get(conn, board["id"])["max_agents"]
+    from commonplace.projects import orchestration as orch
+
+    workspace = service.principal.workspace_id
+    with orch.runner_read(service.ctx.gateway.workspace_dir(workspace)) as runner:
+        return orch.resolve(conn, runner, board["id"], board["slug"], on=False).effective

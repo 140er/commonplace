@@ -865,13 +865,29 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
   render();
 }
 
+const limitCount = value => value === null || value === undefined ? "No limit" : String(value);
+
+/** Plain words for the three limits side by side: the stepper, the accepted Coworker config and the one in effect. */
+export function limitWords(limit) {
+  if (!limit) return null;
+  let config = "No Coworker config accepted";
+  if (limit.config_version !== null && limit.config_version !== undefined) {
+    const sets = limit.config === null || limit.config === undefined ? "sets no limit" : `sets ${limit.config}`;
+    config = `Coworker config version ${limit.config_version} ${sets}${limit.config !== null && limit.config !== undefined && !limit.config_applies ? " (not used: it has no runner section)" : ""}`;
+  }
+  const why = {accepted_config: "from the Coworker config", project: "from the project limit", default: "the default", unlimited: "nothing sets a limit"}[limit.source] || "";
+  return {project: `Project limit: ${limitCount(limit.configured)}`, config, effective: `In effect: ${limitCount(limit.effective)}${why ? ` (${why})` : ""}`};
+}
+
 export function mountAgentLimit(host, { project, api, e, current = () => true, onSaved = () => {} }) {
   let explicit = project.limits?.max_agents ?? null;
   let value = explicit ?? project.orchestration?.default_max_agents ?? null, busy = false, status = "";
+  let effective = project.effective_limit;
   const active = () => current() && host.isConnected;
   function render() {
     if (!active()) return;
-    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max bots working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 100 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
+    const summary = limitWords(effective);
+    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max bots working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 100 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div>${summary ? `<p class="set-note" data-limit-summary>${[summary.project, summary.config, summary.effective].map(e).join(" · ")}</p>` : ""}<p role="status" data-limit-status>${e(status)}</p>`;
     host.querySelectorAll("[data-limit-step]").forEach(button => {
       button.onclick = () => save(value === null ? 1 : value + Number(button.getAttribute("data-limit-step")));
     });
@@ -883,7 +899,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
     busy = true; status = ""; render();
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/limits`, {method: "PUT", body: {max_agents: next}});
-      if (active()) { explicit = result.limits.max_agents; value = explicit ?? result.orchestration?.default_max_agents ?? null; status = savedAt(); onSaved(); }
+      if (active()) { explicit = result.limits.max_agents; effective = result.effective_limit ?? effective; value = explicit ?? result.orchestration?.default_max_agents ?? null; status = savedAt(); onSaved(); }
     } catch { if (active()) status = "Could not save maximum bots"; }
     finally { busy = false; render(); }
   }

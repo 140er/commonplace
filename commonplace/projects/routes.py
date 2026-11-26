@@ -128,8 +128,13 @@ def workspace_models_route(gateway, h):
 
 def _view(gateway, principal, board):
     service = BoardService(ToolContext(principal=principal, gateway=gateway))
-    with service.store.connection() as conn:
+    on = orchestration.enabled(gateway.db, principal.workspace_id)
+    with (
+        service.store.connection() as conn,
+        orchestration.runner_read(gateway.workspace_dir(principal.workspace_id)) as runner,
+    ):
         project_limits = limits.get(conn, board["id"])
+        found = orchestration.resolve(conn, runner, board["id"], board["slug"], on=on)
     choices = models.get(gateway.db, principal.workspace_id, board["slug"])
     listed = models.catalog(gateway.db, principal.workspace_id, board["slug"])
     rule = escalation.get(gateway.db, principal.workspace_id, board["slug"])
@@ -143,6 +148,14 @@ def _view(gateway, principal, board):
         "name": redact.redact(board["name"])[0],
         "main": seats.main(gateway, principal, board["slug"]).public(),
         "limits": project_limits,
+        "effective_limit": {
+            "configured": found.configured,
+            "config": found.config,
+            "config_version": found.config_version,
+            "config_applies": found.config_applies,
+            "effective": found.effective,
+            "source": found.source,
+        },
         "models": {
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()

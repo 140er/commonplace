@@ -99,6 +99,73 @@ def effective_cap(board_conn, board_id, config_cap=None, *, on):
 
 
 @dataclass(frozen=True)
+class Limit:
+    """The three limits of one project and the one that governs."""
+
+    configured: int | None  # the project stepper
+    config: int | None  # what the accepted Coworker config declares
+    config_version: int | None
+    config_applies: bool  # a config limit binds only a configured board ([runner] present)
+    effective: int | None
+    source: str  # accepted_config | project | default | unlimited
+
+
+def accepted_limit(runner_conn, board_slug):
+    """``(version, declared max_agents, has_runner)`` of the accepted live config, or Nones."""
+    if (
+        runner_conn is None
+        or not runner_conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='orch_configs'"
+        ).fetchone()
+    ):
+        return None, None, False
+    from commonplace.orch import store
+
+    version = store.accepted_in(runner_conn, board_slug)
+    if version is None:
+        return None, None, False
+    config = version.config()
+    return version.version, config.max_agents, config.runner is not None
+
+
+def resolve(board_conn, runner_conn, board_id, board_slug, *, on):
+    """The one effective agent limit: the smaller of the project stepper and the accepted
+    config's limit (the config binds only when it has ``[runner]``); with neither, the
+    default when the workspace switch is on, else no limit. Admin, project settings and
+    every admission check read this."""
+    configured = limits.get(board_conn, board_id)["max_agents"]
+    version, declared, applies = accepted_limit(runner_conn, board_slug)
+    config_cap = declared if applies else None
+    cap = effective_cap(board_conn, board_id, config_cap, on=on)
+    if config_cap is not None and (configured is None or config_cap <= configured):
+        source = "accepted_config"
+    elif configured is not None:
+        source = "project"
+    else:
+        source = "default" if on else "unlimited"
+    return Limit(configured, declared, version, applies, cap, source)
+
+
+@contextmanager
+def runner_read(workspace_dir):
+    """A read connection to an existing runner store; ``None`` when there is none."""
+    from pathlib import Path
+
+    from mempalace.sqlite_crypto import connect, row_factory
+
+    path = Path(workspace_dir) / "runner.sqlite3"
+    if not path.exists():
+        yield None
+        return
+    conn = connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10, isolation_level=None)
+    conn.row_factory = row_factory
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@dataclass(frozen=True)
 class Usage:
     slots: frozenset[tuple[str, str | int]]
     cap: int | None
@@ -168,19 +235,8 @@ def usage(
         ):
             continue
         slots.add(("card", job["task_number"]))
-    config_cap = None
-    if (
-        runner_conn is not None
-        and runner_conn.execute("SELECT 1 FROM sqlite_master WHERE name='orch_configs'").fetchone()
-    ):
-        from commonplace.orch import store
-
-        version = store.accepted_in(runner_conn, board_slug)
-        if version is not None:
-            config = version.config()
-            if config.runner is not None:
-                config_cap = config.max_agents
-    return Usage(frozenset(slots), effective_cap(board_conn, board_id, config_cap, on=True))
+    limit = resolve(board_conn, runner_conn, board_id, board_slug, on=True)
+    return Usage(frozenset(slots), limit.effective)
 
 
 def require_lock_timeout(exc):
