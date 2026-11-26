@@ -1,8 +1,8 @@
 # Workspace templates
 
 An owner-chosen subset of one workspace exports to a JSON package that another workspace can
-later import. Slice 1 (this document's scope) is the plan, the export and the import preview;
-nothing writes to a workspace.
+later import. Slice 1 is the plan, the export and the import preview, which write nothing to a
+workspace. The confirmed import write path (slice 2) is described in the workspace template import design note.
 
 Not account export (`docs/modules/account-data.md`): that is the whole account for its owner;
 a template is a small, shareable, secret-free starting point. The idea of portable
@@ -63,9 +63,8 @@ Entry points: `commonplace template export|preview` (owner of the workspace only
 
 ## Later slices
 
-1. Import write path: creates goals, routines and seats from a clean preview, renames on
-   collision on request, files the orch config as a *proposed* version (owner accepts it
-   separately), never a live config or runner grant.
+1. Import write path: delivered in slice 2 (see the design note above): goals, routines and seats
+   are created, the config is filed only as a *proposed* version, collisions are skipped.
 2. App UI: pick sections, show the preview, confirm.
 3. Fresh-user two-workspace test: export from one throwaway workspace, preview and import into
    another, check nothing but the chosen sections arrived.

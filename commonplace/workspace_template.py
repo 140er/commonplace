@@ -27,11 +27,13 @@ never imported. Findings carry paths and kinds, never the matching text.
 
 from __future__ import annotations
 
+import copy
 import functools
 import hashlib
 import json
 import re
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -93,6 +95,8 @@ class Source:
     seats: list[dict] = field(default_factory=list)
     routines: list[dict] = field(default_factory=list)
     goals: list[dict] = field(default_factory=list)
+    boards: set[str] | None = None  # slugs of the workspace's boards; None when not read
+    proposed_shas: set[str] = field(default_factory=set)  # open config proposals of the board
 
 
 # ------------------------------------------------------------------ secrets
@@ -311,6 +315,116 @@ def build_package(
     return seal(package)
 
 
+# ------------------------------------------------------------------ orchestrator proposal
+
+
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _toml_str(text: str) -> str:
+    return json.dumps(text, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def _toml_key(key: str) -> str:
+    return key if _BARE_KEY.fullmatch(key) else _toml_str(key)
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return _toml_str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return (
+            "{ " + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in value.items()) + " }"
+        )
+    raise TemplateError("proposal_invalid", "a config value has no TOML form")
+
+
+def to_toml(data: dict, _path: tuple[str, ...] = ()) -> str:
+    """TOML text for a plain config dict: scalars and lists first, then one table per dict."""
+    lines = [
+        f"{_toml_key(k)} = {_toml_value(v)}"
+        for k, v in data.items()
+        if v is not None and not isinstance(v, dict)
+    ]
+    out = "\n".join(lines) + "\n" if lines else ""
+    for key, value in data.items():
+        if isinstance(value, dict):
+            name = ".".join(_toml_key(p) for p in (*_path, key))
+            out += f"\n[{name}]\n" + to_toml(value, (*_path, key))
+    return out
+
+
+def _clean_role(entry: dict) -> dict:
+    return {k: copy.deepcopy(v) for k, v in entry.items() if k in _ALLOWED["roles"] - {"name"}}
+
+
+def plan_proposal(content: dict, target: Source) -> dict | None:
+    """The one orchestrator config an import would file as a proposal, or ``None``.
+
+    New roles (and, on a board with no live config, the exported workflows and limits) are
+    added to the target's live config, or to a fresh config for the target board. Roles the
+    target already has are never touched. Runner, triggers, MCPs and fleet never come from a
+    package. Raises ``TemplateError('proposal_invalid')`` when the result is not a valid
+    config; the text names a code and path, never a value."""
+    from commonplace.orch import schema
+
+    live = None
+    if target.config_body is not None:
+        live = copy.deepcopy(_config(target).to_dict())
+    exported = content.get("orch_config") or {}
+    config = exported.get("config") if isinstance(exported, dict) else None
+    config = config if isinstance(config, dict) and live is None else {}
+    incoming = {e["name"]: _clean_role(e) for e in content.get("roles", [])}
+    for name, fields in (config.get("roles") or {}).items():
+        incoming.setdefault(name, _clean_role(fields))
+    have = set(live["roles"]) if live else set()
+    added = {name: fields for name, fields in incoming.items() if name not in have}
+    if not added:
+        return None
+    merged: dict[str, Any] = live or {
+        "schema": schema.SCHEMA_ID,
+        "project": target.board,
+        "roles": {},
+    }
+    if live is None:
+        limits = config.get("limits")
+        if isinstance(limits, dict) and "max_agents" in limits:
+            merged["limits"] = {"max_agents": limits["max_agents"]}
+        flows = config.get("workflows")
+        if isinstance(flows, dict) and flows:
+            merged["workflows"] = {
+                n: {"steps": copy.deepcopy(f.get("steps"))}
+                for n, f in flows.items()
+                if isinstance(f, dict)
+            }
+    dropped = []
+    for name, fields in added.items():
+        if fields.get("workflow") not in merged.get("workflows", {}):
+            if fields.pop("workflow", None) is not None:
+                dropped.append({"path": f"roles.{name}.workflow", "reason": "workflow_unresolved"})
+        merged["roles"][name] = fields
+    try:
+        expected = schema.validate(merged).to_dict()
+        text = to_toml(merged)
+        parsed = schema.parse(text)
+    except schema.ConfigError as exc:
+        raise TemplateError("proposal_invalid", f"{exc.code} {exc.path}".strip()) from None
+    if parsed.to_dict() != expected:
+        raise TemplateError("proposal_invalid", "the config does not survive being written")
+    return {
+        "text": text,
+        "sha256": parsed.sha256,
+        "roles": sorted(added),
+        "dropped": dropped,
+    }
+
+
 # ------------------------------------------------------------------ preview
 
 
@@ -500,6 +614,32 @@ def preview(package: Any, target: Source, *, include_memory: bool = False) -> di
     if not _collisions(content, target, create, collisions):
         refused.append(_refuse("target_config_invalid", "the target config does not parse"))
         return result
+    refused.extend(_routine_refusals(content, target))
+    plan = None
+    try:
+        plan = plan_proposal(content, target)
+    except TemplateError as exc:
+        refused.append(_refuse(exc.code, str(exc).removeprefix(exc.code).lstrip(": ")))
+    if refused:
+        return result
+    create.pop("roles", None)
+    entry = None
+    if plan is not None:
+        result["dropped"].extend(plan["dropped"])
+        if plan["sha256"] in target.proposed_shas:
+            collisions.append(
+                {"section": "config_proposal", "key": plan["sha256"][:12], "resolution": "skip"}
+            )
+        else:
+            create["roles"] = len(plan["roles"])
+            entry = {
+                "section": "config_proposal",
+                "status": "proposal_only",
+                "board": target.board,
+                "sha256": plan["sha256"],
+                "roles": plan["roles"],
+                "note": "filed as a proposed version; an owner accepts it by its sha256",
+            }
     if "orch_config" in content:
         if target.config_body is not None:
             collisions.append({"section": "orch_config", "key": target.board, "resolution": "skip"})
@@ -510,9 +650,11 @@ def preview(package: Any, target: Source, *, include_memory: bool = False) -> di
                 "note": "an owner must accept it; it never becomes live or grants a runner by import",
             }
         )
-    for entry in content.get("skills", []):
+    if entry is not None:
+        result["proposals"].append(entry)
+    for skill in content.get("skills", []):
         result["references"].append(
-            {"section": "skills", "id": entry.get("id"), "version": entry.get("version")}
+            {"section": "skills", "id": skill.get("id"), "version": skill.get("version")}
         )
     if "memory" in content:
         if include_memory:
@@ -520,7 +662,58 @@ def preview(package: Any, target: Source, *, include_memory: bool = False) -> di
         else:
             result["dropped"].append({"path": "memory", "reason": "memory_not_included_by_default"})
     result["ok"] = True
+    result["preview_id"] = preview_id(package, target, result, include_memory)
     return result
+
+
+def preview_id(package: dict, target: Source, result: dict, include_memory: bool) -> str:
+    """Names one preview: the exact package, target board, options and what it would do."""
+    return digest(
+        {
+            "package": package.get("digest"),
+            "board": target.board,
+            "include_memory": bool(include_memory),
+            **{
+                key: result[key]
+                for key in ("would_create", "collisions", "dropped", "proposals", "references")
+            },
+        }
+    )
+
+
+def _routine_refusals(content: dict, target: Source) -> list[dict]:
+    """Routines a write would refuse: a bad name, template or schedule, or no board to run on."""
+    from commonplace import routines
+
+    existing = {str(r.get("name", "")).casefold() for r in target.routines}
+    out: list[dict] = []
+    for index, entry in enumerate(content.get("routines", [])):
+        if str(entry.get("name", "")).casefold() in existing:
+            continue
+        here = f"routines[{index}]"
+        try:
+            routines.check_name(entry.get("name"))
+            template = routines.template_fields(entry.get("template"))
+            routines.check_schedule(
+                entry.get("schedule"), entry.get("timezone", "UTC"), time.time()
+            )
+        except ToolError:
+            out.append(_refuse("routine_invalid", here))
+            continue
+        if target.boards is not None and routine_board(template, target) is None:
+            out.append(_refuse("routine_board_missing", here))
+    return out
+
+
+def routine_board(template: dict, target: Source) -> str | None:
+    """The board an imported routine runs on: its own when the target has it, else the target
+    board; ``None`` when neither exists. A target whose boards were not read keeps both."""
+    boards = target.boards
+    if boards is None:
+        return template.get("board")
+    if template.get("board") in boards:
+        return template["board"]
+    return target.board if target.board in boards else None
 
 
 # ------------------------------------------------------------------ reading a workspace
@@ -560,7 +753,7 @@ def _json(text: str) -> Any:
 def read_source(db, workspace_id: str, directory: str | Path, board: str | None) -> Source:
     """Read one workspace without writing: accepted config, seats, routines, goals."""
     directory = Path(directory)
-    source = Source(board=board)
+    source = Source(board=board, boards=set())
     runner_db = directory / "runner.sqlite3"
     if board and runner_db.exists():
         from commonplace.orch import store as orch_store
@@ -568,6 +761,13 @@ def read_source(db, workspace_id: str, directory: str | Path, board: str | None)
         try:
             with orch_store.Store.existing(directory).connection() as conn:
                 version = orch_store.accepted_in(conn, board)
+                source.proposed_shas = {
+                    row["sha256"]
+                    for row in conn.execute(
+                        "SELECT sha256 FROM orch_configs WHERE board=? AND status='proposed'",
+                        (board,),
+                    )
+                }
         except sqlite3.OperationalError as exc:
             if not _missing_table(exc):
                 raise _unreadable() from None
@@ -603,6 +803,9 @@ def read_source(db, workspace_id: str, directory: str | Path, board: str | None)
         try:
             conn = _read_only(boards_db)
             try:
+                source.boards = {
+                    r["slug"] for r in conn.execute("SELECT slug FROM boards WHERE archived=0")
+                }
                 source.goals = [
                     {
                         "id": r["id"],

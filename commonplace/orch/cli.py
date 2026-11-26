@@ -45,10 +45,32 @@ def _version(value: str) -> int:
     return int(match.group(1))
 
 
+def local_principal(user, workspace_id: str):
+    """The CLI's principal: the data-dir owner acting locally (``auth="local"``)."""
+    from commonplace.control_db import Principal
+    from commonplace.policy import Policy
+
+    return Principal(
+        user_id=user["id"],
+        user_email=user["email"],
+        workspace_id=workspace_id,
+        connection_id="",
+        connection="cli",
+        client="commonplace",
+        auth="local",
+        role="owner",
+        policy=Policy.build(
+            profile="full",
+            scopes=["memory:read", "memory:write", "admin"],
+            read_wings=["*"],
+            trust="trusted",
+        ),
+    )
+
+
 def _context(args, *, owner: bool):
     """(principal, store, connection names) for ``args.workspace``."""
-    from commonplace.control_db import ControlError, Principal
-    from commonplace.policy import Policy
+    from commonplace.control_db import ControlError
     from commonplace.workspace_store import workspace_path
 
     from . import store
@@ -65,22 +87,7 @@ def _context(args, *, owner: bool):
         names = [row["name"] for row in db.connections(workspace["id"]) if not row["revoked_at"]]
     finally:
         db.close()
-    principal = Principal(
-        user_id=user["id"],
-        user_email=user["email"],
-        workspace_id=workspace["id"],
-        connection_id="",
-        connection="cli",
-        client="commonplace",
-        auth="local",
-        role="owner",
-        policy=Policy.build(
-            profile="full",
-            scopes=["memory:read", "memory:write", "admin"],
-            read_wings=["*"],
-            trust="trusted",
-        ),
-    )
+    principal = local_principal(user, workspace["id"])
     directory = workspace_path(cli._data_dir(args), workspace["id"])
     return principal, store.Store(directory), names
 
