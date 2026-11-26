@@ -197,7 +197,7 @@ def _config(source: Source):
     from commonplace.orch import schema
 
     if source.config_body is None:
-        raise TemplateError("no_live_config", "the board has no accepted orchestrator config")
+        raise TemplateError("no_live_config", "the board has no accepted Coworker config")
     return schema.parse(source.config_body)
 
 
