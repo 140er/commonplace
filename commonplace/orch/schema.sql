@@ -56,3 +56,45 @@ CREATE TABLE IF NOT EXISTS orch_state (
  acked_at TEXT,
  updated_at TEXT NOT NULL
 );
+
+-- Benchmark-gated promotion (commonplace.orch.benchmark). Append-only: a benchmark
+-- compares one accepted exp:<name> candidate with the live version on replayed tasks;
+-- results are never updated or deleted. Money is integer micro-USD.
+CREATE TABLE IF NOT EXISTS orch_benchmarks (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ board TEXT NOT NULL,
+ channel TEXT NOT NULL,
+ candidate_version INTEGER NOT NULL,
+ candidate_sha256 TEXT NOT NULL,
+ live_version INTEGER NOT NULL,
+ live_sha256 TEXT NOT NULL,
+ thresholds TEXT NOT NULL,
+ promote INTEGER NOT NULL CHECK (promote IN (0,1)),
+ reasons TEXT NOT NULL,
+ summary TEXT NOT NULL,
+ recorded_by TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS orch_benchmark_results (
+ benchmark_id INTEGER NOT NULL,
+ side TEXT NOT NULL CHECK (side IN ('live','candidate')),
+ task TEXT NOT NULL,
+ passed INTEGER NOT NULL CHECK (passed IN (0,1)),
+ cost_micro_usd INTEGER NOT NULL CHECK (cost_micro_usd >= 0),
+ tokens INTEGER NOT NULL CHECK (tokens >= 0),
+ latency_ms INTEGER NOT NULL CHECK (latency_ms >= 0),
+ PRIMARY KEY (benchmark_id, side, task)
+);
+-- One row per promotion to live and per rollback of one. previous_version is the live
+-- version the row superseded; new_version is the live row it created.
+CREATE TABLE IF NOT EXISTS orch_promotions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ board TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK (kind IN ('promote','rollback')),
+ benchmark_id INTEGER,
+ of_promotion INTEGER,
+ previous_version INTEGER NOT NULL,
+ new_version INTEGER NOT NULL,
+ decided_by TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
