@@ -89,6 +89,8 @@ A card an untrusted agent created waits in backlog until a person releases it.
 | Drop it | yes | 3 / 2 (open card, Remove assignment, confirm) | Called **Remove assignment** here and "reservation" everywhere else; the confirm dialog says the card "goes back to the pool" and takes an optional reason ([screenshot](usability-audit-372/10-remove-assignment.png)). The confirm click was not submitted in this run | status update todo to backlog, owner drop |
 | Reserve to a second agent | no (agent side only) | n/a | A handoff to another connection was refused until that connection exists and is active; the person has no way to hand a card to a specific agent from the card except the "Hand off" button, which was not exercised | `task_handoff` |
 
+<a id="6-accepting-and-rejecting-orchestrator-configs"></a>
+
 ### 6. Accepting and rejecting Coworker configs
 
 | Step | Possible | Clicks / screens | Where a user gets stuck | Mirrors |
