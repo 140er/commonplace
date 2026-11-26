@@ -76,7 +76,7 @@ export function scopeHTML(scope) {
 }
 
 export function settingsOrder(sections) {
-  const rank = id => ['deck-settings-nav', 'phone-push', 'look', 'deck-connections', 'deck-tools', 'deck-bot-sharing', 'deck-second-review'].indexOf(id);
+  const rank = id => ['deck-settings-nav', 'phone-push', 'today-email', 'look', 'deck-connections', 'deck-tools', 'deck-bot-sharing', 'deck-second-review'].indexOf(id);
   return [...sections].sort((a, b) => (a.id === 'deck-settings-advanced' ? 100 : rank(a.id) < 0 ? 7 : rank(a.id)) - (b.id === 'deck-settings-advanced' ? 100 : rank(b.id) < 0 ? 7 : rank(b.id)));
 }
 export const settingsLayout = width => width >= 1100 ? 'columns' : 'stack';

@@ -56,10 +56,10 @@ test('segmented click uses the existing save route, preserves identity and ignor
 });
 
 test('layout puts common settings before advanced permissions without losing sections', () => {
-  const old=['phone-push','deck-connections','deck-tools','plan','voice','chat','agent-schedules','tool-policy','webhooks','sign-out','look'];
+  const old=['phone-push','today-email','deck-connections','deck-tools','plan','voice','chat','agent-schedules','tool-policy','webhooks','sign-out','look'];
   const sections=[...old,'deck-settings-nav','deck-bot-sharing','deck-second-review'].map(id=>({id}));
   const ordered=settingsOrder(sections);
-  assert.deepEqual(ordered.slice(0,5).map(n=>n.id),['deck-settings-nav','phone-push','look','deck-connections','deck-tools']);
+  assert.deepEqual(ordered.slice(0,6).map(n=>n.id),['deck-settings-nav','phone-push','today-email','look','deck-connections','deck-tools']);
   assert.deepEqual(new Set(ordered),new Set(sections));
   assert.equal(ordered.length,sections.length);
   assert.equal(settingsLayout(1440),'columns'); assert.equal(settingsLayout(390),'stack');

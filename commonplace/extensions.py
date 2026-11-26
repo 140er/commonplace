@@ -38,6 +38,7 @@ MODULES = (
     "commonplace.account",
     "commonplace.webhooks",
     "commonplace.phone_push",
+    "commonplace.today_email",
     "commonplace.oauth",
     "commonplace.web",
     "commonplace.voice",

@@ -326,13 +326,15 @@ test("R3b: a matching workspace tap removes the workspace query", async () => {
   assert.equal(page.replacements.at(-1)?.path, "/app/#/card/5");
 });
 
+const plain = (html) => html.replaceAll("&#39;", "'");
+
 test("R4: phone notifications render the four states with escaped values and acceptance labels", async () => {
   const page = app();
   await settle();
   assert.equal(runInContext("typeof phonePushView", page.context), "function");
-  const view = (data) => {
+  const view = (data, owner = true) => {
     page.context.phonePushData = data;
-    const html = runInContext("phonePushView(phonePushData)", page.context);
+    const html = runInContext(`phonePushView(phonePushData, ${owner})`, page.context);
     assert.doesNotMatch(html, /deliver|type="checkbox"|>Save<|needs_you|blocked|category/i);
     return html;
   };
@@ -342,7 +344,9 @@ test("R4: phone notifications render the four states with escaped values and acc
   const attack = '<script>"&\'topic</script>';
   const subscription = { server: `https://ntfy.example/${attack}`, topic: attack };
   const unavailable = view({ ...base, available: false });
-  assert.ok(unavailable.includes("Not set up on this server."));
+  assert.ok(plain(unavailable).includes("Phone push isn't available on this server."));
+  assert.ok(!unavailable.includes("Ask the workspace owner"), "The owner is never told to ask the owner");
+  assert.ok(view({ ...base, available: false }, false).includes("Ask the workspace owner to set it up."));
   assert.doesNotMatch(unavailable, />Turn on<|>Turn off</);
   const unavailableOn = view({ ...base, available: false, subscription });
   assert.ok(unavailableOn.includes(">Turn off<"));
@@ -352,6 +356,7 @@ test("R4: phone notifications render the four states with escaped values and acc
   assert.doesNotMatch(ineligible, />Turn on<|>Turn off</);
   const off = view(base);
   assert.ok(off.includes(">Turn on<"));
+  assert.ok(off.includes("subscribe to that topic in the ntfy app on your phone"), "The owner is shown how to enable phone push");
   assert.ok(off.includes(pause));
   assert.doesNotMatch(off, />Turn off</);
   for (const [status, label] of [["accepted", "Accepted by your ntfy server"], ["pending", "Waiting"], ["not_accepted", "Not accepted"], [null, ""]]) {
@@ -361,6 +366,26 @@ test("R4: phone notifications render the four states with escaped values and acc
     assert.doesNotMatch(on, /<script>|>Turn on</);
     if (status === null) assert.doesNotMatch(on, /role="status"|Not accepted|Waiting|Accepted by your ntfy server/);
   }
+});
+
+test("R4c: email for Today shows opt-in, the address, and a plain line when the server has no mail", async () => {
+  const page = app();
+  await settle();
+  const view = (data) => {
+    page.context.todayEmailData = data;
+    return runInContext("todayEmailView(todayEmailData)", page.context);
+  };
+  const base = { available: true, enabled: false, address: "me@example.test" };
+  const none = view({ ...base, available: false });
+  assert.ok(plain(none).includes("Email isn't set up on this server."));
+  assert.doesNotMatch(none, /<button|Ask the/);
+  const off = view(base);
+  assert.ok(off.includes(">Turn on<") && off.includes("me@example.test") && off.includes("never the card text"));
+  assert.doesNotMatch(off, />Turn off</);
+  const on = view({ ...base, enabled: true });
+  assert.ok(on.includes(">Turn off<") && on.includes("data-action=\"today-email-off\""));
+  assert.doesNotMatch(on, />Turn on</);
+  assert.ok(view({ ...base, address: '<script>x</script>' }).includes("&lt;script&gt;"));
 });
 
 async function onboarding() {

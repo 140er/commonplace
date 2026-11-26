@@ -90,7 +90,7 @@ const content = {
 const values = {
   '/api/boards?view=shell': { boards: [] }, '/api/bots': { bots: [] }, '/api/needs-me': {}, '/api/rules/count': {},
   '/api/connections': {}, '/api/webhooks': { webhooks: [] },
-  '/api/plan': { plan: 'free' }, '/api/phone-push': {},
+  '/api/plan': { plan: 'free' }, '/api/phone-push': {}, '/api/today-email': { available: false },
   '/api/chat-settings': { front: { enabled: false }, usage: { used_today: 0, user_used_today: 0 } },
   '/api/settings/models': { can_configure: true, models: {}, models_effective: {}, model_catalog: [], model_suggestions: [] },
 };

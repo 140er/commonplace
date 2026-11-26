@@ -1002,19 +1002,41 @@ function handoffForm(card, prefill = {}) {
   // On Needs me the panel holds the item's detail: it waits while the form is open.
   if (onNeeds()) state.needsUI?.pause(true);
 }
-function phonePushView(data) {
+function phonePushView(data, owner = false) {
   const home = "Phone notifications cover only your home workspace. Cards in other workspaces never notify this phone.";
   const pause = "Notifications pause while you are signed out everywhere, including when a sign-in expires after 30 days. Nothing you miss is sent later.";
+  const how = "Turn this on for a private topic, then subscribe to that topic in the ntfy app on your phone.";
   const off = '<button data-action="phone-push-off">Turn off</button>';
   let body;
-  if (!data.available) body = `<p>${e("Not set up on this server.")}</p>${data.subscription ? off : ""}`;
+  // The owner is the one who sets the server up, so never tell them to ask the owner.
+  if (!data.available) body = `<p data-phone-push-unavailable>${e(owner ? "Phone push isn't available on this server." : "Phone push isn't available on this server. Ask the workspace owner to set it up.")}</p>${data.subscription ? off : ""}`;
   else if (!data.subscription && !data.eligible) body = `<p>${e(home)}</p>`;
-  else if (!data.subscription) body = `<button data-action="phone-push-on">Turn on</button><p>${e(home)}</p><p>${e(pause)}</p>`;
+  else if (!data.subscription) body = `<p>${e(how)}</p><button data-action="phone-push-on">Turn on</button><p>${e(home)}</p><p>${e(pause)}</p>`;
   else {
     const status = data.test == null ? "" : data.test?.status === "accepted" ? "Accepted by your ntfy server" : data.test?.status === "pending" ? "Waiting" : "Not accepted";
     body = `<p>Server: ${e(data.subscription.server)}</p><p>Topic: <span data-phone-push-topic>${e(data.subscription.topic)}</span> <button data-action="phone-push-copy">Copy</button></p><button data-action="phone-push-test">Test</button>${status ? `<p role="status">${e(status)}</p>` : ""}${off}<p>${e(home)}</p><p>${e(pause)}</p>`;
   }
   return `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${body}</section>`;
+}
+function todayEmailView(data) {
+  let body;
+  if (!data.available) body = `<p data-today-email-unavailable>${e("Email isn't set up on this server.")}</p>`;
+  else if (data.enabled) body = `<p>New items waiting on you are emailed to ${e(data.address)}. Each email has the title and a link, never the card text.</p><button data-action="today-email-off">Turn off</button>`;
+  else body = `<p>Get an email at ${e(data.address)} when a new item is waiting on you in Today. Each email has the title and a link, never the card text. A burst of items arrives as one email.</p><button data-action="today-email-on">Turn on</button>`;
+  return `<section class="settings-section" id="today-email"><h2>Email for Today</h2>${body}</section>`;
+}
+async function todayEmailAction(action) {
+  if (state.pending.has("today-email")) return;
+  state.pending.add("today-email");
+  root.querySelectorAll("#today-email button").forEach((button) => { button.disabled = true; });
+  const epoch = state.screen;
+  try {
+    await api("/api/today-email", { method: "POST", body: { enabled: action === "today-email-on" } });
+    if (state.me && epoch === state.screen) await settingsView(epoch);
+  } finally {
+    state.pending.delete("today-email");
+    root.querySelectorAll("#today-email button").forEach((button) => { button.disabled = false; });
+  }
 }
 async function phonePushAction(action) {
   if (state.pending.has("phone-push")) return;
@@ -1047,7 +1069,8 @@ async function settingsView(epoch) {
     models: { path: "/api/settings/models", name: "Agent models", view: () => '<section class="settings-section"><h2>Agent models</h2><div data-workspace-models-host></div></section>', ready: (value, host) => mountWorkspaceModels(host.querySelector("[data-workspace-models-host]"), { api, e, value, current }) },
     chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
     connections: { path: "/api/connections", name: "Connected apps", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
-    phone: { path: "/api/phone-push", name: "Phone notifications", view: phonePushView, ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },
+    phone: { path: "/api/phone-push", name: "Phone notifications", view: (value) => phonePushView(value, (state.me.role ? state.me.role === "owner" : state.me.can_admin === true)), ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },
+    email: { path: "/api/today-email", name: "Email for Today", view: todayEmailView },
     hooks: { path: "/api/webhooks", name: "Webhooks", view: (value) => `<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${(value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks")}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section>` },
   };
   const saved = remember();
@@ -1951,6 +1974,7 @@ root.addEventListener("click", async (event) => {
       void state.workbenchChat?.dock.open({ from: root.querySelector("#m-chat-tab") || undefined, focus: row, resume: true });
     }
     else if (action.startsWith("phone-push-")) await phonePushAction(action);
+    else if (action.startsWith("today-email-")) await todayEmailAction(action);
     else if (action.startsWith("agent-")) await agentAction(b);
     else if (action === "speak-digest") await speech.toggle();
     else if (action === "need-accept") {
@@ -2278,7 +2302,7 @@ async function poll() {
       if (state.me && epoch === state.screen && !state.pending.has("phone-push")) {
         state.phonePushPending = phonePush.test?.status === "pending";
         const section = root.querySelector("#phone-push");
-        if (section) section.outerHTML = phonePushView(phonePush);
+        if (section) section.outerHTML = phonePushView(phonePush, (state.me.role ? state.me.role === "owner" : state.me.can_admin === true));
       }
     }
     state.seq = feed.seq; state.eventEpoch = feed.epoch || "";
