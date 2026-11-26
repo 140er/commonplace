@@ -49,7 +49,7 @@ The server makes the final decision and refuses a move you may not make.
 |---|---|---|---|
 | A project: its board, its memory and its Coworker | Projects (sidebar, Settings, search), New project. Admin used to list projects under "Bots" | The tools say board, and the older name space, for the same thing | **Project**. It is what a person creates and names |
 | The cards of one project | Board (page heading) | The tools take a board argument | **Board**. The cards of a single project. Work in the sidebar shows the cards of every project in one place |
-| A unit of work | Card | The tools and the older cards of an agent say task | **Card** in the app and the guides. A task in a tool name is a card |
+| A unit of work | Card | The tools say task | **Card** in the app and the guides. A task in a tool name is a card |
 | Where a card is in its life | Backlog, Todo, Doing, Review, Done (status list, Move menu, card face) | A status field with the same five words in lower case | **Status**, in exactly these five words. Earlier screens said Ready and Live for statuses; those are now only the summary words above |
 | A group of statuses on the board | Waiting on you, Active, In review, Shipped | None. Lanes are only a view | **Lane**. Never used for a status |
 | A private chat | Bots (sidebar), New bot | The routes say bots | **Bot**. A Bot is a chat, not a project and not a connected agent. Each project you can read has one |
