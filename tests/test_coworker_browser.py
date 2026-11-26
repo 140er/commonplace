@@ -125,12 +125,21 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 page.locator(".cw-message p").filter(
                     has_text="A second message is accepted"
                 ).wait_for()
-                # Cancel both the blocked turn and its queued successor.
-                for item in open_store(gateway, wid).list_jobs(owner, first_id):
+                # Cancel the queued successor first, then the blocked turn: cancelling the
+                # blocked turn first would let the worker start the successor.
+                for item in reversed(open_store(gateway, wid).list_jobs(owner, first_id)):
                     if item["state"] in ("pending", "running"):
-                        page.locator(
-                            f'[data-cw-action="cancel-job"][data-id="{item["id"]}"]'
-                        ).click()
+                        cancel_path = f"/api/coworkers/jobs/{item['id']}/cancel"
+                        with page.expect_response(
+                            lambda response, path=cancel_path: (
+                                response.request.method == "POST"
+                                and response.url.split("?", 1)[0].endswith(path)
+                                and 200 <= response.status < 300
+                            )
+                        ):
+                            page.locator(
+                                f'[data-cw-action="cancel-job"][data-id="{item["id"]}"]'
+                            ).click()
                 assert all(
                     j["state"] == "cancelled"
                     for j in open_store(gateway, wid).list_jobs(owner, first_id)
