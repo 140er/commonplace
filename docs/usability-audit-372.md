@@ -93,11 +93,11 @@ A card an untrusted agent created waits in backlog until a person releases it.
 
 | Step | Possible | Clicks / screens | Where a user gets stuck | Mirrors |
 |---|---|---|---|---|
-| Learn that a proposal exists | **no** | n/a | A proposed config creates no Today item, no badge and no card. The owner learns only by opening project settings and scrolling to "Coworker config versions" | `orch_config_get` |
-| Find the list | partial | 3 / 2 (Settings, "<project> review settings", scroll) | Settings has a "Second review" section whose button opens project settings; "review" does not suggest config. Section sits below the readiness list, Coworker, chat answers, agents, project memory and panel | `GET /api/orch/boards/<board>/configs` |
-| Read the change | partial | 1 / 1 (Changes) | The first version shows the whole file (seen); later ones show a diff against the accepted version (from the source, not checked on screen). Proposer is shown as a raw identifier (`conn:Coworker:<project>`), not a name ([screenshot](usability-audit-372/14-config-diff.png)). Nothing says in words what changes (for example the agent limit) | `orch_config_diff` |
-| Accept | yes | 1 / 1 | One click, no confirm, no summary of effect ([screenshot](usability-audit-372/13-config-versions.png)) | `orch_config_accept` |
-| Reject | yes | 2 / 1 | Confirm panel explains the effect well ([screenshot](usability-audit-372/15-config-reject-confirm.png)) | `orch_config_reject` |
+| Learn that a proposal exists | yes | 0 | Since #662 a proposed config is an item in Waiting on you, counted in the sidebar and Today badge ([screenshot](usability-audit-372/31-today-config-after.png); before: [screenshot](usability-audit-372/30-today-config-before.png)) | `orch_config_get` |
+| Find the list | yes | 1 / 1 (Waiting on you) | The proposal is the first item in Waiting on you. Project settings keeps "Coworker config versions" as the history view | `GET /api/orch/boards/<board>/configs` |
+| Read the change | yes | 1 / 1 (Changes) | The item names the proposer ("<project> bot", not the raw `conn:Coworker:<project>`), says the change in one line (for example "Agent limit: 3 to 5") and expands to the diff | `orch_config_diff` |
+| Accept | yes | 1 / 1 | One click on the item, with the effect in words above it ("Accept means yes: <project> uses v4 from now on") | `orch_config_accept` |
+| Reject | yes | 2 / 1 | Reject asks once with the project settings wording, then Reject version ([screenshot](usability-audit-372/15-config-reject-confirm.png)) | `orch_config_reject` |
 
 Total to accept: 4 interactions plus one scroll; nothing leads there.
 
@@ -150,7 +150,7 @@ Total to accept: 4 interactions plus one scroll; nothing leads there.
 |---|---|---|---|---|
 | Phone notifications | no | n/a | The owner is told "Ask the workspace owner to connect a notification service" ([screenshot](usability-audit-372/26-settings-notifications.png)); there is nothing to enable | push settings |
 | Webhooks | partial | not counted | A form with URL, project, "Waiting on" and an event filter exists under Workspace; not exercised past the form | `webhook_add` |
-| In-app | partial | 0 | Today badge and sidebar count only. No count for config proposals or release waits (flows 4 and 6) | |
+| In-app | partial | 0 | Today badge and sidebar count only. Config proposals are counted since #662; no count yet for release waits (flow 4) | |
 
 ### 13. Memory import
 

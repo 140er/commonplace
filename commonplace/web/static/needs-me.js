@@ -13,10 +13,19 @@ export function needsCards(needs = {}) {
   return [...new Map(BUCKETS.flatMap(bucket => Array.isArray(needs?.[bucket]) ? needs[bucket] : []).filter(valid).map(card => [card.number, card])).values()];
 }
 
-/** How many cards wait on the person. Derived from the listed cards; only a payload with no lists at all
- *  (a member who cannot read the queue) falls back to its plain number. */
+const validConfig = item => typeof item?.board === 'string' && item.board !== '' && Number.isSafeInteger(item?.version) && item.version > 0 && typeof item?.sha256 === 'string';
+
+/** Proposed Coworker configs waiting on the owner, one per board and version. They are decisions, not cards:
+ *  they have no card number, and they are counted with the cards. */
+export function configProposals(needs = {}) {
+  const list = Array.isArray(needs?.config_proposals) ? needs.config_proposals : [];
+  return [...new Map(list.filter(validConfig).map(item => [`${item.board}:${item.version}`, item])).values()];
+}
+
+/** How many items wait on the person. Derived from the listed cards and config proposals; only a payload with
+ *  no lists at all (a member who cannot read the queue) falls back to its plain number. */
 export function needsMeCount(needs) {
-  if (hasQueue(needs)) return needsCards(needs).length;
+  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length;
   return Number.isSafeInteger(needs?.count) && needs.count > 0 ? needs.count : 0;
 }
 

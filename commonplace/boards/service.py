@@ -5110,6 +5110,8 @@ class BoardService(lifecycle.LifecycleMixin):
             if self.principal.person:
                 groups["model_roles"] = self._missing_model_roles()
                 groups["count"] += len(groups["model_roles"])
+                groups["config_proposals"] = self._config_proposals()
+                groups["count"] += len(groups["config_proposals"])
                 if getattr(self.ctx.gateway, "runner_installed", False):
                     from commonplace.runner import install_receipts
 
@@ -5136,6 +5138,26 @@ class BoardService(lifecycle.LifecycleMixin):
                 groups["model_connections"] = lacking
                 groups["count"] += len(lacking)
         return groups
+
+    def _config_proposals(self):
+        """Proposed Coworker configs the owner can accept or reject, one item each."""
+        if not self.principal.person or self.principal.role != "owner":
+            return []
+        from commonplace.orch import proposals
+
+        with self._require_store().connection() as conn:
+            rows = conn.execute("SELECT slug,name,wing FROM boards WHERE archived=0").fetchall()
+        boards = {
+            row["slug"]: row["name"]
+            for row in rows
+            if self.principal.policy.can_read_wing(row["wing"])
+        }
+        return proposals.pending(
+            self.ctx.gateway,
+            self.principal.workspace_id,
+            boards=boards,
+            people=lambda text: people(self.ctx, text),
+        )
 
     def _budget_warnings(self):
         """One item per cost budget that crossed its warning in this window. Owner-only."""
