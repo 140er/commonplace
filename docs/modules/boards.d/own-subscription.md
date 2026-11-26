@@ -1,0 +1,4 @@
+- **Owns:** The `model_signins` group of Needs me (card #661): the caller's own CLI sign-ins that stopped working, one item per machine and provider.
+- **Promises:** Absent when empty, shown only to the person concerned, never to the owner for anyone else. A row whose machine was revoked or disabled clears itself on the next read; an answer from that CLI on that machine clears it.
+- **How it fails:** A store error leaves the group and its count out rather than failing Needs me.
+- **Tests:** `tests/test_model_roles_own_subscription.py`.

@@ -1,0 +1,2 @@
+- **Owns:** The public-surface classification of `GET|PUT|POST /api/settings/models` (card #661), each authenticated before validation.
+- **Tests:** `tests/test_commonplace_public_surface.py`.
