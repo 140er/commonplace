@@ -867,6 +867,9 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
     if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
+    // An open removal form was drawn from one card version: a read of that same version has nothing new to show,
+    // so the form and the reason typed in it stay. Cancel removes the form first, which lets the drawer draw again.
+    if (!opening && panel.querySelector('[data-form="remove-assignment"] input[name="version"]')?.value === String(card.version)) return;
     state.card = card;
     // A shared card link draws its own board behind the card, once.
     const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
@@ -1992,6 +1995,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
       root.querySelector("#card-panel .assignment-refusal")?.remove();
+      root.querySelector('#card-panel [data-form="remove-assignment"]')?.remove();
       // Needs me redraws the item's detail; a card route reads the card again.
       const needs = onNeeds() ? state.needsUI : null;
       if (needs?.paused()) needs.pause(false); else await refresh();
