@@ -797,7 +797,15 @@ def _card_row(ctx, board, card):
 # -------------------------------------------------------------------- lease API
 
 
-def resume(ctx: ToolContext, board: str, role: str, *, force: bool = False, now=None) -> dict:
+def resume(
+    ctx: ToolContext,
+    board: str,
+    role: str,
+    *,
+    force: bool = False,
+    now=None,
+    log_event: str | None = None,
+) -> dict:
     """``orch_resume``: claim the lease of ``(board, role)`` and return the checkpoint.
 
     Returns ``{"board", "role", "epoch", "token", "expires_at", "checkpoint"}``; the
@@ -850,7 +858,16 @@ def resume(ctx: ToolContext, board: str, role: str, *, force: bool = False, now=
                 expires,
             ),
         )
-        _log(conn, board, role, None, epoch, "force" if force else "claim", actor, now)
+        _log(
+            conn,
+            board,
+            role,
+            None,
+            epoch,
+            log_event or ("force" if force else "claim"),
+            actor,
+            now,
+        )
         _mark_in_doubt(conn, board, role, epoch, actor, now)
         _sync_jobs(conn, board, role, epoch, actor, now)
     cards = _card_classes(ctx, board_row, principal, now, heartbeat=True)
@@ -875,8 +892,18 @@ def heartbeat(ctx: ToolContext, board: str, role: str, epoch: int, token: str, *
     return {"epoch": epoch, "expires_at": expires}
 
 
-def release(ctx: ToolContext, board: str, role: str, epoch: int, token: str, *, now=None):
-    """Give the lease up (the next ``resume`` claims at once). Returns ``{"epoch"}``."""
+def release(
+    ctx: ToolContext,
+    board: str,
+    role: str,
+    epoch: int,
+    token: str,
+    *,
+    now=None,
+    log_event: str | None = "release",
+):
+    """Give the lease up (the next ``resume`` claims at once). Returns ``{"epoch"}``.
+    ``log_event`` None writes no journal row (the caller already logged the action)."""
     now = _clock(now)
     st, _version = _holder(ctx, board, role)
     with st.transaction() as conn:
@@ -886,7 +913,8 @@ def release(ctx: ToolContext, board: str, role: str, epoch: int, token: str, *, 
             "WHERE board=? AND role=? AND epoch=?",
             (now, _actor_ref(ctx.principal), board, role, epoch),
         )
-        _log(conn, board, role, None, epoch, "release", _actor_ref(ctx.principal), now)
+        if log_event:
+            _log(conn, board, role, None, epoch, log_event, _actor_ref(ctx.principal), now)
     return {"epoch": epoch, "released": True}
 
 
@@ -911,6 +939,26 @@ def force_release(ctx: ToolContext, board: str, role: str, *, now=None) -> dict:
         )
         _log(conn, board, role, None, row["epoch"], "force_release", actor, now)
         return {"epoch": row["epoch"], "released": True}
+
+
+def owner_resume(ctx: ToolContext, board: str, role: str, *, now=None) -> dict:
+    """The owner lets a stopped Coworker work again, from the web app.
+
+    It runs the ordinary ``resume`` (so in-doubt steps are marked and the restore and config
+    fences apply) and hands the claim straight back with ``release``, so the next coordinator
+    claims at once and the owner never holds a usable lease. The token stays inside this call.
+    One ``owner_resume`` journal row records it. Returns ``{"epoch", "resumed"}``; ``held``
+    (409) while a lease is live."""
+    orch_store.require_owner(ctx.principal)
+    claimed = resume(ctx, board, role, now=now, log_event="owner_resume")
+    epoch, token = claimed["epoch"], claimed["token"]
+    try:
+        release(ctx, board, role, epoch, token, now=now, log_event=None)
+    except BaseException:
+        # Never leave the owner's own claim blocking the Coworker for the lease TTL.
+        force_release(ctx, board, role, now=now)
+        raise
+    return {"epoch": epoch, "resumed": True}
 
 
 # ------------------------------------------------------------------ journal API
@@ -1840,6 +1888,23 @@ def rankable_cards(ctx, board_row) -> list[dict]:
     ]
 
 
+LEASE_HISTORY_EVENTS = ("claim", "force", "release", "force_release", "owner_resume")
+HISTORY_LIST = 20
+
+
+def _lease_history(conn, board, role):
+    """The newest lease actions (claims, releases, owner stops and resumes): who and when."""
+    marks = ",".join("?" for _ in LEASE_HISTORY_EVENTS)
+    return [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT event, epoch, actor, at FROM orch_journal WHERE board=? AND role=? "
+            f"AND event IN ({marks}) ORDER BY id DESC LIMIT ?",
+            (board, role, *LEASE_HISTORY_EVENTS, HISTORY_LIST),
+        )
+    ]
+
+
 def _misses(conn, board):
     if not conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_misses'"
@@ -1969,6 +2034,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
             (board, MAX_LIST),
         ).fetchall()
         misses = _misses(conn, board)
+        history = _lease_history(conn, board, role)
         factory_view = _factory_view(conn, version, board)
         escalations = _escalations(conn, version, board, role)
         bound = (
@@ -2072,6 +2138,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         "jobs": [dict(row) for row in job_rows],
         "gates": [_gate_public(row) for row in gates],
         "misses": misses,
+        "history": history,
         "repairs": repairs,
         "findings": findings,
         "inbox_findings": inbox_findings,

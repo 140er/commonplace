@@ -148,7 +148,7 @@ const cases = {
     const {host, calls} = await mount();
     await click(host, "end");
     assert.ok(has(host, "confirm"));
-    assert.match(host.text, /End builder-bot's lease\?/);
+    assert.match(host.text, /Stop builder-bot\?/);
     assert.match(host.text, /keeps running and stays listed below/);
     assert.equal(posts(calls).length, 0);
     await click(host, "end-cancel");
@@ -426,6 +426,97 @@ const cases = {
     await click(host, "refresh");
     assert.equal(restoreReads.length, 2);
     assert.match(host.text, /No restore is waiting\./);
+  },
+  async stop_is_named_stop_and_confirms() {
+    const {host} = await mount();
+    assert.match(host.querySelector("[data-orch-end]") && host.text, /Stop Coworker…/);
+    await click(host, "end");
+    assert.match(host.text, /Stop Coworker/);
+  },
+  async resume_is_offered_to_the_owner_when_nobody_coordinates() {
+    for (const lease of [null, {epoch: 2, holder: "conn:builder-bot", expires_at: iso(-180), live: false}]) {
+      const {host} = await mount({responses: [view({lease})]});
+      assert.ok(has(host, "resume"));
+      assert.equal(has(host, "end"), false);
+    }
+    const live = await mount();
+    assert.equal(has(live.host, "resume"), false);
+    const other = await mount({project: member, responses: [view({lease: null})]});
+    assert.equal(has(other.host, "resume"), false);
+  },
+  async resume_needs_a_confirm_then_posts_once_and_reloads() {
+    const stopped = view({lease: {epoch: 2, holder: "conn:builder-bot", expires_at: iso(-5), live: false}});
+    const {host, calls} = await mount({responses: [stopped, stopped], post: {epoch: 3, resumed: true}});
+    await click(host, "resume");
+    assert.ok(has(host, "resume-confirm"));
+    assert.equal(posts(calls).length, 0);
+    await click(host, "resume-cancel");
+    assert.equal(has(host, "resume-confirm"), false);
+    assert.equal(posts(calls).length, 0);
+    await click(host, "resume");
+    const node = host.querySelector("[data-orch-resume-confirm]");
+    const first = node.onclick();
+    await node.onclick();
+    await first;
+    const sent = posts(calls);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].path, "/api/orch/boards/atlas/roles/main/owner-resume");
+    assert.deepEqual(sent[0].body, {});
+    assert.match(host.text, /Coworker resumed/);
+    assert.equal(calls.filter(c => c.method === "GET").length, 2);
+  },
+  async resume_refusals_are_named_and_nothing_is_claimed() {
+    const stopped = view({lease: null});
+    for (const [error, text] of [[refusalWith(409, "held"), "A Coworker is already running"], [refusal(403), "Only the workspace owner can resume"], [refusal(404), "This project is no longer available."], [refusalWith(409, "restore_pending"), "Acknowledge the restore first"], [refusal(500), "Could not resume the Coworker. Nothing was changed. Try again."]]) {
+      const {host} = await mount({responses: [stopped], post: error});
+      await click(host, "resume");
+      await click(host, "resume-confirm");
+      assert.ok(host.text.includes(text), `${text} :: ${host.text}`);
+      assert.ok(has(host, "resume"));
+    }
+  },
+  async resume_never_shows_a_lease_token() {
+    const {host} = await mount({responses: [view({lease: null})], post: {epoch: 3, resumed: true, token: "TOKEN-SENTINEL-1234"}});
+    await click(host, "resume");
+    await click(host, "resume-confirm");
+    assert.equal(host.html.includes("TOKEN-SENTINEL"), false);
+  },
+  async failed_card_starts_show_their_reason() {
+    const misses = [
+      {id: 2, card: 12, code: "at_cap", created_at: iso(-120)},
+      {id: 1, card: 9, code: "worker_unavailable", created_at: iso(-3600)},
+      {id: 0, card: 4, code: "something_new", created_at: iso(-7200)},
+    ];
+    const {host} = await mount({responses: [view({misses})]});
+    assert.ok(has(host, "misses"));
+    assert.match(host.text, /3 card starts failed/);
+    assert.match(host.text, /Card #12 did not start · .*agent limit.* · 2 min ago/);
+    assert.match(host.text, /Card #9 did not start · .*machine.* · 1 h ago/);
+    assert.match(host.text, /Card #4 did not start · a reason this page does not know \(something_new\)/);
+  },
+  async no_failed_starts_shows_nothing() {
+    const {host} = await mount({responses: [view({misses: []})]});
+    assert.equal(has(host, "misses"), false);
+    const none = await mount();
+    assert.equal(has(none.host, "misses"), false);
+  },
+  async history_lists_stop_and_resume_with_who_and_when() {
+    const history = [
+      {event: "owner_resume", epoch: 3, actor: "user:owner", at: iso(-60)},
+      {event: "force_release", epoch: 2, actor: "user:owner", at: iso(-300)},
+      {event: "claim", epoch: 2, actor: "conn:builder-bot", at: iso(-900)},
+      {event: "mystery", epoch: 1, actor: "conn:x", at: iso(-9000)},
+    ];
+    const {host} = await mount({responses: [view({history})]});
+    assert.ok(has(host, "history"));
+    assert.match(host.text, /Resumed by owner · 1 min ago/);
+    assert.match(host.text, /Stopped by owner · 5 min ago/);
+    assert.match(host.text, /Claimed by builder-bot · 15 min ago/);
+    assert.match(host.text, /mystery by x/);
+  },
+  async history_is_escaped() {
+    const {host} = await mount({responses: [view({history: [{event: "claim", epoch: 1, actor: "conn:<img src=x onerror=alert(1)>", at: iso(-60)}]})]});
+    assert.equal(host.html.includes("<img"), false);
   },
   async stale_mount_draws_nothing() {
     const anchor = new Anchor();
