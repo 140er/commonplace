@@ -569,7 +569,7 @@ export function createWorkspaces(ctx) {
     if (typeof control?.matches !== "function") return () => {};
     const row = control.closest?.("[data-ws-id]");
     const selector = control.matches("[data-ws-control]") ? `[data-ws-control="${control.dataset.wsControl}"]` : control.matches("[data-ws-notice]") ? "[data-ws-notice]" : control.matches("[data-ws-summary]") ? "[data-ws-summary]"
-      : control.id === "compute-ws-heading" ? "#compute-ws-heading" : control.dataset?.wsAction ? `${row ? `[data-ws-id="${row.dataset.wsId}"] ` : ""}[data-ws-action="${control.dataset.wsAction}"]${control.dataset.focus ? `[data-focus="${control.dataset.focus}"]` : ""}${control.dataset.preset ? `[data-preset="${control.dataset.preset}"]` : ""}` : "";
+      : control.id === "compute-ws-heading" ? "#compute-ws-heading" : row && control.matches(".compute-ws-name") ? `[data-ws-id="${row.dataset.wsId}"] .compute-ws-name` : control.dataset?.wsAction ? `${row ? `[data-ws-id="${row.dataset.wsId}"] ` : ""}[data-ws-action="${control.dataset.wsAction}"]${control.dataset.focus ? `[data-focus="${control.dataset.focus}"]` : ""}${control.dataset.preset ? `[data-preset="${control.dataset.preset}"]` : ""}` : "";
     const caret = typeof control.selectionStart === "number" ? [control.selectionStart, control.selectionEnd] : null;
     return () => {
       const again = selector ? ctx.host()?.querySelector?.(selector) : null;
