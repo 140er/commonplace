@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_connection_trust_level.py`, `tests/test_trust_form_blocker.py` and the `trust` case of `tests/admin_runtime_ui.mjs`.
+- **Promises:** The server tests run a real gateway over temporary data and check the owner path, the refusals (member, agent token, trusted, runner and bot, revoked, policy-invalid lowering) and the audit row; the node cases run the shipped `admin.js` and `projects.js` against synthetic server answers.
+- **How it fails:** A control offered without a server option, a write without the confirm step, or a trust form shown without a machine fails these tests.
+- **Tests:** They are the tests.
