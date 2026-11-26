@@ -271,7 +271,7 @@ export function headHTML(bot, e) {
 }
 
 export function coworkersNavHTML(bot = '-') {
-  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers" role="menuitem">Bot conversations</a>`;
+  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers" role="menuitem">Conversations and setup</a>`;
 }
 
 /** What the bot is doing in a few words: its state, then its job. */

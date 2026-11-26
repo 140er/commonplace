@@ -221,7 +221,7 @@ test('the account menu and sheet call the server console "Server admin", and its
   }
   assert.match(renderDeckTop({ hash: '#/instance-admin' }), /<b>Server admin<\/b>/);
   assert.match(renderDeckTop({ hash: '#/admin' }), /<b>Admin<\/b>/);
-  assert.match(renderDeckTop({ hash: '#/bots/-/coworkers' }), /<b>Bot conversations<\/b>/, 'the phone title of the bot conversations page is not "Bots"');
+  assert.match(renderDeckTop({ hash: '#/bots/-/coworkers' }), /<b>Conversations<\/b>/, 'the phone title of the conversations page is not "Bots"');
   assert.match(renderDeckTop({ hash: '#/bots' }), /<b>Bots<\/b>/);
   const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
   assert.match(app, /dataset\?\.ui === "deck"\) text = \{ "Workspace administration": "Admin", "Instance console": "Server admin" \}\[text\] \|\| text;/);
