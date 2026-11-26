@@ -107,7 +107,20 @@ def test_ready_to_start_browser(tmp_path, width):
                             checklist = page.get_by_role("region", name="Ready to start?")
                             assert checklist.is_visible()
                             assert checklist.locator("li").count() == 6
-                            assert checklist.get_by_role("link").count() == (6 if owner else 0)
+                            # Only the steps that need you are open; done, later and not-needed steps fold away.
+                            open_steps = 1 if missing else 0
+                            assert checklist.get_by_role("link").count() == (
+                                open_steps if owner else 0
+                            )
+                            assert checklist.locator("ul:not(.ready-rest ul) > li").count() == (
+                                open_steps
+                            )
+                            assert checklist.locator("details.ready-rest").count() == 1
+                            assert checklist.locator("details.ready-rest li").count() == (
+                                6 - open_steps
+                            )
+                            # Every step keeps its action link behind the fold (the optional one has none).
+                            assert checklist.locator("a").count() == (5 if owner else 0)
                             if missing:
                                 row = checklist.locator(f'[data-ready="{missing}"]')
                                 assert row.get_attribute("data-state") == "needs_you"

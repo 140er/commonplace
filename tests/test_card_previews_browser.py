@@ -460,7 +460,7 @@ def test_invalid_rule_days_name_the_field_and_keep_the_value(browser):  # noqa: 
     page.route("**/api/previews**", previews_api)
     page.evaluate("location.hash='#/card/1'")
     section = page.locator("[data-card-previews]")
-    section.locator("summary").click()
+    section.locator("summary[data-preview-rule-summary]").click()
     field = section.locator('input[name="stop_days_after_pr"]')
     field.fill("366")
     section.get_by_role("button", name="Save rule").click()

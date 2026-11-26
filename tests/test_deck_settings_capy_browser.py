@@ -81,7 +81,7 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         ]
         for title in [
             "Free plan",
-            "Coworker management",
+            "Bot management",
             "Chat",
             "Scheduled prompts",
             "Phone notifications",

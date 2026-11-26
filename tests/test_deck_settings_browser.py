@@ -159,7 +159,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
         # Every former section and form is still reachable; only two headings change.
         old_sections = [
             "Free plan",
-            "Coworker management",
+            "Bot management",
             "Chat",
             "Agents",
             "Scheduled prompts",
@@ -191,9 +191,13 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
         assert title.evaluate("el => getComputedStyle(el).fontSize") == (
             "15px" if width >= 700 else "16px"
         )
-        assert page.locator("#phone-push").evaluate(
-            "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgb(28, 37, 48)", "10px"]
+        # No notification service here: the card has nothing to act on, so it folds to one quiet line
+        # with no surface of its own, and the owner's next step stays a link.
+        push = page.locator("#phone-push")
+        assert "deck-quiet-line" in push.get_attribute("class")
+        assert push.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
+        assert "not set up on this server" in push.inner_text()
+        assert push.locator('a[href="#/admin"]').is_visible()
         if width == 390:
             assert page.locator("#content").evaluate(
                 "el => [getComputedStyle(el).paddingLeft, getComputedStyle(el).paddingRight]"

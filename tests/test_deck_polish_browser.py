@@ -184,9 +184,11 @@ def test_phone_tab_bar_is_clear_and_settings_has_one_way_in(browser, height):  #
         sheet = page.locator("#deck-more")
         sheet.wait_for(state="visible")
         links = sheet.locator('a[href="#/settings"]')
+        # The close button leads the panel for reach; Settings is the first destination after it.
         assert (
             links.count() == 1
-            and sheet.locator("a, button").first.inner_text().strip() == "Settings"
+            and sheet.locator("a, button:not(.deck-more-close)").first.inner_text().strip()
+            == "Settings"
         )
     finally:
         page.close()

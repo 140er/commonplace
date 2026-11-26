@@ -14,7 +14,6 @@ from tests.test_deck_phone_navigation_browser import open_app
 DESTINATIONS = {
     "Settings": "#/settings",
     "Cloud workspaces": "#/compute",
-    "Projects": "#/boards",
     "Rules": "#/rules",
     "Console": "#/console",
     "Pipeline": "#/pipeline",
@@ -64,6 +63,7 @@ def test_phone_more_sheet_reaches_every_destination(hub, fresh):
         async with playwright.async_playwright() as manager:
             browser = await launch(manager)
             context, page, url = await open_app(browser, hub, fresh)
+            page.set_default_timeout(10000)
             try:
                 for start in ["#/today", "#/bots", "#/work", "#/settings", "#/memory"]:
                     await page.goto(url + start)
@@ -103,6 +103,11 @@ def test_phone_more_sheet_reaches_every_destination(hub, fresh):
                         await entry.click()
                         await page.wait_for_function("h => location.hash.startsWith(h)", arg=href)
                         assert await sheet.is_hidden(), "a tap on an entry closes the sheet"
+                    # Projects is not a sheet entry any more: it stays within two taps, More, Settings,
+                    # then the Workspace row.
+                    await page.locator('[data-deck-shell-action="more"]').click()
+                    await page.locator('#deck-more a[href="#/settings"]').click()
+                    await page.locator('#deck-tools a[href="#/boards"]').wait_for(state="visible")
                     # Escape closes the sheet without navigating.
                     await page.locator('[data-deck-shell-action="more"]').click()
                     await page.keyboard.press("Escape")

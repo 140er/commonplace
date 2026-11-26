@@ -154,13 +154,20 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             pills = page.locator(".deck-board-states")
             pill_box = pills.bounding_box()
             actions = page.locator(".deck-board-phone-actions").bounding_box()
-            title = page.locator(".deck-board-heading h1").bounding_box()
             assert pill_box["x"] == 16 and pill_box["width"] == 358
             review = pills.locator('[data-board-column="review"]').bounding_box()
             assert review["x"] + review["width"] <= pill_box["x"] + pill_box["width"] - 16
             assert pill_box["y"] >= actions["y"] + actions["height"]
-            assert abs(actions["y"] + actions["height"] / 2 - title["y"] - title["height"] / 2) < 1
-            assert "16px" in pills.evaluate("el=>getComputedStyle(el).maskImage")
+            # The phone header names the page, so the page heading is not drawn and the actions row
+            # sits at the right edge of the content.
+            assert not page.locator(".deck-board-heading h1").is_visible()
+            assert abs(actions["x"] + actions["width"] - (pill_box["x"] + pill_box["width"])) < 1
+            # The few states wrap instead of scrolling, so none hides past the edge and no fade is drawn.
+            assert pills.evaluate("el=>getComputedStyle(el).maskImage") == "none"
+            for pill in pills.locator("button").all():
+                box = pill.bounding_box()
+                assert box["x"] >= pill_box["x"]
+                assert box["x"] + box["width"] <= pill_box["x"] + pill_box["width"]
             # The phone header carries the More menu button and the page title.
             assert page.locator("#phone-bar .deck-phone-avatar").is_visible()
             assert page.locator("#phone-bar b").inner_text().strip() != ""
@@ -187,7 +194,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         page.wait_for_selector(".deck-card-drawer")
         drawer = page.locator("#card-panel")
         assert drawer.get_attribute("role") == "dialog"
-        for text in ["Summary", "Bot", "Coworker", "Version", "Progress"]:
+        for text in ["Summary", "Bot", "Assigned to", "Version", "Progress"]:
             assert drawer.get_by_text(text, exact=True).count() >= 1
         assert drawer.locator(".deck-card-facts code").inner_text() == "abc1234"
         assert (
