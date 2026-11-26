@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_coworker_browser.py` cancels the queued coworker job before the blocked one and waits for each cancel request's 2xx response before reading job state, so the check no longer depends on request timing under load.
