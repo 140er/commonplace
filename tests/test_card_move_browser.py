@@ -18,6 +18,7 @@ def test_board_card_moves_in_two_clicks(browser, size):  # noqa: F811
         assert button.inner_text().strip() == "Move to…"
         assert button.is_visible()
         button.click()
+        page.locator(".card-menu [data-menu-move]").first.wait_for()
         names = [t.strip() for t in page.locator(".card-menu [data-menu-move]").all_inner_texts()]
         assert [n.split("\n")[0] for n in names] == ["Active", "In review", "Shipped"]
         page.locator('.card-menu [data-menu-move="review"]').click()

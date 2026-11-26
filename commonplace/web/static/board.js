@@ -3,6 +3,7 @@ import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
 import { segHTML } from './seg.js';
 import { deckBoardView, bindDeckBoard, boardGroup, addedNotice } from './deck-board.js';
+import { PRIORITIES, priorityBadge, priorityFilter as priorityFilterHTML, matchesPriority, bindPriorityHints } from './card-priority.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const ITEM = '.card[data-card]';
@@ -51,9 +52,6 @@ export function filterCards(cards, filter, me) {
   return cards.filter((c) => filter === 'mine' ? c.assignee === me : filter === 'agents' ? String(c.assignee).startsWith('conn:') : filter === 'blocked' ? isBlocked(c, me) : true);
 }
 // Status tags are chips; the rest (who, source, open for agents) reads as quiet meta text.
-const PRIORITIES = ['urgent', 'high', 'normal', 'low'];
-// A card shows its priority only when it is not the default; the list order already carries the rest.
-const prioTag = (card) => card.priority && card.priority !== 'normal' && PRIORITIES.includes(card.priority) ? `<span class="tag prio ${card.priority === 'urgent' ? 'block' : 'meta'}" data-priority="${card.priority}">${heading(card.priority)}</span>` : '';
 const prioRank = (card) => { const i = PRIORITIES.indexOf(card.priority); return i < 0 ? PRIORITIES.indexOf('normal') : i; };
 const tagKind = (t) => t === 'Blocked' ? 'block' : t === 'Needs me' ? 'you' : t.startsWith('From chat') ? 'new' : t === 'Available for an agent' ? 'meta open' : 'meta';
 const icon = (d) => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -63,12 +61,12 @@ const hints = { todo: 'Work waiting to be picked up.', doing: 'An agent or a per
 const DONE_SHOWN = 4;
 function doneView(card, options, stop) {
   const id = cardId(options.board, card.number), selected = options.selected === card.number;
-  return `<article class="card is-done${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}, done"${selected ? ' aria-current="true"' : ''}><div class="card-top">${icon(CHECK)}<span class="cid">${e(id)}</span></div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3></article>`;
+  return `<article class="card is-done${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}, done"${selected ? ' aria-current="true"' : ''}><div class="card-top">${icon(CHECK)}<span class="cid">${e(id)}</span></div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3>${priorityBadge(card, options)}</article>`;
 }
 function cardView(card, options, stop) {
   const id = cardId(options.board, card.number), tags = cardTags(card, options);
   const blocked = isBlocked(card, options.me), selected = options.selected === card.number;
-  return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${prioTag(card)}${tags.map((t) => `<span class="tag ${tagKind(t)}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${snoozedLine(card)}${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
+  return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${priorityBadge(card, options)}${tags.map((t) => `<span class="tag ${tagKind(t)}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${snoozedLine(card)}${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
 }
 // Component styles (design 03, 04, 05, r2-04-board-1024) stay with this renderer.
 const styles = `
@@ -200,13 +198,13 @@ export function roveTo(card) {
 }
 // The column a card is drawn in: the Deck groups by who it waits on, the classic board by status.
 export const cardColumn = (card, me, deck) => (deck ? boardGroup(card, me) : card.status);
-export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, added = null, people = [], agents = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
-  const options = { board, me, selected, messages, deck, added }, visible = filterCards(cards, filter, me).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
+export function boardView({ board, cards = [], me, filter = 'all', priorityFilter = 'all', selected, messages = [], adding = false, added = null, people = [], agents = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
+  const options = { board, me, selected, messages, deck, added }, visible = filterCards(cards, filter, me).filter(c => matchesPriority(c, priorityFilter)).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
   const backlog = visible.filter((c) => c.status === 'backlog'), count = (s) => visible.filter((c) => c.status === s).length;
   const form = adding ? addCardForm({ people, agents, me, sheet, canPrioritize, failure: addFailureFor(board) }) : '';
-  if (deck) return deckBoardView({ ...options, bots, cards: visible, filter, form, sheet, column });
+  if (deck) return deckBoardView({ ...options, bots, cards: visible, filter, priorityFilter, form, sheet, column });
   const steps = !cards.length ? `<section class="empty-strip" aria-label="Get started"><ol class="steps"><li class="is-next"><span class="num" aria-hidden="true">1</span><div><h2>Add your first card</h2><p>A card is one piece of work. Write it like a to-do.</p><button class="btn primary" data-action="new-card">${icon(PLUS)}Add card</button></div></li><li><span class="num" aria-hidden="true">2</span><div><h2>Connect an agent</h2><p>An agent is an AI helper that works on cards. The first one becomes the Coworker.</p><button class="btn" data-action="connect-agent">Connect an agent</button></div></li><li><span class="num" aria-hidden="true">3</span><div><h2>Ask for something</h2><p>Write in chat. The Coworker turns requests into cards.</p><button class="btn" data-action="open-chat">Write in chat <kbd>/</kbd></button></div></li></ol></section>` : '';
-  return `<div class="workbench-board">${steps}${whyStrip(board)}<div class="board-tools">${segHTML({ label: 'Filter cards', attr: 'data-board-filter', current: filter, items: ['all','mine','agents','blocked'].map((f) => [f, `${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}`]) })}</div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
+  return `<div class="workbench-board">${steps}${whyStrip(board)}<div class="board-tools">${segHTML({ label: 'Filter cards', attr: 'data-board-filter', current: filter, items: ['all','mine','agents','blocked'].map((f) => [f, `${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}`]) })}${priorityFilterHTML(priorityFilter)}</div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
     // The selected card is never one of the hidden Done cards: its column opens instead.
     const list = visible.filter((c) => c.status === s), done = s === 'done', all = done && (doneAll || list.findIndex((c) => c.number === selected) >= DONE_SHOWN), more = done && !all ? list.length - DONE_SHOWN : 0;
     const body = list.length ? list.map((c) => (done ? doneView : cardView)(c, options, c.number === stopIn(list, selected))).join('') : s === 'todo' ? `<button type="button" class="add-ghost" data-action="new-card">${icon(PLUS)}Add card</button>` : '<p class="empty-col">Nothing yet</p>';
@@ -248,7 +246,7 @@ export async function submitCard({ api, board, values, me = '' }) {
   const assignee = values.assignee === ANY_AGENT ? null : values.assignee || me || null;
   return api(`/api/boards/${encodeURIComponent(board.slug)}/cards`, { method:'POST', body:{ title:values.title, body:values.body || '', assignee, labels:values.label ? [values.label] : [], ...(values.priority ? { priority:values.priority } : {}) } });
 }
-export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFilter = () => {}, onSelect = () => {}, onOpen = () => {}, onCancel = () => {} }) {
+export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFilter = () => {}, onPriorityFilter = () => {}, onSelect = () => {}, onOpen = () => {}, onCancel = () => {} }) {
   const click = (event) => { if (event.target.closest('[data-action="cancel-card"]')) addFailure = null; const more = event.target.closest('[data-board-more]'); if (more) { const col = more.closest('.col'); col?.setAttribute('data-all', ''); more.remove(); const next = col?.querySelectorAll(ITEM)[DONE_SHOWN]; if (next) { roveTo(next); next.focus(); } return; } const button = event.target.closest('[data-board-filter]'); if (button) onFilter(button.dataset.boardFilter); const jump = event.target.closest('[data-board-column]'); if (jump) { root.querySelectorAll('[data-status]').forEach((el) => { el.dataset.active = String(el.dataset.status === jump.dataset.boardColumn); }); root.querySelectorAll('[data-board-column]').forEach((el) => el.setAttribute('aria-pressed', String(el === jump))); root.querySelector(`#col-${jump.dataset.boardColumn}`)?.scrollIntoView({ block:'nearest', inline:'nearest' }); } };
   const submit = async (event) => {
     if (!event.target.matches('[data-board-add]')) return;
@@ -292,8 +290,9 @@ export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFil
     event.preventDefault(); roveTo(next); next.focus(); onSelect(Number(next.dataset.card));
   };
   const stopDeckBoard = bindDeckBoard(root);
+  const stopPriorityHints = bindPriorityHints(root, { api, board, me });
   // The hint under Who says plainly whether adding the card will start a run.
-  const change = (event) => { const who = event.target.closest?.('[data-board-add] select[name="assignee"]'); const hint = who?.closest('[data-board-add]').querySelector('[data-who-hint]'); if (hint) hint.textContent = who.selectedOptions?.[0]?.dataset?.hint || whoHint(who.value); };
+  const change = (event) => { if (event.target.matches?.('[data-priority-filter]')) onPriorityFilter(event.target.value); const who = event.target.closest?.('[data-board-add] select[name="assignee"]'); const hint = who?.closest('[data-board-add]').querySelector('[data-who-hint]'); if (hint) hint.textContent = who.selectedOptions?.[0]?.dataset?.hint || whoHint(who.value); };
   root.addEventListener('click', click); root.addEventListener('submit', submit); root.addEventListener('keydown', keydown); root.addEventListener('change', change);
-  return () => { stopDeckBoard(); root.removeEventListener('click', click); root.removeEventListener('submit', submit); root.removeEventListener('keydown', keydown); root.removeEventListener('change', change); };
+  return () => { stopDeckBoard(); stopPriorityHints(); root.removeEventListener('click', click); root.removeEventListener('submit', submit); root.removeEventListener('keydown', keydown); root.removeEventListener('change', change); };
 }
