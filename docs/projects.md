@@ -28,12 +28,16 @@ this is a memory-access boundary, not a guarantee of access to only one board.
 For a project using the shared wing, Connect requires explicit confirmation
 that the agent will have read and write access to all shared memory.
 
-Connect conflicts stay visible in the Coworker section of project settings.
-For shared memory, the status names the conflict and asks the owner to retry,
-choosing an own memory section or explicit access to all shared memory. Cancelling
-or dismissing the choice dialog leaves that guidance visible and changes nothing.
-Other connect conflicts show their reason there, including after a replacement
-confirmation is cancelled. The empty-board connect dialog uses the same guidance.
+For a project on shared memory, Connect asks the memory question first, before it
+requests anything: give the project its own memory section (recommended and selected
+by default, because the agent then sees only this project) or allow the agent to read
+and write all shared memory. Cancelling or dismissing the question changes nothing and
+shows no error. If the page was out of date and the server still refuses, the same
+question is asked again.
+
+Other connect conflicts stay visible in the Coworker section of project settings and
+show their reason there, including after a replacement confirmation is cancelled.
+The empty-board connect dialog asks the same question.
 
 Tokens expire after 90 days. Connecting again rotates an active token and
 invalidates the old one. After revocation or expiry, Connect creates a fresh

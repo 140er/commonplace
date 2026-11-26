@@ -70,3 +70,15 @@ def test_failed_coordinator_set_leaves_no_unheld_connection(projects_hub, monkey
     assert created[0] == 201
     assert status == 500
     assert h.coordinator("alpha") is None
+
+
+def test_direct_connect_on_shared_memory_is_refused_with_a_clear_message(projects_hub):
+    """The web asks the memory question first, but the server check itself stays."""
+    h = projects_hub
+    assert h.create_board(h.owner, "direct", wing="shared")[0] == 201
+    status, body = h.connect(h.owner, "direct")
+    assert status == 409 and body["error"] == "shared_wing"
+    assert "shared" in body["explanation"].lower()
+    assert body["fix"]["path"] == "/api/projects/direct/wing"
+    assert body["alternative"]["body"] == {"allow_shared": True}
+    assert "token" not in body, "a refused connect must not mint a credential"

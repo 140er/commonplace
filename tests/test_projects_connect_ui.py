@@ -16,6 +16,13 @@ SHARED_CONFLICT = {
     "fix": {"path": "/api/projects/ledger/wing", "label": OWN},
 }
 OTHER_CONFLICT = {"error": "The bot connection changed; try again"}
+CONNECTED = {
+    "connection": {"name": "Bot:ledger"},
+    "token": "masked-test-token",
+    "mcp_url": "http://project.test/mcp",
+    "board": "ledger",
+    "wing": "shared",
+}
 
 
 @pytest.fixture(scope="module")
@@ -42,7 +49,7 @@ def connect_page(browser):
         "memory": {"shared": True, "wing": "shared"},
         "models": {},
     }
-    state = {"conflicts": [SHARED_CONFLICT], "posts": [], "unknown": []}
+    state = {"conflicts": [], "posts": [], "project": project, "unknown": []}
     with browser.new_context(viewport={"width": 1280, "height": 1000}) as context:
         page = context.new_page()
 
@@ -68,8 +75,10 @@ def connect_page(browser):
             elif request.method == "POST":
                 state["posts"].append((path, request.post_data_json))
                 if path == CONNECT:
-                    conflict = state["conflicts"].pop(0) if state["conflicts"] else OTHER_CONFLICT
-                    route.fulfill(status=409, json=conflict)
+                    if state["conflicts"]:
+                        route.fulfill(status=409, json=state["conflicts"].pop(0))
+                    else:
+                        route.fulfill(status=201, json=CONNECTED)
                 else:
                     assert path == "/api/projects/ledger/wing"
                     route.fulfill(
@@ -133,17 +142,20 @@ def start_connect(page, entry):
     return button
 
 
+def unshare(state):
+    """The project already has its own memory section, so the memory question is not asked."""
+    state["project"]["memory"] = {"shared": False, "wing": "project_ledger"}
+
+
 @pytest.mark.parametrize("entry", ["settings", "intro"])
 @pytest.mark.parametrize("dismiss", ["cancel", "escape", "close"])
-def test_shared_wing_cancel_keeps_conflict_and_next_step(connect_page, entry, dismiss):
+def test_memory_question_dismissal_changes_nothing_and_shows_no_error(connect_page, entry, dismiss):
     from playwright.sync_api import expect
 
     page, state = connect_page
     button = start_connect(page, entry)
     dialog = page.get_by_role("dialog", name="Project memory", exact=True)
     expect(dialog).to_be_visible()
-    expect(dialog.get_by_role("button", name=OWN, exact=True)).to_be_visible()
-    expect(dialog.get_by_role("button", name=SHARED, exact=True)).to_be_visible()
     if dismiss == "cancel":
         dialog.get_by_role("button", name="Cancel", exact=True).click()
     elif dismiss == "escape":
@@ -152,12 +164,30 @@ def test_shared_wing_cancel_keeps_conflict_and_next_step(connect_page, entry, di
         dialog.evaluate("dialog => dialog.close()")
     expect(dialog).to_have_count(0)
     expect(button).to_be_enabled()
-    assert state["posts"] == [(CONNECT, {})], "dismissal must not grant or change memory"
-    status = page.locator("[data-project-connect-status]")
-    text = status.inner_text()
-    assert "shared memory" in text.lower(), f"missing shared-memory conflict: {text!r}"
-    assert OWN in text and SHARED in text, f"missing next steps: {text!r}"
-    assert status.is_visible(), "the conflict must be visible after the dialog closes"
+    assert state["posts"] == [], "dismissal must not grant, change or request anything"
+    assert page.locator("[data-project-connect-status]").inner_text().strip() == ""
+
+
+@pytest.mark.parametrize("entry", ["settings", "intro"])
+def test_memory_question_comes_first_without_error_text(connect_page, entry):
+    from playwright.sync_api import expect
+
+    page, state = connect_page
+    start_connect(page, entry)
+    dialog = page.get_by_role("dialog", name="Project memory", exact=True)
+    expect(dialog).to_be_visible()
+    assert state["posts"] == [], "the memory question must come before any connect request"
+    text = page.locator("body").inner_text()
+    assert "Could not connect" not in text and "Try connecting again" not in text
+    own = dialog.get_by_role("button", name=OWN, exact=True)
+    expect(own).to_be_focused()
+    expect(dialog.get_by_role("button", name=SHARED, exact=True)).to_be_visible()
+    assert "Recommended" in dialog.inner_text()
+    dialog.get_by_role("button", name=OWN, exact=True).click()
+    expect(page.locator("[data-project-token]")).to_be_visible()
+    assert state["posts"] == [("/api/projects/ledger/wing", {}), (CONNECT, {})]
+    text = page.locator("body").inner_text()
+    assert "Could not connect" not in text and "Try connecting again" not in text
 
 
 @pytest.mark.parametrize("entry", ["settings", "intro"])
@@ -165,6 +195,7 @@ def test_replacement_409_cancel_keeps_conflict_and_next_step(connect_page, entry
     from playwright.sync_api import expect
 
     page, state = connect_page
+    unshare(state)
     state["conflicts"] = [{"error": "replaces current orchestrator"}]
     button = start_connect(page, entry)
     dialog = page.get_by_role("alertdialog", name="Replace the bot?", exact=True)
@@ -182,6 +213,7 @@ def test_other_connect_409_shows_reason_in_orchestrator_section(connect_page):
     from playwright.sync_api import expect
 
     page, state = connect_page
+    unshare(state)
     state["conflicts"] = [OTHER_CONFLICT]
     button = start_connect(page, "settings")
     expect(button).to_be_enabled()
@@ -194,13 +226,32 @@ def test_other_connect_409_shows_reason_in_orchestrator_section(connect_page):
 
 
 @pytest.mark.parametrize("choice", ["own", "shared"])
-def test_shared_wing_choices_keep_existing_retry_rules(connect_page, choice):
+def test_memory_choices_connect_in_two_steps(connect_page, choice):
     from playwright.sync_api import expect
 
     page, state = connect_page
-    state["conflicts"] = [SHARED_CONFLICT, OTHER_CONFLICT]
     button = start_connect(page, "settings")
     page.locator(f'[data-wing-choice="{choice}"]').click()
+    expect(page.locator("[data-project-token]")).to_be_visible()
+    if choice == "own":
+        expected = [("/api/projects/ledger/wing", {}), (CONNECT, {})]
+    else:
+        expected = [(CONNECT, {"allow_shared": True})]
+    assert state["posts"] == expected
+    expect(button).to_be_enabled()
+
+
+@pytest.mark.parametrize("choice", ["own", "shared"])
+def test_server_refusal_after_stale_project_still_offers_the_choice(connect_page, choice):
+    """The server check stays: a stale project view that hid the question still gets it."""
+    from playwright.sync_api import expect
+
+    page, state = connect_page
+    unshare(state)
+    state["conflicts"] = [SHARED_CONFLICT]
+    button = start_connect(page, "settings")
+    page.locator(f'[data-wing-choice="{choice}"]').click()
+    expect(page.locator("[data-project-token]")).to_be_visible()
     expect(button).to_be_enabled()
     expected = [(CONNECT, {})]
     if choice == "own":
