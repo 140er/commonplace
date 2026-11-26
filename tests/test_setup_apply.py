@@ -248,3 +248,34 @@ def test_the_list_answers_the_newest_twenty_however_many_were_decided(projects_h
     assert [item["id"] for item in listed] == list(range(newest["id"], newest["id"] - 20, -1))
     rejected = h.request(h.owner, "GET", ROUTE + "?status=rejected")[1]["proposals"]
     assert [item["id"] for item in rejected] == [views[1]["id"], views[0]["id"]]
+
+
+def test_an_outage_after_the_tap_still_ends_the_setup_and_keeps_what_was_done(
+    projects_hub, monkeypatch
+):
+    from commonplace.chat.coworkers import store as coworker_store
+
+    h = projects_hub
+    view = _propose(h)
+
+    def down(*_args, **_kwargs):
+        raise OSError("the Coworker store is not reachable")
+
+    monkeypatch.setattr(coworker_store, "open_store", down)
+    status, applied = _decide(h, h.owner, view["id"], "apply", view["sha256"])
+    assert status == 200 and applied["status"] == "partial"
+    assert applied["results"] == [{"kind": "setup", "ok": False, "error": "failed"}]
+    assert _model_rows(h) == []
+    (audit,) = _audit(h, "setup.apply")
+    assert audit["decision"] == "partial"
+    # It is decided, so the same tap cannot run it again.
+    assert _decide(h, h.owner, view["id"], "apply", view["sha256"])[1]["code"] == "not_proposed"
+
+
+def test_one_unlisted_model_for_two_roles_is_listed_once(projects_hub):
+    h = projects_hub
+    view = _propose(h, {"models": {"projects": {"work": {"reviewer": OPUS, "gate": OPUS}}}})
+    status, applied = _decide(h, h.owner, view["id"], "apply", view["sha256"])
+    assert status == 200 and applied["status"] == "applied"
+    assert len(_audit(h, "project.model_catalog")) == 1
+    assert h.project(h.owner, "work")[1]["models"]["gate"] == OPUS

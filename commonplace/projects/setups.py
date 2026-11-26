@@ -521,6 +521,50 @@ def listing(ctx, status=None) -> dict:
     return {"proposals": [_view(ctx, row, boards) for row in visible]}
 
 
+def pending(ctx) -> list[dict]:
+    """Waiting on you (slice 3): the proposals still ``proposed``, newest first, for the signed-in
+    owner only (anyone else gets an empty list, so the bucket does not exist for them).
+
+    One item each: what Today shows and the digest it posts back to apply or reject."""
+    principal, db = ctx.principal, ctx.db
+    if not is_signed_in_owner(principal):
+        return []
+    with db._lock:
+        if not db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_proposals'"
+        ).fetchone():
+            return []
+        rows = db._conn.execute(
+            "SELECT * FROM setup_proposals WHERE workspace_id=? AND status='proposed' "
+            "ORDER BY id DESC LIMIT ?",
+            (principal.workspace_id, MAX_LISTED),
+        ).fetchall()
+    if not rows:
+        return []
+    boards = readable_boards(ctx)
+    items = []
+    for row in rows:
+        view = _view(ctx, row, boards)
+        items.append(
+            {
+                "kind": "setup",
+                "id": view["id"],
+                "ref": view["ref"],
+                "sha256": view["sha256"],
+                "proposed_by": view["proposed_by"],
+                "proposer_name": view["proposer_name"],
+                "proposed_at": view["proposed_at"],
+                "summary": view["summary"],
+                "changes": [
+                    {key: line[key] for key in ("kind", "action", "text", "problem") if key in line}
+                    for line in view["changes"]
+                ],
+                "problems": view["problems"],
+            }
+        )
+    return items
+
+
 def _emit(ctx, kind: str, number: int, sha: str) -> None:
     """Refs-only event after the commit; a failure to emit never fails the call."""
     from commonplace import events
@@ -590,6 +634,8 @@ def _claim(ctx, number: int, sha: str, status: str) -> None:
             "SELECT status FROM setup_proposals WHERE workspace_id=? AND id=?",
             (principal.workspace_id, number),
         ).fetchone()
+    if row is None:
+        raise Hidden()
     if row["status"] != "proposed":
         raise SetupError(
             "not_proposed", f"this setup is already {row['status']}", path="status", status=409
@@ -660,6 +706,7 @@ def _apply_models(ctx, scope, roles) -> dict:
     for choice in roles.values():
         if choice is not None and (choice["provider"], choice["model"]) not in offered:
             models.catalog_add(db, principal, scope, choice)
+            offered.add((choice["provider"], choice["model"]))
     if scope == models.WORKSPACE:
         models.put_workspace(db, principal, roles)
         effective = models.workspace_roles(db, principal.workspace_id)
@@ -669,24 +716,17 @@ def _apply_models(ctx, scope, roles) -> dict:
     return {"roles": {role: effective[role].public() for role in roles}}
 
 
-def apply(ctx, number, sha) -> dict:
-    """Apply one proposal as the signed-in owner, item by item through the existing services.
-
-    The digest check and the move to ``applying`` are one statement, so a proposal applies at
-    most once and a changed proposal never applies. Each item result is stored as soon as it is
-    known; the proposal ends ``applied`` (every item succeeded) or ``partial``."""
+def _apply_items(ctx, number: int, results: list) -> None:
+    """Every item of the claimed proposal in body order, each result recorded as it is known."""
     from commonplace.chat.coworkers.store import open_store
 
     principal, db = ctx.principal, ctx.db
-    _decidable(ctx, number)
-    _claim(ctx, number, sha, "applying")
     with db._lock:
         row = db._conn.execute(
             "SELECT body FROM setup_proposals WHERE workspace_id=? AND id=?",
             (principal.workspace_id, number),
         ).fetchone()
     body = validate(json.loads(row["body"]))
-    results: list = []
     bot_ids: dict = {}
     store = open_store(ctx.gateway, principal.workspace_id)
     for bot in body["bots"]:
@@ -719,6 +759,27 @@ def apply(ctx, number, sha) -> dict:
             _attempt(item, _apply_models, ctx, scope, roles)
         results.append(item)
         _record(ctx, number, results)
+
+
+def apply(ctx, number, sha) -> dict:
+    """Apply one proposal as the signed-in owner, item by item through the existing services.
+
+    The digest check and the move to ``applying`` are one statement, so a proposal applies at
+    most once and a changed proposal never applies. Each item result is stored as soon as it is
+    known; the proposal ends ``applied`` (every item succeeded) or ``partial``."""
+    from commonplace.http_util import log_failure
+
+    principal, db = ctx.principal, ctx.db
+    _decidable(ctx, number)
+    _claim(ctx, number, sha, "applying")
+    results: list = []
+    try:
+        _apply_items(ctx, number, results)
+    except Exception as exc:
+        # An outage after the claim (the Coworker store or the control database) still ends the
+        # proposal: what was done stays recorded, the rest is one failed step, never "applying".
+        log_failure(logger, "setup apply stopped", exc)
+        results.append({"kind": "setup", "ok": False, "error": "failed"})
     status = "applied" if all(item["ok"] for item in results) else "partial"
     _record(ctx, number, results, status)
     db.audit(

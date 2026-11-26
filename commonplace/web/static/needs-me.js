@@ -22,10 +22,19 @@ export function configProposals(needs = {}) {
   return [...new Map(list.filter(validConfig).map(item => [`${item.board}:${item.version}`, item])).values()];
 }
 
-/** How many items wait on the person. Derived from the listed cards and config proposals; only a payload with
- *  no lists at all (a member who cannot read the queue) falls back to its plain number. */
+const validSetup = item => Number.isSafeInteger(item?.id) && item.id > 0 && typeof item?.sha256 === 'string' && item.sha256 !== '';
+
+/** Proposed workspace setups waiting on the owner (bots, Coworkers and models in one approval), one per version.
+ *  Like config proposals they are decisions with no card number, counted with the cards. */
+export function setupProposals(needs = {}) {
+  const list = Array.isArray(needs?.setup_proposals) ? needs.setup_proposals : [];
+  return [...new Map(list.filter(validSetup).map(item => [item.id, item])).values()];
+}
+
+/** How many items wait on the person. Derived from the listed cards, config proposals and setup proposals; only a
+ *  payload with no lists at all (a member who cannot read the queue) falls back to its plain number. */
 export function needsMeCount(needs) {
-  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length;
+  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length + setupProposals(needs).length;
   return Number.isSafeInteger(needs?.count) && needs.count > 0 ? needs.count : 0;
 }
 

@@ -13,6 +13,7 @@ import pytest
         "deck_home_today.mjs",
         "deck_home_today_routes.mjs",
         "deck_config_proposals.mjs",
+        "deck_setup_proposals.mjs",
         "deck_home_activity.mjs",
         "deck_home_roster.mjs",
     ],

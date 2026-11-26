@@ -102,3 +102,15 @@ digest, next to the audit rows the services already write (`project.models`, `mo
 
 Bots of `POST /api/bots` (each person's own bots, one per project is made automatically) are not part of a
 setup: anyone makes those for themselves. Coworker configs (`orch_configs`) keep their own proposal flow.
+
+#### Approval in Waiting on you (slice 3)
+
+`GET /api/needs-me` carries `setup_proposals` for the signed-in owner only: one item per waiting
+proposal, newest first and at most 20, with `kind` `setup`, `id`, `ref`, `sha256`, the proposer,
+`summary`, the plain-words `changes` and the number of `problems`. It is counted in `count`, agent
+tokens get no such list, and members cannot read the owner queue. Today shows each item ahead of config
+proposals and cards, with the same markup as a config proposal: the proposer, the one-line summary, the
+number of changes, a Changes list (`+` creates, `~` sets or clears, `=` stays), Approve and Reject.
+Approve posts the item's own `sha256` to the apply route; Reject asks once and posts it to the reject
+route. A refused or stale tap keeps the item, says why and re-reads the queue. The confirmation says
+that everything under Changes is in place, or how many parts could not be done.
