@@ -1,0 +1,3 @@
+- **Owns:** `design/drop-reservation/` holds the before and after screenshots of a reserved card (board face, card header, Drop reservation control and confirmation) in the Classic and Deck looks, taken on a throwaway workspace with made-up data.
+- **Promises:** The images show only synthetic names and cards; they are evidence for the Drop reservation change and not a design source.
+- **Tests:** `tests/test_remove_assignment.py` writes the same screenshots when run with a screenshot folder set.
