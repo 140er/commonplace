@@ -145,7 +145,7 @@ for (const deck of [false, true]) {
     ...context, detailsUI: null,
     root: { querySelector: selector => selector === '#card-panel' ? surface : null, querySelectorAll: () => [], addEventListener() {} },
     state: { ...state, deck: { on: () => deck }, card, route: '#/card/1', base: '#/board/work', screen: 0, panelRequest: 0, pending: new Set(), boards: [], needs: {}, me: { actor: 'me', people: [], can_admin: true }, chat: [], chatBoard: null, deckBots: [] },
-    remember: () => ({}), restore() {}, showLoading() {}, releaseControl: () => '', callTree: () => '', conversation: () => '', drawerCopy: extra => extra,
+    remember: () => ({}), restore() {}, showLoading() {}, releaseBlock: () => '', callTree: () => '', conversation: () => '', drawerCopy: extra => extra,
     cardId: () => '', enc: encodeURIComponent, placeLifecycle() {}, message: text => text, openSelectedCard() {},
     createDetails: () => ({ show: async () => { redraws.push('drawn'); surface.innerHTML = 'details redrawn'; }, selectTab() {}, stop() {} }),
     api: async path => { reads.push(path); return { ...card }; },

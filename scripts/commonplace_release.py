@@ -440,10 +440,8 @@ class Journey:
             # Agent-created cards wait in backlog until the signed-in owner releases them.
             await self.page.goto(self.instance.origin + f"/app/#/card/{number}")
             release = self.page.get_by_role("dialog", name="Card", exact=True)
-            # The Deck card panel keeps the release form under "Edit card"; Approve opens it
-            # and moves focus to the required Reason field.
-            await release.get_by_role("button", name="Approve", exact=True).click()
-            await release.get_by_label("Reason").fill("Synthetic release journey card")
+            # The card panel opens with a "Waiting for release" block: reason field, then Release.
+            await release.get_by_label("Release reason").fill("Synthetic release journey card")
             async with self.page.expect_response(
                 lambda r: (
                     r.request.method == "POST" and r.url.endswith(f"/api/cards/{number}/approve")

@@ -10,14 +10,14 @@ const needs = { approvals: [card] };
 assert.equal(needsItems(needs)[0].kind, 'approval');
 assert.equal(needsItems(needs, 'approvals').length, 1);
 let html = renderNeedDetail(card);
-assert.ok(html.includes(configuration ? 'Coordinator configuration' : 'Origin release'));
+assert.ok(html.includes(configuration ? 'Coordinator configuration' : 'Release'));
 assert.ok(!html.includes('#/decide/') && !html.includes('60 seconds') && !html.includes('Approve and send'));
 if (configuration) {
   assert.ok(html.includes('data-action="coordinator" data-board="atlas"'));
   assert.ok(html.includes('Configure coordinator'));
   assert.ok(!html.includes('data-needs-approve'));
 } else {
-  assert.ok(html.includes('Release origin') && html.includes('data-needs-note'));
+  assert.ok(html.includes('>Release</button>') && !html.includes('Release origin') && !html.includes('Origin release') && html.includes('Release reason') && html.includes('data-needs-note'));
   const requests = [], handlers = new Map(), note = { value: '' };
   const node = () => ({ innerHTML: '', addEventListener: (k, f) => handlers.set(k, f), removeEventListener() {}, contains: () => true,
     querySelector: (s) => s === '[data-needs-note]' ? note : null, querySelectorAll: () => [] });

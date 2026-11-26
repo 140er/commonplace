@@ -59,7 +59,7 @@ const content = { innerHTML: '' }, pending = process.argv[1];
 const context = { title() {}, enc: encodeURIComponent, e: String,
   root: { querySelector: () => content },
   state: { base: '#/boards', boards: [{ slug: 'project', counts: null, counts_state: pending }] } };
-vm.runInNewContext(source.slice(source.indexOf('function boardsView()'), source.indexOf('function releaseControl(')), context);
+vm.runInNewContext(source.slice(source.indexOf('function boardsView()'), source.indexOf('// Needs me draws on')), context);
 context.boardsView();
 assert.match(content.innerHTML, pending === 'unavailable' ? /Counts unavailable/ : /Still loading counts/);
 """

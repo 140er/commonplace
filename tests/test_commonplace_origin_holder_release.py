@@ -287,6 +287,14 @@ def no_origin(work, n):
     )
 
 
+def owner_sees_release(work, n):
+    """A live coordinator does not take the card out of the owner's Today: it stays there to release."""
+    item = next(
+        c for c in items(work.needs_me()) if c["number"] == n and c.get("approval_kind") == "origin"
+    )
+    assert item["actions"] == ["approve"] and item["can_approve"] is True
+
+
 def release(work, n):
     return allowed(lambda: work.task_approve(n, reason="Independent origin verified"))
 
@@ -375,7 +383,7 @@ def test_origin_item_child_and_release_lifecycle(hub, fresh):
     child = fresh.connect("worker", parent=s.k.id)
     edit(fresh.owner, s.n, assignee=child.principal.actor)
     origin(s.k.work, s.n)
-    no_origin(fresh.owner, s.n)
+    owner_sees_release(fresh.owner, s.n)
     assert fresh.owner.needs_me().get("coordinator_waiting") == []
     release(s.k.work, s.n)
     no_origin(s.k.work, s.n)
@@ -486,7 +494,7 @@ def test_owner_creator_conflict_contract(hub, fresh, relation):
         reason=LINEAGE_REFUSAL if relation != "creator" else NO_REVIEW,
     )
     appoint(fresh, fresh.connect("independent"))
-    no_origin(fresh.owner, s.n)
+    owner_sees_release(fresh.owner, s.n)
     release(fresh.owner, s.n)
     assert raw(fresh.owner, s.n)["approved_by"] == f"user:{fresh.user}"
 

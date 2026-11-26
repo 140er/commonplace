@@ -74,7 +74,7 @@ export function canApprove(card) {
 /** The card's one main button: Approve when an approval is on offer, otherwise Answer when it asks a question,
  *  otherwise Open (the card page). Hold and Reply stay beside it. */
 export function primaryAction(card) {
-  if (canApprove(card)) return { action: 'approve', label: 'Approve' };
+  if (canApprove(card)) return { action: 'approve', label: card.approval_kind === 'origin' ? 'Release' : 'Approve' };
   if ((card.actions || []).some(action => action === 'answer' || action === 'accept')) return { action: 'reply', label: 'Answer' };
   return { action: 'reply', label: 'Open' };
 }

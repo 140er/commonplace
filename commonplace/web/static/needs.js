@@ -5,6 +5,7 @@ import { cardId } from "./board.js";
 import { segHTML } from "./seg.js";
 import { budgetNeed } from "./budget-format.js";
 import { decisionBlocksHTML } from "./decision-blocks.js";
+import { trustLine } from "./release-block.js";
 
 const enc = encodeURIComponent;
 const exact = (text) => e(text).replaceAll("\r", "&#13;");
@@ -12,7 +13,7 @@ const filters = { all: "All", approvals: "Approvals", decisions: "Decisions", re
 const labels = { approval: "Approval", decision: "Decision", review: "Review" };
 const buckets = ["backlog_from_agents", "approvals", "asks", "done_review", "ready_to_merge", "plans", "stale"];
 const originKind = (card) => ["origin", "origin_configuration"].includes(card.approval_kind);
-const badge = (card, kind) => card.approval_kind === "origin" ? "Origin release" : card.approval_kind === "origin_configuration" ? "Coordinator configuration" : labels[kind];
+const badge = (card, kind) => card.approval_kind === "origin" ? "Release" : card.approval_kind === "origin_configuration" ? "Coordinator configuration" : labels[kind];
 const active = (hold) => hold && ["waiting", "settling", "released"].includes(hold.state);
 const clock = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 const stamp = (at) => at ? `<time datetime="${e(at)}">${e(clock(at))}</time>` : "";
@@ -238,7 +239,7 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const ask = `<button class="btn" data-needs-ask aria-keyshortcuts="R" aria-controls="chat" aria-expanded="${chatOpen}">${hold?.tooLate || hold?.state === "released" ? "Ask the bot" : "Ask a question"} <kbd>R</kbd></button>`;
   const disabled = busy ? " disabled" : "";
   const confirmTag = phone ? "dialog" : "div";
-  const noteBox = canAnswer && (release || proposal || allowed("answer")) ? `<label class="lbl">${release ? "Origin release reason" : "Note to the bot"} <span class="help">${release ? "Required, up to 500 characters." : "Optional. Sent with your answer."}</span><textarea data-needs-note rows="1" placeholder="e.g. Send at 09:00 tomorrow"${release ? ' required maxlength="500"' : proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
+  const noteBox = canAnswer && (release || proposal || allowed("answer")) ? `<label class="lbl">${release ? "Release reason" : "Note to the bot"} <span class="help">${release ? "Required, up to 500 characters." : "Optional. Sent with your answer."}</span><textarea data-needs-note rows="1" placeholder="e.g. Send at 09:00 tomorrow"${release ? ' required maxlength="500"' : proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
   // A structured ask shows its options side by side in the body; a plain ask keeps its footer buttons.
   const blocks = !proposal && kind === "decision" && allowed("answer") && canAnswer ? decisionBlocksHTML(card, { disabled: busy }) : "";
   const decisions = !blocks && !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
@@ -247,11 +248,11 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   // A plan is approved directly; only a proposal's approval waits as a hold.
   const plan = !origin && !proposal ? `${allowed("approve") ? `<button class="btn primary" data-needs-approve="plan"${disabled}>Approve</button>` : ""}${shellButton("reject", "Reject", " danger")}` : "";
   const recovery = ["requeue", "reassign", "park"].map((action) => shellButton(action, { requeue: "Requeue", reassign: "Reassign", park: "Park" }[action])).join("");
-  const originAction = release && allowed("approve") ? `<button class="btn primary" data-needs-approve="origin"${disabled}>Release origin</button>` : origin && allowed("configure_coordinator") ? `<button class="btn" data-action="coordinator" data-board="${e(card.board)}"${disabled}>Configure coordinator</button>` : "";
+  const originAction = release && allowed("approve") ? `<button class="btn primary" data-needs-approve="origin"${disabled}>Release</button>` : origin && allowed("configure_coordinator") ? `<button class="btn" data-action="coordinator" data-board="${e(card.board)}"${disabled}>Configure coordinator</button>` : "";
   const direct = proposal ? shellButton("reject", "Decline", " danger") : originAction + plan + shellButton("accept", "Accept", " primary") + recovery;
   const open = recovery ? `<a class="btn" href="#/card/${e(card.number)}">Answer</a>` : `<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>`;
   const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the bot 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `${direct ? `<div class="acts">${direct}</div>` : ""}<div class="decide-acts">${decisions}${open}${ask}</div>` : ask;
-  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Waiting on you details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Waiting on you</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${badge(card, kind)}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${blocks}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the bot receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${githubControls(card, github, busy)}${actions}</footer></section>`;
+  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Waiting on you details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Waiting on you</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${badge(card, kind)}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${release && card.creator ? `<p data-release-creator>Created by ${e(trustLine(card.creator))}</p>` : ""}${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${blocks}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the bot receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${githubControls(card, github, busy)}${actions}</footer></section>`;
 }
 
 // The shell owns routing, sheet modality and chat. All requests use the shared JSON api.
@@ -413,14 +414,14 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (stopped || busy || !current || current.approval_kind !== "origin" || !(current.actions || []).includes("approve")) return;
     rememberNote();
     const reason = notes.get(current.number) || "";
-    if (!reason.trim() || reason.length > 500) { error = "Enter an origin release reason (1–500 characters)."; drawDetail(); return; }
+    if (!reason.trim() || reason.length > 500) { error = "Enter a release reason (1–500 characters)."; drawDetail(); return; }
     const card = current, token = revision;
     busy = true; error = ""; drawDetail();
     try {
       await api(`/api/cards/${card.number}/approve`, { method: "POST", body: { approve: true, version: card.version, reason } });
       if (stopped) return;
       dropFromQueue(card, token); notes.delete(card.number); onChange();
-    } catch (failure) { failedFor(card.number, "Could not release origin. Open the card again before trying again.", failure); }
+    } catch (failure) { failedFor(card.number, "Could not release this card. Open the card again before trying again.", failure); }
     finally { busy = false; draw(); }
   }
   // A plan's Approve uses the card's approve route at once; no hold, unlike a proposal.

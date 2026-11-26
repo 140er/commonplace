@@ -79,8 +79,7 @@ test('recorded plan approvals and origin release retain their existing authority
   const plan=renderDetails({...base,need:'you',actions:['approve'],ask:null},options);
   assert.match(plan,/data-action="need-approve" data-card="7" data-version="3"/);
   const origin=renderDetails({...base,need:'you',awaiting_release:true,can_approve:true},options);
-  assert.match(origin,/data-deck-release>Approve</);
-  assert.doesNotMatch(origin,/data-action="need-approve"/,'origin release still requires its reason form');
+  assert.doesNotMatch(origin,/data-deck-release|data-action="need-approve"/,'release lives in the card\'s own block, with its reason field');
   assert.doesNotMatch(renderDetails({...base,need:'you',awaiting_release:true,can_approve:false,proposal_status:'pending'},options),/data-action="need-approve"|data-deck-release/);
   const unoffered=renderDetails({...base,need:'you',actions:[]},options);
   assert.doesNotMatch(unoffered,/data-action="need-approve"/);
