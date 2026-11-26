@@ -1,0 +1,4 @@
+- **Owns:** `docs/evidence/bot-project-tree/` holds the screenshots of the sidebar bot tree (desktop rail, current project, move chooser, 375 px and 320 px phone layouts) written by the optional `tests/test_deck_bot_tree_browser.py` walkthrough; the pictures show fixture names only.
+- **Promises:** The pictures are linked from the pull request by repo-relative path, carry no account data and are replaced, never edited by hand, when the walkthrough is rerun.
+- **How it fails:** A picture that is out of date against the tree is found by rerunning the walkthrough (`CAPY_TREE_SHOTS` names the output folder); nothing reads the pictures at run time.
+- **Tests:** `tests/test_deck_bot_tree_browser.py` (skipped without the optional browser dependency).
