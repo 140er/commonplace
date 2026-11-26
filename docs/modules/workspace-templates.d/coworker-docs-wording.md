@@ -1,0 +1,2 @@
+- **Promises:** The template doc's section table calls the role's config a Coworker config; the `project_orchestrators` table name stays as a stored name in code formatting.
+- **Tests:** `tests/test_coworker_docs_copy.py` covers the wording of `docs/workspace-templates.md`.
