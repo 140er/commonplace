@@ -95,6 +95,12 @@ def test_home_today_live_actions(hub, fresh, width):
                 if width == 390:
                     assert await page.locator(".bt-fact").count() == 0
                     await capture("phone")
+                    # Measure once the first card's buttons are laid out (a slow machine can still be rendering).
+                    await expect(
+                        page.locator(".bt-card")
+                        .first.locator(".bt-approve, .bt-secondary, .bt-quiet")
+                        .first
+                    ).to_be_visible()
                     sizes = (
                         await page.locator(".bt-card")
                         .first.locator(".bt-approve, .bt-secondary, .bt-quiet")
