@@ -91,7 +91,7 @@ const container = () => {
 };
 const elements = { "#title": {}, "#head-actions": container(), "#content": container(), "#card-panel": { hidden: true }, "#digest-captions": {} };
 const context = {
-  document, root: { querySelector: (selector) => selector === '[data-action="speak-digest"]' ? button : elements[selector] },
+  seatedIn: () => null, document, root: { querySelector: (selector) => selector === '[data-action="speak-digest"]' ? button : elements[selector] },
   speech: { supported: true }, speechState: { active: false, text: "" },
   state: { needs: {}, open: [], boards: [], route: "#/needs", base: "#/needs" }, needsCards: () => [],
   homeView: ({ speak }) => (speak ? '<button data-action="speak-digest">Speak</button>' : ""),

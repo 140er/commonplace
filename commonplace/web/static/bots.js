@@ -10,6 +10,7 @@ import { capyRosterHTML, overviewBots } from "./deck-coworkers.js";
 import { botCreateFields, validateBotName } from "./bot-create.js";
 import { setupText } from "./bot-setup.js";
 import { readyToStartHTML } from "./ready-to-start.js";
+import { once, releaseActions, seatActions } from "./head-actions.js";
 import { scrollFades, sharePermission } from "./deck-coworker-sharing.js";
 
 export const BOTS_COPY = Object.freeze({
@@ -503,6 +504,7 @@ export function createBots({
   function paintThread() {
     paintReadiness();
     host()?.querySelector(".bots")?.setAttribute?.("data-pane", s.botId ? "thread" : "roster");
+    seatBar();
     const composer = region("composer");
     paintHead();
     if (composer) {
@@ -1172,6 +1174,13 @@ export function createBots({
     event.preventDefault?.();
     click(el);
   }
+  // New chat and New bot sit in the desktop title bar; a click there and in the page reaches onClick once.
+  const clickOnce = once((event) => onClick(event));
+  let actionsEl = null;
+  function seatBar() {
+    if (!actionsEl) return;
+    if (s.botId || s.sharingOnly) releaseActions(actionsEl); else seatActions(actionsEl);
+  }
   function onSubmit(event) {
     const form = event.target?.closest?.("[data-bots-form]");
     if (!form) return;
@@ -1255,7 +1264,9 @@ export function createBots({
       active = true; s.sharingOnly = true; s.botId = bot.id; s.bot = bot;
       host().innerHTML = '<div class="bots"><div data-region="sheet"></div></div>';
       rootEl = host().querySelector('.bots');
-      for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
+      if (actionsEl) releaseActions(actionsEl);
+      actionsEl = null;
+      for (const [type, handler] of [["click", clickOnce], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
       return openSharing();
     },
     newBot() { if (active) return openSheet("new"); },
@@ -1277,7 +1288,9 @@ export function createBots({
       }
       el.innerHTML = shellHTML;
       rootEl = el.querySelector(".bots");
-      for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
+      for (const [type, handler] of [["click", clickOnce], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
+      actionsEl = rootEl?.querySelector?.(".bots-actions") ?? null;
+      actionsEl?.addEventListener?.("click", clickOnce);
       if (!visibilityBound) { globalThis.document?.addEventListener?.("visibilitychange", onVisible); visibilityBound = true; }
       if (!wasActive && viewport) {
         viewport.addEventListener?.("resize", followViewport);
@@ -1296,6 +1309,7 @@ export function createBots({
     stop() {
       active = false;
       generation++;
+      if (actionsEl) releaseActions(actionsEl);
       s.turn?.controller.abort();
       s.turn = null;
       unbind();

@@ -47,7 +47,7 @@ if (which === "need_items") {
   const shows = [];
   const context = {
     state, ...rail, needItems: home.needItems,
-    document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
+    seatedIn: () => null, document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
     localStorage: { getItem: () => null }, speech: { supported: false }, speechView() {},
     api: async (path) => {
       if (path === "/api/holds") return { holds: [] };
@@ -107,7 +107,7 @@ if (which === "need_items") {
   const controllers = [];
   const context = {
     state, ...rail, needItems: home.needItems,
-    document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
+    seatedIn: () => null, document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
     speech: { supported: false }, speechView() {},
     api: async (path) => {
       if (path === "/api/holds") return { holds: [] };
@@ -171,7 +171,7 @@ if (which === "need_items") {
   const controllers = [];
   const state = { me: { actor: "user:maya" }, needs: { backlog_from_agents: [proposal], asks: [ask], count: 2 }, boards: [{ slug: "atlas", name: "Atlas", coordinator: "conn:lead" }], open: [], selected: null, route: "#/needs", base: "#/needs" };
   const context = {
-    state, document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
+    state, seatedIn: () => null, document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
     speech: { supported: false }, speechView() {}, needsCards: () => home.needItems(state.needs).map((item) => item.card),
     homeView: home.homeView, dot: () => "", taskRow: () => "", children: () => "",
     api: async (path, options = {}) => {

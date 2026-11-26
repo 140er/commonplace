@@ -1,3 +1,4 @@
+import { once, releaseActions, seatActions } from './head-actions.js';
 import { escape as e } from './api.js';
 import { MAP_PATH, createTopologyMap, mapModel } from './topology-map.js';
 import { discoveryAction } from './map-discovery.js';
@@ -182,7 +183,7 @@ export function summaryText({ mode, rows, payload }) {
 export function mount(context) {
   let ctx = context, rows = [], general = null, bots = [], work = workModel([]), readWork = createWorkReader(), mode = '', latest = null, map = null, built = '';
   let stopped = false, epoch = 0, request = null, framed = false, phone = false, builtColumns = 0, observer = null;
-  let topAdd = null;
+  let topAdd = null, addMachine = null;
   const root = context.root, doc = root.ownerDocument || globalThis.document;
   styles(doc);
   computeStyles(doc);
@@ -262,7 +263,13 @@ export function mount(context) {
   }
   function actions() {
     const host = region('actions');
-    if (host) host.innerHTML = '<button class="dc-action dc-primary" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action" type="button" data-compute-action="map">Map it with a bot</button>' : '');
+    if (!host) return;
+    if (addMachine) releaseActions(addMachine);
+    host.innerHTML = '<button class="dc-action dc-primary" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action" type="button" data-compute-action="map">Map it with a bot</button>' : '');
+    // Add a machine sits in the desktop title bar; a click there and in the page reaches click once.
+    addMachine = host.querySelector?.('[data-compute-action="add-machine"]') ?? null;
+    addMachine?.addEventListener?.('click', click);
+    if (addMachine) seatActions(addMachine);
   }
   const tabs = root.parentElement?.querySelector(':scope > .dw-tabs');
   let tabsHome = null;
@@ -330,12 +337,13 @@ export function mount(context) {
       if (stopped || mine !== epoch) return;
       if (error?.status === 403) {
         topAdd?.stop(); topAdd = null;
+        if (addMachine) { releaseActions(addMachine); addMachine = null; }
         map?.stop(); map = null; built = ''; framed = false; rows = []; general = null; bots = []; work = workModel([]); latest = null;
         root.innerHTML = '<h1>Cloud workspaces</h1><p class="dc-notice">Only workspace owners can see the machines.</p>';
       } else if (!note(GENERIC_FAILURE)) root.innerHTML = `<h1>Cloud workspaces</h1><p class="dc-notice" role="status">${GENERIC_FAILURE}</p>`;
     }
   }
-  function click(event) {
+  function onClick(event) {
     const target = event.target.closest?.('[data-compute-action]'), action = target?.dataset.computeAction;
     if (action === 'add-machine') { ctx.go(ENROLL_ROUTE); return; }
     if (action === 'add-site') { void add(action, target); return; }
@@ -345,12 +353,13 @@ export function mount(context) {
       ctx.go(`#/bots/${encodeURIComponent(general.id)}`);
     } catch { note('The message could not be prepared. Try again.'); }
   }
+  const click = once(onClick);
   root.addEventListener('click', click);
   root.innerHTML = '<h1>Cloud workspaces</h1><p class="dc-notice" role="status">Loading machines…</p>';
   void refresh();
   return { refresh, stop() {
     if (stopped) return;
-    stopped = true; topAdd?.stop(); stopMotion(); epoch++; request?.abort(); map?.stop(); map = null; observer?.disconnect();
+    stopped = true; if (addMachine) { releaseActions(addMachine); addMachine = null; } topAdd?.stop(); stopMotion(); epoch++; request?.abort(); map?.stop(); map = null; observer?.disconnect();
     root.removeEventListener('click', click);
     if (tabsHome?.parent) {
       const { parent, next } = tabsHome;

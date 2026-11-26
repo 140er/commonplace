@@ -132,8 +132,16 @@
      the one bar every page shares, so it shows anyway (the global [hidden] rule is !important, hence this one). */
   :root[data-ui="deck"] body .shell .center > .head[hidden] { display: flex !important; }
   :root[data-ui="deck"] body .shell .center:has(.bots[data-pane="thread"]) > .head { display: none !important; }
-  /* Pages that draw their own controls keep them in the page, not as a second set in the bar. */
-  :root[data-ui="deck"] body .shell .center:has(:is(.deck-board, .deck-memory)) > .head #head-actions { display: none; }
+  /* A page's main creating action is seated here by the page (head-actions.js): Bots, Cloud workspaces, Board and Memory,
+     as Projects and Rules already do. The same elements keep their in-page styles' look through these rules. */
+  :root[data-ui="deck"] body .shell .center > .head #head-actions :is(.bots-actions, .memory-actions) { position: static; display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions :is(.bots-new, .bots-new-chat, .dc-action, .memory-actions .btn, .deck-board-add) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 30px; height: 30px; padding: 0 12px; margin: 0; border-radius: var(--radius-control); font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions .dc-action.dc-primary { border: 0; background: var(--violet); color: var(--ground); }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions .dc-action:not(.dc-primary) { border: 0; background: var(--s2); color: var(--ink); }
+  /* Board and Memory keep the project chat in the page, not in the bar: only their own action shows. */
+  :root[data-ui="deck"] body .shell .center:has(:is(.deck-board, .deck-memory)) > .head #head-actions > :not(.deck-board-add, .memory-actions) { display: none; }
+  /* The page used to reserve this corner for its own buttons. */
+  :root[data-ui="deck"] body .shell #content .deck-memory .memory-heading { padding-right: 0; }
   /* The page title lives in the bar, so the in-page copies go. */
   :root[data-ui="deck"] body .shell #content :is(.bt-bar, .wk-bar, .bots-bar, .dc-title, .deck-board-title-row, .memory-heading, .pl-head, .cb-heading) h1 { display: none; }
   :root[data-ui="deck"] body .shell #content > .bt-bar { height: auto; min-height: 0; width: 100%; max-width: var(--page-width); margin-inline: auto; padding: 0 0 6px; border-bottom: 0; background: none; }
