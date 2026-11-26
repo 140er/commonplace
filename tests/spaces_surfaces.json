@@ -1961,6 +1961,55 @@
               "claim": {
                 "type": "boolean"
               },
+              "contract": {
+                "additionalProperties": false,
+                "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+                "properties": {
+                  "allowed_tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "escalation": {
+                    "type": "string"
+                  },
+                  "handoff_evidence": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "inputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "mission": {
+                    "type": "string"
+                  },
+                  "owned_paths": {
+                    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "test_commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
               "labels": {
                 "items": {
                   "type": "string"
@@ -1979,7 +2028,7 @@
                 ]
               },
               "paths": {
-                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
                 "items": {
                   "type": "string"
                 },
@@ -2341,6 +2390,55 @@
               "context": {
                 "type": "string"
               },
+              "contract": {
+                "additionalProperties": false,
+                "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+                "properties": {
+                  "allowed_tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "escalation": {
+                    "type": "string"
+                  },
+                  "handoff_evidence": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "inputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "mission": {
+                    "type": "string"
+                  },
+                  "owned_paths": {
+                    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "test_commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
               "labels": {
                 "items": {
                   "type": "string"
@@ -2357,6 +2455,14 @@
                 "items": {
                   "type": "string"
                 },
+                "type": "array"
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
                 "type": "array"
               },
               "person_reason": {
@@ -3527,6 +3633,55 @@
               "claim": {
                 "type": "boolean"
               },
+              "contract": {
+                "additionalProperties": false,
+                "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+                "properties": {
+                  "allowed_tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "escalation": {
+                    "type": "string"
+                  },
+                  "handoff_evidence": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "inputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "mission": {
+                    "type": "string"
+                  },
+                  "owned_paths": {
+                    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "test_commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
               "labels": {
                 "items": {
                   "type": "string"
@@ -3545,7 +3700,7 @@
                 ]
               },
               "paths": {
-                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
                 "items": {
                   "type": "string"
                 },
@@ -3907,6 +4062,55 @@
               "context": {
                 "type": "string"
               },
+              "contract": {
+                "additionalProperties": false,
+                "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+                "properties": {
+                  "allowed_tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "escalation": {
+                    "type": "string"
+                  },
+                  "handoff_evidence": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "inputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "mission": {
+                    "type": "string"
+                  },
+                  "owned_paths": {
+                    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "test_commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
               "labels": {
                 "items": {
                   "type": "string"
@@ -3923,6 +4127,14 @@
                 "items": {
                   "type": "string"
                 },
+                "type": "array"
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
                 "type": "array"
               },
               "person_reason": {
@@ -6080,6 +6292,55 @@
               "claim": {
                 "type": "boolean"
               },
+              "contract": {
+                "additionalProperties": false,
+                "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+                "properties": {
+                  "allowed_tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "escalation": {
+                    "type": "string"
+                  },
+                  "handoff_evidence": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "inputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "mission": {
+                    "type": "string"
+                  },
+                  "owned_paths": {
+                    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "test_commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
               "labels": {
                 "items": {
                   "type": "string"
@@ -6098,7 +6359,7 @@
                 ]
               },
               "paths": {
-                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
                 "items": {
                   "type": "string"
                 },
@@ -6460,6 +6721,55 @@
               "context": {
                 "type": "string"
               },
+              "contract": {
+                "additionalProperties": false,
+                "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+                "properties": {
+                  "allowed_tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "escalation": {
+                    "type": "string"
+                  },
+                  "handoff_evidence": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "inputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "mission": {
+                    "type": "string"
+                  },
+                  "owned_paths": {
+                    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  },
+                  "test_commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
               "labels": {
                 "items": {
                   "type": "string"
@@ -6476,6 +6786,14 @@
                 "items": {
                   "type": "string"
                 },
+                "type": "array"
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
                 "type": "array"
               },
               "person_reason": {
