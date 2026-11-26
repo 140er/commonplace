@@ -1,0 +1,4 @@
+- **Owns:** `scripts/web-build/build.mjs` owns the route-to-module lists the web bundle is built from.
+- **Promises:** The `home` route no longer lists a module of its own; Home is built from the `today` route's module, as the server's own route table already does.
+- **Tests:** `tests/test_web_bundle.py` builds the bundle and checks every route resolves.
+- **How it fails:** A route that names a module that does not exist stops the build with the module name.
