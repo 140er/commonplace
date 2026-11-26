@@ -12,9 +12,15 @@ from commonplace.projects.types import (
     ProjectDenied,
 )
 
+# Built-in suggestions every picker offers next to the workspace's list (card #661). A suggestion
+# is never part of a list and never a default: a project with no choice keeps today's behaviour,
+# and an external provider is used only when an owner picks it.
+SUGGESTED = (ModelChoice("grok", "grok-4.7"),)
+WORKSPACE = "*"
+
 
 class UnknownModel(ValueError):
-    """A choice names a model that is not in the workspace's list."""
+    """A choice names a model that is neither in the workspace's list nor a suggestion."""
 
 
 def _shape(choice) -> ModelChoice:
@@ -47,10 +53,25 @@ def catalog(db, workspace_id: str, board: str) -> list[ModelChoice]:
     return [ModelChoice(row["provider"], row["model"]) for row in rows]
 
 
-def catalog_add(db, principal, board: str, choice: dict) -> list[ModelChoice]:
-    """An owner adds one model to a project list (validated, audited, idempotent)."""
+def suggestions(listed: list[ModelChoice]) -> list[ModelChoice]:
+    """The built-in suggestions a list does not hold yet."""
+    return [choice for choice in SUGGESTED if choice not in listed]
+
+
+def options(db, workspace_id: str, board: str) -> list[ModelChoice]:
+    """What a picker offers: the list (``catalog``), then each built-in suggestion not on it."""
+    listed = catalog(db, workspace_id, board)
+    return listed + suggestions(listed)
+
+
+def _require_owner(principal) -> None:
     if not principal.person or principal.role != "owner":
         raise ProjectDenied("Only a signed-in workspace owner can change project models")
+
+
+def catalog_add(db, principal, board: str, choice: dict) -> list[ModelChoice]:
+    """An owner adds one model to a project list (validated, audited, idempotent)."""
+    _require_owner(principal)
     entry = _shape(choice)
     added_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with db._lock, db._tx() as conn:
@@ -114,7 +135,8 @@ def _slot_order(role):
 
 
 def get(db, workspace_id: str, board: str) -> dict[str, ModelChoice | None]:
-    """Return explicit project choices; inherited choices belong to resolve()."""
+    """Return explicit choices of one scope (a board, or ``*`` for the workspace's defaults);
+    inherited choices belong to resolve()."""
     choices: dict[str, ModelChoice | None] = dict.fromkeys(MODEL_ROLES)
     with db._lock:
         rows = db._conn.execute(
@@ -129,9 +151,17 @@ def get(db, workspace_id: str, board: str) -> dict[str, ModelChoice | None]:
 
 
 def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
-    """Validate an owner's partial update, then atomically store and audit it."""
-    if not principal.person or principal.role != "owner":
-        raise ProjectDenied("Only a signed-in workspace owner can change project models")
+    """Validate an owner's partial update of one project, then atomically store and audit it."""
+    return _store(db, principal, board, body, "project.models")
+
+
+def put_workspace(db, principal, body: dict) -> dict[str, ModelChoice | None]:
+    """The owner's workspace default per role: every project without its own choice uses it."""
+    return _store(db, principal, WORKSPACE, body, "models.workspace")
+
+
+def _store(db, principal, scope: str, body: dict, action: str) -> dict[str, ModelChoice | None]:
+    _require_owner(principal)
     if not isinstance(body, dict) or set(body) - set(MODEL_ROLES):
         raise ValueError("Invalid project models")
     known = None
@@ -140,7 +170,7 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
             continue
         entry = _shape(choice)
         if known is None:
-            known = set(catalog(db, principal.workspace_id, board))
+            known = set(options(db, principal.workspace_id, scope))
         if entry not in known:
             raise UnknownModel("Unknown project model")
 
@@ -150,7 +180,7 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
             if choice is None:
                 conn.execute(
                     "DELETE FROM chat_model_settings WHERE workspace_id=? AND scope=? AND role=?",
-                    (principal.workspace_id, board, role),
+                    (principal.workspace_id, scope, role),
                 )
             else:
                 added = conn.execute(
@@ -159,7 +189,7 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         principal.workspace_id,
-                        board,
+                        scope,
                         choice["provider"],
                         choice["model"],
                         principal.user_id,
@@ -172,7 +202,7 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
                         decision="ok",
                         workspace_id=principal.workspace_id,
                         user_id=principal.user_id,
-                        target_ids=(board, f"{choice['provider']}/{choice['model']}"),
+                        target_ids=(scope, f"{choice['provider']}/{choice['model']}"),
                     )
                 conn.execute(
                     "INSERT OR REPLACE INTO chat_model_settings "
@@ -180,7 +210,7 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
                     "updated_by, updated_at) VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ?, ?)",
                     (
                         principal.workspace_id,
-                        board,
+                        scope,
                         role,
                         choice["provider"],
                         choice["model"],
@@ -189,13 +219,13 @@ def put(db, principal, board: str, body: dict) -> dict[str, ModelChoice | None]:
                     ),
                 )
         db.audit(
-            action="project.models",
+            action=action,
             decision="ok",
             workspace_id=principal.workspace_id,
             user_id=principal.user_id,
-            target_ids=(board,),
+            target_ids=(scope,),
         )
-        return get(db, principal.workspace_id, board)
+        return get(db, principal.workspace_id, scope)
 
 
 def _chosen(db, workspace_id: str, board: str, role: str) -> tuple[ModelChoice, str] | None:
@@ -248,6 +278,19 @@ def effective(db, workspace_id: str, board: str, role: str) -> Effective:
 def effective_roles(db, workspace_id: str, board: str) -> dict[str, Effective]:
     """``effective`` for each configurable slot, in slot order."""
     return {role: effective(db, workspace_id, board, role) for role in MODEL_ROLES}
+
+
+def workspace_roles(db, workspace_id: str) -> dict[str, Effective]:
+    """What a project with no choice of its own runs on, per role: the workspace's choice
+    (``workspace``), else the first model of the workspace's list (``default``), else ``none``."""
+    chosen = get(db, workspace_id, WORKSPACE)
+    fallback = default_choice(db, workspace_id, WORKSPACE)
+    return {
+        role: Effective(choice, "workspace")
+        if choice is not None
+        else Effective(fallback, "default" if fallback is not None else "none")
+        for role, choice in chosen.items()
+    }
 
 
 def describe(item: Effective) -> str:

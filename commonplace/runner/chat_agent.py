@@ -31,9 +31,44 @@ CHAT_KEYS = frozenset({"default_cli", "context", "relay_always", "clis"})
 CLI_KEYS = frozenset({"argv", "default_model", "tools"})
 POLL_S = 3
 CLI_TIMEOUT_S = 60
+# Why a run failed, in the CLI's own words (card #661), checked in this order. Only the verdict
+# leaves the machine: the CLI's output is matched here and dropped, never sent to the hub.
+# 426: the CLI is too old for the provider. 403: signed in, but the plan does not include the
+# model (for Grok: the subscription tier). 401 or "not logged in": the sign-in expired or is gone.
+FAILURE_WORDS = (
+    (
+        "cli_outdated",
+        re.compile(
+            r"\b426\b|upgrade required|(?:cli|client|version) is (?:too old|outdated|no longer "
+            r"supported)|update (?:the|your) (?:cli|client)|please update",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_not_entitled",
+        re.compile(
+            r"\b403\b|forbidden|not entitled|not available (?:on|for|with) your (?:plan|tier|"
+            r"subscription)|(?:plan|tier|subscription) does not (?:include|allow|support)"
+            r"|upgrade your (?:plan|subscription)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "cli_signed_out",
+        re.compile(
+            r"\b401\b|unauthori[sz]ed|not logged in|not authenticated|not signed in"
+            r"|please (?:run /login|log ?in|sign in)|run `?[a-z-]+ login|login (?:has )?expired"
+            r"|session (?:has )?expired|(?:oauth |access )?token (?:has )?expired|sign in again"
+            r"|log ?in again",
+            re.IGNORECASE,
+        ),
+    ),
+)
 # Usage is read from the CLI's JSON result (claude --output-format json); a CLI that prints plain
 # text reports none, and the hub then records an explicit unknown cost, never zero.
 USAGE_INPUT_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+GROK_USAGE_KEYS = ("inputTokens", "outputTokens", "costUsdTicks", "modelUsage")
+GROK_TICKS_PER_MICRO = 10_000  # costUsdTicks are 10^-10 USD
 MAX_USAGE = 10**15
 CHAT_CHILD_KEYS = _CHILD_KEYS + ("XDG_CONFIG_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR")
 SAFE_ARGV = {
@@ -54,7 +89,24 @@ SAFE_ARGV = {
             "--agent",
             "--permission-mode",
         ),
-    }
+    },
+    # Grok CLI in headless mode (card #661): one turn, no tools, no memory, no subagents, no web.
+    "grok": {
+        "any_of": ("-p",),
+        "all_of": ("--no-memory", "--no-subagents", "--disable-web-search", "--max-turns"),
+        "empty_value": "--tools",
+        "exact": {"--max-turns": "1"},
+        "deny": (
+            "--always-approve",
+            "--yolo",
+            "--dangerously-skip-permissions",
+            "--allow",
+            "--allowedTools",
+            "--allowed-tools",
+            "--mcp-config",
+            "--permission-mode",
+        ),
+    },
 }
 EGRESS_LINE = "chat: answers run your configured CLI under your own login; each prompt (your message, the project name and up to 15 trusted card titles) goes to that CLI's provider"
 EGRESS_FULL_LINE = "chat: context full: prompts also carry recent chat lines from everyone in the project and up to 15 visible card titles"
@@ -127,6 +179,13 @@ def _safe_argv(argv):
         if arg.split("=", 1)[0] == empty
     ]
     _require(values and all(values), "CLI tools-off flags required")
+    for flag, wanted in rules.get("exact", {}).items():
+        given = [
+            arg.split("=", 1)[1] if "=" in arg else (args[i + 1] if i + 1 < len(args) else None)
+            for i, arg in enumerate(args)
+            if arg.split("=", 1)[0] == flag
+        ]
+        _require(given and all(value == wanted for value in given), "CLI tools-off flags required")
 
 
 def _check_credentials(config):
@@ -228,6 +287,11 @@ def _post_result(hub, action, body, deadline):
                 raise
 
 
+def failure_code(said: str) -> str:
+    """The failure code for a CLI that exited with an error: why, never what it said."""
+    return next((code for code, words in FAILURE_WORDS if words.search(said)), "cli_failed")
+
+
 def _count(value):
     return value if type(value) is int and 0 <= value <= MAX_USAGE else None
 
@@ -244,15 +308,19 @@ def _unwrap(text: str) -> tuple[str, dict]:
         result = json.loads(text)
     except (ValueError, RecursionError):
         return text, {}
-    if not (
-        isinstance(result, dict)
-        and result.get("type") == "result"
-        and isinstance(result.get("result"), str)
-    ):
+    if not isinstance(result, dict):
+        return text, {}
+    if result.get("type") == "result" and isinstance(result.get("result"), str):
+        answer = result["result"]
+    elif result.get("type") in (None, "result", "response") and isinstance(result.get("text"), str):
+        answer = result["text"]  # Grok's headless JSON (card #661)
+    else:
         return text, {}
     usage = {}
     raw = result.get("usage")
-    if isinstance(raw, dict):
+    if isinstance(raw, dict) and any(key in raw for key in GROK_USAGE_KEYS):
+        usage = _grok_usage(raw)
+    elif isinstance(raw, dict):
         inputs = [_count(raw[key]) for key in USAGE_INPUT_KEYS if key in raw]
         if inputs and None not in inputs:
             usage["input_tokens"] = sum(inputs)
@@ -261,7 +329,26 @@ def _unwrap(text: str) -> tuple[str, dict]:
     cost = result.get("total_cost_usd")
     if type(cost) in (int, float) and math.isfinite(cost) and 0 < cost * 1_000_000 <= MAX_USAGE:
         usage.update(cost_micros=round(cost * 1_000_000), currency="USD")
-    return result["result"].strip(), usage
+    return answer.strip(), usage
+
+
+def _grok_usage(raw: dict) -> dict:
+    """Grok's usage: ``inputTokens`` already counts the cached part; the cost comes in ticks of
+    10^-10 USD (``costUsdTicks``). Without top-level numbers, the ``modelUsage`` entries add up."""
+    totals = [raw]
+    if "inputTokens" not in raw and isinstance(raw.get("modelUsage"), dict):
+        totals = [entry for entry in raw["modelUsage"].values() if isinstance(entry, dict)]
+    usage = {}
+    for name, key in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens")):
+        counts = [_count(entry.get(key)) for entry in totals]
+        if counts and None not in counts and sum(counts) <= MAX_USAGE:
+            usage[name] = sum(counts)
+    ticks = [entry.get("costUsdTicks") for entry in totals]
+    if ticks and all(type(t) is int and t >= 0 for t in ticks):
+        micros = round(sum(ticks) / GROK_TICKS_PER_MICRO)
+        if 0 < micros <= MAX_USAGE:
+            usage.update(cost_micros=micros, currency="USD")
+    return usage
 
 
 def _reply(hub, config, job):
@@ -335,11 +422,19 @@ def _ask_cli(
                 argv,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 cwd=cwd,
                 env=env,
             )
-            output = bytearray()
+            output, errors = bytearray(), bytearray()
+
+            def read_errors():
+                # Kept only to tell a signed-out CLI from another failure; drained to the end so
+                # the CLI never blocks on a full pipe.
+                with child.stderr:
+                    while chunk := child.stderr.read(4096):
+                        if len(errors) < 4096:
+                            errors.extend(chunk[: 4096 - len(errors)])
 
             def read_output():
                 # This thread owns the pipe: closing it from another thread can
@@ -359,20 +454,24 @@ def _ask_cli(
 
             reader = Thread(target=read_output, daemon=True)
             writer = Thread(target=write_input, daemon=True)
+            complaints = Thread(target=read_errors, daemon=True)
             deadline = time.monotonic() + CLI_TIMEOUT_S
             reader.start()
             writer.start()
+            complaints.start()
             try:
                 child.wait(timeout=CLI_TIMEOUT_S)
                 reader.join(max(0, deadline - time.monotonic()))
                 writer.join(max(0, deadline - time.monotonic()))
-                if reader.is_alive() or writer.is_alive():
+                complaints.join(max(0, deadline - time.monotonic()))
+                if reader.is_alive() or writer.is_alive() or complaints.is_alive():
                     raise subprocess.TimeoutExpired(argv, CLI_TIMEOUT_S)
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
                 reader.join(0.1)
                 writer.join(0.1)
+                complaints.join(0.1)
                 return "fail", "cli_timeout"
             if len(output) > 65_536:
                 return "fail", "bad_output"
@@ -389,7 +488,8 @@ def _ask_cli(
         # Tokens were spent even when the CLI then failed.
         usage.update(reported)
     if returncode != 0:
-        return "fail", "cli_failed"
+        said = text + "\n" + errors.decode("utf-8", errors="replace")
+        return "fail", failure_code(said)
     if not text:
         return "fail", "bad_output"
     return "ok", text[:MAX_REPLY_CHARS]

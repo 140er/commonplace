@@ -671,7 +671,10 @@ def account_problem(store, machine, row):
         return "account_changed"
     try:
         connection = model_modes.connection_of_machine(
-            store.gateway.db._conn, store.workspace_id, machine["id"]
+            store.gateway.db._conn,
+            store.workspace_id,
+            machine["id"],
+            saved.get("model_provider") if saved.get("account_kind") == "person" else None,
         )
     except sqlite3.Error:
         return "mode_unavailable"

@@ -38,12 +38,25 @@ RELAY_CODES = (
     "cli_failed",
     "cli_timeout",
     "cli_not_configured",
+    "cli_signed_out",
+    "cli_not_entitled",
+    "cli_outdated",
     "bad_output",
     "no_access",
     "daily_limit",
     "budget_exceeded",
 )
-RUNNER_FAIL_CODES = ("cli_failed", "cli_timeout", "cli_not_configured", "bad_output")
+RUNNER_FAIL_CODES = (
+    "cli_failed",
+    "cli_timeout",
+    "cli_not_configured",
+    "cli_signed_out",
+    "cli_not_entitled",
+    "cli_outdated",
+    "bad_output",
+)
+# A runner failure the person must act on: answered in the chat with what to do (card #661).
+ACCOUNT_FAIL_CODES = ("cli_signed_out", "cli_not_entitled", "cli_outdated")
 
 
 class InvalidReply(ValueError):
@@ -281,8 +294,8 @@ def _refuse_account(gateway, workspace_id, board, message_id, user_id, code, tex
         log_failure(logger, "chat account refusal reply failed", exc)
 
 
-def _account_snapshot(db, workspace_id, account, machine):
-    connection = model_modes.connection_of_machine(db._conn, workspace_id, machine["id"])
+def _account_snapshot(db, workspace_id, account, machine, provider):
+    connection = model_modes.connection_of_machine(db._conn, workspace_id, machine["id"], provider)
     return {
         "account": account.record(),
         "connection": connection["id"] if connection is not None else None,
@@ -354,7 +367,7 @@ def enqueue(gateway, principal, board: str, message_id: int, now: float, decisio
                     db, ws, board, person=user, provider=cli, machine=machine
                 )
                 if account.refusal is None:
-                    accounts[machine["id"]] = _account_snapshot(db, ws, account, machine)
+                    accounts[machine["id"]] = _account_snapshot(db, ws, account, machine, cli)
                     agents.append(machine["worker_connection_id"])
     except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
         log_failure(logger, "chat model mode unreadable at queue", exc)
@@ -536,7 +549,9 @@ def lease(
                 provider=claimed["cli"],
                 machine=machine,
             )
-            current = _account_snapshot(db, claimed["workspace_id"], account, machine)
+            current = _account_snapshot(
+                db, claimed["workspace_id"], account, machine, claimed["cli"]
+            )
     except (model_modes.ModeUnavailable, sqlite3.Error) as exc:
         log_failure(logger, "chat model mode unreadable at lease", exc)
         account = None
@@ -684,6 +699,8 @@ def answer(
             except (OSError, sqlite3.Error):
                 raise ReplyBusy() from None
             _finish(conn, row, "done", "ok", now)
+    if poster is not None:
+        _signed_in_again(db, row, machine, cli)
     _report(
         gateway,
         row,
@@ -715,10 +732,43 @@ def fail(
         if code not in RUNNER_FAIL_CODES:
             raise InvalidReply("Invalid runner failure code")
         _finish(conn, row, "failed", code, now)
+    if code in ACCOUNT_FAIL_CODES:
+        _account_failed(gateway, row, machine, code)
     _report(
         gateway, row, machine, "errored", now, provider=row["cli"], model=row["model"], usage=usage
     )
     return {"job": job, "state": "failed", "code": code}
+
+
+def _account_failed(gateway, row, machine, code) -> None:
+    """The person's CLI says it is signed out, not entitled to the model, or too old (card #661):
+    tell them in the chat what to do. A sign-in that stopped working also keeps one Needs me item
+    until it answers again. The message is never offered to another account or provider."""
+    provider = row["cli"] or ""
+    if code == "cli_signed_out":
+        try:
+            model_modes.note_signed_out(
+                gateway.db, row["workspace_id"], row["user_id"], machine["id"], provider
+            )
+        except (OSError, sqlite3.Error, TimeoutError) as exc:
+            log_failure(logger, "chat sign-in note failed", exc)
+    _refuse_account(
+        gateway,
+        row["workspace_id"],
+        row["board"],
+        row["message_id"],
+        row["user_id"],
+        code,
+        model_modes.cli_problem_words(code, provider, machine.get("label"), row["model"]),
+    )
+
+
+def _signed_in_again(db, row, machine, cli) -> None:
+    try:
+        for provider in {cli, row["cli"] or ""}:
+            model_modes.clear_signed_out(db, row["workspace_id"], machine["id"], provider)
+    except (OSError, sqlite3.Error, TimeoutError) as exc:
+        log_failure(logger, "chat sign-in clear failed", exc)
 
 
 def caller_state(db, workspace_id: str, user_id: str, now: float, cli: str | None = None) -> dict:

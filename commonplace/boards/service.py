@@ -5174,6 +5174,14 @@ class BoardService(lifecycle.LifecycleMixin):
             if lacking:
                 groups["model_connections"] = lacking
                 groups["count"] += len(lacking)
+            # Card #661: the person's own CLI sign-ins that stopped working.
+            try:
+                expired = model_modes.signin_needs(self.ctx.db, self.principal)
+            except sqlite3.Error:
+                expired = []
+            if expired:
+                groups["model_signins"] = expired
+                groups["count"] += len(expired)
         return groups
 
     def _config_proposals(self):

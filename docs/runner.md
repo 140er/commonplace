@@ -305,6 +305,10 @@ use models offered by your own CLI login. The Codex example uses `your-codex-mod
         "argv": ["/absolute/path/codex", "exec", "--sandbox", "read-only", "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "-m", "{model}", "-"],
         "default_model": "your-codex-model",
         "tools": true
+      },
+      "grok": {
+        "argv": ["/absolute/path/grok", "-p", "--no-memory", "--no-subagents", "--disable-web-search", "--max-turns", "1", "--tools", "", "-m", "{model}", "--output-format", "json"],
+        "default_model": "grok-4.7"
       }
     }
   }
@@ -353,7 +357,26 @@ Without `tools: true`, validation requires that tools-off shape and rejects
 `--plugin-dir`, `--agents`, `--agent` and `--permission-mode`, including their
 `--flag=value` forms.
 
-**Every executable except `claude`, including Codex, requires explicit
+### Your Grok subscription
+
+To answer with your own Grok subscription, install the Grok command line tool on
+this machine and sign in once from its terminal with `grok login --device-auth`.
+It shows a code; open the link it prints, sign in with your Grok account and enter
+the code. The sign-in stays on this machine: Commonplace never sees it, and no API
+key is needed or used. Then add the `grok` entry above, and in Settings under
+Your own accounts link this machine for the provider `grok`. Pick Grok 4.7 for a
+role in Agent models; with the project in personal mode, its chat answers run here.
+
+The `grok` entry runs without tools: validation requires `-p`, `--no-memory`,
+`--no-subagents`, `--disable-web-search`, `--max-turns 1` and an empty `--tools`,
+and rejects `--always-approve`, `--yolo`, `--dangerously-skip-permissions`,
+`--allow`, `--allowedTools`, `--allowed-tools`, `--mcp-config` and
+`--permission-mode`, including their `--flag=value` forms. Check the flags against
+your CLI's `--help` after an upgrade. If Grok says the sign-in expired, your plan
+does not include the model, or the tool is too old, you get that reason in the
+chat with the next step; the message is never sent to another account or provider.
+
+**Every executable except `claude` and `grok`, including Codex, requires explicit
 `"tools": true`.** Validation uses the executable's basename, not its CLI label. This
 acknowledgement bypasses tools-off validation, including for a Claude entry.
 The Codex flags were checked against **codex-cli 0.163.0** `--help` and are
