@@ -22,7 +22,7 @@ code is copied.
 
 | Section | Read from | Exported fields |
 | --- | --- | --- |
-| `roles` | accepted live orchestrator config of `--board` (`runner.sqlite3`) | name, kind, parent, harness, topic, model_role, workflow, prompt, area, skills |
+| `roles` | accepted live Coworker config of `--board` (`runner.sqlite3`) | name, kind, parent, harness, topic, model_role, workflow, prompt, area, skills |
 | `skills` | the same config's role skill references | id, version (no skill content) |
 | `seats` | `project_orchestrators` (control db) | role, name (no connection id) |
 | `routines` | `routines` (control db), not deleted | name, template, schedule, timezone, state (no owner, cursor, runs) |
