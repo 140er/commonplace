@@ -1,4 +1,6 @@
-# Words used in Commonplace
+# Words in the app and the tool names (card #667)
+
+The user guide section is "Words used in Commonplace" in `docs/projects.md`. This page keeps the technical names next to it. Nothing below is renamed by card #667: only visible labels change.
 
 One name for each thing. The same word is used in the sidebar, in Settings, on the board, on a
 card, in the status list, in the Move menu and in these guides. Where a tool or an API route has to
