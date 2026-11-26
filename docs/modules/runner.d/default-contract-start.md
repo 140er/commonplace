@@ -1,0 +1,1 @@
+- **Promises:** A start with no path contract of its own (and none from its role) holds the whole repo when the card has one: `card_start` on a board without an orchestrator config runs the same `defaults=True` contract check as a configured start, so two such cards of a repo serialise and the refusal names the card it is blocked by.

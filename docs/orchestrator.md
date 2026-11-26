@@ -283,8 +283,9 @@ Inside it, in this order:
    card skips the add re-check), its holder may
    clear or narrow its own contract (the owner-only rule needs a runner job;
    globs it adds are checked against the other running cards),
-   and a `doing` claim held by a person does not hold a start. Cards without a
-   contract never conflict.
+   and a `doing` claim held by a person does not hold a start. On a board bound to
+   a repo a card without a contract holds the whole repo (see the system design notes on
+   role and card contracts).
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with

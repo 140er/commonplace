@@ -60,6 +60,12 @@ MATCH_STEPS = 6
 CLASS_STEPS = 8
 GLOB_UNITS = 10  # work units to read, expand and canonicalise one stored glob
 CARD_UNITS = 16  # work units billed for handling one running card (parse, prepare, loop)
+MAX_CONTRACT_TEXT = 2000  # characters in a contract's mission or escalation
+MAX_CONTRACT_ITEMS = 32  # entries in one of a contract's list fields
+MAX_CONTRACT_ITEM_LENGTH = 500
+CONTRACT_TEXT_FIELDS = ("mission", "escalation")
+CONTRACT_LIST_FIELDS = ("allowed_tools", "inputs", "test_commands", "handoff_evidence")
+CONTRACT_FIELDS = (*CONTRACT_TEXT_FIELDS, *CONTRACT_LIST_FIELDS)
 MAX_MATCHERS = 8192  # wildcard segment matchers kept
 _WILDCARDS = frozenset("*?[{}")
 ANY = ("**",)
@@ -170,6 +176,88 @@ def normalize(value) -> list[str]:
     if len(globs) > MAX_STORED:
         raise ToolError(f"no: paths expand to more than {MAX_STORED} globs")
     return globs
+
+
+def _clean(value, field: str, limit: int) -> str:
+    if not isinstance(value, str):
+        raise ToolError(f"no: contract {field} must be text")
+    text = value.strip()
+    if not text or len(text) > limit or any(ord(c) < 32 and c not in "\n\t" for c in text):
+        raise ToolError(f"no: contract {field} must be 1-{limit} printable characters")
+    return text
+
+
+def normalize_contract(value) -> dict:
+    """Validated role or card contract: only the fields that are set. ``mission`` and
+    ``escalation`` are text, ``allowed_tools``, ``inputs``, ``test_commands`` and
+    ``handoff_evidence`` are lists of text, ``owned_paths`` is a path glob list (``normalize``).
+    Every field is optional; ``{}`` is no contract. Raises ``ToolError`` otherwise."""
+    if not isinstance(value, dict):
+        raise ToolError("no: contract must be an object")
+    unknown = set(value) - {*CONTRACT_FIELDS, "owned_paths"}
+    if unknown:
+        raise ToolError("no: unknown contract field: " + ", ".join(sorted(map(str, unknown))))
+    out: dict = {}
+    for field in CONTRACT_TEXT_FIELDS:
+        if field in value:
+            out[field] = _clean(value[field], field, MAX_CONTRACT_TEXT)
+    for field in CONTRACT_LIST_FIELDS:
+        if field not in value:
+            continue
+        items = value[field]
+        if not isinstance(items, list) or len(items) > MAX_CONTRACT_ITEMS:
+            raise ToolError(
+                f"no: contract {field} must be a list of at most {MAX_CONTRACT_ITEMS} entries"
+            )
+        out[field] = [_clean(item, field, MAX_CONTRACT_ITEM_LENGTH) for item in items]
+    if "owned_paths" in value:
+        out["owned_paths"] = normalize(value["owned_paths"])
+    return out
+
+
+def split_contract_args(args) -> dict:
+    """``args`` with a ``contract`` argument split in two: its ``owned_paths`` become the
+    ``paths`` argument (the one place a card's globs live) and the rest stays in
+    ``contract``. A ``paths`` argument that names other globs than ``owned_paths`` is
+    refused. Without ``contract`` the arguments come back unchanged."""
+    if "contract" not in args:
+        return dict(args)
+    out = {key: value for key, value in args.items() if key != "contract"}
+    contract = normalize_contract(args["contract"])
+    owned = contract.pop("owned_paths", None)
+    if owned is not None:
+        if "paths" in out and normalize(out["paths"]) != owned:
+            raise ToolError("no: paths and contract owned_paths name different globs")
+        out["paths"] = owned
+    out["contract"] = contract
+    return out
+
+
+def public_contract(raw, paths) -> dict:
+    """A card's contract as read: the stored fields plus ``owned_paths`` when it has any. An
+    unreadable stored value shows as no fields (its globs still show, read as ``**``)."""
+    try:
+        fields = json.loads(raw) if isinstance(raw, str) else {}
+    except ValueError:
+        fields = {}
+    out = (
+        {k: v for k, v in fields.items() if k in CONTRACT_FIELDS}
+        if isinstance(fields, dict)
+        else {}
+    )
+    globs = parse(paths)
+    globs = list(ANY) if globs is None else globs
+    if globs:
+        out["owned_paths"] = globs
+    return out
+
+
+def effective_paths(card_paths, role_paths) -> list[str]:
+    """The globs a start is checked with: the card's own, else its role's, else none (the
+    default contract). An unreadable card value reads as ``**``."""
+    if card_paths is None:
+        return list(ANY)
+    return list(card_paths) or list(role_paths or [])
 
 
 def column_update(args) -> dict:

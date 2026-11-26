@@ -188,7 +188,8 @@ def card_start(
 
     def contract_guard(conn, now):
         # No orchestrator config here, so ``_fenced`` does not run: the same path-contract
-        # check applies before the job is inserted.
+        # check applies before the job is inserted. There is no role either, so no role
+        # paths: a card without paths of its own holds the default contract.
         refusal = runner_bridge.contract_refusal(
             conn,
             workspace_dir=ctx.workspace_dir(),
@@ -196,6 +197,7 @@ def card_start(
             board_id=board["id"],
             card=card_id,
             now=now,
+            defaults=True,
         )
         if refusal is not None:
             raise refusal

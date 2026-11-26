@@ -568,32 +568,87 @@ def _cap_count(conn, plan: Plan, now: str) -> int:
     return len(_live_cards(conn, plan.board, now, hold=True) | set(plan.doing))
 
 
+def _job_role_paths(conn, board: str, cards) -> dict:
+    """``{card: owned_paths}`` for the live jobs of ``cards`` whose role (the ``launch_role`` of
+    a split start, else the runner role) carries ``contract.owned_paths`` in the config the
+    job started under. A job without a config, with an unreadable one or a role without
+    paths has no entry: it holds the default contract."""
+    found, configs = {}, {}
+    ids = sorted(cards)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        for job in conn.execute(
+            "SELECT * FROM runner_jobs "
+            "WHERE board_slug=? AND config_version IS NOT NULL AND task_number IN "
+            f"({','.join('?' * len(chunk))}) AND (state IN "
+            "('queued','leased','starting','uncertain','started')) ORDER BY id",
+            (board, *chunk),
+        ):
+            key = (job["config_version"], job["config_sha256"])
+            if key not in configs:
+                stored = conn.execute(
+                    "SELECT * FROM orch_configs WHERE board=? AND version=?",
+                    (board, job["config_version"]),
+                ).fetchone()
+                try:
+                    if stored is None or stored["sha256"] != job["config_sha256"]:
+                        raise ValueError
+                    configs[key] = orch_store._checked_config(orch_store._version(stored))
+                except Exception:  # an unreadable config holds the default contract
+                    configs[key] = None
+            config = configs[key]
+            launched = job["launch_role"] if "launch_role" in job.keys() else None
+            role = config.roles.get(launched or config.runner.role) if config else None
+            owned = (role.contract or {}).get("owned_paths") if role is not None else None
+            if owned:
+                found[job["task_number"]] = list(owned)
+            else:
+                found.pop(job["task_number"], None)
+    return found
+
+
 def contract_refusal(
-    conn, *, workspace_dir, board_slug: str, board_id: int, card: int, now: str, paths=None
+    conn,
+    *,
+    workspace_dir,
+    board_slug: str,
+    board_id: int,
+    card: int,
+    now: str,
+    paths=None,
+    role_paths=None,
+    defaults: bool = False,
 ) -> StartRefused | None:
-    """``path_overlap`` when ``card`` declares a path contract that overlaps the contract
-    of another card of the board that holds a start: a runner job that has not failed or
-    been cancelled (a started job counts whatever its age, because nothing ends it) or
-    ``doing`` with a ``conn:`` assignee. Call it inside the runner write transaction
-    (``conn``): the jobs, the doing cards and every contract are read there. A running
-    card's paths are read as they are now, so clearing them releases the card. An
-    unreadable stored contract counts as ``**``. A card with no contract, or running next
-    to cards with none, is never refused; a comparison past the work budget refuses
-    (``path_contract_too_large``) rather than hold the lock. A ``doing`` claim held by a
-    person (``user:``) does not hold a start. ``paths`` checks a contract that is about to be
-    stored (a running card that gains globs) instead of the one stored for ``card``. ``conn``
-    is None when the workspace has no runner database: there are no jobs then, so only
-    ``doing`` claims count."""
+    """``path_overlap`` when ``card``'s path contract overlaps the contract of another card
+    of the board that holds a start: a runner job that has not failed or been cancelled (a
+    started job counts whatever its age, because nothing ends it) or ``doing`` with a
+    ``conn:`` assignee. Call it inside the runner write transaction (``conn``): the jobs,
+    the doing cards and every contract are read there. A running card's paths are read as
+    they are now, so clearing them releases the card. An unreadable stored contract counts
+    as ``**``. A comparison past the work budget refuses (``path_contract_too_large``)
+    rather than hold the lock. A ``doing`` claim held by a person (``user:``) does not hold
+    a start. ``paths`` checks a contract that is about to be stored (a running card that
+    gains globs) instead of the one stored for ``card``. ``conn`` is None when the workspace
+    has no runner database: there are no jobs then, so only ``doing`` claims count.
+
+    A card's contract is its own paths, else ``role_paths`` (the owned paths of its role).
+    ``defaults`` (a start, not an edit) gives a card with neither the default contract, the
+    whole repo (``**``), when the card has a repo: it waits for every running card of that
+    repo, and a running card without a contract of its own holds ``**`` against it. A card
+    without a repo has none to hold and keeps the old rule: no contract, no refusal."""
     from commonplace.projects import orchestration as orch
 
     live = set() if conn is None else _live_cards(conn, board_slug, now, hold=False)
     with orch.board_read(workspace_dir) as boards:
+        row = boards.execute("SELECT paths, repo FROM tasks WHERE id=?", (card,)).fetchone()
+        repo = (row["repo"] or "") if row is not None else ""
         if paths is not None:
-            mine = list(paths)
+            own = list(paths)
         else:
-            row = boards.execute("SELECT paths FROM tasks WHERE id=?", (card,)).fetchone()
-            mine = contracts.parse(row["paths"] if row is not None else None)
-        if mine is None:
+            own = contracts.parse(row["paths"] if row is not None else None)
+        mine = contracts.effective_paths(own, role_paths)
+        default_mine = not mine and defaults and bool(repo)
+        if default_mine:
             mine = list(contracts.ANY)
         if not mine:
             return None
@@ -606,17 +661,24 @@ def contract_refusal(
             )
         }
         running.discard(card)
+        job_paths = {} if conn is None else _job_role_paths(conn, board_slug, live & running)
         ids, stored = sorted(running), []
         for start in range(0, len(ids), 500):
             chunk = ids[start : start + 500]
-            stored += [
-                (r["id"], r["paths"])
-                for r in boards.execute(
-                    "SELECT id, paths FROM tasks WHERE paths IS NOT NULL AND id IN "
-                    f"({','.join('?' * len(chunk))}) ORDER BY id",
-                    chunk,
-                )
-            ]
+            for r in boards.execute(
+                "SELECT id, paths, repo FROM tasks WHERE id IN "
+                f"({','.join('?' * len(chunk))}) ORDER BY id",
+                chunk,
+            ):
+                globs = contracts.parse(r["paths"])
+                same = not (repo and r["repo"] and r["repo"] != repo)
+                if globs is None or globs:  # a contract of its own (an unreadable one is **)
+                    if same or not default_mine:
+                        stored.append((r["id"], r["paths"]))
+                elif r["id"] in job_paths:  # a job runs with its own role's paths
+                    stored.append((r["id"], json.dumps(job_paths[r["id"]])))
+                elif defaults and repo and r["repo"] == repo:  # the default contract: **
+                    stored.append((r["id"], json.dumps(list(contracts.ANY))))
         stored.sort(key=lambda item: item[0])
     try:
         found = contracts.first_overlap_running(mine, stored, contracts.Budget())
@@ -635,9 +697,18 @@ def contract_refusal(
     if found is None:
         return None
     other, globs, pair = found
-    head = (
-        f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of running card #{other}. "
-    )
+    if default_mine:
+        head = (
+            f"card #{card} declares no path contract, so it holds the whole repo, which "
+            f"overlaps {pair[1]!r} of running card #{other}. "
+        )
+        advice = f"; declare paths on #{card} (task_update paths=[...]) to run beside #{other}"
+    else:
+        head = (
+            f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of running "
+            f"card #{other}. "
+        )
+        advice = ""
     if other in live:
         how = (
             f"#{other} holds its contract while its job exists (a started job never ends): "
@@ -650,7 +721,14 @@ def contract_refusal(
             f"#{other} is claimed by its holder: start #{card} after the holder finishes or "
             f"releases #{other}, or narrow #{card}'s paths"
         )
-    return StartRefused("path_overlap", head + how, card=other, paths=mine, other_paths=globs)
+    return StartRefused(
+        "path_overlap",
+        f"{head}{how}{advice} (blocked_by #{other})",
+        card=other,
+        blocked_by=other,
+        paths=mine,
+        other_paths=globs,
+    )
 
 
 def _job(conn, job_id):
@@ -796,6 +874,8 @@ def _fenced(
         board_id=plan.board_id,
         card=plan.card,
         now=now,
+        role_paths=(plan.role.contract or {}).get("owned_paths"),
+        defaults=True,
     )
     if overlap is not None:
         raise overlap

@@ -545,3 +545,61 @@ def test_live_cards_needs_an_explicit_hold():
     wide = [f"s{i}/{alternatives}/x" for i in range(32)]
     with pytest.raises(contracts.TooLarge):
         contracts.first_overlap(wide, wide, contracts.Budget())
+
+
+def test_normalize_contract_keeps_only_what_is_set():
+    assert contracts.normalize_contract({}) == {}
+    assert contracts.normalize_contract(
+        {"mission": " Ship it ", "owned_paths": ["./a/", "a", "b/*.py"], "allowed_tools": ["Read"]}
+    ) == {"mission": "Ship it", "owned_paths": ["a", "b/*.py"], "allowed_tools": ["Read"]}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        "x",
+        {"mission": ""},
+        {"mission": 1},
+        {"extra": "x"},
+        {"allowed_tools": "x"},
+        {"allowed_tools": [1]},
+        {"inputs": ["x"] * (contracts.MAX_CONTRACT_ITEMS + 1)},
+        {"test_commands": ["x" * (contracts.MAX_CONTRACT_ITEM_LENGTH + 1)]},
+        {"mission": "x" * (contracts.MAX_CONTRACT_TEXT + 1)},
+        {"escalation": "bad\x07"},
+        {"owned_paths": "src"},
+        {"owned_paths": ["/abs"]},
+    ],
+)
+def test_normalize_contract_refuses_malformed_values(bad):
+    with pytest.raises(ToolError, match="contract|path"):
+        contracts.normalize_contract(bad)
+
+
+def test_split_contract_args_maps_owned_paths_onto_paths():
+    args = contracts.split_contract_args({"contract": {"mission": "m", "owned_paths": ["a/"]}})
+    assert args == {"paths": ["a"], "contract": {"mission": "m"}}
+    assert contracts.split_contract_args({"paths": ["a"]}) == {"paths": ["a"]}
+    assert contracts.split_contract_args({"paths": ["a/"], "contract": {"owned_paths": ["a"]}}) == {
+        "paths": ["a"],
+        "contract": {},
+    }
+    with pytest.raises(ToolError, match="paths"):
+        contracts.split_contract_args({"paths": ["a"], "contract": {"owned_paths": ["b"]}})
+
+
+def test_public_contract_joins_the_stored_fields_and_the_paths():
+    assert contracts.public_contract(None, None) == {}
+    assert contracts.public_contract('{"mission": "m"}', '["a"]') == {
+        "mission": "m",
+        "owned_paths": ["a"],
+    }
+    assert contracts.public_contract("not json", "[]") == {}
+
+
+def test_effective_paths_prefer_the_card_then_the_role():
+    assert contracts.effective_paths(["a"], ["r"]) == ["a"]
+    assert contracts.effective_paths([], ["r"]) == ["r"]
+    assert contracts.effective_paths([], None) == []
+    assert contracts.effective_paths(None, ["r"]) == list(contracts.ANY)  # unreadable: **

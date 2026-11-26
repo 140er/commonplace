@@ -25,6 +25,27 @@ logger = logging.getLogger(__name__)
 STRING = {"type": "string"}
 TASK = {"type": ["string", "integer"]}
 ARRAY = {"type": "array", "items": STRING}
+PATHS = {
+    "type": "array",
+    "items": STRING,
+    "maxItems": 32,
+    "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together; a card without paths holds the whole repo.",
+}
+_LIST = {"type": "array", "items": STRING, "maxItems": 32}
+CONTRACT = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": "Card contract, every field optional: mission, allowed_tools, owned_paths (same as paths), inputs, test_commands, handoff_evidence, escalation. Replaces the stored fields; owned_paths [] clears the paths. No contract means the whole repo.",
+    "properties": {
+        "mission": STRING,
+        "escalation": STRING,
+        "allowed_tools": _LIST,
+        "inputs": _LIST,
+        "test_commands": _LIST,
+        "handoff_evidence": _LIST,
+        "owned_paths": PATHS,
+    },
+}
 STATUS = {"type": "string", "enum": ["backlog", "todo", "doing", "review", "done"]}
 PRIORITY = {
     "type": "string",
@@ -106,6 +127,9 @@ def show(c):
         rows.extend(decision_blocks.lines(c))
     if c.get("paths"):
         rows.append("paths: " + quoted(c["paths"]))
+    for key, value in (c.get("contract") or {}).items():
+        if key != "owned_paths":
+            rows.append(f"contract {key}: " + quoted(value))
     for key, label in (
         ("repo", "repo"),
         ("branch", "branch"),
@@ -537,12 +561,8 @@ def register_tools():
             "priority": PRIORITY,
             "reviewer": REVIEWER,
             "labels": ARRAY,
-            "paths": {
-                "type": "array",
-                "items": STRING,
-                "maxItems": 32,
-                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
-            },
+            "paths": PATHS,
+            "contract": CONTRACT,
             "blocked_by": {
                 "type": "array",
                 "items": {"type": "integer", "minimum": 1},
@@ -595,6 +615,8 @@ def register_tools():
             },
             "reviewer": REVIEWER,
             "labels": ARRAY,
+            "paths": PATHS,
+            "contract": CONTRACT,
             "blocked_by": {
                 "type": "array",
                 "items": {"type": "integer", "minimum": 1},
