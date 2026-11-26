@@ -21,7 +21,7 @@ def test_matching_agent_takes_and_other_type_is_refused_with_reason(hub, env):
     other = create(hub, cookie, task_type="design")
     assert worker.task_take_next(task=mine["number"])["assignee"] == agent.actor
     message = reason(lambda: worker.task_take_next(task=other["number"]))
-    assert "'design'" in message and "Settings > Agents" in message
+    assert "'design'" in message and "Settings > Connected apps" in message
     assert worker.task_show(other["number"])["assignee"] is None
 
 
@@ -30,7 +30,7 @@ def test_refusal_covers_start_by_status_and_names_the_type(hub, env):
     worker = service(hub, agent)
     typed = create(hub, cookie, task_type="review")
     message = reason(lambda: worker.task_update(typed["number"], status="doing"))
-    assert "'review'" in message and "Settings > Agents" in message
+    assert "'review'" in message and "Settings > Connected apps" in message
 
 
 def test_automatic_take_skips_other_types_and_untyped_cards_are_unchanged(hub, env):
