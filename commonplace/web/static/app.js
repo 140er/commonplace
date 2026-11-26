@@ -481,8 +481,14 @@ function navigation() {
   // It closes when the route changes (a link in it, the palette, back), so it never stays open over the page it led to.
   const accountOpen = boardNav.querySelector?.(".user-menu")?.open === true && state.accountAt === state.base;
   state.accountAt = state.base;
-  boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  if (accountOpen) root.querySelector("#board-nav .user-menu")?.setAttribute("open", "");
+  // An unchanged rail is left in place, so an open menu and its buttons are not replaced under the pointer.
+  const railHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  if (boardNav !== state.railNode || railHTML !== state.railHTML) {
+    boardNav.outerHTML = railHTML;
+    state.railHTML = railHTML;
+    state.railNode = root.querySelector("#board-nav");
+    if (accountOpen) state.railNode?.querySelector?.(".user-menu")?.setAttribute("open", "");
+  } else if (!accountOpen) boardNav.querySelector?.(".user-menu")?.removeAttribute?.("open");
   root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
