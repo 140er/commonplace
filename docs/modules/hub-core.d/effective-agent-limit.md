@@ -1,0 +1,4 @@
+- **Owns:** The per-project cap fields of the instance admin space inventory in `commonplace/instance_admin.py`, now read from `orchestration.resolve` (the separate `accepted_cap` reader is gone) with `accepted_config_applies` added.
+- **Promises:** With the workspace switch off, an accepted config's limit now counts in `effective_max_agents` and `cap_source`, as at runtime; no limit is loosened.
+- **How it fails:** Unchanged: an unreadable runner store reads as no accepted config.
+- **Tests:** `tests/test_effective_agent_limit_671.py`, `tests/test_instance_admin_read.py`.

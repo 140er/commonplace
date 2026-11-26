@@ -674,7 +674,6 @@ def runtime(gateway, workspace_id, context, after):
 
 
 def project_limits(gateway, workspace_id, context, after):
-    from commonplace.orch import store
     from commonplace.projects import limits, orchestration
 
     with read_control(gateway.db, context) as conn:
@@ -691,15 +690,14 @@ def project_limits(gateway, workspace_id, context, after):
     ):
         for board in board_rows(bc, context):
             context.remaining()
-            configured = limits.get(bc, board["id"])["max_agents"]
-            accepted = None
+            found = orchestration.resolve(
+                bc,
+                rc if has_table(rc, context, "orch_configs") else None,
+                board["id"],
+                board["slug"],
+                on=on,
+            )
             if on:
-                if has_table(rc, context, "orch_configs"):
-                    version = store.accepted_in(rc, board["slug"])
-                    if version is not None:
-                        config = version.config()
-                        if config.runner is not None:
-                            accepted = config.max_agents
                 used = orchestration.usage(
                     bc,
                     rc,
@@ -709,17 +707,20 @@ def project_limits(gateway, workspace_id, context, after):
                     now=control_db._iso(context.now),
                     allow_missing_runner=True,
                 )
-                cap, count = used.cap, used.used
+                count = used.used
             else:
-                cap, count = configured, len(limits.working(bc, board["id"]))
+                count = len(limits.working(bc, board["id"]))
             projects.append(
                 {
                     "id": board["id"],
                     "slug": slug(board["slug"]),
                     "name": display(board["name"]),
-                    "configured_max_agents": configured,
-                    "accepted_config_max_agents": accepted,
-                    "effective_max_agents": cap,
+                    "configured_max_agents": found.configured,
+                    "accepted_config_max_agents": found.config,
+                    "accepted_config_version": found.config_version,
+                    "accepted_config_applies": found.config_applies,
+                    "effective_max_agents": found.effective,
+                    "limit_source": found.source,
                     "used": count,
                     "counting_mode": "orchestration_slots" if on else "distinct_doing_agents",
                 }

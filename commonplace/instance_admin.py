@@ -495,21 +495,15 @@ def space_inventory(gateway, context, conn, target, binding, query):
         with admin.read_store(gateway, target, "runner.sqlite3", context) as runner:
 
             def project(r):
-                from commonplace.projects import limits as project_limits, orchestration
+                from commonplace.projects import orchestration
 
-                configured = project_limits.get(boards, r["id"])["max_agents"]
-                accepted = None
-                if on and admin.has_table(runner, context, "orch_configs"):
-                    accepted = accepted_cap(runner, context, r["slug"])
-                effective = (
-                    accepted
-                    if configured is None
-                    else min(configured, accepted)
-                    if accepted is not None
-                    else configured
+                found = orchestration.resolve(
+                    boards,
+                    runner if admin.has_table(runner, context, "orch_configs") else None,
+                    r["id"],
+                    r["slug"],
+                    on=on,
                 )
-                if effective is None and on:
-                    effective = orchestration.DEFAULT_MAX_AGENTS
                 return {
                     "id": r["id"],
                     "slug": admin.slug(r["slug"]),
@@ -519,16 +513,11 @@ def space_inventory(gateway, context, conn, target, binding, query):
                     "coordinator": safe_actor(r["coordinator"]),
                     "done_needs_review": bool(r["done_needs_review"]),
                     "claim_minutes": r["claim_minutes"],
-                    "configured_max_agents": configured,
-                    "accepted_config_max_agents": accepted,
-                    "effective_max_agents": effective,
-                    "cap_source": "accepted_config"
-                    if accepted is not None
-                    else "project"
-                    if configured is not None
-                    else "default"
-                    if on
-                    else "unlimited",
+                    "configured_max_agents": found.configured,
+                    "accepted_config_max_agents": found.config,
+                    "accepted_config_applies": found.config_applies,
+                    "effective_max_agents": found.effective,
+                    "cap_source": found.source,
                 }
 
             result = page(gateway, context, boards, binding, query, sql, (), "page_key", project)
@@ -551,19 +540,3 @@ def safe_actor(value):
         )
         else None
     )
-
-
-def accepted_cap(conn, context, slug):
-    # The existing accepted configuration is TOML, so parse it using its shared reader.
-    from commonplace.orch import schema
-
-    context.remaining()
-    row = admin.select(
-        conn,
-        context,
-        "SELECT body FROM orch_configs WHERE board=? AND channel='live' AND status='accepted'",
-        (slug,),
-    ).fetchone()
-    config = schema.parse(row["body"]) if row else None
-    context.remaining()
-    return config.max_agents if config and config.runner is not None else None

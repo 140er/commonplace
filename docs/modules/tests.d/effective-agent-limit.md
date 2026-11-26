@@ -1,0 +1,2 @@
+- **Promises:** The effective agent limit is pinned in one file: claims with the workspace switch off obey an accepted config's limit, Admin shows the config's number and the number in effect, a config without a runner section is shown but does not bind, and Admin, project view and the admission check read the same resolver.
+- **Tests:** `tests/test_effective_agent_limit_671.py`; its project-settings wording is covered by the `limit_summary` case of `tests/workbench_project_settings.mjs`.

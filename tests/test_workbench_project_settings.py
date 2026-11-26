@@ -22,6 +22,7 @@ REDS = [
     "single_flight",
     "limits",
     "limits_failure",
+    "limit_summary",
     "phases",
     "settings_screen",
     "settings_pending_connections",
