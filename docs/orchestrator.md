@@ -51,13 +51,6 @@ topic = "build"
 model_role = "worker"
 workflow = "build-unit"
 prompt = '''Implement the card's plan unit; run fast checks.'''
-[roles.builder.contract]       # optional, every field optional
-mission = "Implement the card's plan unit"
-owned_paths = ["src/**", "tests/**"]   # default paths for cards of this role
-allowed_tools = ["Read", "Edit", "Bash"]
-test_commands = ["uv run pytest -q"]
-handoff_evidence = ["PR link", "test output"]
-escalation = "Ask the lead after two failed fix rounds."
 [workflows.card-pipeline]
 steps = ["planner", "builder"]
 [workflows.build-unit]
@@ -90,8 +83,7 @@ most 16 roles, and a prompt is at most 32 KiB.
 | runner role `harness`, `topic`, `model_role` | **Enforced.** `harness` must be `t3`; the topic passes the machine's grant checks; `model_role` is resolved once when the job is inserted, and the provider and model are stored on the job and sent as `modelSelection {instanceId: provider, model}`. An unresolved role refuses the start before insert. |
 | `runner.machine`, `runner.project`, `runner.runtime_mode` | **Enforced** through the machine's existing grant checks. |
 | `triggers` (`card.todo`, live), `limits.max_agents`, planner `connections` | **Enforced** (below). |
-| runner role `contract.owned_paths` | **Enforced** as the paths of a card that declares none (see Path contracts). |
-| other roles, `skills`, `mcps`, the other `contract` fields | **Advisory.** Rendered for sessions to read. |
+| other roles, `skills`, `mcps` | **Advisory.** Rendered for sessions to read. |
 | `[factory]` (optional) | `gate.required` is **enforced** on new `merge` steps; checks and batch cadence are **declared** for agents and tools to read (see Merge policy). |
 
 ### Area preview slice 1, preview-only
@@ -291,27 +283,9 @@ Inside it, in this order:
    card skips the add re-check), its holder may
    clear or narrow its own contract (the owner-only rule needs a runner job;
    globs it adds are checked against the other running cards),
-   and a `doing` claim held by a person does not hold a start.
-
-   **Contracts.** A card's contract is `paths` (its owned globs) plus optional
-   `mission`, `allowed_tools`, `inputs`, `test_commands`, `handoff_evidence` and
-   `escalation`. `task_add` and `task_update` take `paths`, or a `contract` object
-   whose `owned_paths` is the same list (naming different globs in both is refused);
-   `contract` replaces the stored text fields. Limits: 2,000 characters for the two
-   text fields, 32 entries of 500 characters for each list. `task_show` returns
-   `contract` (the set fields, `owned_paths` included); the column is added
-   in place and a card without one reads `{}`. A role may carry the same table
-   (`[roles.<name>.contract]`); the runner role's `owned_paths` are the paths of a card
-   that has none of its own, and a running job without paths of its own holds them.
-
-   **Default contract.** A start with no paths (and no role paths) holds the whole repo
-   (`**`) when the card has a repo, which cards of a repo-bound board get when they
-   are created: it is refused with `path_overlap` while another running card of
-   the board holds anything in that repo, and a running card without a contract
-   holds `**` against every later start. The refusal names the card it waits for
-   (`blocked_by`, in the details and the text). A card with no repo keeps the old
-   rule (no contract, no conflict); adding globs to a running card (the edit check)
-   compares only declared contracts.
+   and a `doing` claim held by a person does not hold a start. On a board bound to
+   a repo a card without a contract holds the whole repo (see the system design notes on
+   role and card contracts).
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
