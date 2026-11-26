@@ -100,10 +100,10 @@ test("no answer: local times, the reassurance line, restart as the primary actio
   const block = p.nodes.get("[data-chat-recovery]")?.innerHTML || "";
   assert.match(block, /No answer yet\./);
   assert.ok(block.includes(`It has not answered your message from ${local(sent)}.`), block);
-  assert.ok(block.includes(`Its agent was last active at ${local(active)}.`), "local time, not ISO");
+  assert.ok(block.includes(`Its bot was last active at ${local(active)}.`), "local time, not ISO");
   assert.doesNotMatch(block, /\d{4}-\d\d-\d\dT/, "no raw ISO timestamp");
   assert.match(block, /Your message is kept, and nothing changed on the board\./);
-  assert.match(block, /<a class="btn sm primary" href="#\/board\/atlas\/settings">Show how to restart the agent<\/a>/);
+  assert.match(block, /<a class="btn sm primary" href="#\/board\/atlas\/settings">Show how to restart the bot<\/a>/);
   assert.match(block, /<button class="btn sm" type="button" data-chat-ask-again>Ask again<\/button>/);
   assert.equal(lines.at(-1), `Connected, not answering since ${local(sent)}`);
   p.controller.destroy();
@@ -118,7 +118,7 @@ test("a connected orchestrator reads 'Orchestrator connected'", async (t) => {
   const lines = [];
   p.controller.watchHeader((text) => lines.push(text));
   await p.controller.show("atlas", { name: "Atlas" }); await settle();
-  assert.equal(lines.at(-1), "Coworker connected");
+  assert.equal(lines.at(-1), "Bot connected");
   p.controller.destroy();
 });
 

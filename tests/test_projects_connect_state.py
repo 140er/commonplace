@@ -37,10 +37,10 @@ const project = {board: 'alpha', name: 'Alpha', can_configure: true,
   main: {name: 'orchestrator:alpha', connected: true, seen: false, status: 'unused', connectable: true}};
 const unused = visible(ui.mainHTML(project, e));
 assert.doesNotMatch(unused, /\bconnected\b/i, `unused token reads as connected: ${unused}`);
-assert.match(unused, /no agent has used it yet/i, unused);
+assert.match(unused, /no app has used it yet/i, unused);
 const seen = visible(ui.mainHTML({...project, main: {...project.main, seen: true, status: 'working'}}, e));
 assert.match(seen, /\bconnected\b/i, seen);
-assert.doesNotMatch(seen, /no agent has used it yet/i, seen);
+assert.doesNotMatch(seen, /no app has used it yet/i, seen);
 const none = visible(ui.mainHTML({...project, main: {...project.main, connected: false}}, e));
 assert.match(none, /not connected/i, none);
 """)

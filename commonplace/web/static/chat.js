@@ -5,8 +5,8 @@ import { liveHTML, liveLine, livePending } from "./chatlive.js";
 
 export const CHAT_COPY = Object.freeze({
   title: "Chat", loading: "Loading chat…", unavailable: "Chat is unavailable. Try again.",
-  noProjects: "Choose a project to chat with its Coworker.",
-  empty: "Write what you need. The Coworker answers here and turns the work into cards marked “From chat” on the board.",
+  noProjects: "Choose a project to chat with its bot.",
+  empty: "Write what you need. The bot answers here and turns the work into cards marked “From chat” on the board.",
   placeholder: "Ask for something…", send: "Send", basic: "Basic replies (no model)",
   model: "Answers by {provider}/{model}", statusPrivate: "status private", decisions: "Decisions",
   runnerAnswer: "via your {cli} login", runnerMode: "Answers via your {cli} login",
@@ -19,7 +19,7 @@ const marked = (value, e) => e(value).replace(/\[(?:redacted|omitted):[a-z_]+\]/
 const validId = (number) => Number.isSafeInteger(number) && number > 0;
 const merge = (rows = [], added = []) => [...new Map([...rows, ...added].map((row) => [row.id, row])).values()].sort((a, b) => a.id - b.id);
 const writer = (ref, me, board) => ref === `user:${me?.user}` ? "You" : ref && ref === board.coordinator
-  ? `${board.name || board.slug} Coworker` : `${actor(ref)}${ref?.startsWith("conn:") ? " (agent)" : ""}`;
+  ? `${board.name || board.slug} bot` : `${actor(ref)}${ref?.startsWith("conn:") ? " (connected app)" : ""}`;
 const localSetting = (front) => {
   if (front?.provider !== "openai_compatible") return false;
   try {
@@ -39,9 +39,9 @@ const clock = (at) => {
 const words = (...parts) => parts.filter(Boolean).join(" ");
 // The phrase a card row's Details strip reads after "Opened from {Project} chat:".
 function messageSource(message, me, board) {
-  if (message.actor && message.actor === board.coordinator) return words("the Coworker's", clock(message.at), "answer");
+  if (message.actor && message.actor === board.coordinator) return words("the bot's", clock(message.at), "answer");
   if (message.actor === `user:${me?.user}`) return words("your", clock(message.at), "message");
-  return words(`${writer(message.actor, me, board).replace(/ \(agent\)$/, "")}'s`, clock(message.at), "message");
+  return words(`${writer(message.actor, me, board).replace(/ \(connected app\)$/, "")}'s`, clock(message.at), "message");
 }
 
 function cardRows(cards, heading, key, board, e, src = "", note = "select one to open its details") {
@@ -87,11 +87,11 @@ export function chatHTML(page, me, e) {
         const referenced = reply.kind === "answer" ? cards.filter((card) => refs.has(card.number)) : [];
         // Never the model id: the strip names the kind of quick reply only.
         const src = words("the", clock(reply.at), reply.kind === "answer" ? `quick reply (${quickKind(reply.model)})` : "delivery update");
-        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b>${clock(reply.at) ? ` <time datetime="${e(reply.at)}">${e(clock(reply.at))}</time>` : ""}</div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the Coworker.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e, src)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}" data-src="${e(src)}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
+        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b>${clock(reply.at) ? ` <time datetime="${e(reply.at)}">${e(clock(reply.at))}</time>` : ""}</div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the bot.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e, src)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}" data-src="${e(src)}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
       }).join("")}
       ${(hosted.get(message.id) || []).map((request) => cardRows(cards.filter((card) => card.message_id === request), "From this request · on the board now", `request-${request}`, board, e, messageSource(message, me, board), `${cards.filter((card) => card.message_id === request).length} new`)).join("")}
     </li>`;
-  }).join("") || `<li class="chat-empty"><h3>Ask the Coworker for something</h3><p>${e(CHAT_COPY.empty)}</p><p>Try asking</p><div class="chat-suggestions">${["What is blocked?", "Plan the next launch", "Split a card into smaller cards"].map((text) => `<button type="button" data-chat-suggest="${e(text)}">${e(text)}</button>`).join("")}</div></li>`;
+  }).join("") || `<li class="chat-empty"><h3>Ask the bot for something</h3><p>${e(CHAT_COPY.empty)}</p><p>Try asking</p><div class="chat-suggestions">${["What is blocked?", "Plan the next launch", "Split a card into smaller cards"].map((text) => `<button type="button" data-chat-suggest="${e(text)}">${e(text)}</button>`).join("")}</div></li>`;
 }
 
 export function statusHTML(status, e) {
@@ -291,8 +291,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
       const hasOrchestrator = !!(state.status?.orchestrator || project().coordinator);
       if (state.derived?.state === "no_answer") text = `Connected, not answering since ${clock(request?.at) || "earlier"}`;
-      else if (state.derived?.state === "waiting" || !hasOrchestrator) text = "No Coworker yet";
-      else text = "Coworker connected";
+      else if (state.derived?.state === "waiting" || !hasOrchestrator) text = "No bot yet";
+      else text = "Bot connected";
       // The server's delivery state of the newest message says more than "connected".
       if (state.derived?.state !== "no_answer") text = liveLine(state.page.live) || text;
     }
@@ -354,17 +354,17 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     const recovery = state.derived?.state;
     const lastActive = clock(state.derived?.last_seen) || state.derived?.last_seen;
     const recoveryText = recovery === "no_answer"
-      ? `It has not answered your message from ${clock(request?.at) || "earlier"}.${lastActive ? ` Its agent was last active at ${lastActive}.` : ""} ${CHAT_COPY.kept}`
-      : lastActive ? `Agent last active at ${lastActive}.` : "";
+      ? `It has not answered your message from ${clock(request?.at) || "earlier"}.${lastActive ? ` Its bot was last active at ${lastActive}.` : ""} ${CHAT_COPY.kept}`
+      : lastActive ? `Bot last active at ${lastActive}.` : "";
     const acts = recovery === "no_answer"
-      ? `<a class="btn sm primary" href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button class="btn sm" type="button" data-chat-ask-again>Ask again</button>`
+      ? `<a class="btn sm primary" href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the bot</a><button class="btn sm" type="button" data-chat-ask-again>Ask again</button>`
       : '<p>Connect an app in Settings. Your message is delivered when it connects.</p>';
     // With a live delivery state from the server, the timed "Working on it…" guess is not shown,
-    // and "Waiting for an agent" only while the server also finds no agent.
+    // and "Waiting for a bot" only while the server also finds no agent.
     const live = state.page.live?.message_id ? state.page.live : null;
     const recovering = !!request && (live ? recovery === "no_answer" || (recovery === "waiting" && live.state === "no_agent") : ["waiting", "working", "no_answer"].includes(recovery));
     put("[data-chat-live]", recovering ? "" : liveHTML(live, state.me, e));
-    put("[data-chat-recovery]", recovering ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${recoveryText ? `<p>${e(recoveryText)}</p>` : ""}${recovery !== "working" ? `<div class="chat-acts">${acts}<button class="btn sm" type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
+    put("[data-chat-recovery]", recovering ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for a bot" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${recoveryText ? `<p>${e(recoveryText)}</p>` : ""}${recovery !== "working" ? `<div class="chat-acts">${acts}<button class="btn sm" type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
     headerLine();
     const form = host.querySelector(".chat-compose");
     // While an earlier message is unsent, the composer keeps its text but does not send.

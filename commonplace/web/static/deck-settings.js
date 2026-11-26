@@ -72,14 +72,14 @@ export const policyPresentation = {
     if (top < edge || top > edge + frame.clientHeight / 2) frame.scrollBy({ top: top - edge - 12 });
   },
   filterLabel:'Search permissions', placeholder:'Search, e.g. notifications or cards',
-  introduction: () => 'Choose what Bots may do without asking. Ask first puts the action in Needs me. Off refuses it. This does not limit what you do yourself.',
+  introduction: () => 'Choose what Bots may do without asking. Ask first puts the action in Waiting on you. Off refuses it. This does not limit what you do yourself.',
 };
 
 export function arrangeSettings(box, { owner = false } = {}) {
   // Move existing sections with their forms intact; no setting or event handler is replaced.
   const phone = box.querySelector('#phone-push');
   const connections = box.querySelector('.agents-settings') || [...(box.querySelectorAll?.('.settings-section') || [])]
-    .find(section => section.querySelector('h2')?.textContent === 'Agents');
+    .find(section => section.querySelector('h2')?.textContent === 'Connected apps');
   if (connections) {
     connections.id = 'deck-connections';
     const heading = connections.querySelector('h2');

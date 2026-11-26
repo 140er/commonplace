@@ -209,7 +209,7 @@ const cases = {
       app.value = "codex"; app.onchange();
       await dialog.querySelector("[data-project-copy-setup]").click();
       await tick(20);
-      assert.equal(clipboard.at(-1), clientConfig("codex", result.mcp_url, result.token), "the chosen agent app's format is copied");
+      assert.equal(clipboard.at(-1), clientConfig("codex", result.mcp_url, result.token), "the chosen connected app's format is copied");
       assert.ok(!logged.some((line) => line.includes(result.token)), "the credential is never logged");
       dialog.dispatch("cancel");
     } finally { globalThis.setTimeout = realTimeout; button.remove(); }
@@ -291,7 +291,7 @@ const cases = {
       assert.deepEqual(calls.filter((c) => c.method === "POST").map((c) => c.path), ["/api/projects/ledger/orchestrator/connect"]);
       assert.equal(dialog.querySelector("[data-project-token]").value, "synthetic-token");
       assert.ok(doc.activeElement.matches("[data-project-token]"), "the setup has focus");
-      assert.match(dialog.textContent, /Waiting for the agent/);
+      assert.match(dialog.textContent, /Waiting for the app/);
       dialog.dispatch("cancel");
       assert.equal(openDialog(), null);
       assert.equal(doc.activeElement, button);
@@ -320,7 +320,7 @@ const cases = {
     ui.showConnectResult(result, e, { api: async () => ({ ...project, main: { ...project.main, seen: true } }), path: "/api/projects/ledger", project, opener: button });
     await tick();
     const dialog = openDialog();
-    assert.match(dialog.querySelector("#project-connect-title").textContent, /Coworker connected/);
+    assert.match(dialog.querySelector("#project-connect-title").textContent, /Bot connected/);
     assert.ok(doc.activeElement.matches(".btn.primary") && dialog.contains(doc.activeElement), `focus: ${doc.activeElement.tagName}`);
     dialog.dispatch("cancel");
     assert.equal(openDialog(), null);
@@ -367,9 +367,9 @@ const cases = {
     await tick();
     const dialog = doc.querySelector('[aria-modal="true"], dialog[open]');
     assert.ok(dialog, "a drawn dialog is open");
-    assert.match(dialog.textContent, /Disconnect Ledger Coworker\?/);
+    assert.match(dialog.textContent, /Disconnect Ledger bot\?/);
     assert.match(dialog.textContent, /What happens:/);
-    assert.match(dialog.textContent, /It is the only agent in Ledger/);
+    assert.match(dialog.textContent, /It is the only connected app in Ledger/);
     assert.ok(doc.activeElement.matches('[data-confirm="cancel"]'), "Cancel has focus");
     assertTrapped(dialog);
     assert.equal(doc.key("Escape").defaultPrevented, true, "the dialog takes Escape");

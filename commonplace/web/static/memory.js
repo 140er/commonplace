@@ -41,8 +41,8 @@ export function memoryAuthor(result, board = {}) {
   let ref = result.actor || result.author;
   if (ref && result.kind === "note" && !/^(conn:|user:)/.test(ref)) ref = `conn:${ref}`;
   if (!ref) return "";
-  if (ref === board.coordinator) return `${name(board)} Coworker`;
-  return String(ref).startsWith("conn:") ? `${actor(ref)} (agent)` : actor(ref);
+  if (ref === board.coordinator) return `${name(board)} bot`;
+  return String(ref).startsWith("conn:") ? `${actor(ref)} (connected app)` : actor(ref);
 }
 
 export function sourceLabel(result, board = {}) {
@@ -186,7 +186,7 @@ export function renderMemory(state) {
     <div class="memory-import-entry"><button class="btn" data-memory-action="map">Map</button><button class="btn" data-memory-action="import">Import</button></div>
     ${note}
     <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
-    <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} Coworker`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
+    <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} bot`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
     ${state.errors?.length && !state.error && !busy ? sourcesWarning(state.errors, boards) : ""}
     ${busy ? retryLine(state) : ""}

@@ -98,7 +98,7 @@ assert.equal(button.disabled,false);
 const known = [
   [403, {code:'handoff_refused', error:'Card is reserved for another connection; the workspace owner can move it.'}, 'Only the workspace owner can remove this assignment.'],
   [403, {code:'handoff_refused', error:'This card came from a restricted connection and has not been released, so it cannot be handed off.'}, 'This card is still locked by the bot that made it. The owner can unlock it in the card, then try again.'],
-  [409, {current:{status:'doing',assignee:'conn:receiver'}}, 'receiver (agent) has started working on this card, so its assignment stays.'],
+  [409, {current:{status:'doing',assignee:'conn:receiver'}}, 'receiver (connected app) has started working on this card, so its assignment stays.'],
   [403, {code:'future_refusal',error:'<Unknown reason>'}, '&lt;Unknown reason&gt;'],
   [403, {code:'handoff_refused',error:'A new restriction.'}, 'A new restriction.'],
 ];

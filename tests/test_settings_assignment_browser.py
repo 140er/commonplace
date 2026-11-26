@@ -46,7 +46,7 @@ def test_common_settings_before_collapsed_advanced(browser, width):
         assert page.locator("#phone-push").bounding_box()["y"] < 550
         for label, target in [
             ("Notifications", "phone-push"),
-            ("Connections", "deck-connections"),
+            ("Connected apps", "deck-connections"),
             ("Appearance", "deck-appearance"),
         ]:
             page.locator("#deck-settings-nav").get_by_role("button", name=label, exact=True).click()

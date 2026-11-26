@@ -103,7 +103,7 @@ if (which === 'details-button') {
   assert.ok(app.includes('function askStrip('), 'Ask strip copy missing');
   run(slice('const hhmm =', 'function boardView()'));
   const approval = context.askStrip({ proposal_status: 'pending' }, { title: 'Send beta 0.9 to 40 testers?', hold: null });
-  assert.equal(approval.text, 'Approval · You are asking about Send beta 0.9 to 40 testers? Approve or decline it in Needs me.');
+  assert.equal(approval.text, 'Approval · You are asking about Send beta 0.9 to 40 testers? Approve or decline it in Waiting on you.');
   assert.equal(approval.backLabel, 'Back to the approval');
   const at = new Date(2026, 10, 5, 14, 7).toISOString();
   const released = context.askStrip({ proposal_status: 'approved' }, { title: 'Publish the privacy page', hold: { state: 'released', updated_at: at } });
@@ -115,7 +115,7 @@ if (which === 'details-button') {
   Object.assign(context, { consoleUI: null, openRestart: async (link) => { opened.push(link); } });
   run(slice('root.addEventListener("click",', 'root.addEventListener("submit",'));
   assert.equal(typeof handlers.click, 'function');
-  // "Show how to restart the agent" opens the restart steps, never the unknown settings route.
+  // "Show how to restart the bot" opens the restart steps, never the unknown settings route.
   const link = { href: '#/board/ledger/settings' };
   let prevented = 0;
   await handlers.click({ defaultPrevented: false, preventDefault() { prevented++; }, target: { closest: (s) => s.includes('.chat-recovery') ? link : null } });

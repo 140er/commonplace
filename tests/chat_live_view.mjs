@@ -127,11 +127,11 @@ test("delivery, working and the answer appear through the poll, with no reload",
   assert.equal(h.header.at(-1), "Message delivered");
   await h.poll();
   assert.match(h.region("[data-chat-live]"), /a1 is working on this/);
-  assert.equal(h.header.at(-1), "Coworker is working on your message");
+  assert.equal(h.header.at(-1), "Bot is working on your message");
   await h.poll();
   assert.equal(h.region("[data-chat-live]"), "");
   assert.ok(h.region(".chat-stream").includes("On it: card 7."));
-  assert.equal(h.header.at(-1), "Coworker connected");
+  assert.equal(h.header.at(-1), "Bot connected");
   assert.equal([...h.timers.values()].at(-1).delay, 2000);
   // Every later read continued from the pane's cursors: the page was never loaded again.
   assert.ok(h.reads.slice(1).every((path) => /\?after=\d+&replies_after=\d+$/.test(path)), h.reads.join(" "));
@@ -174,7 +174,7 @@ test("with a no-agent receipt the pane's own waiting block, with its actions, st
   page.reply_cursor = 1;
   const h = pane(t, [page, { ...page, messages: [], live: { ...page.live, state: "delivered", reason: "wake_sent", agent: "a1" } }]);
   await h.controller.show("work"); await settle();
-  assert.match(h.region("[data-chat-recovery]"), /Waiting for an agent.*Make it a card now/s);
+  assert.match(h.region("[data-chat-recovery]"), /Waiting for a bot.*Make it a card now/s);
   assert.equal(h.region("[data-chat-live]"), "");
   // An agent connects later: the old receipt no longer holds the pane in "waiting".
   await h.poll();

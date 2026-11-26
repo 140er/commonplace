@@ -62,22 +62,22 @@ async function pendingSettings(pending, fail = false) {
     const expected = pending.reduce((count, part) => count + (part === "/cards" ? 2 : 1), 0);
     assert.equal(resolvers.length, expected, "prerequisite requests must still be pending");
     const heading = host.querySelector("[data-project-heading]");
-    assert.match(heading.innerHTML || "", /Atlas Coworker/, "the card must render before prerequisite reads settle");
+    assert.match(heading.innerHTML || "", /Atlas bot/, "the card must render before prerequisite reads settle");
     assert.match(heading.innerHTML, /Connect app/);
     await click(host, "[data-project-connect]");
     assert.ok(calls.some(call => call.path.endsWith("/orchestrator/connect") && call.method === "POST"), "Connect must work while sections load");
     assert.match(node(host, "[data-project-connect-status]").textContent, /Could not connect/);
-    if (pending.includes("connections")) assert.match(host.querySelector("[data-project-agents]").innerHTML, /Loading agents/);
+    if (pending.includes("connections")) assert.match(host.querySelector("[data-project-agents]").innerHTML, /Loading connected apps/);
     if (pending.includes("chat-settings")) assert.match(host.querySelector("[data-project-chat]").innerHTML, /Loading chat settings/);
   } finally {
     resolvers.forEach(resolve => resolve());
     await mounting;
   }
-  assert.doesNotMatch(host.querySelector("[data-project-agents]").innerHTML, /Loading agents/);
-  assert.match(host.querySelector("[data-project-heading]").innerHTML, /Atlas Coworker/);
+  assert.doesNotMatch(host.querySelector("[data-project-agents]").innerHTML, /Loading connected apps/);
+  assert.match(host.querySelector("[data-project-heading]").innerHTML, /Atlas bot/);
   if (fail) {
     assert.match(host.querySelector("[data-project-chat]").innerHTML, /Could not load chat settings/);
-    assert.match(host.querySelector("[data-project-agents]").innerHTML, /Could not load the agent list/);
+    assert.match(host.querySelector("[data-project-agents]").innerHTML, /Could not load the connected app list/);
     assert.doesNotMatch(host.querySelector("[data-project-chat]").innerHTML, /private failure/);
     assert.doesNotMatch(host.querySelector("[data-project-agents]").innerHTML, /private failure/);
     assert.equal(node(host, "[data-project-connect]").disabled, false);
@@ -134,7 +134,7 @@ const cases = {
   },
   async phone_escape() {
     const bind = exists("bindSettingsNavigation");
-    for (const [origin, label] of [["#/board/atlas", "Back to board"], ["#/board/atlas/chat", "Back to the chat"], ["#/needs", "Back to Needs me"]]) {
+    for (const [origin, label] of [["#/board/atlas", "Back to board"], ["#/board/atlas/chat", "Back to the chat"], ["#/needs", "Back to Waiting on you"]]) {
       const listeners = new Map(), doc = {addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name)};
       const host = new Host(); host.innerHTML = '<a data-project-back></a>'; let returned = null;
       const stop = bind(host, {slug: "atlas", origin, document: doc, onBack: value => returned = value});
@@ -212,17 +212,17 @@ const cases = {
   },
   async phases() {
     const render = exists("connectPhaseHTML");
-    assert.match(render("waiting", project, e), /Waiting for the agent/);
-    assert.match(render("done", project, e), /Delivered to the Coworker/);
+    assert.match(render("waiting", project, e), /Waiting for the app/);
+    assert.match(render("done", project, e), /Delivered to the bot/);
     const failed = render("failed", project, e); assert.match(failed, /Try again/); assert.match(failed, /120/);
   },
   async settings_screen() {
     const render = exists("projectSettingsHTML");
     const html = render(project, e, {origin: "#/needs"});
-    for (const text of ["Atlas", "Coworker", "Chat answers", "Agents", "Connect an app on a computer", "Project memory"]) assert.ok(html.includes(text), text);
+    for (const text of ["Atlas", "Bot", "Chat answers", "Connected apps", "Connect an app on a computer", "Project memory"]) assert.ok(html.includes(text), text);
     assert.match(html, /data-project-back/); assert.match(html, /data-project-chat/); assert.match(html, /data-project-limit/);
     const restart = render(project, e, {origin: "#/board/atlas/chat", restart: true});
-    assert.match(restart, /How to restart the agent/); assert.match(restart, /Check again/);
+    assert.match(restart, /How to restart the bot/); assert.match(restart, /Check again/);
   },
   guard_own_memory() {
     assert.equal(typeof ui.memoryHTML, "function");

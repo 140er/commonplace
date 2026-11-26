@@ -1,0 +1,3 @@
+- **Owns:** The consent text the Connect response returns, kept equal to the project settings copy in the web app.
+- **Promises:** The shared-memory explanation and the dedicated-section effect call outside tools connected apps and the project's lead helper its bot, matching the screens that show them.
+- **How it fails:** If the two copies drift, the Connect dialog shows the server text and project settings another; `tests/test_projects_wing_edges.py` compares them.

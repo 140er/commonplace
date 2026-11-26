@@ -14,7 +14,7 @@ case 'blocked':
   assert.equal(b.isBlocked({...card,review_kind:'completion'},me),false);
   assert.ok(b.cardTags({...card,ask_to:me},{me}).includes('Needs me'));
   assert.ok(b.cardTags({...card,review_kind:'completion',return_to:'conn:Iris'},{me}).includes('Reviewer: leon'));
-  assert.ok(b.cardTags({...card,return_to:'conn:Iris'},{me}).includes('Built by Iris (agent)')); break;
+  assert.ok(b.cardTags({...card,return_to:'conn:Iris'},{me}).includes('Built by Iris (connected app)')); break;
 case 'chat': {
   const at = '2026-11-05T14:03:00', tags = b.cardTags({...card,message_id:10,created_at:at},{messages:[{id:10,at}]});
   assert.ok(tags.includes('From chat · 14:03')); assert.ok(!render([{...card,starts_after:118}]).includes('Starts after')); assert.ok(!render([card]).includes('Linked in chat')); break;

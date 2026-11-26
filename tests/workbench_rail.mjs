@@ -29,7 +29,7 @@ switch (process.argv[2]) {
     assert.match(menu, /<div class="menu-group" role="group" aria-label="Workspace">/);
     assert.match(group, /Workspace</);
     assert.deepEqual(hrefs(group), ['#/boards', '#/needs', '#/console', '#/compute', '#/compute-map']);
-    assert.deepEqual(links(group).map(text), ['Projects', 'Needs me 3', 'Console', 'Cloud workspaces', 'Compute map']);
+    assert.deepEqual(links(group).map(text), ['Projects', 'Waiting on you 3', 'Console', 'Cloud workspaces', 'Compute map']);
     assert.deepEqual(hrefs(menu), ['#/boards', '#/needs', '#/console', '#/compute', '#/compute-map', '#/rules', '#/settings', '#/admin']);
     assert.ok(!rail.renderRail({ ...options, can_admin: false }).includes('#/compute-map'), 'the map is the owner\'s');
     // Compute itself (cloud workspaces, read-only for members) is in the menu for every member, like the Deck bar.
@@ -79,8 +79,8 @@ switch (process.argv[2]) {
       assert.doesNotMatch(rail.renderPhoneTabs({ botsWaiting: none }), /class="count/, String(none));
     }
     assert.match(rail.renderPhoneTabs({ botsWaiting: 4 }), /Bots <span class="count need">4</);
-    assert.equal(rail.projectSubline(board), '2 agents working');
-    assert.equal(rail.projectSubline({ agents_working: 1 }), '1 agent working');
+    assert.equal(rail.projectSubline(board), '2 bots working');
+    assert.equal(rail.projectSubline({ agents_working: 1 }), '1 bot working');
     assert.equal(rail.projectSubline({ counts: { doing: 4 } }), '4 doing');
     assert.equal(rail.projectSubline({}), 'Idle');
     assert.ok(!rail.renderRail().includes('class="count need"'));

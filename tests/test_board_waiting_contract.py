@@ -158,5 +158,5 @@ def test_node_summary_is_the_server_line_in_board_and_agent_header():
     assert shown["board"] is True and shown["header"] is True
     assert shown["escaped"] is True and shown["absent"] is True
     assert shown["taskCopy"] is True
-    assert shown["working"] == ["worker (agent) is working on it"]
-    assert shown["workingTimed"] == ["worker (agent) is working on it · 2m ago"]
+    assert shown["working"] == ["worker (connected app) is working on it"]
+    assert shown["workingTimed"] == ["worker (connected app) is working on it · 2m ago"]

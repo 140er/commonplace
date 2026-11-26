@@ -212,7 +212,7 @@ const cases = {
     assert.equal(back.getAttribute("data-keys"), "G B");
     host.innerHTML = ui.mainHTML(project, e);
     assert.ok(host.querySelector(".orch-row .av"), "avatar");
-    assert.equal(host.querySelector(".orch-text b")?.textContent, "Atlas Coworker");
+    assert.equal(host.querySelector(".orch-text b")?.textContent, "Atlas bot");
     assert.equal(host.querySelector(".tag.ok")?.textContent, "Connected");
     assert.match(host.querySelector(".orch-text small")?.textContent || "", /connected · working · reads chat, makes cards/);
     assert.equal(ui.lastActive(new Date(Date.now() - 3 * 60000).toISOString()), "3 min ago");

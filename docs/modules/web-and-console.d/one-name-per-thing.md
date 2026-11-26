@@ -1,0 +1,5 @@
+- **Owns:** The visible names in the Chat, Memory, project settings, command palette, rail, Settings, Needs and Admin copy: a bot is the AI helper, a connected app is an outside tool such as Claude Code or Codex, and Waiting on you is the queue that was called Needs me.
+- **Promises:**
+
+  **One name per thing.** The project's lead helper reads as "<project> bot" in Chat, the Memory From filter, project settings, the board and card details. An outside tool reads as a connected app: the classic Settings section is "Connected apps" like the Deck one, and the "(agent)" suffix on a writer is "(connected app)". The rail link, palette entry, shortcut help and the page heading say "Waiting on you". Admin's runtime table shows "Bot: <project name>" in its Runs on column. "Agent" stays only where it names the runner process on a machine. Routes, ids, APIs, scope ids and stored data keep their spellings.
+- **How it fails:** A screen left with the old word reads as a second name for the same thing; the stored seat id stays in the data and is not shown.
