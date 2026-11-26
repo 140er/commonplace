@@ -1,0 +1,2 @@
+- **Promises:** The usability audit names the product role a Coworker everywhere a person reads it; stored route and field names are not quoted as prose.
+- **Tests:** `tests/test_coworker_docs_copy.py` fails if any user doc outside the internal list uses the old role word.

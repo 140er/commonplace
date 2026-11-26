@@ -54,7 +54,7 @@ Total: 3 clicks, 3 screens, then a board. Screenshots: [sign-in](usability-audit
 | Workspace | yes (automatic) | 0 | Named after the email address; renaming is not offered; "Switch workspace" lives in Settings | `GET /api/me` |
 | First project | yes (automatic) | 0 | It is called a project, a bot and a board in different places; the sidebar lists "Bots", settings say "Projects", the board says "Board" | `board_add`, `space_add` |
 | New project | partial | 3 / 1 (Bots, New bot, fill, Create bot) | Creates a "bot"; nothing says it is also a project with its own board and memory ([screenshot](usability-audit-372/30-new-bot.png)) | `board_add` |
-| Project readiness | partial | 3 / 2 | "Ready to start?" lists five items, three read "Needs you" (model, key, machine) even when the person only wants a board ([screenshot](usability-audit-372/11-project-settings.png)) | orchestrator inbox route |
+| Project readiness | partial | 3 / 2 | "Ready to start?" lists five items, three read "Needs you" (model, key, machine) even when the person only wants a board ([screenshot](usability-audit-372/11-project-settings.png)) | Coworker inbox route |
 | Invite a member | yes | 3 / 1 (Admin, email, Make invite link) | Link is shown once | invites API |
 | Member opens the invite | partial | 4 / 3 | The invite lands on the generic sign-in page of a new workspace ([screenshot](usability-audit-372/21-invite-landing.png)), then a "Join workspace" step ([screenshot](usability-audit-372/22-join.png)); nothing tells the invitee which workspace they are about to join until the third screen | invite accept route |
 
@@ -89,7 +89,9 @@ A card an untrusted agent created waits in backlog until a person releases it.
 | Drop it | yes | 3 / 2 (open card, Remove assignment, confirm) | Called **Remove assignment** here and "reservation" everywhere else; the confirm dialog says the card "goes back to the pool" and takes an optional reason ([screenshot](usability-audit-372/10-remove-assignment.png)). The confirm click was not submitted in this run | status update todo to backlog, owner drop |
 | Reserve to a second agent | no (agent side only) | n/a | A handoff to another connection was refused until that connection exists and is active; the person has no way to hand a card to a specific agent from the card except the "Hand off" button, which was not exercised | `task_handoff` |
 
-### 6. Accepting and rejecting orchestrator configs
+<a id="6-accepting-and-rejecting-orchestrator-configs"></a>
+
+### 6. Accepting and rejecting Coworker configs
 
 | Step | Possible | Clicks / screens | Where a user gets stuck | Mirrors |
 |---|---|---|---|---|
@@ -105,7 +107,7 @@ Total to accept: 4 interactions plus one scroll; nothing leads there.
 
 | Step | Possible | Clicks / screens | Where a user gets stuck | Mirrors |
 |---|---|---|---|---|
-| Turn on Coworker-managed starts | yes | 2 / 1 (Settings, checkbox) | The workspace switch is off by default and described in a long sentence under Workspace; the trust form does not exist until it is on | orchestration setting |
+| Turn on Coworker-managed starts | yes | 2 / 1 (Settings, checkbox) | The workspace switch is off by default and described in a long sentence under Workspace; the trust form does not exist until it is on | Coworker setting |
 | Trust a Coworker to start work | partial | 5 / 2 | Form sits in a collapsed "Coworker start permissions" disclosure; needs "select machines" and a confirm box, but a new workspace has no machine, so the form cannot be completed ([screenshot](usability-audit-372/16-coworker-status.png)) | `POST /api/projects/<slug>/orchestrator/trust` |
 | See or change a connection's trust level | partial | 2 / 1 | Admin lists each connection as `untrusted` or `standard`; there is no control to change it. The two agents in the run were `untrusted` and `standard` with no explanation of what that allows ([screenshot](usability-audit-372/20-admin.png)) | token trust level |
 | Trust on the card | **no** | n/a | The card shows no trust information about its creator, so the person cannot see why a release is needed | `task_show` provenance |
