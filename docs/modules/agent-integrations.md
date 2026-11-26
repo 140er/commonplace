@@ -5,9 +5,13 @@
 
   - Plugin manifests, slash commands, hook scripts, editor rules, packaged skills and integration examples for coding agents.
 
+  - `integrations/even-g2/`: the Even Realities G2 glasses plugin (Even Hub web app, `plugin/`) and its token bridge (`bridge/`, dependency-free Node), which forwards an allowlist of hub routes for the glasses.
+
 - **Promises:**
 
   - Hooks fail open and stay within the hook time budget; manifests reference files that exist; no integration enables an external provider by default.
+  - The G2 bridge keeps the Commonplace token server-side: it goes upstream in `Authorization` only, is never logged or returned, and any copy in an upstream body is redacted. Only the allowlisted read, decide and comment routes are forwarded; beyond loopback a pairing key is required. The plugin bundle holds no token.
+
   - Conversation autosave preserves user and assistant transcript text verbatim. Hook work runs outside the turn handler, serializes per session, and coalesces repeated hooks that are already queued.
 
 - **How it fails:**
@@ -16,6 +20,8 @@
   - Serialization tests must control fake subprocess completion explicitly: elapsed sleeps cannot prove that a hook is still running when the scheduler is busy.
 
 - **Tests:**
+
+  - `tests/test_even_g2_bridge.py` runs the G2 bridge Node suite (allowlist, token redaction, pairing key, CORS); the plugin's own vitest suite (`integrations/even-g2/plugin`, `npm test`) covers 576x288 layout, gestures and the confirm-before-decide flow.
 
   - `tests/test_dsh_plugin.py` runs the plugin Node suite; hook serialization uses explicit fake subprocess completion rather than elapsed sleeps, preserving transcript and deduplication assertions.
 
