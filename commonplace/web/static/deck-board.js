@@ -36,13 +36,15 @@ export function cardBot(card, { board = {}, bots = [] } = {}) {
 const botName = (card, options) => boardCopy(cardBot(card, options)?.name || card.bot?.name || '') || 'No bot assigned';
 const avatar = name => `<span class="deck-board-avatar" aria-hidden="true">${e(Array.from(name)[0] || '?')}</span>`;
 const dot = tone => `<i class="deck-board-dot ${tone}" aria-hidden="true"></i>`;
+// The five statuses a card is stored with, named the way the tools and the status select name them.
+export const STATUS_NAMES = { backlog: 'Backlog', todo: 'Todo', doing: 'Doing', review: 'Review', done: 'Done' };
 export const boardGroup = (card, me, needs) => needsOwner(card, me, needs) ? 'todo' : card.status === 'done' ? 'done' : card.status === 'review' ? 'review' : 'doing';
 // An empty column says what lands in it, so an empty board explains itself.
 export const EMPTY_COLUMN = { todo: 'Nothing waits on you. Questions and approvals land here.', doing: 'No card is being worked on.', review: 'Nothing is waiting for review.', done: 'Nothing shipped yet.' };
 const columns = [['todo', 'Waiting on you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
 function cardHTML(card, options, first) {
   const selected = options.selected === card.number, name = botName(card, options);
-  return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(cardTitle(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(cardTitle(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div>${snoozedLine(card)}</article>`;
+  return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(cardTitle(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(cardTitle(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span><span aria-hidden="true">·</span><span data-card-status>${e(STATUS_NAMES[card.status] || card.status)}</span></div>${snoozedLine(card)}</article>`;
 }
 // Just after Add card: say which column holds the new card and the state the server gave it (the Deck has no
 // Todo column), read from the card itself so a queue that has not caught up cannot name another place; else the usual intro.

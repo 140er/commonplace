@@ -21,7 +21,7 @@ def test_board_card_moves_in_two_clicks(browser, size):  # noqa: F811
         # The menu module loads on first use; wait for the sheet instead of reading it mid-load.
         page.locator(".card-menu [data-menu-move]").first.wait_for()
         names = [t.strip() for t in page.locator(".card-menu [data-menu-move]").all_inner_texts()]
-        assert [n.split("\n")[0] for n in names] == ["Active", "In review", "Shipped"]
+        assert [n.split("\n")[0] for n in names] == ["Backlog", "Todo", "Doing", "Review", "Done"]
         page.locator('.card-menu [data-menu-move="review"]').click()
         patches = [(path, body) for path, body in writes if path == "/api/cards/3"]
         assert patches == [("/api/cards/3", {"version": 3, "status": "review"})]

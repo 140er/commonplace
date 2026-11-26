@@ -5,6 +5,7 @@
 Owner [Admin overview](admin.md) reads existing project configuration without creating seats. It shows effective caps and actual usage under the current Coworker management counting mode.
 
 A Coworker works under a Bot, owns its code and uses subagents.
+The words used for projects, boards, cards, statuses and lanes are in [Words used in Commonplace](glossary.md).
 
 Every project (board) gets one main Coworker seat automatically, normally
 named `Coworker:<project>` for new seats. Existing saved names stay unchanged.

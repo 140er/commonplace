@@ -73,11 +73,11 @@ function fixture(options = {}) {
 const cases = {
   surface() {
     const html = menu.renderCardMenu({ ...card, title:'<img src=x> & "words"' }, { board });
-    for (const marker of ['<dialog', 'class="sheet menu-sheet card-menu"', 'aria-modal="true"', 'aria-labelledby="cm-h"', 'data-return-focus="more-A-21"', 'aria-label="Move to column"', 'Edit title', 'Copy link', 'Close', 'aria-current="true"', 'now here']) assert.ok(html.includes(marker), marker);
+    for (const marker of ['<dialog', 'class="sheet menu-sheet card-menu"', 'aria-modal="true"', 'aria-labelledby="cm-h"', 'data-return-focus="more-A-21"', 'aria-label="Move to status"', 'Edit title', 'Copy link', 'Close', 'aria-current="true"', 'now here']) assert.ok(html.includes(marker), marker);
     for (const forbidden of ['Remind', 'Starts after', '>Due', '<img src=x>']) assert.ok(!html.includes(forbidden), forbidden);
     assert.ok(html.includes('&lt;img src=x&gt; &amp; &quot;words&quot;'));
-    assert.deepEqual([...html.matchAll(/data-menu-move="([^"]+)"/g)].map((m) => m[1]), ['todo','doing','review','done']);
-    const f = fixture(); assert.equal(f.dialog.open, true); assert.equal(f.doc.activeElement.dataset.menuMove, 'todo'); f.controller.stop();
+    assert.deepEqual([...html.matchAll(/data-menu-move="([^"]+)"/g)].map((m) => m[1]), ['backlog','todo','doing','review','done']);
+    const f = fixture(); assert.equal(f.dialog.open, true); assert.equal(f.doc.activeElement.dataset.menuMove, 'backlog'); f.controller.stop();
   },
   async move() {
     for (const status of ['todo','done']) {
@@ -178,18 +178,22 @@ const cases = {
       const names = (value) => [...menu.renderCardMenu(value, { board, me:'user:me' }).matchAll(/data-menu-move="([^"]+)"([^>]*)>.*?<\/svg>([^<]*)(?:<span class="sub">([^<]*)<\/span>)?/g)]
         .map(([, status, attrs, name, note]) => ({ status, name, note: note || '', disabled: /disabled/.test(attrs), current: /aria-current/.test(attrs) }));
       const doing = names({ ...card, status:'doing' });
-      assert.deepEqual(doing.map((o) => o.name), ['Active', 'In review', 'Shipped']);
-      assert.deepEqual(doing.map((o) => [o.disabled, o.current]), [[true, true], [false, false], [false, false]]);
-      assert.deepEqual(doing.map((o) => o.status), ['doing', 'review', 'done']);
+      assert.deepEqual(doing.map((o) => o.name), ['Backlog', 'Todo', 'Doing', 'Review', 'Done']);
+      assert.deepEqual(doing.map((o) => [o.disabled, o.current]), [[false, false], [false, false], [true, true], [false, false], [false, false]]);
+      assert.deepEqual(doing.map((o) => o.status), ['backlog', 'todo', 'doing', 'review', 'done']);
+      assert.deepEqual(doing.map((o) => o.note), ['Off the board lanes', 'Active', 'now here', 'In review', 'Shipped']);
       const todo = names({ ...card, status:'todo' });
-      assert.deepEqual(todo.map((o) => [o.name, o.disabled, o.note]), [['Active', false, 'Marks it as started'], ['In review', false, ''], ['Shipped', true, 'Move it to Active first.']]);
+      assert.deepEqual(todo.map((o) => [o.name, o.disabled, o.note]), [['Backlog', false, 'Off the board lanes'], ['Todo', true, 'now here'], ['Doing', false, 'Active · Marks it as started'], ['Review', false, 'In review'], ['Done', true, 'Move it to Doing first.']]);
+      const backlog = names({ ...card, status:'backlog' });
+      assert.deepEqual(backlog.map((o) => [o.name, o.disabled]), [['Backlog', true], ['Todo', false], ['Doing', true], ['Review', true], ['Done', true]]);
       const done = names({ ...card, status:'done' });
-      assert.deepEqual(done.map((o) => [o.name, o.status, o.disabled]), [['Active', 'todo', false], ['In review', 'review', true], ['Shipped', 'done', true]]);
+      assert.deepEqual(done.map((o) => [o.name, o.status, o.disabled]), [['Backlog', 'backlog', false], ['Todo', 'todo', false], ['Doing', 'doing', true], ['Review', 'review', true], ['Done', 'done', true]]);
+      assert.equal(done[1].note, 'Active · Reopens it');
       // A question an agent asked is answered, not moved past.
       const asked = names({ ...card, status:'review', review_kind:'decision', ask:'Ship it?' });
       assert.ok(asked.every((o) => o.disabled) && /Answer its question first/.test(asked[0].note));
       const own = names({ ...card, status:'review', review_kind:'moved', ask:'Moved to review.' });
-      assert.deepEqual(own.map((o) => [o.name, o.disabled]), [['Active', false], ['In review', true], ['Shipped', false]]);
+      assert.deepEqual(own.map((o) => [o.name, o.disabled]), [['Backlog', false], ['Todo', false], ['Doing', false], ['Review', true], ['Done', false]]);
       assert.ok(menu.renderCardMenu(card, { board, me:'user:me' }).includes('Move to…'));
       const f = fixture(); f.controller.show({ ...card, status:'done' }, { board, me:'user:me' });
       return f.click('menuMove', 'todo').then(() => assert.deepEqual(f.calls.at(-1), ['/api/cards/21', { method:'PATCH', body:{ status:'todo', version:4 } }]));
@@ -203,12 +207,13 @@ const cases = {
     setNeedsQueue({ asks: [{ number: 21 }], done_review: [], approvals: [] }); // stale: still lists the card
     try {
       const moved = { ...card, status:'review', review_kind:'moved', ask:'Moved to review.', ask_to:null, need:'idle' };
-      assert.equal(moveNotice(moved, me, 'review'), 'Moved to In review.');
-      assert.equal(moveNotice({ ...card, status:'doing', need:'working' }, me, 'doing'), 'Moved to Active.');
-      assert.equal(moveNotice({ ...card, status:'todo', need:'idle' }, me, 'todo'), 'Moved to Active.');
-      assert.equal(moveNotice({ ...card, status:'done' }, me, 'done'), 'Moved to Shipped.');
+      assert.equal(moveNotice(moved, me, 'review'), 'Moved to Review. It shows in In review.');
+      assert.equal(moveNotice({ ...card, status:'doing', need:'working' }, me, 'doing'), 'Moved to Doing. It shows in Active.');
+      assert.equal(moveNotice({ ...card, status:'todo', need:'idle' }, me, 'todo'), 'Moved to Todo. It shows in Active.');
+      assert.equal(moveNotice({ ...card, status:'backlog', need:'idle' }, me, 'backlog'), 'Moved to Backlog.');
+      assert.equal(moveNotice({ ...card, status:'done' }, me, 'done'), 'Moved to Done. It shows in Shipped.');
       // The server says it needs the person: that is said, and it is not claimed to be what was asked.
-      assert.equal(moveNotice({ ...card, status:'review', need:'you', ask:'Ship it?', ask_to:me, review_kind:'decision' }, me, 'review'), 'Moved. It now shows in Needs you, not In review.');
+      assert.equal(moveNotice({ ...card, status:'review', need:'you', ask:'Ship it?', ask_to:me, review_kind:'decision' }, me, 'review'), 'Moved to Review. It now shows in Waiting on you, not In review.');
     } finally { setNeedsQueue(null); }
     // The real-state Add notice keeps a title's own "#599" (the title is the person's words) and names the state.
     const { addedNotice } = await import(new URL('../commonplace/web/static/deck-board.js', import.meta.url));
