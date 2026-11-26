@@ -154,6 +154,9 @@ RULES = {
     ),
     "runner_lifecycle": Rule(workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")),
     "sessions": Rule(user=_U),
+    # A setup proposal belongs to the workspace it sets up; the proposer and decider are actor
+    # labels (user:<id>, conn:<name>), like the card history.
+    "setup_proposals": Rule(workspace=_W),
     "short_links": Rule(workspace=_W),
     "signin_flows": Rule(),
     "signin_usage": Rule(),

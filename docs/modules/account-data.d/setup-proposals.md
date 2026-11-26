@@ -1,0 +1,3 @@
+- **Owns:** The classification of `setup_proposals` (card #675): one workspace's proposed setups, by workspace.
+- **Promises:** The rows stay with the workspace they set up, like the card history; the proposer and the owner who decided are actor labels (`user:<id>`, `conn:<name>`), and a row holds the canonical setup body, its sha256 (column `digest`) and per-item results, never a credential.
+- **Tests:** `tests/test_commonplace_account_tables.py`, `tests/test_setup_proposals.py`.
