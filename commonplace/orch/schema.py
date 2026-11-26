@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from commonplace.boards import contracts as path_contracts
+from commonplace.extensions import ToolError
 from commonplace.redact import redact
 
 try:
@@ -162,6 +164,9 @@ class Role:
     mcps: tuple[str, ...] = ()
     connections: tuple[str, ...] = ()
     area: str | None = None
+    # Validated role contract (mission, allowed_tools, owned_paths, inputs, test_commands,
+    # handoff_evidence, escalation); None when the role declares none.
+    contract: dict | None = field(default=None, hash=False)
 
 
 @dataclass(frozen=True)
@@ -319,7 +324,9 @@ _ROLE_KEYS = (
     "skills",
     "mcps",
     "connections",
+    "contract",
 )
+_CONTRACT_KEYS = (*path_contracts.CONTRACT_FIELDS, "owned_paths")
 _RUNNER_KEYS = ("role", "machine", "project", "runtime_mode")
 _FLEET_KEYS = ("repair_attempts", "route_findings", "reuse_agents", "agent_cards")
 _RUNNER_OPTIONAL_KEYS = ("session",)
@@ -543,6 +550,15 @@ def _connections(value: object, path: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
+def _contract(value: object, path: str) -> dict:
+    """A role's ``[roles.<name>.contract]`` table: the card contract fields, all optional."""
+    body = _table(value, path, _CONTRACT_KEYS, ())
+    try:
+        return path_contracts.normalize_contract(dict(body))
+    except ToolError as exc:
+        raise ConfigError("invalid_value", path, str(exc).removeprefix("no: ")) from None
+
+
 def _role(name: str, value: object, workflows: Mapping, mcps: Mapping) -> Role:
     path = f"roles.{name}"
     body = _table(value, path, _ROLE_KEYS, ("kind",))
@@ -607,6 +623,9 @@ def _role(name: str, value: object, workflows: Mapping, mcps: Mapping) -> Role:
         skills=_skills(body["skills"], f"{path}.skills") if "skills" in body else (),
         mcps=tuple(dict.fromkeys(role_mcps)),
         connections=connections,
+        contract=(_contract(body["contract"], f"{path}.contract") or None)
+        if "contract" in body
+        else None,
     )
 
 
@@ -877,6 +896,8 @@ def _role_dict(role: Role) -> dict[str, Any]:
         out["mcps"] = list(role.mcps)
     if role.connections:
         out["connections"] = list(role.connections)
+    if role.contract:
+        out["contract"] = {k: v for k, v in role.contract.items()}
     return out
 
 
@@ -902,6 +923,9 @@ def _role_lines(role: Role, effective: dict[str, str] | None = None) -> list[str
         lines.append("- mcps: " + ", ".join(f"`{m}`" for m in role.mcps))
     if role.connections:
         lines.append("- connections: " + ", ".join(f"`{c}`" for c in role.connections))
+    for key, value in (role.contract or {}).items():
+        text = ", ".join(f"`{v}`" for v in value) if isinstance(value, list) else value
+        lines.append(f"- contract {key}: {text}")
     return lines
 
 

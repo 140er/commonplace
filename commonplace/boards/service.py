@@ -3326,7 +3326,17 @@ class BoardService(lifecycle.LifecycleMixin):
         task_type=task_types.UNSET,
         priority=priorities.UNSET,
         reviewer=reviewers.UNSET,
+        paths=_UNSET,
+        contract=_UNSET,
     ):
+        contract_args = contracts.split_contract_args(
+            {
+                **({"paths": paths} if paths is not _UNSET else {}),
+                **({"contract": contract} if contract is not _UNSET else {}),
+            }
+        )
+        if "paths" in contract_args:
+            contract_args["paths"] = contracts.normalize(contract_args["paths"])
         if task_type is not task_types.UNSET:
             task_types.owner_value(self.principal, task_type)
         if priority is not priorities.UNSET:
@@ -3361,6 +3371,17 @@ class BoardService(lifecycle.LifecycleMixin):
                 priority=priority,
                 reviewer=chosen,
             )
+            if contract_args:
+                columns = {}
+                if "paths" in contract_args:
+                    columns["paths"] = json.dumps(contract_args["paths"])
+                if "contract" in contract_args:
+                    columns["contract"] = json.dumps(contract_args["contract"])
+                conn.execute(
+                    "UPDATE tasks SET " + ",".join(f"{name}=?" for name in columns) + " WHERE id=?",
+                    (*columns.values(), result["number"]),
+                )
+                result = self._card(conn, task_row(conn, result["number"]))
             if blocked_by is not _UNSET:
                 from commonplace.boards.store import CardRefused, set_blockers
 
@@ -4464,6 +4485,9 @@ class BoardService(lifecycle.LifecycleMixin):
             updates["ask_to"] = chosen or self._owner_actor()
 
     def task_update(self, task, *, version=None, **args):
+        return self._task_update(task, version=version, **contracts.split_contract_args(args))
+
+    def _task_update(self, task, *, version=None, **args):
         type_updates = {
             key: task_types.owner_value(self.principal, value)
             for key, value in args.items()
@@ -4480,6 +4504,7 @@ class BoardService(lifecycle.LifecycleMixin):
             "body",
             "labels",
             "paths",
+            "contract",
             "blocked_by",
             "status",
             "before",
@@ -4542,7 +4567,8 @@ class BoardService(lifecycle.LifecycleMixin):
                 completing=args.get("status") == "done",
                 dropping=set(args) == {"status"} and args["status"] == "backlog",
                 editing=bool(
-                    set(args) & {"title", "body", "labels", "blocked_by", "task_type", "paths"}
+                    set(args)
+                    & {"title", "body", "labels", "blocked_by", "task_type", "paths", "contract"}
                 )
                 and not content_edit,
                 reopening=set(args) == {"status"} and args["status"] == "todo",
@@ -4589,6 +4615,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 self._check_split_labels(conn, board, row, labels)
                 updates["labels"] = json.dumps(labels)
             updates.update(self._paths_update(row, args))
+            updates.update({"contract": json.dumps(args["contract"])} if "contract" in args else {})
             for key in ("title", "body", "branch", "status_line"):
                 if key in args:
                     updates[key] = validate_text(

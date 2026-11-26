@@ -196,6 +196,7 @@ def card_start(
             board_id=board["id"],
             card=card_id,
             now=now,
+            defaults=True,
         )
         if refusal is not None:
             raise refusal

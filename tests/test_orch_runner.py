@@ -84,6 +84,7 @@ def config_text(
     main_model_role="main",
     harness="t3",
     fleet="",
+    builder_contract="",
 ):
     lines = [
         'schema = "commonplace.orchestrator/1"',
@@ -105,6 +106,7 @@ def config_text(
         f'model_role = "{model_role}"',
         'workflow = "build-unit"',
         f"prompt = '''{prompt}'''",
+        *([builder_contract] if builder_contract else []),
         "[workflows.card-pipeline]",
         'steps = ["builder"]',
         "[workflows.build-unit]",
@@ -2551,3 +2553,220 @@ def test_c389_a_paths_edit_does_not_create_the_runner_database(world):
     assert _as(world, world.b, card, paths=["src/**"])["paths"] == ["src/**"]
     assert _as(world, world.owner, card, paths=[])["paths"] == []
     assert not runner_db.exists()
+
+
+# ------------------------------------------- role contracts and default serialisation (#389)
+
+
+def _bind_repo(world, slug=BOARD, repo="github.com/acme/app"):
+    """Bind ``slug`` to a repo, as a board that hooks or the owner connected to one is."""
+    with BoardStore(world.gw.workspace_dir(world.ws)).transaction() as conn:
+        conn.execute(
+            "INSERT INTO board_repos(repo,board_id) SELECT ?, id FROM boards WHERE slug=?",
+            (repo, slug),
+        )
+
+
+def test_c389_default_contract_cards_serialise_on_a_repo_board(world):
+    """No contract means the whole repo: a second card without one waits for the first,
+    and the refusal names the card it waits for."""
+    _bind_repo(world)
+    first, second = world.card(), world.card()
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    exc = refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+    assert exc.status == 409
+    assert exc.details["card"] == first and exc.details["blocked_by"] == first
+    assert f"blocked_by #{first}" in str(exc) and "whole repo" in str(exc)
+    assert world.jobs_for(second) == []
+
+
+def test_c389_default_and_declared_contracts_exclude_each_other(world):
+    _bind_repo(world)
+    declared, plain, other = world.card(), world.card(), world.card()
+    _declare(world, declared, "src/api/**")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, declared, "s1")
+    refused("path_overlap", world.orch_start, world.a, lease, plain, "s2")
+    _declare(world, other, "docs/**")
+    world.orch_start(world.a, lease, other, "s3")  # disjoint from the declared card
+    assert len(world.all_jobs()) == 2
+
+
+def test_c389_a_running_default_card_blocks_a_declared_one(world):
+    _bind_repo(world)
+    plain, declared = world.card(), world.card()
+    _declare(world, declared, "src/api/**")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, plain, "s1")
+    exc = refused("path_overlap", world.orch_start, world.a, lease, declared, "s2")
+    assert exc.details["card"] == plain
+
+
+def test_c389_default_serialisation_ends_with_the_running_card_state(world):
+    """A card that gains a declared contract narrows what it holds, so the next default
+    card is still refused but a disjoint declared card starts."""
+    _bind_repo(world)
+    first, second, third = world.card(), world.card(), world.card()
+    _declare(world, third, "docs/**")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    world.update(first, paths=["src/**"])
+    world.orch_start(world.a, lease, third, "s2")
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s3")
+
+
+def test_c389_a_board_without_a_repo_keeps_cards_without_contracts_parallel(world):
+    first, second = world.card(), world.card()
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    world.orch_start(world.a, lease, second, "s2")
+    assert len(world.all_jobs()) == 2
+
+
+def test_c389_person_start_serialises_default_contracts(world):
+    _bind_repo(world)
+    first, second = world.card(), world.card()
+    world.configure(max_agents=5)
+    world.person_start(first)
+    exc = refused("path_overlap", world.person_start, second)
+    assert exc.details["blocked_by"] == first
+
+
+def test_c389_card_contract_round_trips_and_is_validated(world):
+    card = world.card()
+    assert world.boards.task_show(card)["contract"] == {}
+    contract = {
+        "mission": "Ship the importer",
+        "allowed_tools": ["Read", "Edit", "Bash"],
+        "owned_paths": ["./src/import/", "tests/test_import*.py"],
+        "inputs": ["card #12 body"],
+        "test_commands": ["uv run pytest tests/test_import.py -q"],
+        "handoff_evidence": ["PR link", "test output"],
+        "escalation": "Ask the lead after two failed fix rounds.",
+    }
+    shown = world.update(card, contract=contract)
+    assert shown["paths"] == ["src/import", "tests/test_import*.py"]
+    assert shown["contract"] == {**contract, "owned_paths": ["src/import", "tests/test_import*.py"]}
+    assert world.boards.task_show(card)["contract"] == shown["contract"]
+    # the contract is one value: a second update replaces the text fields, keeps paths
+    shown = world.update(card, contract={"mission": "Only this"})
+    assert shown["contract"] == {"mission": "Only this", "owned_paths": shown["paths"]}
+    assert shown["paths"] == ["src/import", "tests/test_import*.py"]
+    shown = world.update(card, contract={"owned_paths": []})
+    assert shown["contract"] == {} and shown["paths"] == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "mission",
+        {"mission": 3},
+        {"unknown": "x"},
+        {"allowed_tools": "Read"},
+        {"allowed_tools": ["x"] * 33},
+        {"test_commands": [""]},
+        {"mission": "x" * 2001},
+        {"escalation": "a\x00b"},
+        {"owned_paths": ["../x"]},
+    ],
+)
+def test_c389_card_contract_is_refused_when_malformed(world, bad):
+    card = world.card()
+    with pytest.raises(ToolError, match="contract|path"):
+        world.update(card, contract=bad)
+    assert world.boards.task_show(card)["contract"] == {}
+
+
+def test_c389_contract_paths_and_contract_owned_paths_must_agree(world):
+    card = world.card()
+    with pytest.raises(ToolError, match="paths"):
+        world.update(card, paths=["a/**"], contract={"owned_paths": ["b/**"]})
+    shown = world.update(card, paths=["a/**"], contract={"owned_paths": ["a/**"]})
+    assert shown["paths"] == ["a/**"]
+
+
+def test_c389_task_add_takes_a_contract(world):
+    card = world.card(paths=["pkg/**"], contract={"mission": "m", "owned_paths": ["pkg/**"]})
+    shown = world.boards.task_show(card)
+    assert shown["paths"] == ["pkg/**"] and shown["contract"]["mission"] == "m"
+    with pytest.raises(ToolError, match="contract"):
+        world.card(contract={"nope": 1})
+
+
+def test_c389_a_role_contract_is_validated_and_stored_with_the_config(world):
+    result = world.configure(
+        builder_contract=(
+            "[roles.builder.contract]\n"
+            'mission = "Implement the card"\n'
+            'allowed_tools = ["Read", "Edit"]\n'
+            'owned_paths = ["src/**", "tests/**"]\n'
+            'test_commands = ["uv run pytest -q"]\n'
+            'handoff_evidence = ["PR link"]\n'
+            'escalation = "Ask the lead."\n'
+        )
+    )
+    from commonplace.orch import schema as orch_schema
+
+    config = orch_schema.parse(result.version.body).to_dict()
+    assert config["roles"]["builder"]["contract"] == {
+        "mission": "Implement the card",
+        "allowed_tools": ["Read", "Edit"],
+        "owned_paths": ["src/**", "tests/**"],
+        "test_commands": ["uv run pytest -q"],
+        "handoff_evidence": ["PR link"],
+        "escalation": "Ask the lead.",
+    }
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        '[roles.builder.contract]\nunknown = "x"\n',
+        '[roles.builder.contract]\nowned_paths = ["../x"]\n',
+        '[roles.builder.contract]\nallowed_tools = "Read"\n',
+        '[roles.builder.contract]\nmission = ""\n' + 'escalation = "' + "x" * 1001 + '"\n',
+    ],
+)
+def test_c389_a_malformed_role_contract_is_refused(world, bad):
+    with pytest.raises(Exception, match="contract"):
+        world.configure(builder_contract=bad)
+
+
+def test_c389_a_role_contract_gives_its_cards_their_owned_paths(world):
+    """A card without paths of its own starts with its role's owned paths: it no longer
+    claims the whole repo, so it runs next to a card on disjoint files."""
+    _bind_repo(world)
+    world.configure(
+        max_agents=5,
+        builder_contract='[roles.builder.contract]\nowned_paths = ["src/api/**"]\n',
+    )
+    plain, docs = world.card(), world.card()
+    _declare(world, docs, "docs/**")
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, docs, "s1")
+    world.orch_start(world.a, lease, plain, "s2")
+    assert len(world.all_jobs()) == 2
+    clash = world.card()
+    _declare(world, clash, "src/api/users.py")
+    exc = refused("path_overlap", world.orch_start, world.a, lease, clash, "s3")
+    assert exc.details["card"] == plain
+
+
+def test_c389_the_contract_column_is_added_in_place_and_keeps_every_card(world):
+    """A board database from before the contract column opens additively: the cards, their
+    paths and their history stay, and a card without a contract reads ``{}``."""
+    card = world.card(title="Kept")
+    world.update(card, paths=["src/**"], contract={"mission": "Gone with the column"})
+    with BoardStore(world.gw.workspace_dir(world.ws)).transaction() as conn:
+        conn.execute("ALTER TABLE tasks DROP COLUMN contract")
+    BoardStore(world.gw.workspace_dir(world.ws))  # opening migrates additively
+    shown = world.boards.task_show(card)
+    assert shown["title"] == "Kept" and shown["paths"] == ["src/**"]
+    assert shown["contract"] == {"owned_paths": ["src/**"]}
+    assert world.update(card, contract={"mission": "Back"})["contract"]["mission"] == "Back"

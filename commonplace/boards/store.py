@@ -37,6 +37,7 @@ TASK_COLUMNS = {
     "heartbeat_at": "TEXT",
     "labels": "TEXT",
     "paths": "TEXT",
+    "contract": "TEXT",
     "claim_expired_at": "TEXT",
     "claim_session": "TEXT NOT NULL DEFAULT ''",
     "agent_parent": "TEXT",
@@ -273,6 +274,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
             not in (
                 "labels",
                 "paths",
+                "contract",
                 "parent_number",
                 "pr_repo",
                 "task_type",
@@ -289,6 +291,10 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         ),
         "labels": json.loads(row["labels"] or "[]"),
         "paths": _paths(row["paths"] if "paths" in columns else None),
+        "contract": contracts.public_contract(
+            row["contract"] if "contract" in columns else None,
+            row["paths"] if "paths" in columns else None,
+        ),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],
