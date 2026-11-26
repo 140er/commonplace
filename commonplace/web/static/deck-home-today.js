@@ -1,12 +1,15 @@
 // Shared Home/Today presentation and action contracts. No new write authority.
 import { elapsed } from './api.js';
-import { BUCKETS, needsCards, needsMeCount, hasQueue, hideReferences, setNeedsQueue } from './needs-me.js';
+import { BUCKETS, needsCards, needsMeCount, configProposals, hasQueue, hideReferences, setNeedsQueue } from './needs-me.js';
 
-export { needsCards, needsMeCount };
+export { needsCards, needsMeCount, configProposals };
 const positive = text => /^(?:yes\b|accept\b|approve\b|ship\b|start\b|send\b|publish\b|proceed\b|go ahead\b)/i.test(String(text));
 const holding = text => /^(?:hold\b|wait\b|not now\b|later\b)/i.test(String(text));
 const actionable = card => Number.isSafeInteger(card.number) && card.number > 0 && Number.isSafeInteger(card.version) && card.version > 0;
 export const stamp = card => `${card.number}:${card.version}`;
+/** A config proposal has a board and a version but no card number. */
+export const isConfig = item => !item?.number && typeof item?.board === 'string' && typeof item?.sha256 === 'string';
+export const configKey = item => `config:${item.board}:${item.version}`;
 // Display copy only; the source card and submitted choice are kept verbatim.
 export const displayText = value => hideReferences(String(value ?? '').replace(/\s+/g, ' '), /\bPR\s*#\d+\b|#\d+\b/gi, /(?:~\/|\/(?:home|Users|tmp|var|srv|opt|etc|mnt|work|api)\/|[A-Z]:\\)\S+/g);
 export function removeNeed(needs = {}, card) {
@@ -14,7 +17,14 @@ export function removeNeed(needs = {}, card) {
   const found = needsCards(needs).some(matches);
   const next = { ...needs };
   for (const bucket of BUCKETS) if (Array.isArray(needs[bucket])) next[bucket] = needs[bucket].filter(item => !matches(item));
-  next.count = hasQueue(next) ? needsCards(next).length : Math.max(0, needsMeCount(needs) - (found ? 1 : 0));
+  next.count = hasQueue(next) ? needsMeCount(next) : Math.max(0, needsMeCount(needs) - (found ? 1 : 0));
+  return next;
+}
+/** The same for a decided config proposal: it leaves the list and the count follows. */
+export function removeConfig(needs = {}, item) {
+  const next = { ...needs };
+  if (Array.isArray(needs.config_proposals)) next.config_proposals = needs.config_proposals.filter(other => !(other.board === item.board && other.version === item.version));
+  next.count = hasQueue(next) ? needsMeCount(next) : Math.max(0, needsMeCount(needs) - 1);
   return next;
 }
 /** Keep a pre-decision read from restoring a badge, scoped to one signed-in person. */
@@ -25,11 +35,11 @@ export function createNeedLedger() {
     if (identity !== next) { identity = next; settled = new Map(); }
   }
   return {
-    settle(card, me) { scope(me); settled.set(stamp(card), card); },
+    settle(card, me) { scope(me); settled.set(isConfig(card) ? configKey(card) : stamp(card), card); },
     // The shell's one entry for a queue it read: settled cards removed, `count` derived from the listed cards, and
     // the Board told which queue is current. Everything the shell shows as a count comes out of here.
     apply(needs, me) {
-      scope(me); for (const card of settled.values()) needs = removeNeed(needs, card);
+      scope(me); for (const card of settled.values()) needs = isConfig(card) ? removeConfig(needs, card) : removeNeed(needs, card);
       const next = { ...needs, count: needsMeCount(needs) };
       setNeedsQueue(next);
       return next;

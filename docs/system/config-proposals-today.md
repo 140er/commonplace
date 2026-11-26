@@ -1,0 +1,3 @@
+### Config proposals in Waiting on you
+
+Card #662, from the usability audit (#372, gap 1). `GET /api/needs-me` carries a `config_proposals` list for a signed-in owner: one item per proposed config version on a readable board, `{board, board_name, version, ref, channel, sha256, proposed_by, proposer_name, proposed_at, first, summary, diff}`. The list is absent for members and agent tokens, and `count` includes it. Accepting posts `{sha256}` to `/api/orch/boards/<board>/configs/<version>/accept` and rejecting posts `{}` to `.../reject`: the existing routes, with their owner and digest checks. Nothing here writes.
