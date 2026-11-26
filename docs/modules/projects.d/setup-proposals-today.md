@@ -1,0 +1,3 @@
+- **Owns:** `setups.pending` (card #675 slice 3): the waiting proposals for Waiting on you, newest first and at most 20, each with `kind` `setup`, `id`, `ref`, `sha256`, the proposer, `summary`, the plain-words `changes` (kind, action, text, problem) and the number of `problems`.
+- **Promises:** Only the signed-in owner in a web session gets items; anyone else gets an empty list. An item carries the digest the owner's Approve posts back, so the tap applies exactly the version shown.
+- **Tests:** `tests/test_setup_proposals_today.py`.
