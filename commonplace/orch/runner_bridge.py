@@ -568,6 +568,45 @@ def _cap_count(conn, plan: Plan, now: str) -> int:
     return len(_live_cards(conn, plan.board, now, hold=True) | set(plan.doing))
 
 
+def _job_role_paths(conn, board: str, cards) -> dict:
+    """``{card: owned_paths}`` for the live jobs of ``cards`` whose role (the ``launch_role`` of
+    a split start, else the runner role) carries ``contract.owned_paths`` in the config the
+    job started under. A job without a config, with an unreadable one or a role without
+    paths has no entry: it holds the default contract."""
+    found, configs = {}, {}
+    ids = sorted(cards)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        for job in conn.execute(
+            "SELECT * FROM runner_jobs "
+            "WHERE board_slug=? AND config_version IS NOT NULL AND task_number IN "
+            f"({','.join('?' * len(chunk))}) AND (state IN "
+            "('queued','leased','starting','uncertain','started')) ORDER BY id",
+            (board, *chunk),
+        ):
+            key = (job["config_version"], job["config_sha256"])
+            if key not in configs:
+                stored = conn.execute(
+                    "SELECT * FROM orch_configs WHERE board=? AND version=?",
+                    (board, job["config_version"]),
+                ).fetchone()
+                try:
+                    if stored is None or stored["sha256"] != job["config_sha256"]:
+                        raise ValueError
+                    configs[key] = orch_store._checked_config(orch_store._version(stored))
+                except Exception:  # an unreadable config holds the default contract
+                    configs[key] = None
+            config = configs[key]
+            launched = job["launch_role"] if "launch_role" in job.keys() else None
+            role = config.roles.get(launched or config.runner.role) if config else None
+            owned = (role.contract or {}).get("owned_paths") if role is not None else None
+            if owned:
+                found[job["task_number"]] = list(owned)
+            else:
+                found.pop(job["task_number"], None)
+    return found
+
+
 def contract_refusal(
     conn,
     *,
@@ -622,6 +661,7 @@ def contract_refusal(
             )
         }
         running.discard(card)
+        job_paths = {} if conn is None else _job_role_paths(conn, board_slug, live & running)
         ids, stored = sorted(running), []
         for start in range(0, len(ids), 500):
             chunk = ids[start : start + 500]
@@ -635,8 +675,8 @@ def contract_refusal(
                 if globs is None or globs:  # a contract of its own (an unreadable one is **)
                     if same or not default_mine:
                         stored.append((r["id"], r["paths"]))
-                elif r["id"] in live and role_paths:  # a job runs with its role's paths
-                    stored.append((r["id"], json.dumps(list(role_paths))))
+                elif r["id"] in job_paths:  # a job runs with its own role's paths
+                    stored.append((r["id"], json.dumps(job_paths[r["id"]])))
                 elif defaults and repo and r["repo"] == repo:  # the default contract: **
                     stored.append((r["id"], json.dumps(list(contracts.ANY))))
         stored.sort(key=lambda item: item[0])

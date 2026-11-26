@@ -2734,8 +2734,9 @@ def test_c389_a_role_contract_is_validated_and_stored_with_the_config(world):
     ],
 )
 def test_c389_a_malformed_role_contract_is_refused(world, bad):
-    with pytest.raises(Exception, match="contract"):
+    with pytest.raises(orch_store.OrchError, match="contract") as info:
         world.configure(builder_contract=bad)
+    assert info.value.code in {"unknown_key", "wrong_type", "invalid_value"}
 
 
 def test_c389_a_role_contract_gives_its_cards_their_owned_paths(world):
@@ -2770,3 +2771,26 @@ def test_c389_the_contract_column_is_added_in_place_and_keeps_every_card(world):
     assert shown["title"] == "Kept" and shown["paths"] == ["src/**"]
     assert shown["contract"] == {"owned_paths": ["src/**"]}
     assert world.update(card, contract={"mission": "Back"})["contract"]["mission"] == "Back"
+
+
+def test_c389_a_running_cards_paths_come_from_its_own_jobs_role(world):
+    """The role paths a running card holds are those of the config its job started under,
+    not those of the card that is starting now (a board's roles and configs differ)."""
+    _bind_repo(world)
+    world.configure(
+        max_agents=5,
+        builder_contract='[roles.builder.contract]\nowned_paths = ["src/api/**"]\n',
+    )
+    first = world.card()
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    world.configure(
+        max_agents=5,
+        builder_contract='[roles.builder.contract]\nowned_paths = ["docs/**"]\n',
+    )
+    second, clash = world.card(), world.card()
+    _declare(world, clash, "src/api/users.py")
+    # second owns docs/** (its role now); first still holds src/api/** (its own config)
+    world.orch_start(world.a, lease, second, "s2")
+    exc = refused("path_overlap", world.orch_start, world.a, lease, clash, "s3")
+    assert exc.details["card"] == first and exc.details["other_paths"] == ["src/api/**"]
