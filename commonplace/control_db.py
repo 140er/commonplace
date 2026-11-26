@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Optional
 
-from . import bots_grant, decide_grant, tokens
+from . import bots_grant, decide_grant, tokens, trust_levels
 from .admission import GATE
 from .db_busy import BUSY_TIMEOUT_S, begin_immediate
 from .decide_grant import DECIDE_SCOPE
@@ -1076,6 +1076,55 @@ class ControlDB:
                 user_id=actor_id,
                 connection_id=row["id"],
                 auth="pat",
+            )
+
+    def set_connection_trust(self, ref, trust, *, actor, workspace_ref):
+        """Move one active personal access token between ``untrusted`` and ``standard``.
+
+        ``actor`` is the signed-in owner's principal, never a bare user id or an agent. The new
+        level goes through the policy's own construction checks, so nothing is allowed that the
+        policy would refuse at creation. ``trusted`` is never granted here and a connection that
+        holds it is left alone. Refusals carry a message safe to show the owner.
+        """
+        with self._lock, self._tx():
+            row = self.connection(ref, workspace_ref)
+            if (
+                actor is None
+                or not getattr(actor, "person", False)
+                or actor.workspace_id != row["workspace_id"]
+                or self.role(row["workspace_id"], actor.user_id) != "owner"
+            ):
+                raise ControlError(trust_levels.OWNER_ONLY_TEXT)
+            if row["auth"] != "pat":
+                raise ControlError(trust_levels.OAUTH_TEXT)
+            if decide_grant.is_runner(self, row["id"]) or decide_grant.is_seat(
+                self, row["id"], row["client"]
+            ):
+                raise ControlError(trust_levels.MACHINERY_TEXT)
+            if self.authenticate_connection(row["id"]) is None:
+                raise ControlError(trust_levels.INACTIVE_TEXT)
+            policy = json.loads(row["policy"])
+            before = policy.get("trust", "untrusted")
+            if before not in trust_levels.SETTABLE:
+                raise ControlError(trust_levels.TRUSTED_TEXT)
+            refusal = trust_levels.target_refusal(row["policy"], trust)
+            if refusal:
+                raise ControlError(refusal)
+            if before == trust:
+                return
+            policy["trust"] = trust
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            self.audit(
+                action="connection.trust",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=actor.user_id,
+                connection_id=row["id"],
+                auth=row["auth"],
+                reason=f"{before} -> {trust}",
             )
 
     def set_connection_decide(self, ref, allowed, *, actor, workspace_ref):

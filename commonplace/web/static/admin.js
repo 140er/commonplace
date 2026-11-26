@@ -1,6 +1,6 @@
 import { boundedRequest } from "./request-deadline.js";
 export { boundedRequest } from "./request-deadline.js";
-/** Read-first workspace administration, with independently bounded section loads. The one write is the owner's machine requester list. */
+/** Read-first workspace administration, with independently bounded section loads. Its writes are the owner's machine requester list and the owner's connection trust level. */
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Connected apps',
   runtime: 'Bots and machines', limits: 'Agent limits',
@@ -9,7 +9,7 @@ const SECTIONS = {
 
 export function createAdmin({ mount, api, e, current, runners = null, invites = null, timers = globalThis }) {
   let host = null, body = null, workspace = null, epoch = 0, live = false, instanceBlocked = false;
-  const sections = new Map(), requests = new Map(), generations = new Map(), writing = new Set(), notes = new Map();
+  const sections = new Map(), requests = new Map(), generations = new Map(), writing = new Set(), notes = new Map(), trustAsk = new Map();
   const owner = () => current()?.can_admin === true;
   const eligible = () => live && owner() && current()?.workspace === workspace;
   const operational = key => ['deploy','health','backups','backup-online','backup-offline','index-stats'].includes(key);
@@ -87,6 +87,48 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     void refreshSection('runtime');
   }
 
+  // Owner-only: move one connection between the levels the server offers. The server re-checks the owner and the policy.
+  async function changeTrust({ adminAction: action, adminConnection: id, adminTrust: level }) {
+    const row = sections.get('connections')?.data?.connections?.find(c => c.id === id);
+    const key = 'trust:' + id;
+    if (!eligible() || !row || !id || writing.has(key)) return;
+    if (action === 'trust-cancel') { trustAsk.delete(id); render(); return; }
+    if (!row.trust_change?.options?.includes(level)) return;
+    if (action === 'trust-ask') { trustAsk.set(id, level); notes.delete(key); render(); return; }
+    if (trustAsk.get(id) !== level) return;
+    const pageEpoch = epoch;
+    trustAsk.delete(id); writing.add(key); notes.delete(key); render();
+    try {
+      await api(`/api/connections/${encodeURIComponent(id)}`, { method: 'PATCH', body: { trust: level }, timeoutMs: 10000 });
+      notes.set(key, 'Trust level saved.');
+    } catch (error) {
+      notes.set(key, error.status === 403 ? 'a signed-in workspace owner is required'
+        : error.status === 409 && typeof error.payload?.error === 'string' ? error.payload.error
+        : 'Could not change the trust level. Try again.');
+    } finally { writing.delete(key); }
+    if (epoch !== pageEpoch || !live) return;
+    render();
+    requests.get('connections')?.abort(); requests.delete('connections');
+    void refreshSection('connections');
+  }
+
+  // Each level in words, then the owner's control for one connection (or why there is none).
+  function trustLegend(levels) {
+    return levels?.length ? '<h3>What each trust level allows</h3><ul>' + levels.map(l => `<li><b>${value(l.level)}</b>: ${value(l.summary)}</li>`).join('') + '</ul>' : '';
+  }
+  function trustControl(c, levels) {
+    const change = c.trust_change;
+    if (!change) return '';
+    const key = 'trust:' + c.id, busy = writing.has(key), note = notes.get(key);
+    const button = (action, level, text) => `<button type="button" class="btn" data-admin-section="connections" data-admin-action="${action}" data-admin-connection="${e(c.id)}" data-admin-trust="${e(level)}" aria-label="${e(text)} for ${e(c.name)}"${busy ? ' disabled' : ''}>${e(text)}</button>`;
+    let html = '';
+    const asked = trustAsk.get(c.id);
+    if (!change.can_change) html = `<small>Can't change here: ${value(change.reason)}</small>`;
+    else if (asked) html = `<small>Make ${value(c.name)} ${value(asked)}? ${value(levels?.find(l => l.level === asked)?.summary)}</small>${button('trust-confirm', asked, 'Confirm')}${button('trust-cancel', asked, 'Cancel')}`;
+    else html = change.options.map(level => button('trust-ask', level, `Make ${level}`)).join('');
+    return html + (note ? `<small role="status">${value(note)}</small>` : '');
+  }
+
   function limitsContent(data) {
     return '<p>Workspace concurrency cap: not configured. Project and machine limits apply separately.</p>' +
       (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, ({orchestration_slots:'Bot management slots',distinct_doing_agents:'Distinct doing agents'})[r.counting_mode]])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
@@ -129,10 +171,10 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     }
     const line = (name, text) => `<small>${e(name)} ${value(text)}</small>`;
     const cells = (name, html) => `<td data-label="${e(name)}"><div>${html}</div></td>`;
-    return `<p>${e(data.count)} connection${data.count === 1 ? '' : 's'} · Shows what was used, not what is running now.</p>` +
+    return `<p>${e(data.count)} connection${data.count === 1 ? '' : 's'} · Shows what was used, not what is running now.</p>` + trustLegend(data.trust_levels) +
       (data.connections.length ? `<table><thead><tr>${['Agent', 'Permissions', 'State', 'Activity'].map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${data.connections.map(c => `<tr>${
         cells('Agent', `<b>${value(c.name)}</b>${line('Client', c.client)}${line('Auth', c.auth)}${line('User', c.user_id)}`) +
-        cells('Permissions', `<span>${value(c.trust)}</span>${line('Scopes', c.scopes.join(', '))}${line('Read wings', c.read_wings.join(', '))}`) +
+        cells('Permissions', `<span>${value(c.trust)}</span>${c.trust_summary ? `<small>${value(c.trust_summary)}</small>` : ''}${trustControl(c, data.trust_levels)}${line('Scopes', c.scopes.join(', '))}${line('Read wings', c.read_wings.join(', '))}`) +
         cells('State', `<span>${value(c.state)}</span>${line('Created', c.created_at)}${line('Expires', c.expires_at)}${line('Revoked', c.revoked_at)}`) +
         cells('Activity', `<span>${value(c.activity)}</span>${line('Last used', c.last_used_at)}`)
       }</tr>`).join('')}</tbody></table>` : '<p>No connections recorded.</p>');
@@ -162,7 +204,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
   function stop() {
     live = false; epoch++;
     for (const request of requests.values()) request.abort();
-    requests.clear(); sections.clear(); generations.clear(); writing.clear(); notes.clear();
+    requests.clear(); sections.clear(); generations.clear(); writing.clear(); notes.clear(); trustAsk.clear();
     host?.removeEventListener('click', click);
     globalThis.document?.removeEventListener('session-expired', stop);
     globalThis.document?.removeEventListener('signout', stop);
@@ -261,6 +303,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
     if (!button) return;
     const { adminSection: key, adminAction: action, adminList: list } = button.dataset;
     if (action === 'requester-add' || action === 'requester-remove') { void changeRequesters(button.dataset); return; }
+    if (action.startsWith('trust-')) { void changeTrust(button.dataset); return; }
     void refreshSection(key, action === 'retry' ? sections.get(key)?.retry ?? {} : { more: action === 'more', list });
   }
 

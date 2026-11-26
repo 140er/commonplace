@@ -144,6 +144,50 @@ try {
     find('runtime').resolve({...payload,orchestrators:{state:'ready',items:[{id:2,name:'Next project'}],count:101,has_more:false}});await flush();
     html=section(host.innerHTML,'runtime');assert.match(html,/Existing project/);assert.match(html,/Next project/);
     assert.doesNotMatch(html,/Orchestrators unavailable/);
+  } else if(process.argv[2]==='trust') {
+    const levels=[{level:'trusted',summary:'Full <access>.'},{level:'standard',summary:'Reads and writes.'},{level:'untrusted',summary:'Adds notes only.'}];
+    const row=(id,name,trust,change)=>({id,name,client:'x',auth:'pat',user_id:'u1',state:'active',scopes:['memory:read'],read_wings:[],trust,trust_summary:levels.find(l=>l.level===trust).summary,trust_change:change,created_at:null,expires_at:null,revoked_at:null,last_used_at:null,activity:'unused'});
+    const open={can_change:true,options:['standard'],reason:''};
+    const payload=rows=>({workspace_id:'ws-one',connections:rows,trust_levels:levels,count:rows.length,has_more:false,next_cursor:null});
+    const rowsNow=()=>[row('conn_a','low-agent','untrusted',open),row('conn_b','top-agent','trusted',{can_change:false,options:[],reason:'Managed from the command line <here>.'})];
+    find('connections').resolve(payload(rowsNow()));await flush();
+    let html=section(host.innerHTML,'connections');
+    for(const l of levels) assert.ok(html.includes(l.summary.replace('<','&lt;').replace('>','&gt;')),`the page explains ${l.level}`);
+    assert.match(html,/Adds notes only\./);
+    assert.doesNotMatch(html,/<access>|<here>/);
+    assert.match(html,/Managed from the command line &lt;here&gt;/,'a connection that cannot change says why');
+    assert.match(html,/data-admin-action="trust-ask"[^>]*data-admin-connection="conn_a"[^>]*data-admin-trust="standard"/);
+    assert.doesNotMatch(html,/data-admin-connection="conn_b"/,'no control without an option');
+    const act=(action,connection,trust)=>listeners.get('click')({target:{closest:()=>({dataset:{adminSection:'connections',adminAction:action,adminConnection:connection,adminTrust:trust}})}});
+    const writes=()=>requests.filter(r=>r.options?.method&&r.options.method!=='GET');
+    act('trust-ask','conn_a','standard');
+    assert.equal(writes().length,0,'asking only opens the confirm step');
+    html=section(host.innerHTML,'connections');
+    assert.match(html,/Make low-agent standard\?/);assert.match(html,/Reads and writes\./);
+    assert.match(html,/data-admin-action="trust-confirm"/);assert.match(html,/data-admin-action="trust-cancel"/);
+    act('trust-cancel','conn_a','standard');
+    assert.doesNotMatch(section(host.innerHTML,'connections'),/trust-confirm/);assert.equal(writes().length,0);
+    act('trust-ask','conn_a','standard');act('trust-confirm','conn_a','standard');
+    assert.equal(writes().length,1);assert.equal(writes()[0].path,'/api/connections/conn_a');assert.equal(writes()[0].options.method,'PATCH');
+    assert.deepEqual(writes()[0].options.body,{trust:'standard'});
+    act('trust-confirm','conn_a','standard');assert.equal(writes().length,1,'one write per connection at a time');
+    writes()[0].resolve({connection:{id:'conn_a'}});await flush();
+    assert.equal(requests.filter(r=>r.path.endsWith('/connections')).length,2,'the list is read again after a save');
+    find('connections').resolve(payload([row('conn_a','low-agent','standard',{can_change:true,options:['untrusted'],reason:''}),rowsNow()[1]]));await flush();
+    html=section(host.innerHTML,'connections');
+    assert.match(html,/Trust level saved/);assert.match(html,/data-admin-trust="untrusted"/);
+    // The server refuses: its owner-safe reason is shown and nothing else changes.
+    act('trust-ask','conn_a','untrusted');act('trust-confirm','conn_a','untrusted');
+    writes()[1].reject(Object.assign(new Error('conflict'),{status:409,payload:{error:'Only an active connection can change.'}}));await flush();
+    html=section(host.innerHTML,'connections');
+    assert.match(html,/Only an active connection can change\./);assert.doesNotMatch(html,/Trust level saved/);
+    find('connections').resolve(payload(rowsNow()));await flush();
+    act('trust-ask','conn_a','standard');act('trust-confirm','conn_a','standard');
+    writes()[2].reject(Object.assign(new Error('boom'),{status:500,payload:{error:'private detail'}}));await flush();
+    html=section(host.innerHTML,'connections');
+    assert.match(html,/Could not change the trust level/);assert.doesNotMatch(html,/private detail/);
+    // Fail closed: once the session is no longer an owner, nothing is written.
+    me={...me,can_admin:false};const before=writes().length;act('trust-confirm','conn_a','standard');assert.equal(writes().length,before);
   } else {
     find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0,has_more:false},machines:{state:'error',error:'Machines unavailable; try again'}});
     find('stuck').resolve(stuck([card(1)],true));await flush();
