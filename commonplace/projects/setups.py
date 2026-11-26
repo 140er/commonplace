@@ -378,7 +378,7 @@ def _proposer_name(db, actor: str) -> str:
             row = db.user(actor[5:])
         except Exception:
             return "A person"
-        return row["name"] or (row["email"] or "").split("@", 1)[0] or "A person"
+        return row["name"] or "A person"  # a display name only, never part of an address
     return actor
 
 

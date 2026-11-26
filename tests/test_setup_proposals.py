@@ -95,6 +95,8 @@ def test_the_same_body_still_waiting_is_answered_again_and_a_changed_one_is_a_ne
     h = projects_hub
     status, first = _propose(h, h.owner)
     assert status == 201, first
+    # A person is named by display name only, never by any part of their address.
+    assert first["proposed_by"].startswith("user:") and "owner" not in first["proposer_name"]
     reordered = {"models": SETUP["models"], "coworkers": SETUP["coworkers"], "bots": SETUP["bots"]}
     status, again = _propose(h, h.a1, reordered)
     assert status == 200 and (again["id"], again["sha256"]) == (first["id"], first["sha256"])
