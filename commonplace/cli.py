@@ -1386,6 +1386,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_restore)
     orch_cli.add_parsers(sub)
+    from . import workspace_template_cli
+
+    workspace_template_cli.add_parsers(sub)
     from .meetings import cli as meetings_cli
 
     meetings_cli.add_parsers(sub, _meetings)
