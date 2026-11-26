@@ -1,0 +1,3 @@
+- **Promises:** A technical guide may deliberately replace the recognized broad test/lint/format Bash block with `python -m commonplace.guards.prepush --manual --base origin/develop`. Other technical spellings and inbound anchors remain unchanged.
+- **How it fails:** Partial migrations, unsupported target commands and unrelated token changes fail the copy-edit guard; no guide filename grants an exception.
+- **Tests:** `tests/test_docs_reference_compat.py`; contract in `docs/system/technical-guide-command-migration.md`.

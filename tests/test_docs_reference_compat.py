@@ -15,6 +15,17 @@ BASE = "origin/develop"
 INTERNAL = {"modules", "system", "design", "compute"}  # Implementation/history, not user guides.
 LINK = re.compile(r"\[[^\]\n]*\]\(([^\s)]+)(?:\s+\"[^\"]*\")?\)|^\s*\[[^\]]+\]:\s*(\S+)", re.M)
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(\w*)")
+BROAD_TEST_BLOCK = (
+    "```bash\n"
+    "python -m pytest tests/ -q --ignore=tests/benchmarks \\\n"
+    "  --cov=mempalace --cov-report=term\n"
+    "ruff check .\n"
+    "ruff format --check .\n"
+    "```"
+)
+AFFECTED_TEST_BLOCK = (
+    "```bash\npython -m commonplace.guards.prepush --manual --base origin/develop\n```"
+)
 
 
 def git(*args):
@@ -38,7 +49,7 @@ def slug(text):
 
 def anchors(text):
     result = set(re.findall(r"<a\b[^>]*(?:id|name)=[\"\']([^\"\']+)[\"\']", text))
-    seen = Counter()
+    seen: Counter[str] = Counter()
     fenced = False
     for line in text.splitlines():
         if FENCE.match(line):
@@ -106,7 +117,7 @@ def technical_tokens(text):
         r'["\'][A-Za-z_][\w.-]*["\']\s*:',  # JSON keys.
         r"(?m)^\s*[A-Za-z_][\w.-]*\s*=",  # Assignment/config keys.
     ]
-    tokens = Counter(
+    tokens: Counter[tuple[int | str, str]] = Counter(
         (i, m.group().strip())
         for i, pattern in enumerate(patterns)
         for m in re.finditer(pattern, text)
@@ -123,17 +134,154 @@ def technical_tokens(text):
     return tokens
 
 
+def fenced_blocks(text):
+    fence = None
+    offset = 0
+    start = 0
+    for line in text.splitlines(keepends=True):
+        if fence is None:
+            if opening := FENCE.match(line):
+                fence = opening[1]
+                start = offset
+        elif re.fullmatch(rf"[ \t]*{re.escape(fence[0])}{{{len(fence)},}}[ \t]*\n?", line):
+            end = offset + len(line.removesuffix("\n"))
+            yield start, end, text[start:end]
+            fence = None
+        offset += len(line)
+
+
+def copy_edit_tokens(before, after):
+    old_blocks = list(fenced_blocks(before))
+    new_blocks = list(fenced_blocks(after))
+    old_texts = [block for _, _, block in old_blocks]
+    new_texts = [block for _, _, block in new_blocks]
+    if (
+        old_texts.count(BROAD_TEST_BLOCK) == 1
+        and AFFECTED_TEST_BLOCK not in old_texts
+        and BROAD_TEST_BLOCK not in new_texts
+        and new_texts.count(AFFECTED_TEST_BLOCK) == 1
+    ):
+        start, end, _ = next(span for span in old_blocks if span[2] == BROAD_TEST_BLOCK)
+        before = before[:start] + AFFECTED_TEST_BLOCK + before[end:]
+    return technical_tokens(before), technical_tokens(after)
+
+
 def test_copy_edits_preserve_protocol_tokens():
     failures = {}
     for name in changed_docs():
-        before = technical_tokens(git("show", f"{BASE}:{name}"))
-        after = technical_tokens((ROOT / name).read_text())
+        before, after = copy_edit_tokens(git("show", f"{BASE}:{name}"), (ROOT / name).read_text())
         if before != after:
             failures[name] = {
                 "removed": list((before - after).elements()),
                 "added": list((after - before).elements()),
             }
     assert not failures, failures
+
+
+def guide_change(monkeypatch, tmp_path, before, after, name="docs/reference.md"):
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(after)
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    monkeypatch.setitem(globals(), "changed_docs", lambda: [name])
+    monkeypatch.setitem(globals(), "git", lambda *args: before)
+
+
+@pytest.mark.parametrize("name", ["docs/reference.md", "docs/nested/other-guide.md"])
+def test_copy_edit_guard_allows_exact_affected_command_migration(monkeypatch, tmp_path, name):
+    guide_change(monkeypatch, tmp_path, BROAD_TEST_BLOCK, AFFECTED_TEST_BLOCK, name)
+    test_copy_edits_preserve_protocol_tokens()
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        "",
+        AFFECTED_TEST_BLOCK.replace("commonplace.guards.prepush", "commonplace.guards.bypass"),
+        AFFECTED_TEST_BLOCK.replace("python -m", "python3 -m"),
+        AFFECTED_TEST_BLOCK.replace(" --manual", ""),
+        AFFECTED_TEST_BLOCK.replace(" --base origin/develop", ""),
+        AFFECTED_TEST_BLOCK.replace("origin/develop", "origin/main"),
+        AFFECTED_TEST_BLOCK.replace("--manual", "--manual --full"),
+        AFFECTED_TEST_BLOCK.replace("--manual", "--manual --base origin/develop"),
+        AFFECTED_TEST_BLOCK.replace("origin/develop", "origin/develop; echo changed"),
+        AFFECTED_TEST_BLOCK.replace("origin/develop", "origin/develop\nruff check ."),
+        AFFECTED_TEST_BLOCK.replace("```bash", "```sh"),
+        AFFECTED_TEST_BLOCK + "\n" + AFFECTED_TEST_BLOCK,
+        AFFECTED_TEST_BLOCK + "\n" + BROAD_TEST_BLOCK,
+        AFFECTED_TEST_BLOCK + "\n```bash\npython -m pytest tests/ -q\n```",
+    ],
+)
+def test_copy_edit_guard_rejects_unsupported_command_migrations(monkeypatch, tmp_path, after):
+    guide_change(monkeypatch, tmp_path, BROAD_TEST_BLOCK, after)
+    with pytest.raises(AssertionError):
+        test_copy_edits_preserve_protocol_tokens()
+
+
+@pytest.mark.parametrize(
+    "context,changed",
+    [
+        ("https://example.invalid/guide", "https://example.invalid/other"),
+        ("/api/projects/<slug>/connect", "/api/projects/<slug>/remove"),
+        ("COMMONPLACE_URL", "COMMONPLACE_ENDPOINT"),
+        ("`orch_read`", "`coworker_read`"),
+        ("`--main-role`", "`--other-role`"),
+        ("`settings.toml`", "`other.toml`"),
+        ("```toml\n[roles.main]\n```", "```toml\n[roles.coworker]\n```"),
+        ('```toml\nkind = "orchestrator"\n```', '```toml\nkind = "coworker"\n```'),
+        ('```toml\nschema = "v1"\n```', '```toml\nschema = "v2"\n```'),
+        ('```toml\ntopic = "main"\n```', '```toml\ntopic = "other"\n```'),
+        ('{"role": "main"}', '{"other_role": "main"}'),
+        ("port = 1234", "other_port = 1234"),
+        ("```sh\ncommonplace orch render\n```", "```sh\ncommonplace orch remove\n```"),
+        ("```sh\ncommonplace orch render\n```", ""),
+    ],
+)
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_migration_keeps_adjacent_technical_tokens(
+    monkeypatch, tmp_path, context, changed, position
+):
+    before = [context, BROAD_TEST_BLOCK] if position == "before" else [BROAD_TEST_BLOCK, context]
+    after = (
+        [changed, AFFECTED_TEST_BLOCK] if position == "before" else [AFFECTED_TEST_BLOCK, changed]
+    )
+    guide_change(monkeypatch, tmp_path, "\n".join(before), "\n".join(after))
+    with pytest.raises(AssertionError):
+        test_copy_edits_preserve_protocol_tokens()
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        (BROAD_TEST_BLOCK.replace("```bash", "```sh"), AFFECTED_TEST_BLOCK),
+        ("````md\n" + BROAD_TEST_BLOCK + "\n````", "````md\n" + AFFECTED_TEST_BLOCK + "\n````"),
+        ("~~~md\n" + BROAD_TEST_BLOCK + "\n~~~", "~~~md\n" + AFFECTED_TEST_BLOCK + "\n~~~"),
+        (BROAD_TEST_BLOCK + "\n" + BROAD_TEST_BLOCK, AFFECTED_TEST_BLOCK),
+        (BROAD_TEST_BLOCK + "\n" + AFFECTED_TEST_BLOCK, AFFECTED_TEST_BLOCK),
+        (AFFECTED_TEST_BLOCK, BROAD_TEST_BLOCK),
+    ],
+)
+def test_migration_requires_one_complete_original_block(monkeypatch, tmp_path, before, after):
+    guide_change(monkeypatch, tmp_path, before, after)
+    with pytest.raises(AssertionError):
+        test_copy_edits_preserve_protocol_tokens()
+
+
+@pytest.mark.parametrize("heading", ["## Stable heading", "## Renamed heading"])
+def test_command_migration_preserves_anchor_guard(monkeypatch, tmp_path, heading):
+    guide_change(
+        monkeypatch,
+        tmp_path,
+        "## Stable heading\n" + BROAD_TEST_BLOCK,
+        heading + "\n" + AFFECTED_TEST_BLOCK,
+    )
+    (tmp_path / "docs/inbound.md").write_text("[guide](reference.md#stable-heading)")
+    test_copy_edits_preserve_protocol_tokens()
+    if heading == "## Stable heading":
+        test_changed_guides_preserve_existing_anchors_and_inbound_fragments()
+    else:
+        with pytest.raises(AssertionError):
+            test_changed_guides_preserve_existing_anchors_and_inbound_fragments()
 
 
 @pytest.mark.parametrize(

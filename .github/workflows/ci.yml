@@ -7,56 +7,23 @@ on:
   pull_request:
 
 jobs:
-  test-linux:
+  # The pull-request test gate. The hook calls the same module; --ci adds the
+  # four guard files and fails if a step is skipped or cut off.
+  gate:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           cache: 'pip'
       - run: pip install -e ".[dev]"
-      # Gate is [tool.coverage.report] fail_under in pyproject.toml.
-      # Do not pass --cov-fail-under.
-      - run: python -m pytest tests/ -v --ignore=tests/benchmarks --cov=mempalace --cov-report=term-missing --durations=10
-
-  test-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.13"
-          cache: 'pip'
-      - run: pip install -e ".[dev]"
-      # ChromaDB's rust HNSW core intermittently fails compaction or reader
-      # initialization on Windows ("Failed to apply logs to the hnsw segment
-      # writer" / "Error creating hnsw segment reader: Nothing found on disk")
-      # regardless of our code — long-standing, non-reproducible-on-Linux/macOS
-      # flakes. Retry ONLY those specific transient errors (via --only-rerun) so real,
-      # deterministic failures still fail on the first run. Linux/macOS jobs
-      # deliberately run with no reruns so genuine regressions surface there.
-      # Same pyproject gate as Linux. tests/coverage_gate.py switches Windows
-      # to [tool.mempalace.coverage] fail_under_windows.
-      - run: >-
-          python -m pytest tests/ -v --ignore=tests/benchmarks --cov=mempalace
-          --cov-report=term-missing --durations=10 --reruns 2
-          --reruns-delay 5 --only-rerun
-          "Failed to apply logs to the hnsw segment writer|Error creating hnsw segment reader: Nothing found on disk"
-
-  test-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.13"
-          cache: 'pip'
-      - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/ -v --ignore=tests/benchmarks --cov=mempalace --cov-report=term-missing --durations=10
+      - name: Fetch the base branch
+        run: git fetch --no-tags origin "${{ github.base_ref || 'develop' }}"
+      - name: Affected tests, lint, and guard files
+        run: python -m commonplace.guards.prepush --ci --budget 600
 
   test-milvus:
     name: Measure Milvus extra

@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_runner_setup_approvals.py` waits on the fake device-login CLI's output until its prompt is presented (30 s bound) instead of one fixed 5 s read; the fake CLI pauses between its URL and its code so the split prompt is exercised on every run.
