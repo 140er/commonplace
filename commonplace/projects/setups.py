@@ -341,11 +341,19 @@ def changes(db, workspace_id: str, body: dict, boards: dict[str, str]) -> list[d
                 "new": new,
             }
             if new == old:
-                line.update(action="unchanged", text=f"{where} {word}: stays {_label(old)}")
+                line.update(
+                    action="unchanged", text=f"{where}: the {word} model stays {_label(old)}"
+                )
             elif new is None:
-                line.update(action="clear", text=f"{where} {word}: {_label(old)} cleared")
+                line.update(
+                    action="clear",
+                    text=f"{where}: the {word} model choice {_label(old)} is cleared",
+                )
             else:
-                line.update(action="set", text=f"{where} {word}: {_label(old)} to {_label(new)}")
+                line.update(
+                    action="set",
+                    text=f"{where}: the {word} model goes from {_label(old)} to {_label(new)}",
+                )
                 if (new["provider"], new["model"]) not in offered:
                     line["adds_to_list"] = True
                     line["text"] += " (added to the model list)"
