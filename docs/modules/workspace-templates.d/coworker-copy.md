@@ -1,0 +1,2 @@
+- **Promises:** Text a person reads (the `no_live_config` refusal, the `--board` help) calls the role a Coworker, as the rest of the product does; field and section names inside a package keep their stored names.
+- **Tests:** `tests/test_coworker_tool_copy.py` fails if either module puts the old role word into visible copy.
