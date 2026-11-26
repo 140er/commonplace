@@ -236,3 +236,15 @@ def test_an_item_that_fails_is_reported_and_the_rest_still_apply(projects_hub):
     assert _model_rows(h) == [("work", "main", "grok", "grok-4.7")]
     (audit,) = _audit(h, "setup.apply")
     assert audit["decision"] == "partial"
+
+
+def test_the_list_answers_the_newest_twenty_however_many_were_decided(projects_hub):
+    h = projects_hub
+    views = [_propose(h, {"bots": [{"key": "b", "name": f"Bot {n}"}]}) for n in range(20)]
+    for view in views[:2]:
+        assert _decide(h, h.owner, view["id"], "reject", view["sha256"])[0] == 200
+    newest = _propose(h, {"bots": [{"key": "b", "name": "Bot 20"}]})
+    listed = h.request(h.owner, "GET", ROUTE)[1]["proposals"]
+    assert [item["id"] for item in listed] == list(range(newest["id"], newest["id"] - 20, -1))
+    rejected = h.request(h.owner, "GET", ROUTE + "?status=rejected")[1]["proposals"]
+    assert [item["id"] for item in rejected] == [views[1]["id"], views[0]["id"]]

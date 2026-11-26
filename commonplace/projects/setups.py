@@ -508,10 +508,16 @@ def listing(ctx, status=None) -> dict:
     if status is not None:
         sql += " AND status=?"
         params.append(status)
-    with db._lock:
-        rows = db._conn.execute(sql + " ORDER BY id DESC", params).fetchall()
     boards = readable_boards(ctx)
-    visible = [row for row in rows if _visible(ctx, row, boards)][:MAX_LISTED]
+    visible = []
+    with db._lock:
+        # Newest first, stopping at the cap: the signed-in owner sees every row, so the first 20
+        # are the answer; a connection skips the ones naming a project it cannot read.
+        for row in db._conn.execute(sql + " ORDER BY id DESC", params):
+            if _visible(ctx, row, boards):
+                visible.append(row)
+                if len(visible) >= MAX_LISTED:
+                    break
     return {"proposals": [_view(ctx, row, boards) for row in visible]}
 
 

@@ -183,7 +183,9 @@ def route(gateway, h) -> None:
             except ValueError:
                 return
             if isinstance(body, dict):
-                body.pop("rules_seq", None)  # the web shell adds the rules version to every write
+                # The web shell adds its rules version to every write. The freshness check runs on
+                # the MCP tool (a checked write); these routes answer the owner only.
+                body.pop("rules_seq", None)
             view, created = setups.propose(ctx, body)
             send_json(h, 201 if created else 200, view)
             return
@@ -207,7 +209,9 @@ def route(gateway, h) -> None:
             except ValueError:
                 return
             if isinstance(body, dict):
-                body.pop("rules_seq", None)  # the web shell adds the rules version to every write
+                # The web shell adds its rules version to every write. The freshness check runs on
+                # the MCP tool (a checked write); these routes answer the owner only.
+                body.pop("rules_seq", None)
             if not isinstance(body, dict) or set(body) != {"sha256"}:
                 raise setups.SetupError("invalid", "send {sha256}", path="sha256")
             decide = setups.apply if parts[1] == "apply" else setups.reject
