@@ -74,7 +74,8 @@ def service_for(gateway, principal):
     return BoardService(ToolContext(principal=principal, gateway=gateway))
 
 
-def _template(service, value):
+def template_fields(value):
+    """The validated card template of a routine, without checking that its board exists."""
     if not isinstance(value, dict) or set(value) - TEMPLATE_KEYS:
         raise ToolError("no: template takes board, title, body, labels, priority and status")
     result = {
@@ -90,6 +91,11 @@ def _template(service, value):
     if not isinstance(labels, list) or len(labels) > 20:
         raise ToolError("no: labels must be a list of at most 20")
     result["labels"] = [validate_text(x, "label", required=True, limit=100) for x in labels]
+    return result
+
+
+def _template(service, value):
+    result = template_fields(value)
     with service.store.connection() as conn:
         service._board(conn, result["board"])
     return result
@@ -105,6 +111,9 @@ def _schedule(value, tz, now):
         )
     except ValueError as exc:
         raise ToolError(f"no: {exc}") from None
+
+
+check_schedule = _schedule
 
 
 def _next(row, after):
@@ -137,6 +146,9 @@ def _owner(gateway, principal, value):
 
 def _name(value):
     return validate_text(value, "name", required=True, limit=120)
+
+
+check_name = _name
 
 
 def _view(db, row, now, *, runs=0):
@@ -196,6 +208,53 @@ def show(db, principal, identity, now):
     return _view(db, _find(db, principal, identity), now, runs=50)
 
 
+def insert_row(
+    db,
+    workspace_id,
+    *,
+    owner,
+    created_by,
+    name,
+    template,
+    schedule,
+    tz,
+    now,
+    state="active",
+    conn=None,
+):
+    """Insert one validated routine and return its id; ``conn`` joins the caller's transaction."""
+    identity = uuid.uuid4().hex
+    at = stamp(now)
+    with db._lock:
+        conn = conn or db._conn
+        count = conn.execute(
+            "SELECT count(*) FROM routines WHERE workspace_id=? AND deleted_at IS NULL",
+            (workspace_id,),
+        ).fetchone()[0]
+        if count >= MAX_ROUTINES:
+            raise ToolError(f"no: a workspace can have at most {MAX_ROUTINES} routines")
+        conn.execute(
+            "INSERT INTO routines (id,workspace_id,owner_user_id,name,template,schedule,timezone,"
+            "state,cursor,anchor_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                identity,
+                workspace_id,
+                owner,
+                name,
+                json.dumps(template),
+                json.dumps(schedule),
+                tz,
+                state,
+                at,
+                at,
+                created_by,
+                at,
+                at,
+            ),
+        )
+    return identity
+
+
 def create(service, body, now):
     principal = require_owner(service.principal)
     gateway = service.ctx.gateway
@@ -212,33 +271,18 @@ def create(service, body, now):
     tz = body.get("timezone", "UTC")
     schedule = _schedule(body.get("schedule"), tz, now)
     owner = _owner(gateway, principal, body.get("owner"))
-    identity = uuid.uuid4().hex
-    db, at = gateway.db, stamp(now)
-    with db._lock:
-        count = db._conn.execute(
-            "SELECT count(*) FROM routines WHERE workspace_id=? AND deleted_at IS NULL",
-            (principal.workspace_id,),
-        ).fetchone()[0]
-        if count >= MAX_ROUTINES:
-            raise ToolError(f"no: a workspace can have at most {MAX_ROUTINES} routines")
-        db._conn.execute(
-            "INSERT INTO routines (id,workspace_id,owner_user_id,name,template,schedule,timezone,"
-            "state,cursor,anchor_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'active',?,?,?,?,?)",
-            (
-                identity,
-                principal.workspace_id,
-                owner,
-                name,
-                json.dumps(template),
-                json.dumps(schedule),
-                tz,
-                at,
-                at,
-                principal.user_id,
-                at,
-                at,
-            ),
-        )
+    db = gateway.db
+    identity = insert_row(
+        db,
+        principal.workspace_id,
+        owner=owner,
+        created_by=principal.user_id,
+        name=name,
+        template=template,
+        schedule=schedule,
+        tz=tz,
+        now=now,
+    )
     return show(db, principal, identity, now)
 
 

@@ -1,4 +1,4 @@
-- **Owns:** `commonplace template export` and `commonplace template preview` (`commonplace/workspace_template_cli.py`, registered in `commonplace/cli.py`; the package logic belongs to the `workspace-templates` module).
-- **Promises:** Both commands need the named workspace owner (default the first admin); `export` writes only a new file (never overwrites) or stdout, and `preview` only reads: exit 0 when an import could proceed, 1 when the package is refused.
-- **How it fails:** A refusal prints its code (for example `memory_unavailable`) and never package or workspace text.
-- **Tests:** `tests/test_workspace_template.py` drives both commands over a throwaway data directory.
+- **Owns:** `commonplace template export`, `commonplace template preview` and `commonplace template import` (`commonplace/workspace_template_cli.py`, registered in `commonplace/cli.py`; the package logic belongs to the `workspace-templates` module).
+- **Promises:** Both commands need the named workspace owner (default the first admin); `export` writes only a new file (never overwrites) or stdout, `preview` only reads and prints a `preview_id`: exit 0 when an import could proceed, 1 when the package is refused; `import` applies a package only for the target's owner and only with that `preview_id`.
+- **How it fails:** A refusal prints its code (for example `memory_unavailable`, `preview_stale`, `owner_only`) and never package or workspace text.
+- **Tests:** `tests/test_workspace_template.py` drives the commands over a throwaway data directory.

@@ -1,5 +1,5 @@
-"""``commonplace template ...``: export a workspace template, preview an import. Writes nothing
-to a workspace.
+"""``commonplace template ...``: export a workspace template, preview an import, apply one.
+Only ``import`` writes to a workspace.
 
 - ``export --workspace W [--board B] [--sections a,b] [--include-memory] [-o FILE]`` builds the
   package from the workspace the data directory holds (the named owner, default the first
@@ -9,7 +9,12 @@ to a workspace.
   it, a new file (an existing file is never overwritten).
 - ``preview FILE --workspace W [--board B] [--include-memory]`` prints what an import would
   create, the collisions, the dropped fields and any refusal as JSON; exit 0 when the package
-  could be imported, 1 when it is refused.
+  could be imported, 1 when it is refused. A successful preview carries ``preview_id``.
+- ``import FILE --workspace W --board B --preview-id ID [--include-memory]`` applies the package
+  only if ``ID`` names a preview of this exact package against the workspace as it is now
+  (``preview_stale`` otherwise). The workspace owner only. Goals, routines and seats are
+  created; roles and skills (and any orchestrator config) are filed as a proposal that an owner
+  accepts later; nothing is overwritten and no runner grant is made.
 """
 
 from __future__ import annotations
@@ -78,8 +83,37 @@ def cmd_preview(args) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_import(args) -> int:
+    from commonplace import workspace_template_import as wti
+    from commonplace.control_db import ControlError
+    from commonplace.workspace_store import workspace_path
+
+    with open(args.file, "rb") as handle:
+        package = wt.load_package(handle.read(wt.MAX_PACKAGE_BYTES + 1))
+    cli = _main()
+    db = cli._db(args)
+    try:
+        workspace = db.workspace(args.workspace)
+        if workspace is None:
+            raise ControlError("no such workspace")
+        result = wti.apply(
+            db,
+            workspace["id"],
+            workspace_path(cli._data_dir(args), workspace["id"]),
+            package,
+            board=args.board,
+            preview_id=args.preview_id,
+            actor=cli._actor(db, args),
+            include_memory=args.include_memory,
+        )
+    finally:
+        db.close()
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
 def add_parsers(sub) -> None:
-    template = sub.add_parser("template", help="workspace templates (export, preview)")
+    template = sub.add_parser("template", help="workspace templates (export, preview, import)")
     actions = template.add_subparsers(dest="action", required=True)
 
     def common(parser):
@@ -106,3 +140,10 @@ def add_parsers(sub) -> None:
         "--include-memory", action="store_true", help="count memory the import would add"
     )
     s.set_defaults(func=cmd_preview)
+
+    s = actions.add_parser("import", help="apply a previewed package (owner only; no overwrite)")
+    s.add_argument("file")
+    common(s)
+    s.add_argument("--preview-id", required=True, help="the preview_id the preview printed")
+    s.add_argument("--include-memory", action="store_true", help="refused: no memory writer")
+    s.set_defaults(func=cmd_import)
