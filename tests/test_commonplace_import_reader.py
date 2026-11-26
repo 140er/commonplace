@@ -35,10 +35,8 @@ from tests.test_imported_history_search import world as world
 READER = "memory:import:read"
 READ_SCOPE = "memory:read " + READER
 COPY = (
-    "Allow this agent to read and search your past and future conversations and memory files "
-    "imported through the connection import route in this workspace, including imports from "
-    "your other connections. Imports through the signed-in/full-ACL route, live session captures "
-    "and other people's history are excluded. To stop access, revoke this connection."
+    "Let this app read and search the conversations and memory files you have imported, "
+    "past and future."
 )
 
 

@@ -34,7 +34,7 @@ test('only personal action cards get the amber edge; routine waits never do', ()
 });
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
-  for(const label of ['Summary','Bot','Coworker','Version','Progress','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
+  for(const label of ['Summary','Bot','Assigned to','Version','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
   assert.match(html,/<code[^>]*>abc1234<\/code>/);
   assert.doesNotMatch(visible(html),/~\/|review\.json|Evidence:|P-7|#7/);
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
@@ -129,7 +129,7 @@ test('drawer treats replacement tokens as literal card text and decision values'
     const html = renderDetails(card, options);
     assert.equal(html.match(/data-details-title>([^<]*)<\/h2>/)?.[1], e(card.title));
     assert.equal(html.match(/aria-label="Summary">[\s\S]*?<p>([^<]*)<\/p>/)?.[1], e(card.summary));
-    assert.equal(html.match(/<dt>Coworker<\/dt><dd>([^<]*)<\/dd>/)?.[1], e(card.coworker.name));
+    assert.equal(html.match(/<dt>Assigned to<\/dt><dd>([^<]*)<\/dd>/)?.[1], e(card.coworker.name));
     assert.ok(html.includes(`data-choice="${e(card.ask_options[0])}"`));
     assert.ok(html.includes(`data-choice="${e(card.ask_options[1])}"`));
     assert.equal((html.match(/<header class="detail-h">/g) || []).length, 1);
@@ -186,19 +186,28 @@ test('phone Board actions share the title row and state pills have their own ful
   assert.match(css, /mask-image:[^;]*16px/);
   assert.match(css, /deck-board-states\s*\{[^}]*width:\s*100%/);
 });
-test('Board phone chrome keeps the mark and controls while the page carries its title', async () => {
+test('Board phone chrome names the project and keeps the menu and search controls', async () => {
   const {renderDeckTop} = await import('../commonplace/web/static/deck.js');
   for (const options of [{hash:'#/board/product'},{hash:'#/board'},{board:{slug:'product'}}]) {
     const top = renderDeckTop(options);
-    assert.doesNotMatch(top, /<b>Board<\/b>/);
-    assert.match(top, /class="deck-mark"/);
+    assert.match(top, /<b>Board<\/b>/);
+    assert.match(top, /data-deck-shell-action="more"/);
     assert.match(top, /data-action="palette"/);
   }
+  assert.match(renderDeckTop({ hash: '#/board/product', board: { slug: 'product', name: 'Product' } }), /<b>Product<\/b>/);
   assert.match(renderDeckTop({hash:'#/board/product/chat'}), /<b>Board<\/b>/, 'chat chrome stays unchanged');
   assert.match(htmlFor({}), /<h1>Board<\/h1>/);
 });
-test('drawer progress parent uses its state text without a duplicate state dot', () => {
+test('a card with no steps yet says its state once (the header pill), with no Status line and no Progress heading over a lone row', () => {
   const html = renderDetails({...base,need:'you'},options);
+  assert.match(html, /<div class="deck-card-state"><i class="deck-board-dot waiting"[^>]*><\/i>Needs you/);
+  assert.equal((html.match(/Needs you/g) || []).length, 1, 'the state is said once');
+  assert.doesNotMatch(html, /deck-card-status|Status:/);
+  assert.doesNotMatch(html, /<h3>Progress<\/h3>|<li class="current">/);
+});
+test('drawer progress parent uses its state text without a duplicate state dot', () => {
+  const html = renderDetails({...base,need:'you',events:[{kind:'claim'}]},options);
+  assert.match(html, /<h3>Progress<\/h3>/);
   const parent = html.match(/<li class="current">([\s\S]*?)<\/li>/)?.[1];
   assert.ok(parent);
   assert.doesNotMatch(parent, /deck-board-dot|<i/);
@@ -207,6 +216,11 @@ test('drawer progress parent uses its state text without a duplicate state dot',
 test('desktop filter group gets twelve extra pixels before Add card', () => {
   const css = readFileSync(new URL('../commonplace/web/static/deck-board.css',import.meta.url),'utf8');
   assert.match(css, /\.deck-board-filters\s*\{[^}]*margin-right:\s*12px/);
+  // The columns are right below, so the status chips show on a phone only.
+  assert.match(css, /@media \(min-width: 700px\) \{[^}]*\.deck-board-filters \{ display: none; \}/);
+  // The drawer text never fades; a rule above the footer marks where the scrolling body ends.
+  assert.doesNotMatch(css, /\.deck-card-drawer \.ctx-body \{[^}]*mask-image/);
+  assert.match(css, /\.deck-card-drawer \.ctx-foot \{[^}]*border-top: 1px solid var\(--line\)/);
 });
 const TITLES = ['#12 foo', 'foo #12 bar', '#599 retest', 'PR #7 and #8, see #9'];
 test('Deck shows a card title exactly as typed, #NNN tokens included', async () => {
@@ -232,4 +246,15 @@ test('Add card sends the title verbatim and Deck copy still hides other internal
   }
   assert.equal(boardCopy('Fix #12 in ~/work/x'), 'Fix', 'body copy keeps hiding references');
   assert.equal(deckBoard.cardTitle?.('Fix #12 in ~/work/x'), 'Fix #12', 'a title keeps #NNN; paths are still hidden');
+});
+
+test('the project switch reads as a small button, and the phone drops the repeated title and name line', () => {
+  const html = htmlFor({});
+  assert.match(html, /<a class="deck-board-switch" href="#\/boards" aria-label="Switch project">Switch project<svg class="i"/, 'a menu to other projects, with a chevron');
+  assert.doesNotMatch(html, /Other projects/);
+  assert.match(html, /<b class="deck-board-name">Product<\/b>/);
+  const phone = readFileSync(new URL('../commonplace/web/static/deck-board.css', import.meta.url), 'utf8');
+  assert.match(phone, /\.deck-board-heading h1, :root\[data-ui="deck"\] \.deck-board-intro \.deck-board-name \{ display: none; \}/, 'the bar already names the project');
+  assert.match(phone, /\.deck-board-title-row \{[^}]*justify-content: flex-end/, 'the actions row stays');
+  assert.doesNotMatch(phone, /\.deck-board-heading h1 \{ display: block/);
 });

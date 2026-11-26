@@ -48,7 +48,7 @@ test("an owner is told to act, a member to ask the owner", () => {
     assert.doesNotMatch(forOwner, /Ask the workspace owner/);
     assert.doesNotMatch(forMember, /in Settings|Check that the agent/);
   }
-  assert.match(live.liveHTML({ ...base, state: "no_agent", reason: "none" }, owner, e), /Connect an agent in Settings/);
+  assert.match(live.liveHTML({ ...base, state: "no_agent", reason: "none" }, owner, e), /Connect an app in Settings/);
 });
 
 test("agent names are escaped", () => {
@@ -145,7 +145,7 @@ test("no agent connected and no answer are alerts in the pane", async (t) => {
     next(stamp, { state: "no_answer", reason: "not_picked_up" }),
   ]);
   await h.controller.show("work"); await settle();
-  assert.match(h.region("[data-chat-live]"), /role="alert".*No agent connected.*Connect an agent in Settings/s);
+  assert.match(h.region("[data-chat-live]"), /role="alert".*No agent connected.*Connect an app in Settings/s);
   assert.equal(h.region("[data-chat-recovery]"), "");
   assert.equal(h.header.at(-1), "No agent connected");
   // Nothing is on its way, so the pane keeps its normal pace.

@@ -134,7 +134,7 @@ def test_missing_manifest_retains_unbundled_development_entrypoint(tmp_path):
     shutil.copy(STATIC / "app.js", tmp_path)
     html = assets.index((STATIC / "index.html").read_bytes(), tmp_path)
     assert b'src="/app/app.js"' in html and b"modulepreload" in html
-    assert html.count(b'rel="stylesheet"') == 23
+    assert html.count(b'rel="stylesheet"') == 24
 
 
 def test_wheel_contains_the_generated_manifest_and_exact_bundle_bytes(built, tmp_path, monkeypatch):

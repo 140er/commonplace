@@ -1,4 +1,4 @@
-"""Optional real-hub regression checks for the Home and Today design follow-up."""
+"""Optional real-hub regression checks for the Waiting on you design follow-up (palette, Activity group)."""
 
 import asyncio
 import os
@@ -45,13 +45,10 @@ def test_home_today_design_nits(hub, fresh, width):
 
             try:
                 await page.goto(url + "#/")
-                await page.wait_for_selector(".bh-form textarea:enabled")
+                await page.wait_for_selector(".bt-card")
                 await page.evaluate("document.fonts.ready")
-                tools = page.get_by_role("button", name="Tools", exact=True)
-                if await tools.locator("svg polygon").count() != 1:
-                    issues.append("Tools needs its distinct spark glyph")
-                await capture("hero")
-                await tools.click()
+                await capture("home")
+                await page.locator('[data-action="palette"]:visible').first.click()
                 await page.wait_for_selector(".workbench-palette[open]")
                 selected = page.locator('.workbench-palette [aria-selected="true"]')
                 style = await selected.evaluate("""e => {
@@ -59,7 +56,7 @@ def test_home_today_design_nits(hub, fresh, width):
                   return { background:s.backgroundColor, shadow:s.boxShadow, outline:s.outlineStyle, border:s.borderWidth };
                 }""")
                 if style != {
-                    "background": "rgb(27, 26, 33)",
+                    "background": "rgb(36, 49, 64)",
                     "shadow": "none",
                     "outline": "none",
                     "border": "0px",
@@ -72,15 +69,14 @@ def test_home_today_design_nits(hub, fresh, width):
                     await expect(hint).to_have_text("↑↓ move · ↵ run")
                     assert await hint.locator("kbd").count() == 0
                     await expect(hint).to_have_css("font-size", "12px")
-                    await expect(hint).to_have_css("color", "rgb(133, 131, 154)")
+                    await expect(hint).to_have_css("color", "rgb(134, 149, 166)")
                 if width == 390:
                     await expect(page.locator(".workbench-palette .pfoot")).to_be_hidden()
                 await capture("commands")
                 await page.keyboard.press("Escape")
-                await page.goto(url + "#/today")
                 await expect(page.locator(".bt-card")).to_have_count(3)
-                await expect(page.locator(".bt-activity")).to_contain_text("work")
-                group = page.locator(".bt-activity details")
+                await expect(page.locator('[data-bt="activity"]')).to_contain_text("work")
+                group = page.locator('[data-bt="activity"] details')
                 if await group.count() != 1:
                     issues.append("Same-bot request burst needs one expandable Activity group")
                 else:

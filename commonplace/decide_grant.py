@@ -9,20 +9,22 @@ again when answering.
 from __future__ import annotations
 
 DECIDE_SCOPE = "cards:decide"
-# The one source for the consent copy: the OAuth form and Settings → Agents show it.
-SCOPE_TEXT = (
-    "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
-    "Every answer is recorded with this connection, and you can stop this at any time "
-    "under Agents. It can answer only questions addressed to you, never another "
-    "person's, and only on boards you can write to."
+# The one source for the consent copy: the OAuth form and Settings → Connected apps show it.
+SCOPE_TEXT = "Let this app answer what is waiting on you, as you."
+SCOPE_DETAIL = (
+    "Every answer is recorded with this connection, and you can stop this at any time under "
+    "Connected apps. It can answer only questions addressed to you, never another person's, "
+    "and only on boards you can write to. Permission: cards:decide."
 )
-OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
+OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer what is waiting on them."
 NOT_YOURS_TEXT = (
-    "This connection belongs to another member. Only your own apps can answer your "
-    "Needs-me questions."
+    "This connection belongs to another member. Only your own apps can answer what is "
+    "waiting on you."
 )
-TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
-AGENT_TEXT = "Agent, runner and Coworker connections cannot answer Needs-me questions."
+TOP_LEVEL_TEXT = (
+    "Only a top-level connection of the workspace owner can answer what is waiting on them."
+)
+AGENT_TEXT = "Agent, runner and bot connections cannot answer what is waiting on you."
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
 OAUTH_GRANT_TEXT = "An OAuth app gets this only through a fresh sign-in consent."
 AUDIT_ACTION = "card.decide.delegated"

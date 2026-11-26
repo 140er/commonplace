@@ -49,7 +49,7 @@ case 'filters': {
   const cards = [card,{...card,number:2,assignee:me,ask_to:me},{...card,number:3,assignee:'conn:Iris',status:'doing'}];
   assert.deepEqual(b.filterCards(cards,'mine',me).map(c=>c.number),[2]); assert.deepEqual(b.filterCards(cards,'agents',me).map(c=>c.number),[3]); assert.deepEqual(b.filterCards(cards,'blocked',me).map(c=>c.number),[121]); break;
 }
-case 'empty': assert.ok(render([]).includes('Add your first card')); assert.ok(render([]).includes('Connect an agent')); assert.ok(render([]).includes('Ask for something')); assert.ok(b.cardTags({status:'todo'}).includes('Available for an agent')); assert.ok(!b.cardTags({status:'doing',assignee:'conn:Iris',need:'idle'}).some(t=>t.startsWith('Working'))); break;
+case 'empty': assert.ok(render([]).includes('Add your first card')); assert.ok(render([]).includes('Connect an app')); assert.ok(render([]).includes('Ask for something')); assert.ok(b.cardTags({status:'todo'}).includes('Available for an agent')); assert.ok(!b.cardTags({status:'doing',assignee:'conn:Iris',need:'idle'}).some(t=>t.startsWith('Working'))); break;
 case 'escaping': {
   const html = render([{...card,title:'<script>bad</script>',ask:'<img>',labels:['<label>']}]); assert.ok(!html.includes('<script>')); assert.ok(html.includes('&lt;script&gt;')); assert.ok(html.includes('&lt;img&gt;')); break;
 }

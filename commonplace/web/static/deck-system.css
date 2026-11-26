@@ -1,0 +1,464 @@
+/* Commonplace design system, in a dark, compact desktop-app style: its dark palette, Geist, compact
+   rows, a sidebar beside one canvas. Loaded last, so it settles what the per-screen files leave open; the per-screen
+   files read these tokens. Inert in the classic look. No italic anywhere. */
+@font-face { font-family: Geist; src: url("fonts/geist-latin.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+:root[data-ui="deck"] {
+  /* T3 Code dark roles */
+  --ground: #141a22; --stage: #141a22; --rail: #0e141b;
+  --surface-a: 1; --s1: #1c2530; --s1-solid: #1c2530; --card: #1c2530; --s2: #243140; --s3: #2c3846;
+  --line: #2c3846; --line2: #3a4858; --line3: #52637a; --control-line: #6b7f95;
+  --ink: #e6edf4; --ink2: #a8b7c7; --ink3: #8695a6; --ink4: #627083;
+  --violet: #9bbbe0; --violet-ink: #9bbbe0; --cyan: #7dcea4; --amber: #e0b15a; --red: #e7a39a; --send: #3b82f6;
+  --font: Geist, ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --radius-control: 0.5rem; --radius-card: 10px; --radius-float: 12px; --radius-dialog: 14px;
+  --page-top: 28px; --page-side: 24px; --page-width: 960px; --title-size: 20px;
+}
+:root[data-ui="deck"] * { font-synthesis: none; }
+:root[data-ui="deck"] :is(i, em, cite, var, dfn, address) { font-style: normal; }
+:root[data-ui="deck"] body { font-family: var(--font); font-size: 14px; -webkit-font-smoothing: antialiased; background: var(--ground); }
+:root[data-ui="deck"] :focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+
+/* ---------- No background art: one flat canvas beside the sidebar ---------- */
+:root[data-ui="deck"] .deck-stage { display: none; }
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .shell > .center { padding: 0; }
+  :root[data-ui="deck"] .center > #content { border-radius: 0; }
+}
+:root[data-ui="deck"] .center, :root[data-ui="deck"] .center > #content { background: var(--ground); }
+:root[data-ui="deck"] .center h1 { font-size: var(--title-size); line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+
+/* ---------- Sidebar ---------- */
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .shell.two, :root[data-ui="deck"] .shell:not(.two), :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 236px minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell:not(.two).chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 236px minmax(0, 1fr) 396px; }
+}
+:root[data-ui="deck"] .rail[data-deck="bar"] { background: var(--rail); border-right: 1px solid var(--line); }
+:root[data-ui="deck"] .deck-brand-row { height: 52px; padding: 0 10px 0 14px; }
+:root[data-ui="deck"] .deck-brand { gap: 8px; font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+:root[data-ui="deck"] .deck-mark { width: 20px; height: 20px; color: var(--violet); }
+:root[data-ui="deck"] .rail .deck-new-thread.nav { display: flex; width: auto; margin: 0 8px 6px; min-height: 32px; padding: 0 10px; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: transparent; color: var(--ink); font-weight: 550; }
+:root[data-ui="deck"] .rail .deck-new-thread.nav:hover { background: var(--s1); }
+:root[data-ui="deck"] .deck-find { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; height: 32px; padding: 0 10px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink2); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
+:root[data-ui="deck"] .deck-find:hover { background: var(--s1); color: var(--ink); }
+:root[data-ui="deck"] .deck-find span { flex: 1; }
+:root[data-ui="deck"] .deck-find kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; background: transparent; color: var(--ink3); font: 11px var(--font); }
+:root[data-ui="deck"] .rail .i { width: 15px; height: 15px; }
+:root[data-ui="deck"] .deck-links { display: flex; flex-direction: column; gap: 1px; margin: 0 8px 6px; }
+:root[data-ui="deck"] .rail .nav, :root[data-ui="deck"] .rail .deck-links .nav { display: flex; align-items: center; width: 100%; min-height: 32px; padding: 0 10px; gap: 8px; border-radius: var(--radius-control); color: var(--ink); font-size: 13.5px; font-weight: 450; box-shadow: none; }
+:root[data-ui="deck"] .rail .nav .i { color: var(--ink2); }
+:root[data-ui="deck"] .rail :is(.nav, .deck-bot-row, .deck-tree-row, .deck-thread-row):hover { background: var(--s1); color: var(--ink); }
+:root[data-ui="deck"] .rail .nav[aria-current], :root[data-ui="deck"] .rail .deck-links .nav[aria-current], :root[data-ui="deck"] :is(.deck-bot-row, .deck-tree-row)[aria-current] { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .deck-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="deck"] .rail .count.need { margin-left: auto; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--amber); color: #141a22; font-size: 11.5px; font-weight: 700; line-height: 18px; text-align: center; }
+:root[data-ui="deck"] .rail .count.unread { background: var(--violet); color: #141a22; }
+:root[data-ui="deck"] .deck-rail-scroll { padding: 0 8px 12px; border: 0; }
+:root[data-ui="deck"] .deck-rail-group { display: flex; align-items: center; margin-top: 12px; }
+:root[data-ui="deck"] .deck-rail-heading, :root[data-ui="deck"] .rail[data-deck="bar"] .deck-rail-heading { display: flex; align-items: center; gap: 6px; flex: 1; min-height: 28px; margin: 0; padding: 0 10px; color: var(--ink2); font-size: 12.5px; font-weight: 600; text-decoration: none; border-radius: var(--radius-control); }
+:root[data-ui="deck"] a.deck-rail-heading:hover, :root[data-ui="deck"] a.deck-rail-heading[aria-current] { color: var(--ink); background: var(--s1); }
+:root[data-ui="deck"] h2.deck-rail-heading { margin-top: 12px; }
+:root[data-ui="deck"] .deck-rail-heading[hidden] { display: none; }
+:root[data-ui="deck"] .deck-new-bot { width: 24px; height: 24px; border-radius: 6px; color: var(--ink2); font-size: 16px; }
+:root[data-ui="deck"] .deck-bot-row { height: 32px; padding: 0 10px; gap: 8px; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .deck-bot-avatar { width: 18px; height: 18px; border-radius: 5px; background: var(--s2); color: var(--ink2); border: 0; font-size: 10px; font-weight: 700; }
+:root[data-ui="deck"] .deck-bot-name { font-size: 13.5px; font-weight: 450; }
+:root[data-ui="deck"] .deck-bot-time { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .deck-private { display: none; }
+:root[data-ui="deck"] .deck-state-dot[data-state="live"] { background: var(--cyan); }
+:root[data-ui="deck"] .deck-state-dot[data-state="busy"] { background: var(--violet); }
+:root[data-ui="deck"] .deck-state-dot[data-state="waiting"] { background: var(--amber); }
+:root[data-ui="deck"] .deck-projects { display: flex; flex-direction: column; gap: 1px; }
+:root[data-ui="deck"] .deck-project-row small { color: var(--amber); font-size: 12px; }
+:root[data-ui="deck"] .rail .rail-foot { display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 8px; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .rail .rail-foot .user-menu { flex: 1; min-width: 0; position: relative; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me { min-height: 36px; padding: 0 8px; gap: 8px; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me:hover { background: var(--s1); }
+:root[data-ui="deck"] .rail .me .mark { width: 24px; height: 24px; border-radius: 50%; background: var(--s2); color: var(--ink); border: 0; font-size: 11px; }
+:root[data-ui="deck"] .deck-owner b { font-size: 13px; font-weight: 550; }
+:root[data-ui="deck"] .deck-owner small { color: var(--ink3); font-size: 11.5px; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .user-links { bottom: 44px; left: 0; right: -40px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); }
+:root[data-ui="deck"] .rail[data-deck="bar"] .user-links :is(a, button) { min-height: 32px; border-radius: var(--radius-control); font-size: 13.5px; }
+:root[data-ui="deck"] .deck-settings-link { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: var(--radius-control); color: var(--ink2); }
+:root[data-ui="deck"] .deck-settings-link:hover, :root[data-ui="deck"] .deck-settings-link[aria-current] { background: var(--s2); color: var(--ink); }
+
+/* ---------- Review fixes: full-width page bars, readable answers, one-column setup in a thread ---------- */
+:root[data-ui="deck"] .shell #content > .bt-bar { width: 100%; max-width: none; margin-inline: 0; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me > .i { width: 12px; height: 12px; margin-left: auto; color: var(--ink3); transform: rotate(-90deg); }
+/* The Bots heading is a link to the list, never styled as a selected row. */
+:root[data-ui="deck"] a.deck-rail-heading[aria-current] { background: none; color: var(--ink); }
+/* The Projects heading is a place of its own: it reads as the selected row on the Projects pages. */
+:root[data-ui="deck"] a.deck-projects-heading[aria-current] { background: var(--s2); }
+/* Recent activity: neutral marks, the latest five only. */
+:root[data-ui="deck"] .bt-recent .bt-dot { background: var(--ink4); animation: none; }
+:root[data-ui="deck"] .bt-recent li:nth-child(n+6) { display: none; }
+@media (min-width: 700px) { :root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); } }
+:root[data-ui="deck"] .bots-thread .ready-to-start ul, :root[data-ui="deck"] .cb-detail .ready-to-start ul { grid-template-columns: minmax(0, 1fr); }
+:root[data-ui="deck"] .console-empty .console-message { margin: 0; padding: 0; }
+:root[data-ui="deck"] .deck-work .wk-state { flex: none; color: var(--ink2); white-space: nowrap; }
+:root[data-ui="deck"] .cb-worker small { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 699px) {
+  /* An answer is a sentence: one per line, full width, never squeezed into two lines inside a button. */
+  /* Short answers share a row; a long one takes its own line, and wraps inside it only if it is longer than the line. */
+  :root[data-ui="deck"] .bt-actions { flex-direction: row; flex-wrap: wrap; }
+  :root[data-ui="deck"] .bt-actions button { flex: 1 1 auto; width: auto; max-width: 100%; white-space: normal; text-align: center; }
+  /* The answers own their rows; Reply and See the work always start a row of their own under them. */
+  :root[data-ui="deck"] .bt-actions::after { content: ""; flex-basis: 100%; order: 1; }
+  :root[data-ui="deck"] .bt-actions button.bt-quiet { order: 2; flex: 1 1 40%; margin-left: 0; }
+  /* Settings sections and Board states are few: on a phone they wrap, so none hides past the edge. */
+  :root[data-ui="deck"] body .capy-settings #deck-settings-nav { flex-wrap: wrap; overflow: visible; mask-image: none; padding-right: 0; }
+  :root[data-ui="deck"] body .deck-board-states { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; padding-right: 0; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { display: none; }
+  /* Work's project filters are few: they wrap instead of running off the edge. */
+  :root[data-ui="deck"] .deck-work .wk-chips { flex-wrap: wrap; overflow: visible; mask-image: none; padding-right: 0; }
+  /* Cards and lanes keep the same side gutter as every other phone page. */
+  :root[data-ui="deck"] body .shell .center > #content.deck-work { padding-inline: 14px; }
+  :root[data-ui="deck"] body .shell .deck-work > .wk-bar { height: auto; min-height: 52px; padding: 10px 0; }
+  :root[data-ui="deck"] body .shell .deck-work .wk-health { padding-inline: 0; }
+}
+/* The account menu and the phone sheet group their places under small labels: Workspace, Server, Account. */
+:root[data-ui="deck"] :is(.user-links, .deck-more-panel) .deck-menu-group { margin: 0; padding: 10px 12px 2px; color: var(--ink3); font-size: 11.5px; font-weight: 600; line-height: 16px; letter-spacing: .04em; text-transform: uppercase; }
+:root[data-ui="deck"] .user-links .deck-menu-group { padding-inline: 10px; }
+:root[data-ui="deck"] .user-links .deck-menu-group:first-child, :root[data-ui="deck"] .deck-more-account + .deck-menu-group { padding-top: 6px; }
+
+/* ---------- Every page has the same 52px bar with its title, as in T3 Code; the page's own controls follow ---------- */
+/* The shell writes every page's title into .head; it becomes the bar. A bot thread has its own bot bar instead.
+   `body` raises these above the per-screen sheets, which load later. */
+@media (min-width: 700px) {
+  :root[data-ui="deck"] body .shell .center > .head, :root[data-ui="deck"] body .shell .center > .head:not([hidden]), :root[data-ui="deck"] body .shell .center > .head[hidden] { display: flex; align-items: center; gap: 10px; flex: none; width: 100%; max-width: none; height: 52px; min-height: 52px; margin: 0; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--ground); }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions { display: flex; align-items: center; gap: 8px; margin: 0 0 0 auto; padding: 0; }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions .btn { min-height: 30px; height: 30px; padding: 0 12px; margin: 0; }
+  :root[data-ui="deck"] body .shell .center:has(.capy-settings) > .head { flex-direction: row; align-items: center; justify-content: flex-start; }
+  :root[data-ui="deck"] body .shell .center > .head h1 { font-size: 15px; line-height: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+  /* Work, Cloud workspaces, Pipeline and Coworkers hide the shell head for their own titles; on a desktop the head is
+     the one bar every page shares, so it shows anyway (the global [hidden] rule is !important, hence this one). */
+  :root[data-ui="deck"] body .shell .center > .head[hidden] { display: flex !important; }
+  :root[data-ui="deck"] body .shell .center:has(.bots[data-pane="thread"]) > .head { display: none !important; }
+  /* Pages that draw their own controls keep them in the page, not as a second set in the bar. */
+  :root[data-ui="deck"] body .shell .center:has(:is(.deck-board, .deck-memory)) > .head #head-actions { display: none; }
+  /* The page title lives in the bar, so the in-page copies go. */
+  :root[data-ui="deck"] body .shell #content :is(.bt-bar, .wk-bar, .bots-bar, .dc-title, .deck-board-title-row, .memory-heading, .pl-head, .cb-heading) h1 { display: none; }
+  :root[data-ui="deck"] body .shell #content > .bt-bar { height: auto; min-height: 0; width: 100%; max-width: var(--page-width); margin-inline: auto; padding: 0 0 6px; border-bottom: 0; background: none; }
+  :root[data-ui="deck"] body .shell .deck-work > .wk-bar { height: auto; min-height: 0; padding: 20px 0 6px; border-bottom: 0; background: none; }
+  :root[data-ui="deck"] body .shell .center > #content.deck-work { padding-inline: max(var(--page-side), calc((100% - var(--page-width)) / 2)); }
+  :root[data-ui="deck"] body .shell #content .bt-col { max-width: var(--page-width); padding-inline: 0; }
+  :root[data-ui="deck"] body .shell #content .bots[data-pane="roster"] > .bots-roster { max-width: var(--page-width); padding-top: 0; padding-inline: 0; }
+  :root[data-ui="deck"] body .shell .center #content.deck-workspace.dw-map { padding-top: 20px; }
+  :root[data-ui="deck"] body .shell .center #content.capy-coworkers { padding-top: 20px; }
+  :root[data-ui="deck"] body .shell #content .workbench-board.deck-board { padding-top: 0; }
+  /* The board scrolls with the page, so a long column runs on below the fold instead of being cut inside a box. */
+  :root[data-ui="deck"] body .shell #content .deck-board .board { overflow: visible; height: auto; max-height: none; padding-bottom: 32px; }
+  :root[data-ui="deck"] body .shell #content .deck-memory { padding-top: 0; }
+  /* The bar holds the title, so Memory's actions sit on the intro line, clear of the search box. */
+  :root[data-ui="deck"] body .shell #content .deck-memory .memory-heading { min-height: 32px; align-items: center; margin-bottom: 16px; }
+  :root[data-ui="deck"] body .shell #content .deck-memory .memory-actions { top: 0; }
+  :root[data-ui="deck"] body .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding-top: 20px; }
+  :root[data-ui="deck"] body .shell #content .settings.capy-settings { padding-inline: 0; padding-top: 20px; }
+}
+
+/* ---------- Controls that must read whole at every width ---------- */
+:root[data-ui="deck"] body .shell .look-switch .opt { white-space: nowrap; min-width: max-content; }
+/* Peer answers stay equal, but each reads clearly as a button you can press. */
+:root[data-ui="deck"] body .shell .bt-actions .bt-secondary { border-color: var(--line3); color: var(--ink); background: var(--s2); }
+:root[data-ui="deck"] body .shell .bt-actions .bt-secondary:hover:not(:disabled) { border-color: var(--ink3); }
+@media (max-width: 699px) {
+  /* Rows that scroll sideways fade at the edge, so the next option reads as more to come. */
+  :root[data-ui="deck"] :is(.memory-rooms) { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); padding-right: 32px; }
+}
+
+/* Reply and See the work sit together at the end of the answer row. */
+:root[data-ui="deck"] body .shell .bt-actions .bt-quiet + .bt-quiet { margin-left: 0; }
+
+/* ---------- One primary style, form controls in the palette, no leftover pixel art ---------- */
+:root[data-ui="deck"] body .btn.primary, :root[data-ui="deck"] body button.btn.primary { background: var(--violet); border-color: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] body .btn.primary:hover { background: var(--violet-ink); filter: brightness(1.08); }
+/* Create token is the one primary action of the connections form. */
+:root[data-ui="deck"] body .agents-settings button.blockbtn[data-agent-mutation] { background: var(--violet); border-color: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] body .agents-settings button.blockbtn[data-agent-mutation]:hover:not(:disabled) { background: var(--violet-ink); filter: brightness(1.08); }
+:root[data-ui="deck"] input[type="checkbox"], :root[data-ui="deck"] input[type="radio"] { accent-color: var(--violet); }
+/* Settings checkboxes: an unchecked box is outlined in --control-line (over 3:1 on the card), a checked one is violet. */
+:root[data-ui="deck"] .capy-settings input[type="checkbox"] { appearance: none; display: inline-grid; place-content: center; flex: none; width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; border: 1.5px solid var(--control-line); border-radius: 5px; background: var(--s2); cursor: pointer; }
+:root[data-ui="deck"] .capy-settings input[type="checkbox"]:checked { border-color: var(--violet); background: var(--violet); }
+:root[data-ui="deck"] .capy-settings input[type="checkbox"]:checked::after { content: ""; width: 4px; height: 8px; margin-top: -1px; border: solid var(--ground); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+:root[data-ui="deck"] .capy-settings input[type="checkbox"]:disabled { opacity: 0.5; cursor: default; }
+:root[data-ui="deck"] body .shell .look-switch .opt[aria-pressed="true"] { background: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] .pl-empty .cp-art { display: none; }
+
+/* Each page's creating action is a primary button. */
+:root[data-ui="deck"] body .shell :is(.deck-board-add, [data-rule-action="new"]) { background: var(--violet); border-color: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] body .shell .deck-work .wk-lanes { padding-inline: 0; }
+
+/* ---------- Bots list: one bordered list, a row per bot ---------- */
+:root[data-ui="deck"] .bots-roster .cb-folder > ul { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); overflow: hidden; }
+:root[data-ui="deck"] .bots-roster .cb-folder > ul > li + li { border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .bots-roster .cb-folder > ul > li > a { border-radius: 0; }
+
+/* ---------- Phone: T3's mobile header and three tabs ---------- */
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .m-top[data-deck="top"], :root[data-ui="deck"] #phone-bar .m-top[data-deck="top"] { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; height: 56px; min-height: 56px; padding: 0 10px; gap: 4px; background: var(--ground); border-bottom: 1px solid var(--line); }
+  :root[data-ui="deck"] .m-top[data-deck="top"] > b { text-align: center; font-size: 16px; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :root[data-ui="deck"] .m-top .deck-phone-avatar, :root[data-ui="deck"] .m-top .iconbtn { width: 40px; height: 40px; min-height: 40px; border: 1px solid var(--line); border-radius: 50%; background: var(--s1); color: var(--ink); font-size: 12px; font-weight: 700; display: grid; place-items: center; background-clip: border-box; }
+  :root[data-ui="deck"] .m-top .iconbtn .i { width: 17px; height: 17px; }
+  /* The header has room for three controls; Cloud workspaces offers Add a machine on the page itself. */
+  :root[data-ui="deck"] .m-top .dc-top-add { display: none; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); height: calc(64px + env(safe-area-inset-bottom)); padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); gap: 0; background: var(--rail); border-top: 1px solid var(--line); }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 48px; color: var(--ink3); font-size: 11.5px; font-weight: 600; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs a[aria-current] { color: var(--ink); background: none; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs .i { width: 21px; height: 21px; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs .count { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: #141a22; font-size: 11px; font-weight: 700; line-height: 17px; }
+  :root[data-ui="deck"] .shell .center { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  /* The More sheet (a bottom sheet in deck-shell.css) is headed by the account line. */
+  :root[data-ui="deck"] .deck-more-account { margin: 0; padding: 14px 12px 10px; border-bottom: 1px solid var(--line); color: var(--ink2); font-size: 13px; }
+  :root[data-ui="deck"] .deck-more-account b { color: var(--ink); font-weight: 600; }
+  /* A grabber at the top and a close button: the sheet also closes on Escape and on a tap outside it. */
+  :root[data-ui="deck"] .deck-more-grabber { display: block; width: 36px; height: 4px; margin: 8px auto 0; border-radius: 2px; background: var(--line3); }
+  :root[data-ui="deck"] body .deck-more-panel .deck-more-close { position: absolute; top: 6px; right: 6px; z-index: 1; width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+  :root[data-ui="deck"] .deck-more-panel .deck-more-account { padding-right: 56px; }
+  /* The menu button reads like a tab: dim until the person is on a page that lives in the sheet. */
+  :root[data-ui="deck"] .m-top .deck-phone-avatar { color: var(--ink3); }
+  :root[data-ui="deck"] .m-top .deck-phone-avatar[aria-current] { color: var(--ink); border-color: var(--line3); background: var(--s2); }
+}
+
+/* ---------- One page frame: same left edge, width and title on every screen ---------- */
+:root[data-ui="deck"] .center h1 { font-size: var(--title-size); line-height: 1.25; font-weight: 600; letter-spacing: -0.015em; color: var(--ink); }
+:root[data-ui="deck"] :is(.bt-page, .bh-content) { margin-inline: 0; }
+:root[data-ui="deck"] .bt-page { width: min(var(--page-width), 100%); }
+:root[data-ui="deck"] .settings.capy-settings { max-width: calc(var(--page-width) + 2 * var(--page-side)); margin-inline: auto; padding: var(--page-top) var(--page-side) 32px; }
+:root[data-ui="deck"] .bots-roster { width: min(calc(var(--page-width) + 2 * var(--page-side)), 100%); margin-inline: auto; }
+:root[data-ui="deck"] .bots[data-pane="roster"] { grid-template-columns: minmax(0, 1fr); }
+:root[data-ui="deck"] .bots[data-pane="roster"] > .bots-roster { width: min(760px, 100%); }
+:root[data-ui="deck"] .shell #content .deck-memory { max-width: var(--page-width); margin: 0; }
+@media (min-width: 700px) {
+  /* Screens titled by the shell head (Projects, Rules, Console, Admin, Needs me) start on the same edge as the rest. */
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) { padding: calc(var(--page-top) - 8px) var(--page-side) 0; min-height: 0; }
+  /* Header actions end where the page body ends. */
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) { max-width: calc(var(--page-width) + 2 * var(--page-side)); width: 100%; margin-inline: auto; }
+  :root[data-ui="deck"] #content :is(.console-view, .admin.settings) { padding-left: 0; padding-right: 0; }
+  :root[data-ui="deck"] #content > .console-view .console-message { margin-left: 0; padding-left: 0; }
+  :root[data-ui="deck"] #content:has(> .pl-head) { padding-top: calc(var(--page-top) - 8px); }
+  /* One top offset on every desktop page: 20px under the 52px bar. Where #content carries it, the first block adds none. */
+  :root[data-ui="deck"] #content .admin.settings { padding-top: 0; }
+  :root[data-ui="deck"] #content .admin.settings > .admin-workspace:first-child { margin-top: 0; }
+  :root[data-ui="deck"] .shell .center > .head:not([hidden]) ~ #content:not(:has(> .capy-settings)) { padding: 20px var(--page-side) 32px; }
+  :root[data-ui="deck"] #content > :is(.queue, .rules-view, .console-view) { padding: 0; max-width: var(--page-width); }
+  /* One centred column for every page, as in a T3 thread; Work and boards use the full width for their lanes. */
+  :root[data-ui="deck"] #content > :not(.digest-captions) { max-width: var(--page-width); margin-inline: auto; width: 100%; }
+  :root[data-ui="deck"] #content > :is(.bt-scroll, .bh-wrap, .bots) { max-width: none; }
+  :root[data-ui="deck"] .shell #content :is(.bt-page, .bots-roster, .deck-board) { width: 100%; max-width: var(--page-width); }
+  :root[data-ui="deck"] .shell #content .bots[data-pane="roster"] > .bots-roster { max-width: 760px; }
+  /* On a board every card is in that project already; the avatar letter says which bot, the name would repeat. */
+  :root[data-ui="deck"] .shell .deck-board .card-meta > .deck-board-bot { display: none; }
+  :root[data-ui="deck"] .shell #content .deck-compute { max-width: var(--page-width); }
+  /* A bot thread's bar is the same full-width 52px bar as every other page's: the centred page column above would
+     otherwise cancel the shell-padding bleed, and the 1px rule sits inside the 52px, not below it. */
+  :root[data-ui="deck"] .shell #content > .bots[data-pane="thread"] { width: auto; max-width: none; margin-inline: calc(-1 * var(--page-side)); }
+  :root[data-ui="deck"] .bots .bots-thread > .bots-head { box-sizing: border-box; height: 52px; min-height: 52px; }
+  :root[data-ui="deck"] .bots .bots-thread > .bots-head:has(.bot-thread-audience) { height: auto; }
+  :root[data-ui="deck"] .bots-head .deck-bots-strip { height: 51px; }
+  :root[data-ui="deck"] #content:has(> .pl-head), :root[data-ui="deck"] #content:has(> .deck-compute), :root[data-ui="deck"] #content:has(> .deck-memory) { padding-left: var(--page-side); padding-right: var(--page-side); }
+  /* The shell already pads #content; screens that pad themselves would double the edge. */
+  :root[data-ui="deck"] .shell #content .bt-page { padding-inline: 0; margin-inline: 0; }
+  :root[data-ui="deck"] .shell #content :is(.bots-roster, .deck-board) { padding-inline: 0; }
+  :root[data-ui="deck"] .shell #content .deck-memory { margin-inline: auto; }
+  :root[data-ui="deck"] .shell .deck-workspace { padding-inline: var(--page-side); }
+  /* The card drawer floats over the board, so opening a card never resizes the rail or moves the board. */
+  :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) { grid-template-columns: 252px minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) > .rail { grid-column: 1; }
+  :root[data-ui="deck"] .shell:has(> .context .deck-card-drawer) > .center { grid-column: 2; }
+}
+
+/* ---------- Decorative art: only where a page is empty, never as a rule or a heading ornament ---------- */
+:root[data-ui="deck"] .cp-art:is([data-art="rule"], [data-art="header"], [data-art="column"], [data-art="clear"], [data-art="rail"]) { display: none; }
+
+/* ---------- Empty states read as a sentence, not a placeholder ---------- */
+:root[data-ui="deck"] .deck-board .empty-col { padding: 14px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink3); font-size: 13px; text-align: left; }
+:root[data-ui="deck"] .bt-empty { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); color: var(--ink2); font-size: 14px; }
+:root[data-ui="deck"] .bt-empty::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--cyan); }
+
+/* ---------- Board: the title gets the width; moving a card is a quiet action under it ---------- */
+:root[data-ui="deck"] .deck-board .card h3 { padding-right: 0; }
+/* Title across the card; the meta line and Move to… share the row under it, and the meta wraps rather than hides. */
+:root[data-ui="deck"] .shell .deck-board .card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+:root[data-ui="deck"] .deck-board .card > h3 { grid-column: 1 / -1; grid-row: 1; }
+:root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: nowrap; column-gap: 8px; }
+:root[data-ui="deck"] .deck-board .card-meta > .deck-board-bot { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { flex: none; }
+/* No separator dot: when the line wraps, the state moves down whole instead of leaving a dangling "·". */
+:root[data-ui="deck"] .deck-board .card-meta > span[aria-hidden="true"]:not(.deck-board-avatar) { display: none; }
+:root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; margin-left: 8px; padding: 0 6px 0 10px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--s1); color: var(--ink); text-decoration: none; font-size: 12.5px; font-weight: 550; }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch .i { width: 12px; height: 12px; color: var(--ink3); }
+:root[data-ui="deck"] .deck-board-intro .deck-board-switch:hover { background: var(--s2); }
+:root[data-ui="deck"] .console-empty { grid-column: 1 / -1; align-self: start; justify-self: start; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: var(--page-width); padding: 20px; border: 1px dashed var(--line2); border-radius: var(--radius-card); }
+:root[data-ui="deck"] .console-empty .console-message { margin: 0; color: var(--ink); font-size: 15px; font-weight: 600; }
+:root[data-ui="deck"] .console-empty-next { margin: 0 0 6px; color: var(--ink2); }
+:root[data-ui="deck"] .deck-board .card > .card-top { position: static; grid-column: 2; grid-row: 2; display: flex; }
+:root[data-ui="deck"] .deck-board .card > :not(h3, .card-meta, .card-top) { grid-column: 1 / -1; }
+@media (min-width: 700px) and (hover: hover) {
+  :root[data-ui="deck"] .shell .deck-board .card-top .card-more { height: auto; min-height: 26px; padding: 0 8px; font-size: 12px; }
+}
+:root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 26px; padding: 0 8px; background: transparent; color: var(--ink2); border: 1px solid var(--line3); }
+:root[data-ui="deck"] .deck-board .card-top .card-more:hover { color: var(--ink); background: var(--s2); }
+:root[data-ui="deck"] .deck-board .card:hover { border-color: var(--line2); }
+
+/* ---------- Sign-in: numbered steps you can actually read ---------- */
+:root[data-ui="deck"] .steps3 { counter-reset: step; }
+:root[data-ui="deck"] .steps3 > li { counter-increment: step; }
+:root[data-ui="deck"] .steps3 > li::before { content: counter(step); display: grid; place-items: center; color: var(--ground); font-size: 12px; font-weight: 700; }
+
+/* ---------- Settings forms: fields line up on their labels; consent text reads as a list ---------- */
+:root[data-ui="deck"] .capy-settings .agent-form { align-items: start; gap: 14px 16px; }
+:root[data-ui="deck"] .capy-settings .agent-form > label.agent-consent { flex: 1 1 100%; flex-direction: row; align-items: flex-start; gap: 10px; color: var(--ink2); font-size: 13.5px; line-height: 1.5; }
+:root[data-ui="deck"] .capy-settings .agent-form > label.agent-consent input { margin-top: 3px; flex: none; }
+
+/* ---------- Lists of projects and rules: rows on one surface, words instead of counters ---------- */
+:root[data-ui="deck"] #content > .queue { display: flex; flex-direction: column; gap: 0; }
+:root[data-ui="deck"] #content > .queue > .item { margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-top-width: 0; border-radius: 0; background: var(--s1); box-shadow: none; }
+:root[data-ui="deck"] #content > .queue > .item:first-child { border-top-width: 1px; border-radius: var(--radius-card) var(--radius-card) 0 0; }
+:root[data-ui="deck"] #content > .queue > .item:last-child { border-radius: 0 0 var(--radius-card) var(--radius-card); }
+:root[data-ui="deck"] #content > .queue > .item:only-child { border-radius: var(--radius-card); }
+:root[data-ui="deck"] #content > .queue > .item:hover { background: var(--s2); }
+:root[data-ui="deck"] #content > .queue > .item h3 { margin: 0 0 2px; font-size: 15px; font-weight: 600; }
+:root[data-ui="deck"] #content > .queue > .item h3 a { color: var(--ink); text-decoration: none; }
+:root[data-ui="deck"] #content > .queue > .item h3 a::after { content: ""; position: absolute; inset: 0; }
+:root[data-ui="deck"] #content > .queue > .item { position: relative; }
+:root[data-ui="deck"] #content > .queue > .item .meta { color: var(--ink3); font-size: 13px; }
+/* The waiting count reads "2 waiting" in amber, as in the sidebar; each Projects row ends in a chevron. */
+:root[data-ui="deck"] #content > .queue .meta-waiting { color: var(--amber); }
+:root[data-ui="deck"] #content > .queue.project-list > .item { padding-right: 44px; }
+:root[data-ui="deck"] #content > .queue.project-list > .item::after { content: ""; position: absolute; right: 20px; top: 50%; width: 7px; height: 7px; border-top: 1.5px solid var(--ink3); border-right: 1.5px solid var(--ink3); transform: translateY(-50%) rotate(45deg); }
+:root[data-ui="deck"] #content > .queue.project-list > .item:hover::after { border-color: var(--ink); }
+:root[data-ui="deck"] .rules-empty { max-width: var(--page-width); padding: 16px 18px; border: 1px dashed var(--line2); border-radius: var(--radius-card); color: var(--ink2); background: transparent; }
+
+/* ---------- Small clarity fixes ---------- */
+/* One unnamed group of bots needs no heading under the page title "Bots"; it stays for screen readers. */
+:root[data-ui="deck"] .cb-folder:only-child > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+:root[data-ui="deck"] .needs-me:has(.empty) .keys { display: none; }
+:root[data-ui="deck"] .cb-worker .cb-state-word { display: none; }
+:root[data-ui="deck"] .cb-worker b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-ui="deck"] :is(.cb-state-word, .bt-state-word) { margin-left: 6px; color: var(--ink3); font-size: 12px; font-weight: 400; }
+@media (hover: none) { :root[data-ui="deck"] .needs-me .keys { display: none; } }
+:root[data-ui="deck"] .ready-to-start p { line-height: 1.5; }
+:root[data-ui="deck"] .admin-workspace { color: var(--ink2); }
+/* A name like "Coworker:common / place" wraps at the colon or a space, never inside a word: every name cell. */
+:root[data-ui="deck"] .admin td:is([data-label="Project"], [data-label="Coordinator"]) { overflow-wrap: normal; word-break: normal; }
+:root[data-ui="deck"] .admin a.admin-manage { color: var(--violet); text-decoration: none; }
+:root[data-ui="deck"] .admin a.admin-manage:hover { text-decoration: underline; }
+:root[data-ui="deck"] .admin.settings h3 { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+:root[data-ui="deck"] #content > .admin.settings { padding-inline: 0; }
+/* A heading focused so screen readers land on it is not a control; it needs no focus box. */
+:root[data-ui="deck"] :is(h1, h2, h3)[tabindex="-1"]:focus { outline: none; }
+@media (min-width: 700px) {
+  /* The bot header lines up with the conversation column under it. */
+  :root[data-ui="deck"] .bots-thread > .bots-head { padding-inline: max(16px, calc((100% - 760px) / 2)); }
+}
+
+/* ---------- Bot conversation: one column for the checklist, the stream and the composer ---------- */
+@media (min-width: 700px) {
+  /* The rail already lists every bot; the strip keeps only the one you are talking to. */
+  :root[data-ui="deck"] .deck-bot-chips .deck-bot-chip:not([aria-current]) { display: none; }
+}
+:root[data-ui="deck"] .bots-thread > [data-region="model"]:not(:empty) { width: min(760px, calc(100% - 32px)); margin: 16px auto 0; padding: 0; flex: none; max-height: none; overflow: visible; }
+/* Until setup is done the conversation cannot start, so its "tell the bot" hint gives its room to the checklist. */
+:root[data-ui="deck"] .bots-thread:has(.ready-to-start:not([data-open="0"])) .bots-empty { display: none; }
+/* While setup is incomplete the whole conversation scrolls, so every checklist row stays reachable above the composer. */
+:root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) { overflow-y: auto; overscroll-behavior: contain; }
+:root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) > .bots-stream { flex: 1 0 auto; min-height: 24px; overflow: visible; }
+:root[data-ui="deck"] .bots-thread:has(> [data-region="model"]:not(:empty)) > .bots-compose { position: sticky; bottom: 0; z-index: 2; }
+:root[data-ui="deck"] .cb-detail:has(.ready-to-start:not([data-open="0"])) [data-cb-composer] { position: static; }
+:root[data-ui="deck"] .bots-compose { display: flex; align-items: flex-start; justify-content: center; gap: 8px; }
+:root[data-ui="deck"] .bots-compose > .bots-box { flex: 1; max-width: 760px; }
+:root[data-ui="deck"] .bots-compose > .deck-composer-mic { margin-top: 6px; }
+
+/* ---------- Ready to start: what needs you leads, the rest is a quiet list ---------- */
+:root[data-ui="deck"] .ready-to-start { margin: 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--s1); font-size: 14px; }
+:root[data-ui="deck"] .ready-to-start h2 { margin: 0; font-size: 16px; font-weight: 600; }
+:root[data-ui="deck"] .ready-summary { margin: 4px 0 12px; color: var(--ink2); }
+:root[data-ui="deck"] .ready-to-start li { padding: 10px 0; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .ready-to-start li > div { justify-content: flex-start; align-items: baseline; }
+:root[data-ui="deck"] .ready-to-start li b { font-weight: 600; }
+:root[data-ui="deck"] .ready-to-start .ready-state { margin-left: auto; font-size: 12.5px; color: var(--ink3); }
+:root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] .ready-state { color: var(--amber); font-weight: 600; }
+:root[data-ui="deck"] .ready-to-start li[data-waits] .ready-state { color: var(--ink3); font-weight: 500; }
+/* The next step reads as the one thing to do: a marked row with its link as a button. */
+:root[data-ui="deck"] .ready-to-start li[data-next] { margin: 4px -12px; padding: 12px; border: 1px solid var(--line2); border-radius: var(--radius-control); background: var(--s2); }
+:root[data-ui="deck"] .ready-to-start li[data-next] + li { border-top: 0; }
+:root[data-ui="deck"] .ready-to-start li[data-next] p a { color: var(--ink); font-weight: 600; text-decoration-color: var(--violet); text-decoration-thickness: 2px; }
+
+:root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] p { color: var(--ink2); }
+:root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) { padding: 7px 0; color: var(--ink3); }
+:root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) b { font-weight: 500; color: var(--ink2); }
+:root[data-ui="deck"] .ready-to-start li:not([data-state="needs_you"]) p { margin-top: 2px; font-size: 12.5px; }
+/* Rows that are fine sit two to a line on wide screens, so the steps that need you are all on screen at once. */
+:root[data-ui="deck"] .ready-to-start ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+:root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] { grid-column: 1 / -1; }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .ready-to-start ul { grid-template-columns: minmax(0, 1fr); }
+  :root[data-ui="deck"] .ready-to-start { padding: 14px 16px; }
+  :root[data-ui="deck"] .ready-to-start li[data-state="needs_you"] { padding: 8px 0; }
+  :root[data-ui="deck"] .ready-to-start a { padding: 0; }
+}
+
+/* ---------- Today: the keyboard legend only when there is something to act on, and only with a keyboard ---------- */
+:root[data-ui="deck"] .bt-list:has(.bt-empty) + .bt-keys { display: none; }
+@media (hover: none) { :root[data-ui="deck"] .bt-keys { display: none; } }
+:root[data-ui="deck"] .bt-keys { color: var(--ink3); font-size: 12px; }
+
+/* ---------- Settings: one page with an index; Appearance is the last section, full width like the rest ---------- */
+:root[data-ui="deck"] .settings.capy-settings { grid-template-columns: minmax(0, 1fr); max-width: calc(820px + 2 * var(--page-side)); }
+:root[data-ui="deck"] .capy-settings .deck-appearance { position: static; }
+@media (min-width: 900px) {
+  /* The preview sits beside its controls instead of above them. */
+  :root[data-ui="deck"] .capy-settings .deck-appearance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 24px; align-items: start; grid-auto-flow: row dense; }
+  :root[data-ui="deck"] .capy-settings .deck-appearance > :is(h2, p, .appearance-preview, .appearance-scenes) { grid-column: 1; }
+  :root[data-ui="deck"] .capy-settings .deck-appearance > :is(.appearance-pattern, .appearance-slider, .appearance-save) { grid-column: 2; }
+}
+:root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { padding: var(--page-top) var(--page-side) 0; }
+@media (min-width: 700px) { :root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding: 0; } }
+:root[data-ui="deck"] .settings.capy-settings { padding-top: 16px; }
+/* The section links jump within one page, so they read as an index of the page, not as tabs. */
+:root[data-ui="deck"] .capy-settings #deck-settings-nav { align-items: center; gap: 4px 18px; padding: 0 0 4px; border-bottom: 1px solid var(--line); }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav::before { content: "On this page"; color: var(--ink3); font-size: 12.5px; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 36px; padding: 0; background: transparent; color: var(--ink2); font-size: 13.5px; text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 4px; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav button:hover { color: var(--ink); text-decoration-color: currentColor; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav button[aria-current] { background: transparent; color: var(--ink); text-decoration-color: var(--violet); }
+:root[data-ui="deck"] .look-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--s2); }
+:root[data-ui="deck"] .look-switch .opt { min-height: 32px; min-width: 96px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font: inherit; font-size: 13.5px; }
+:root[data-ui="deck"] .look-switch .opt[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
+
+@media (max-width: 699px) {
+  :root[data-ui="deck"] { --page-top: 20px; --page-side: 16px; }
+  /* Cloud workspaces with no machine yet: the ways to add one come first, the empty map shrinks below them. */
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) { display: flex; flex-direction: column; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-actions { order: 1; margin-bottom: 12px; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-enroll { order: 2; }
+  :root[data-ui="deck"] .deck-compute:has(> .dc-empty) > .dc-map { order: 3; max-height: 220px; margin-top: 16px; overflow: hidden; }
+    :root[data-ui="deck"] .look-switch .opt { min-height: 44px; }
+  :root[data-ui="deck"] .shell .center .bh-wrap { align-items: flex-start; padding: 24px 16px; }
+  :root[data-ui="deck"] .bh-head { margin-bottom: 20px; }
+  :root[data-ui="deck"] .shell .center .bh-head h1 { display: block; font-size: 22px; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav { width: auto; column-gap: 16px; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav::before { flex-basis: 100%; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav button { flex: none; min-height: 44px; }
+  :root[data-ui="deck"] .capy-settings #deck-settings-nav button { min-height: 40px; }
+}
+
+/* Setup steps that are done or do not apply fold behind one quiet line. */
+:root[data-ui="deck"] .ready-to-start .ready-rest { margin-top: 6px; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 2px; color: var(--ink2); font-size: 13px; cursor: pointer; list-style: none; }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary::-webkit-details-marker { display: none; }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); margin-right: 4px; transition: transform .15s; }
+:root[data-ui="deck"] .ready-to-start .ready-rest[open] > summary::before { transform: rotate(45deg); }
+:root[data-ui="deck"] .ready-to-start .ready-rest > summary:hover { color: var(--ink); }
+
+/* Work cards: a long project name and state wrap onto the next line instead of being cut. */
+:root[data-ui="deck"] body .deck-work .wk-meta { flex-wrap: wrap; row-gap: 2px; }
+:root[data-ui="deck"] body .deck-work .wk-name { white-space: normal; overflow: visible; }
+
+/* The selected Board state reads as selected: a primary edge on top of its fill. */
+:root[data-ui="deck"] body .deck-board-states button[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--violet); color: var(--ink); }
+/* Card details on Work and the Board read a little larger and clearer than captions. */
+:root[data-ui="deck"] body .deck-work .wk-meta { color: var(--ink2); font-size: 13px; }
+:root[data-ui="deck"] body .deck-board .card-meta { color: var(--ink2); font-size: 12.5px; }
+:root[data-ui="deck"] body .deck-work .wk-lane-name b, :root[data-ui="deck"] body .deck-board .col-count { color: var(--ink2); }
+
+/* Times and small status words read clearly on the dark surfaces. */
+:root[data-ui="deck"] body .shell :is(time, .wk-meta time, .cb-bot-at, .deck-bot-time, .bt-age) { color: var(--ink2); }

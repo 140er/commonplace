@@ -69,7 +69,7 @@ def require(conn, label, holder, *, labels=UNSET):
         shown = f" '{label}'" if SLUG.fullmatch(label) else ""
         raise ToolError(
             f"no: task type{shown} is not allowed for the holding connection; "
-            "the workspace owner can allow it for this agent in Settings > Agents"
+            "the workspace owner can allow it for this agent in Settings > Connected apps"
         )
 
 

@@ -25,7 +25,7 @@ if (process.argv[2] === 'entry') {
   assert.match(app.slice(app.indexOf('function spaceView()'), app.indexOf('function boardsView()')), /title\(board\?\.name[\s\S]*?href="#\/memory\?project=/, 'Space header must reach its Memory view');
 } else if (process.argv[2] === 'deck_entry') {
   const { renderDeckMemory } = await import('../commonplace/web/static/deck-memory.js');
-  assert.match(renderDeckMemory({ boards: [], results: [], filters: {} }, { highlighted: String }), /<button type="button" class="btn memory-map-launch" data-memory-action="map">Map<\/button>/, 'Deck Memory must keep Map reachable');
+  assert.match(renderDeckMemory({ boards: [], results: [], filters: {} }, { highlighted: String }), /<button type="button" class="btn memory-map-launch" data-memory-action="map">Map memory<\/button>/, 'Deck Memory must keep Map reachable');
 } else if (process.argv[2] === 'me_failure') {
   const ui = createMemory({ mount, panel, boards: context.boards, me: { can_admin: true },
     api: async path => { if (path === '/api/memory/rooms') return { rooms: [] }; paths.push(path); if (path === '/api/me') throw new Error('identity unavailable'); return graph; },

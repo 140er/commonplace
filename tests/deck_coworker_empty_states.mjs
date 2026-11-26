@@ -50,7 +50,7 @@ test('owner, last message is the owner\'s own with no reply: says it was theirs'
 test('owner, bot never ran and has only owner-held cards: plainly nothing recorded, board one click away', async () => {
   const html = await projectBot({ state: 'idle', last: null });
   assert.match(text(html), /^Idle No run recorded for this bot yet\. Open the board$/); never(html);
-  assert.match(rowText(html), /^Idle · No run recorded for this bot yet\.$/);
+  assert.match(rowText(html), /^Idle$/); // the reason is said once, in the Working on box
 });
 test('member of a shared bot, nothing of theirs recorded: says why the owner\'s work is not shown', async () => {
   const html = await projectBot({ state: 'idle', last: null, mine: false, perms: { talk: true, see_shared: false } });
@@ -91,14 +91,24 @@ test('while the conversation loads the page says loading, and when it cannot loa
   let release; const gate = new Promise(resolve => { release = resolve; });
   const h = page(async path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] } : path === '/api/coworkers' ? { bots: [], conversations: [room] } : path.endsWith('/room') ? (await gate, { conversation: room, jobs: [] }) : { models: {} });
   await settle();
-  assert.match(text(h.body.innerHTML), /^Loading Reading what this Coworker did last/); assert.doesNotMatch(h.body.innerHTML, /<b>Idle<\/b>/);
+  assert.match(text(h.body.innerHTML), /^Loading Reading what this bot did last/); assert.doesNotMatch(h.body.innerHTML, /<b>Idle<\/b>/);
   release(); await settle();
   assert.match(text(h.body.innerHTML), /^Idle No run recorded/); h.ui.stop();
   const failed = page(path => { if (path === '/api/bots') return { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] }; if (path === '/api/coworkers') return { bots: [], conversations: [room] }; if (path.endsWith('/room')) throw Object.assign(new Error('boom'), { status: 500 }); return { models: {} }; });
   await settle();
-  assert.match(text(failed.body.innerHTML), /^Not available This Coworker's work could not be read just now\./); failed.ui.stop();
+  assert.match(text(failed.body.innerHTML), /^Not available This bot's work could not be read just now\./); failed.ui.stop();
 });
 test('a running job still wins over everything and links its card (no regression of the status line)', async () => {
   const html = await conversationBot({ state: 'needs_you', waiting: 3 }, () => ({ conversation: room, jobs: [{ id: 3, conversation_id: 'room', state: 'running', task_progress: progress() }] }));
   assert.match(now(html), /<b>Working now<\/b> <span>Running the checks<\/span> <a href="#\/card\/12">Open the card<\/a>/);
+});
+
+test('the all-bots conversations page is titled Bot conversations, counts "All bots", and names rows by the bot', async () => {
+  const h = page(path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] } : path === '/api/coworkers' ? { bots: [], conversations: [] } : { models: {} }, '#/bots/-/coworkers');
+  await settle(); const html = h.body.innerHTML; h.ui.stop();
+  assert.match(html, /<h1>Bot conversations<\/h1>/);
+  assert.match(html, /aria-current="page">All bots <span>1<\/span><\/a>/);
+  assert.doesNotMatch(html, />Bots <span>/);
+  assert.match(html, /<button type="button" class="cb-worker"[^>]*>[^]*?<b>Atlas /, 'the row is the bot\'s own name, not "<Project> bot"');
+  assert.doesNotMatch(html, /Product bot|Atlas bot/);
 });

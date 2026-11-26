@@ -249,7 +249,7 @@ const cases = {
       host.remove();
     }
   },
-  // 03c: the empty board's Connect an agent is a modal dialog; Esc returns to the opener.
+  // 03c: the empty board's Connect an app is a modal dialog; Esc returns to the opener.
   async connect_dialog() {
     assert.equal(typeof ui.openConnectDialog, "function", "openConnectDialog missing");
     const button = opener();
@@ -261,7 +261,7 @@ const cases = {
     assert.equal(dialog.getAttribute("aria-modal"), "true");
     assert.ok(doc.activeElement.matches("[data-project-create]"), "the primary action has focus");
     await tick();
-    assert.match(dialog.querySelector("#project-connect-title").textContent, /Connect an agent to Ledger/);
+    assert.match(dialog.querySelector("#project-connect-title").textContent, /Connect an app to Ledger/);
     assertTrapped(dialog);
     dialog.dispatch("cancel");
     assert.equal(openDialog(), null);

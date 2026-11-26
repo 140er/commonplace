@@ -69,16 +69,16 @@ const field = (name, value, type = 'text', checked = false) => ({ name, value, t
 // Guided machines keep the same state and limitation across surfaces, even after a legacy attest.
 for (const [state, label] of [['waiting_approval', 'Waiting for your approval'], ['not_finished', 'Not finished'], ['set_up', 'Set up and checked']]) {
   for (const binding_state of ['unbound', 'owner_attested']) {
-    const sentence = 'The machine reported its setup state.' + (state === 'set_up' ? '' : ' Coworkers do not run on it in this version.'), next = state === 'set_up'
-      ? 'Nothing more to do here. This version only checks the machine: Coworkers do not run on it in this version.'
+    const sentence = 'The machine reported its setup state.' + (state === 'set_up' ? '' : ' Bots do not run on it in this version.'), next = state === 'set_up'
+      ? 'Nothing more to do here. This version only checks the machine: Bots do not run on it in this version.'
       : 'Open Add a machine in Cloud workspaces.';
     const f = fixture({ machines: [machine({ enabled: false, binding_state, guided: { state, label, sentence, next } })] });
     f.block.show(f.host); await flush();
     const html = f.regions.list.innerHTML;
     assert.match(html, new RegExp(`data-guided="${state}"`));
     assert.ok(html.includes(label) && html.includes(sentence) && html.includes(next));
-    assert.match(html, /Coworkers do not run on it in this version\./);
-    assert.equal((html.match(/Coworkers do not run on it in this version/g) || []).length, 1);
+    assert.match(html, /Bots do not run on it in this version\./);
+    assert.equal((html.match(/Bots do not run on it in this version/g) || []).length, 1);
     assert.match(html, /href="#\/compute" data-runner-guided-link>Open Add a machine/);
     assert.doesNotMatch(html, /disabled|unbound|not verified|Attest|<form|data-runner-action=/);
     assert.match(f.regions['enroll-slot'].innerHTML, /developer route, with tokens/);

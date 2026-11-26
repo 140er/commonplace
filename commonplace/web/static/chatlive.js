@@ -37,7 +37,7 @@ export function liveCopy(live, me) {
     detail = seen ? `Picked up at ${seen}. Its answer appears here.` : "Picked up. Its answer appears here.";
   } else if (live.state === "no_agent") {
     title = live.reason === "gone" ? "The agent is no longer connected" : "No agent connected";
-    detail = `Your message is kept. ${ask("Connect an agent in Settings and it is delivered then.", "Ask the workspace owner to connect an agent.")}`;
+    detail = `Your message is kept. ${ask("Connect an app in Settings and it is delivered then.", "Ask the workspace owner to connect an app.")}`;
   } else if (live.state === "no_answer") {
     title = `${name} did not answer`;
     const since = sent ? ` your message from ${sent}` : " your message";

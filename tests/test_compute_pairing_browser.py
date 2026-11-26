@@ -608,7 +608,7 @@ def test_the_overview_row_of_a_machine_from_the_guide_names_one_step_in_one_plac
         expect(row).to_contain_text("Set up and checked")
         page.get_by_role("button", name="Status and activity of guided-box").click()
         expect(ov).to_contain_text(
-            "This setup only checks the machine. Coworkers do not run on it in this version."
+            "This setup only checks the machine. Bots do not run on it in this version."
         )
         for claim in ("Offline", "Not approved", "Online"):
             assert claim not in ov.inner_text(), claim
@@ -716,14 +716,14 @@ def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_gui
         _shot_of(page, "[data-run-start-why]", f"{label}-14-card-start-refusal-{name}-text")
 
     def body(page, label, context):
-        # 1. No machine at all: add one under Add a machine in Cloud workspaces.
+        # 1. No machine at all: bots run code on a runner machine, which is set up in Admin.
         refusal(
             page,
             label,
             "no-machine",
-            "Add one under Add a machine in Cloud workspaces",
-            "Open Cloud workspaces",
-            "#/compute",
+            "Set one up in Admin",
+            "Open Admin > Runner machines",
+            "#/admin",
         )
         # 2. A machine from the guide that connected and waits for approval.
         _, setup = fx.add(label="card-box")
@@ -751,7 +751,7 @@ def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_gui
             page,
             label,
             "setup-only",
-            "only checks itself in this version. Coworkers do not run on it in this version",
+            "only checks itself in this version. Bots do not run on it in this version",
             "Open Add a machine",
             "#/compute",
         )
@@ -837,7 +837,7 @@ def test_guided_states_match_on_all_three_screens(served, monkeypatch, ui, layou
         "review-approved-stalled": "Not finished",
         "review-approved-failed": "Not finished",
     }
-    limitation = "Coworkers do not run on it in this version."
+    limitation = "Bots do not run on it in this version."
 
     def body(page, label, context):
         label = f"{ui}-{layout}"

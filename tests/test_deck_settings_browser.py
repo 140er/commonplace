@@ -145,7 +145,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
         # One Settings tab, then one shortcut: two taps from any main destination.
         for label, target in [
             ("Notifications", "phone-push"),
-            ("Connections", "deck-connections"),
+            ("Connected apps", "deck-connections"),
             ("Workspace", "deck-tools"),
         ]:
             shortcuts.get_by_role("button", name=label, exact=True).click()
@@ -155,11 +155,11 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             top = page.locator(f"#{target}").bounding_box()["y"]
             assert frame["y"] <= top <= frame["y"] + frame["height"] - 44
             assert shortcuts.locator('[aria-current="location"]').inner_text() == label
-        shortcuts.get_by_role("button", name="Action permissions", exact=True).click()
+        shortcuts.get_by_role("button", name="What bots may do", exact=True).click()
         # Every former section and form is still reachable; only two headings change.
         old_sections = [
             "Free plan",
-            "Coworker management",
+            "Bot management",
             "Chat",
             "Agents",
             "Scheduled prompts",
@@ -185,10 +185,19 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             page.locator(".settings").locator(selector).scroll_into_view_if_needed()
             assert page.locator(".settings").locator(selector).is_visible(), selector
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
-        assert page.locator(".head h1").evaluate("el => getComputedStyle(el).fontSize") == "22px"
-        assert page.locator("#phone-push").evaluate(
-            "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgba(20, 19, 25, 0.94)", "12px"]
+        # The page title sits in the top bar: the shared 52px desktop bar (15px) or the phone header (16px).
+        title = page.locator(".center > .head h1" if width >= 700 else "#phone-bar .m-top > b")
+        assert title.inner_text().strip() == "Settings"
+        assert title.evaluate("el => getComputedStyle(el).fontSize") == (
+            "15px" if width >= 700 else "16px"
+        )
+        # No notification service here: the card has nothing to act on, so it folds to one quiet line
+        # with no surface of its own, and the owner's next step stays a link.
+        push = page.locator("#phone-push")
+        assert "deck-quiet-line" in push.get_attribute("class")
+        assert push.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
+        assert "not set up on this server" in push.inner_text()
+        assert push.locator('a[href="#/admin"]').is_visible()
         if width == 390:
             assert page.locator("#content").evaluate(
                 "el => [getComputedStyle(el).paddingLeft, getComputedStyle(el).paddingRight]"
@@ -206,7 +215,7 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
         field.fill("notif")
         assert (
             page.locator('#deck-settings-nav [aria-current="location"]').inner_text()
-            == "Action permissions"
+            == "What bots may do"
         )
         assert page.locator('[data-tool-policy-row="webhook_add"]').is_visible()
         result_box = page.locator('[data-tool-policy-row="webhook_add"]').bounding_box()
@@ -229,8 +238,9 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         assert field.evaluate(
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgb(27, 26, 33)", "8px"]
+        ) == ["rgb(36, 49, 64)", "8px"]
         page.locator('[data-deck-setting="phone-push"]').click()
-        assert "Connect a notification service" in page.locator("#phone-push").inner_text()
+        assert "not set up on this server" in page.locator("#phone-push").inner_text()
+        assert page.locator("#phone-push.deck-quiet-line").count() == 1
     finally:
         context.close()

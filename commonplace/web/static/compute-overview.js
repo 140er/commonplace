@@ -286,7 +286,7 @@ export function createOverview(ctx) {
   const topHTML = () => `<header><h2 id="compute-overview" tabindex="-1">Overview</h2><button type="button" class="btn compute-ov-pause" data-ov-action="pause">${paused ? "Resume automatic updates" : "Pause automatic updates"}</button></header>`
     + (data?.can_manage === false
       ? '<p class="compute-plain">The cloud workspaces in this workspace and what each is doing. “Last reported” is the last time its machine reported on it, not a live check.</p>'
-      : '<p class="compute-plain">Every runner machine, target machine and cloud workspace in this workspace. A runner machine is a computer for Coworkers; a target machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>');
+      : '<p class="compute-plain">Every runner machine, target machine and cloud workspace in this workspace. A runner machine is a computer for bots; a target machine is where a cloud workspace is placed. “Last seen” is the last time something was heard from it, not a live check, and a number nobody reported says so instead of showing zero.</p>');
 
   function panelKey() { return detail ? `${detail.kind}:${detail.id}` : ""; }
   function slots() {

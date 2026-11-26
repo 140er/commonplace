@@ -107,21 +107,20 @@ test('the note text is a pure function of status and count', () => {
 });
 
 const options = (hash) => ({ user: 'Maya', sections: SECTIONS, section: null, hash, bots: [], directory: {} });
-test('the rail has a Home entry that links to home and marks itself current there', () => {
+test('the rail has a Waiting on you entry that links home and marks itself current there', () => {
   const home = renderShellBar(options('#/'));
-  assert.match(home, /<a class="nav" href="#\/" data-nav="home" aria-current="page">[^]*?<\/svg>Home<\/a>/);
-  assert.ok(home.indexOf('>Home</a>') < home.indexOf('data-nav="today"'), 'Home comes before Today');
-  assert.doesNotMatch(renderShellBar(options('#/today')), /data-nav="home" aria-current/);
-  assert.match(renderShellBar(options('#/today')), /data-nav="home"/);
+  assert.match(home, /<a class="nav" href="#\/" data-nav="home" aria-current="page">[^]*?<\/svg><span class="deck-row-label">Waiting on you<\/span>/);
+  assert.ok(home.indexOf('data-nav="home"') < home.indexOf('data-nav="bots"'), 'Waiting on you comes before the bots');
+  assert.doesNotMatch(renderShellBar(options('#/bots')), /data-nav="home" aria-current/);
+  assert.match(renderShellBar(options('#/today')), /data-nav="home" aria-current/, 'the old Today address is the same place');
 });
 
-test('the phone keeps four tabs plus More and offers Home first in the More sheet', () => {
-  const tabs = renderShellTabs({ ...options('#/today'), section: 'today' });
-  assert.equal((tabs.match(/<a /g) || []).length, 4, 'the bottom bar is not widened');
-  assert.doesNotMatch(tabs, /data-nav="home"/);
-  const sheet = renderShellMore(options('#/today'));
-  assert.match(sheet, /<div class="deck-more-panel"><a href="#\/" data-nav="home">[^]*?<\/svg>Home<\/a>/);
-  assert.match(renderShellMore(options('#/')), /data-nav="home" aria-current="page"/);
+test('the phone keeps three tabs and puts Settings first in the account sheet', () => {
+  const tabs = renderShellTabs({ ...options('#/'), section: 'home' });
+  assert.equal((tabs.match(/<a /g) || []).length, 4, 'Waiting, Chats, Work, Memory');
+  assert.match(tabs, /href="#\/" data-nav="home" aria-current="page"/);
+  const sheet = renderShellMore(options('#/'));
+  assert.match(sheet, /<div class="deck-more-panel"><span class="deck-more-grabber"[^>]*><\/span><button[^>]*class="deck-more-close"[^>]*>[^]*?<\/button><p class="deck-more-account"><b>[^<]*<\/b>[^<]*<\/p><p class="deck-menu-group">Workspace<\/p><a href="#\/settings" data-nav="settings">/);
 });
 
 test('without a registered Home screen neither the rail nor the More sheet offers Home', () => {

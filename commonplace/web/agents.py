@@ -397,7 +397,7 @@ def _consents(data, db, principal):
     grants = data.get("import", False), data.get("import_read", False)
     if any(grants) and not import_grant.eligible(db, principal.user_id, principal.workspace_id):
         raise PermissionError(import_grant.OWNER_ONLY_TEXT)
-    # Only a top-level connection may answer Needs-me; create_token rechecks ownership.
+    # Only a top-level connection may answer what is waiting on you; create_token rechecks ownership.
     if data.get("decide", False) and data.get("parent") is not None:
         raise PermissionError(decide_grant.TOP_LEVEL_TEXT)
     return (*grants, data.get("decide", False))

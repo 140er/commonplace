@@ -475,9 +475,20 @@ function navigation() {
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
-  const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", role: state.me.role || (state.me.can_admin === true ? "owner" : "member"), user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
+  const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", role: state.me.role || (state.me.can_admin === true ? "owner" : "member"), user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting, boards: (state.boards || []).map((b) => ({ slug: b.slug, name: b.name })), needsQueue: state.needs };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
-  boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  // The account menu sits in the rail; a redraw (data arriving, a route change) must not close it under the pointer.
+  // It closes when the route changes (a link in it, the palette, back), so it never stays open over the page it led to.
+  const accountOpen = boardNav.querySelector?.(".user-menu")?.open === true && state.accountAt === state.base;
+  state.accountAt = state.base;
+  // An unchanged rail is left in place, so an open menu and its buttons are not replaced under the pointer.
+  const railHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  if (boardNav !== state.railNode || railHTML !== state.railHTML) {
+    boardNav.outerHTML = railHTML;
+    state.railHTML = railHTML;
+    state.railNode = root.querySelector("#board-nav");
+    if (accountOpen) state.railNode?.querySelector?.(".user-menu")?.setAttribute("open", "");
+  } else if (!accountOpen) boardNav.querySelector?.(".user-menu")?.removeAttribute?.("open");
   root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
@@ -502,6 +513,8 @@ function showError(text, { drawer = false } = {}) {
   if (target && !panel.hidden && text) target.insertAdjacentHTML("afterbegin", `<div class="message${drawer ? "" : " error"}" role="alert" data-panel-error>${e(text)}</div>`);
 }
 function title(text, actions = "") {
+  // The Deck look names these two pages as its account menu does; the classic look keeps the longer titles.
+  if (globalThis.document?.documentElement?.dataset?.ui === "deck") text = { "Workspace administration": "Admin", "Instance console": "Server admin" }[text] || text;
   root.querySelector("#title").textContent = text;
   // A redraw keeps focus on the same header control (Details, Chat).
   const head = root.querySelector("#head-actions"), active = document.activeElement, keep = active?.closest?.("#head-actions") && active.id;
@@ -605,8 +618,8 @@ function boardView() {
   const content = root.querySelector("#content");
   state.boardCache ||= new Map();
   const cached = state.boardCache.get(board.slug) || {};
-  // Keep the active phone column and a parked-card disclosure through polling.
-  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
+  // Keep the active phone column and a parked-card disclosure through polling. The Deck picks its first column with cards; Classic starts on Todo.
+  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || (state.deck?.on() === true ? "" : "todo");
   state.boardColumn = null;
   const backlog = content.querySelector(".backlog")?.open, doneAll = Boolean(content.querySelector("#col-done[data-all]"));
   boardDispose?.();
@@ -813,8 +826,15 @@ function spaceView() {
   syncSpaceTasks(content.querySelector(".space-tasks .stack"), state.cards);
 }
 function boardsView() {
+  // Count each project the way its Board groups it: cards in the needs-me queue are "needs you", wherever their status is.
+  const counted = (b) => {
+    const mine = needsCards().filter((card) => card?.board === b.slug), held = (status) => mine.filter((card) => card.status === status).length;
+    const c = b.counts || {};
+    return [["need you", mine.length], ["active", (c.todo || 0) - held("todo") + (c.doing || 0) - held("doing")], ["in review", (c.review || 0) - held("review")], ["shipped", (c.done || 0) - held("done")], ["in backlog", (c.backlog || 0) - held("backlog")]]
+      .filter(([, value]) => value > 0).map(([label, value]) => label === "need you" && document.documentElement.dataset.ui === "deck" ? `<span class="meta-waiting">${e(value)} waiting</span>` : `${e(value)} ${label === "need you" ? "waiting on you" : label}`).join(" · ") || "No cards yet";
+  };
   title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue project-list">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : counted(b)}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
@@ -1020,7 +1040,7 @@ async function settingsView(epoch) {
   const current = () => state.me === viewer && epoch === state.screen && request === state.settingsRequest;
   const sections = {
     plan: { path: "/api/plan", name: "Plan", view: planView },
-    orchestration: { path: "/api/settings/orchestration", name: "Coworker management", view: () => '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
+    orchestration: { path: "/api/settings/orchestration", name: "Bot management", view: () => '<section class="settings-section"><h2>Bot management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
     chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
     connections: { path: "/api/connections", name: "Agents", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
     phone: { path: "/api/phone-push", name: "Phone notifications", view: phonePushView, ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },

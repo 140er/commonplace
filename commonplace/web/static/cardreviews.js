@@ -17,7 +17,7 @@ export const FOCUS_KEYS = ["data-review-heading", "data-review-retry", "data-rev
 
 const TONES = { new: "wait", working: "wait", addressed: "ok", answered: "ok", needs_you: "bad", skipped: "quiet" };
 const KIND_WORDS = { inline: "Line comment", review: "Review", conversation: "Comment" };
-const SUMMARY_WORDS = { addressed: "fixed", answered: "answered", needs_you: "need you", new: "waiting", working: "being worked on", skipped: "not for the Coworker" };
+const SUMMARY_WORDS = { addressed: "fixed", answered: "answered", needs_you: "need you", new: "waiting", working: "being worked on", skipped: "not for the bot" };
 const LONG = 400;
 const PAGE = 50;
 const POLL_MS = 5000;
@@ -53,7 +53,7 @@ export function summaryWords(counts = {}) {
 // What the person can expect from the loop for this pull request, in one or two sentences.
 export function roundWords(info) {
   if (!info) return "";
-  if (info.loop_stopped) return "A person is handling this pull request's comments; the Coworker does not answer them.";
+  if (info.loop_stopped) return "A person is handling this pull request's comments; the bot does not answer them.";
   const used = Number(info.rounds_used) || 0, allowed = Number(info.rounds_allowed) || 0;
   const head = `Round ${used} of ${allowed} used.`;
   return used >= allowed ? `${head} No rounds are left: new comments wait for a workspace owner's answer.` : head;
@@ -62,7 +62,7 @@ export function roundWords(info) {
 export function replyWords(info) {
   if (!info) return "";
   return info.reply_mode === "post"
-    ? "The Coworker posts its replies on the pull request."
+    ? "The bot posts its replies on the pull request."
     : "Replies are shown here first and are not posted on GitHub: this repository is public, and posting is switched off in this project's settings.";
 }
 
@@ -88,7 +88,7 @@ export function commentHTML(comment, repo, state = {}) {
   const reply = comment.reply
     ? `<div class="review-reply" data-review-reply><p class="run-reason"><b>${comment.reply_posted ? "Reply on GitHub" : "Proposed reply (not posted)"}</b></p><p class="review-text">${e(comment.reply)}</p></div>`
     : "";
-  const note = comment.note ? `<p class="run-reason" data-review-note><b>The Coworker says:</b> ${e(comment.note)}</p>` : "";
+  const note = comment.note ? `<p class="run-reason" data-review-note><b>The bot says:</b> ${e(comment.note)}</p>` : "";
   const why = comment.reason_text && ["needs_you", "skipped", "new"].includes(status)
     ? `<p class="run-reason" data-review-reason>${e(comment.reason_text)}${comment.next ? ` ${e(comment.next)}` : ""}</p>`
     : "";
@@ -108,7 +108,7 @@ function decisionHTML(view) {
 
 function offHTML(view) {
   const settings = `#/board/${encodeURIComponent(view.board || "")}/settings`;
-  const text = "The Coworker does not answer review comments in this project yet.";
+  const text = "The bot does not answer review comments in this project yet.";
   if (view.can_decide && view.board) {
     return `<p class="run-empty" data-review-off>${text} You can switch it on in this project's settings, under Review comments.</p><a class="btn sm" href="${e(settings)}" data-review-settings="open">Open project settings</a>`;
   }
@@ -126,7 +126,7 @@ export function cardReviewsHTML(view, state = {}) {
   const off = view?.loop && !view.loop.enabled ? offHTML(view) : "";
   const list = comments.length
     ? `<ul class="run-list">${comments.map((comment) => commentHTML(comment, view.repo, { expanded: state.expanded?.has(String(comment.id)), original: state.originals?.get(originalKey(comment)) })).join("")}</ul>`
-    : `<p class="run-empty" data-review-empty>No review comments yet. When someone comments on pull request #${e(view?.pr)}, the comments and what the Coworker did with each appear here.</p>`;
+    : `<p class="run-empty" data-review-empty>No review comments yet. When someone comments on pull request #${e(view?.pr)}, the comments and what the bot did with each appear here.</p>`;
   const more = view?.has_more ? `<button class="btn sm" type="button" data-review-more="more">Show more comments (${e(comments.length)} of ${e(view.comments_total)} shown)</button>` : "";
   return `${off}${facts}${decisionHTML(view)}${list}${more}`;
 }
@@ -161,8 +161,8 @@ export function previousReviews(mount) {
 }
 
 const ANSWER_DONE = {
-  again: "Done. The comments go back to the Coworker for another round.",
-  mine: "Done. The Coworker stops answering these comments and the card moved to Backlog.",
+  again: "Done. The comments go back to the bot for another round.",
+  mine: "Done. The bot stops answering these comments and the card moved to Backlog.",
   dismiss: "Done. The waiting comments are set aside.",
 };
 
@@ -170,7 +170,7 @@ function decisionWords(choice, result) {
   if (result?.card_answered === true) return ANSWER_DONE[choice] || "Done.";
   const comment = {
     again: "Done. The comments are ready for another round.",
-    mine: "Done. The Coworker stops answering these comments.",
+    mine: "Done. The bot stops answering these comments.",
     dismiss: ANSWER_DONE.dismiss,
   }[choice] || "Done.";
   if (result?.card_answer_reason === "unrelated_question") {

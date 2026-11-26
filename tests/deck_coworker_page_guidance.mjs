@@ -45,12 +45,10 @@ test('the panel always carries the status line and never the old empty sentence;
 });
 
 // ---- 2. Send is disabled, with a reason, until a conversation is open ----
-test('with no conversation Send and the draft are disabled and a visible reason names the next step', () => {
+test('with no conversation the composer is not shown, only a visible reason that names the next step', () => {
   const html = composerHTML({}, { text: 'typed anyway' });
-  assert.match(html, /<button type="submit" class="cb-send"[^>]* disabled>Send<\/button>/);
-  assert.match(html, /<textarea[^>]* disabled>/);
+  assert.doesNotMatch(html, /<form|<textarea|class="cb-send"|cb-mode-help/);
   assert.match(html, /id="cb-reason" role="status">Send is off until a conversation is open\. <a href="#\/bots\/-\/coworkers\/conversations">Open a conversation<\/a>/);
-  assert.match(html, /<textarea[^>]*aria-describedby="cb-reason"/); assert.match(html, /class="cb-send" aria-describedby="cb-reason" disabled/);
 });
 test('with a conversation Send is enabled only for a non-empty draft and no reason is shown', () => {
   const ready = { conversation };
@@ -115,11 +113,11 @@ function page(api, route = '#/bots/bot/coworkers') {
   const ui = mount({ root, route, me: { workspace: 'w', actor: 'u' }, api: async path => (await api(path)) });
   return { ui, body };
 }
-test('mounted: a bot whose Coworker has no conversation shows idle, a disabled Send and the reason', async () => {
+test('mounted: a bot whose Coworker has no conversation shows idle, no composer and the reason', async () => {
   const h = page(path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] } : path === '/api/coworkers' ? { bots: [], conversations: [] } : { models: {} });
   await settle();
   assert.match(h.body.innerHTML, /<b>Idle<\/b>/); assert.doesNotMatch(h.body.innerHTML, /No work recorded yet/);
-  assert.match(h.body.innerHTML, /class="cb-send"[^>]* disabled/); assert.match(h.body.innerHTML, /Send is off until a conversation is open/);
+  assert.doesNotMatch(h.body.innerHTML, /<textarea|class="cb-send"/); assert.match(h.body.innerHTML, /Send is off until a conversation is open/);
   h.ui.stop();
 });
 test('mounted: a running job is shown on the page with its card link', async () => {

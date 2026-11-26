@@ -45,3 +45,11 @@ test('creation and review events for one request count only once', () => {
   assert.equal(rows[0].id, groupActivity([request(2, { request: 8 }), request(1, { request: 7 })])[0].id);
   assert.equal(groupActivity([request(2, { request: 7 }), request(1, { request: 7 })])[0].items, undefined);
 });
+
+test('a row is a dot, the bot name in bold, what happened and the time', () => {
+  const html = activityHTML({ id: 1, at, text: 'Website asked: Fix <footer>' }, e, false, ['Web', 'Website']);
+  assert.match(html, /^<li><span class="bt-dot" data-tone="wait" aria-hidden="true"><\/span><span class="bt-recent-text"><b>Website<\/b> asked: Fix &lt;footer&gt;<\/span><time /);
+  assert.match(activityHTML({ id: 2, at, text: 'You approved Ship it' }, e, false, ['Website']), /data-tone="ok"[^>]*><\/span><span class="bt-recent-text">You approved Ship it</);
+  assert.match(activityHTML({ id: 3, at, text: 'Commonplace made progress on Webhooks' }, e, false, ['Commonplace']), /data-tone="work"[^>]*><\/span><span class="bt-recent-text"><b>Commonplace<\/b> made progress/);
+  assert.doesNotMatch(activityHTML({ id: 4, at, text: 'Memory was saved' }, e), /<b>/);
+});

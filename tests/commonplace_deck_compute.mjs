@@ -562,9 +562,9 @@ test('topology read: the Deck screen draws the shared canvas, one sentence from 
   assert.equal(f.chosen(), 'birch');
   assert.equal(f.panels.length, 1, 'still one detail view');
   assert.match(f.detail(), /Birch/);
-  // The old ban on hrefs no longer applies: enrollment is a link to the existing Admin flow.
+  // The card is plain instructions; the header button is the one way into the Admin enrollment flow.
   assert.doesNotMatch(f.regions.get('map').innerHTML, /dc-detail/);
-  assert.match(f.root.html, /href="#\/admin"/);
+  assert.doesNotMatch(f.root.html, /href="#\/admin"/); assert.match(f.root.html, /dc-enroll/);
   f.ui.stop();
 });
 
@@ -585,7 +585,7 @@ test('empty or failed topology: the runners through the same canvas, in honest s
     const scene = f.part('world').innerHTML;
     // What a person can read: titles and labels, not class names.
     const words = [...scene.matchAll(/<(?:title|text)[^>]*>([^<]*)</g)].map(m => m[1]).join(' | ');
-    for (const word of ['Commonplace', 'Build box', 'Studio machine', 'Old tower', 'Ready', 'Waiting for attestation', 'Off']) assert.ok(words.includes(word), word);
+    for (const word of ['This server', 'Build box', 'Studio machine', 'Old tower', 'Ready', 'Waiting for attestation', 'Off']) assert.ok(words.includes(word), word);
     assert.doesNotMatch(words, /Revoked machine|online|\bUp\b|Degraded|Unknown|\bDown\b|agents working|proxy|CDN|website|route/i);
     // The approved compact view removes the legend; node shapes and accessible words carry status.
     assert.doesNotMatch(f.map().innerHTML, /topo-legend/);
@@ -668,12 +668,13 @@ test('a refusal is a plain owner-only sentence with no map or raw error, and no 
 test('empty workspace keeps just the hub, and an unavailable general bot hides only the bot handoff', async () => {
   const f = harness({ rows: [], bots: [] }); await flush();
   assert.deepEqual(f.nodes(), ['commonplace-hub']);
-  assert.match(f.root.html, /No machines yet/);
+  assert.match(f.root.html, /A cloud workspace can still be saved without a machine/);
   assert.equal(f.regions.get('empty').hidden, false);
   assert.equal(f.regions.get('summary').textContent, '');
-  assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add a machine/);
+  assert.match(f.regions.get('actions').innerHTML, /class="dc-action dc-primary" type="button" data-compute-action="add-machine">Add a machine/);
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-site">Add site/);
-  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
+  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot|Map it with a bot/);
+  assert.equal((f.root.html.match(/Add a machine/g) || []).length, 0, 'the one Add a machine action is the header button, not repeated in the page');
   f.ui.stop();
 });
 
@@ -682,6 +683,7 @@ test('one-click handoffs store the draft and navigate; never send a message', as
   globalThis.sessionStorage = { setItem: (key, value) => saved.push([key, JSON.parse(value)]) };
   try {
     const f = harness(); await flush();
+    assert.match(f.regions.get('actions').innerHTML, /data-compute-action="map">Map it with a bot</);
     f.click({ computeAction: 'map' });
     assert.deepEqual(saved, [['cmmn.deck.draft', { bot: 'general', text: 'Map my machines and sites.' }]]);
     assert.deepEqual(f.nav, ['#/bots/general']);
@@ -838,7 +840,7 @@ test('status line from counts: busy, idle, stuck, unknown and partial', () => {
   const stuck = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'uncertain', 11, 3), run('2', 'queued', 12, 45), run('3', 'started', 13, 4)]) }]);
   assert.equal(work.statusText(stuck, now), '1 running, 0 waiting, 2 stuck. Look at the flagged jobs below. Last activity 3 minutes ago.');
   assert.deepEqual(stuck.jobs.map(j => j.job), ['1', '2', '3'], 'stuck first, then running');
-  assert.match(work.statusText(model([]), now), /^No enrolled runner machine is known here/, 'no machine asked: nothing to say about the route');
+  assert.match(work.statusText(model([]), now), /^No machines on the map yet\. Machines added here are checked and shown on the map; bots run their code on a runner machine set up in Admin\.$/, 'no machine asked: nothing to say about the route');
   assert.match(work.statusText(model([{ ok: false }]), now), /^Running work could not be read just now\./, 'a failed read is not the route saying it cannot report');
   assert.doesNotMatch(work.statusText(model([{ ok: false }, { ok: false }]), now), /not reported/);
   assert.equal(work.statusText(model([{ ok: true, agents: { applicable: false, reason: 'not_a_runner' } }]), now).startsWith('Running work is not reported'), true);

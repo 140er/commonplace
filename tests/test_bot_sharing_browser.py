@@ -44,8 +44,14 @@ def open_bot(browser, team, user, bot, size):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.goto(f"{origin}/app/?ui=deck#/bots/{bot}")
-    page.locator(".deck-bot-settings").wait_for()
+    page.locator(".deck-bot-more-btn").wait_for()
     return context, page
+
+
+def open_settings(page):
+    """Settings and memory sit in the bar's more menu."""
+    page.locator(".deck-bot-more-btn").click()
+    page.locator(".deck-bot-settings").click()
 
 
 def capture(page, label, size):
@@ -61,12 +67,10 @@ def capture(page, label, size):
     assert_contrast(page, ".bot-access")
     panel = page.locator(".bot-access")
     assert panel.count() == 1
-    assert panel.evaluate("el => getComputedStyle(el.querySelector('h2')).fontSize") == "24px"
+    assert panel.evaluate("el => getComputedStyle(el.querySelector('h2')).fontSize") == "20px"
     for card in page.locator(".bot-access-card").all():
-        assert (
-            card.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(20, 19, 25, 0.94)"
-        )
-        assert card.evaluate("el => getComputedStyle(el).borderRadius") == "20px"
+        assert card.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(28, 37, 48)"
+        assert card.evaluate("el => getComputedStyle(el).borderRadius") == "10px"
     if size[0] == 390:
         assert panel.evaluate("el => getComputedStyle(el).paddingLeft") == "16px"
     measurements = panel.evaluate("""el => {
@@ -92,11 +96,11 @@ def capture(page, label, size):
         };
     }""")
     assert abs(measurements["titleTop"] - measurements["expectedTop"]) < 1, measurements
-    assert measurements["surface"] == "rgb(9, 9, 12)"
+    assert measurements["surface"] == "rgb(20, 26, 34)"
     if measurements["sectionCount"]:
         assert measurements["sectionRows"] == 1
         assert measurements["selectedVisible"]
-        assert measurements["selected"] == ["rgb(237, 237, 242)"]
+        assert measurements["selected"] == ["rgb(44, 56, 70)"]
         if measurements["sectionCount"] == 4 and size[0] == 390:
             assert measurements["tabsOverflow"]
     if measurements["checks"]:
@@ -104,18 +108,18 @@ def capture(page, label, size):
         for check in measurements["checks"]:
             assert check["size"] == check["height"] == 20
             assert check["radius"] == "6px"
-            assert check["background"] in {"rgb(27, 26, 33)", "rgb(237, 237, 242)"}
-            if check["background"] == "rgb(27, 26, 33)":
-                assert check["border"] == "rgba(255, 255, 255, 0.1)"
-    assert all(gap == 20 for gap in measurements["entryGaps"])
+            assert check["background"] in {"rgb(20, 26, 34)", "rgb(155, 187, 224)"}
+            if check["background"] == "rgb(20, 26, 34)":
+                assert check["border"] == "rgb(58, 72, 88)"
+    assert all(gap == 18 for gap in measurements["entryGaps"])
     for time in measurements["times"]:
         assert time["title"] == time["at"]
         assert time["text"].startswith(("Today ", "Yesterday ")) or ", " in time["text"]
     for button in measurements["primary"]:
         assert button["width"] < button["cardWidth"] / 2
-        assert button["background"] == "rgb(237, 237, 242)"
-        assert button["color"] == "rgb(9, 9, 12)"
-        assert button["radius"] == "999px"
+        assert button["background"] == "rgb(155, 187, 224)"  # the one primary colour
+        assert button["color"] == "rgb(20, 26, 34)"
+        assert button["radius"] == "8px"
         assert button["left"] == button["parentLeft"]
     target = os.environ.get("CP_UI_SHOTS")
     if target:
@@ -142,7 +146,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
     page.on("pageerror", lambda error: errors.append(str(error)))
     member_context = None
     try:
-        page.locator(".deck-bot-settings").click()
+        open_settings(page)
         page.get_by_role("button", name="Add a person", exact=True).click()
         page.get_by_label("Find a person by name").fill(LONG_NAME)
         assert len(LONG_NAME) > 40 and len(LONG_NAME.split()) == 2
@@ -150,7 +154,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
             page.get_by_label("Find a person by name").evaluate(
                 "el => getComputedStyle(el).outlineColor"
             )
-            == "rgba(255, 255, 255, 0.1)"
+            == "rgb(155, 187, 224)"
         )
         capture(page, "picker", size)
         page.locator("[data-people-picker] li:not([hidden]) button").click()
@@ -176,7 +180,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
         expect(page.locator(".bot-access")).not_to_contain_text("Access saved.")
         page.get_by_role("button", name="People & permissions", exact=True).click()
         member_context, member = open_bot(browser, team, team.blake, bot, size)
-        member.locator(".deck-bot-settings").click()
+        open_settings(member)
         expect(member.locator("[data-member-access]")).to_contain_text("You can talk privately")
         expect(
             member.locator("[data-permission-editor], [data-bots-action=sharing-picker]")
@@ -224,14 +228,14 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
             "Hello from my private conversation"
         )
         # Read-only permission remains usable even when there is no private thread.
-        page.locator(".deck-bot-settings").click()
+        open_settings(page)
         page.get_by_role("button", name="Change access", exact=True).click()
         page.get_by_label("Can talk to this bot", exact=True).uncheck()
         page.get_by_role("button", name="Save access", exact=True).click()
         expect(page.locator("[data-permission-editor]")).to_have_count(0)
         member.reload()
         expect(member.locator(".bots-compose textarea")).to_have_count(0)
-        member.locator(".deck-bot-settings").click()
+        open_settings(member)
         expect(member.locator("[data-member-access]")).to_contain_text("You cannot send messages")
         page.get_by_role("button", name="Change access", exact=True).click()
         page.get_by_role("button", name="Revoke access", exact=True).click()
@@ -280,7 +284,7 @@ def test_frozen_adoption_and_enable(browser, team, size):
         expect(page.locator(".bot-access")).not_to_contain_text("Loading memory")
         disable = page.get_by_role("button", name="Disable bot", exact=True)
         expect(disable).to_be_visible()
-        assert disable.evaluate("el => getComputedStyle(el).color") == "rgb(251, 113, 133)"
+        assert disable.evaluate("el => getComputedStyle(el).color") == "rgb(231, 163, 154)"
         assert disable.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
         page.locator(".bot-access").evaluate("el => el.scrollTop = 0")
         capture(page, "name-job-memory", size)
@@ -341,7 +345,7 @@ def test_learning_sharing_requires_a_project_preview_and_a_separate_confirmation
     )
     context, page = open_bot(browser, team, team.avery, bot, size)
     try:
-        page.locator(".deck-bot-settings").click()
+        open_settings(page)
         page.get_by_role("button", name="Learning & sharing", exact=True).click()
         expect(page.get_by_role("button", name="Share with a project", exact=True)).to_be_visible()
         capture(page, "learning", size)

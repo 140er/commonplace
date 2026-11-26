@@ -1,6 +1,8 @@
 // Settings presentation; the existing controllers and server remain the authority.
 import { escape as e } from './api.js';
 import { policyPresentation as commonPolicy, permissionRows, permissionLabel } from './deck-settings.js';
+// An explicit role wins; without one, a workspace admin is its owner (the rail's rule).
+const isOwner = me => me?.role ? me.role === 'owner' : me?.can_admin === true;
 
 const STATES = ['allow', 'ask', 'deny'];
 const LABELS = { allow: 'Allow', ask: 'Ask', deny: 'Deny' };
@@ -39,7 +41,7 @@ export function policySummary(actions) {
   return ask || denied ? `${ask} ask first · ${denied} denied · the rest allowed` : 'Every action is allowed';
 }
 export function settingsSubtitle(me = {}) {
-  return `For the ${me.workspace_name || 'current'} workspace. ${me.role === 'owner' ? 'Only you' : 'Only the owner'} can change these.`;
+  return `For the ${me.workspace_name || 'current'} workspace. ${isOwner(me) ? 'Only you' : 'Only the owner'} can change these.`;
 }
 export const capyPolicyPresentation = {
   ...commonPolicy, rows: capyPermissionRows, summary: policySummary, placeholder: 'Search actions',
@@ -83,7 +85,7 @@ export function arrangeCapySettings(box, { api, context = () => ({}) } = {}) {
   const doc = box.ownerDocument;
   if (!doc) return;
   box.classList.add('capy-settings');
-  const me = context()?.me || {}, owner = me.role === 'owner';
+  const me = context()?.me || {}, owner = isOwner(me);
   if (box.dataset) box.dataset.settingsOwner = String(owner);
   const appearance = box.querySelector('[data-deck-appearance]');
   if (appearance) {
@@ -108,12 +110,17 @@ export function arrangeCapySettings(box, { api, context = () => ({}) } = {}) {
   if (policy) policy.textContent = 'What bots may do without asking';
   const connections = main.querySelector('#deck-connections h2');
   if (connections) connections.textContent = 'Connected apps';
+  // Each section link says what its heading says.
+  for (const [id, label] of [['deck-connections', 'Connected apps'], ['tool-policy', 'What bots may do']]) {
+    const link = nav?.querySelector?.(`[data-deck-setting="${id}"]`);
+    if (link) link.textContent = label;
+  }
   if (!main.querySelector('#deck-bot-sharing')) {
     const sharing = doc.createElement('section');
     sharing.className = 'settings-section'; sharing.id = 'deck-bot-sharing';
     sharing.innerHTML = '<h2>Bot sharing</h2><p>Private · Ask before sharing. Each person’s own permissions still apply.</p><div data-capy-sharing><p role="status">Loading sharing settings…</p></div><div class="capy-always"><h3>Always on</h3><div class="capy-setting-note"><b>New bots start private</b><small>Only you can talk to a new bot until you share it.</small></div><div class="capy-setting-note"><b>Keep an access log</b><small>Every grant and removal, with who and when.</small></div><div class="capy-setting-note"><b>Only a bot’s owner changes its access</b><small>Others can ask; the owner decides.</small></div></div><a class="capy-settings-link" href="#/bots">Manage who can use each bot<span aria-hidden="true">›</span></a>';
     main.prepend(sharing);
-    mountSharing(sharing.querySelector('[data-capy-sharing]'), api, () => context()?.me?.role === 'owner');
+    mountSharing(sharing.querySelector('[data-capy-sharing]'), api, () => isOwner(context()?.me));
   }
   if (!main.querySelector('#deck-second-review')) {
     const review = doc.createElement('section');

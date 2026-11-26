@@ -47,10 +47,10 @@ REASONS = {
     ),
     "files_deleted": (
         "A workspace owner deleted the files of this preview.",
-        "Ask the Coworker to publish it again if it is still wanted.",
+        "Ask the bot to publish it again if it is still wanted.",
     ),
     "stopped_by_coworker": (
-        "Stopped by the Coworker that published it. The files are kept.",
+        "Stopped by the bot that published it. The files are kept.",
         "Use Open again to serve it.",
     ),
     "pr_merged": (
@@ -109,7 +109,7 @@ REASONS = {
         "Look at the preview's current state, then publish again if it is still wanted.",
     ),
     "person_stopped": (
-        "A person stopped this preview, so it is not published again by a Coworker.",
+        "A person stopped this preview, so it is not published again by a bot.",
         "Ask on the card whether it should be served again; a person can use Open again.",
     ),
     "files_unreadable": (
@@ -122,7 +122,7 @@ REASONS = {
     ),
 }
 
-_ASK = "Ask the Coworker that published it to publish again"
+_ASK = "Ask the bot that published it to publish again"
 _REPLY = "Reply on this card."
 # What a person reads about a stored preview on the card, where it differs from ``REASONS``.
 PERSON_WORDS = {
@@ -143,7 +143,7 @@ PERSON_WORDS = {
         f"{_ASK} if it is still wanted. {_REPLY}",
     ),
     "stopped_by_coworker": (
-        "Stopped by the Coworker that published it. The files are kept.",
+        "Stopped by the bot that published it. The files are kept.",
         "Use Open again on this card to serve it.",
     ),
     "pr_merged": (
@@ -180,7 +180,7 @@ PERSON_WORDS = {
     ),
     "workspace_quota_full": (
         "Nothing was published: the workspace already serves 25 previews, the most it allows.",
-        "Stop a preview that is no longer needed, then ask the Coworker to publish again.",
+        "Stop a preview that is no longer needed, then ask the bot to publish again.",
     ),
     "workspace_space_full": (
         "Nothing was published: the workspace has used its 500 MiB of preview space.",

@@ -4,9 +4,9 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { artHTML } from '../commonplace/web/static/deck-art.js';
 import { ART } from '../commonplace/web/static/deck-art-data.js';
-import { botsHTML, emptyCardsHTML } from '../commonplace/web/static/deck-today-capy.js';
+import { emptyCardsHTML } from '../commonplace/web/static/deck-today-capy.js';
 import { capyRosterHTML } from '../commonplace/web/static/deck-coworkers.js';
-import { deckBoardView } from '../commonplace/web/static/deck-board.js';
+import { deckBoardView, EMPTY_COLUMN } from '../commonplace/web/static/deck-board.js';
 import { renderDeckMemory } from '../commonplace/web/static/deck-memory.js';
 import { showLoading } from '../commonplace/web/static/loading.js';
 import { renderImport } from '../commonplace/web/static/memory-import.js';
@@ -34,17 +34,15 @@ test('the art helper is hidden, text-free and refuses names it does not know', (
   assert.equal(artHTML('toString'), '');
 });
 
-test('Today all clear and its empty bots line keep their words and gain art', () => {
+test('Waiting on you, all clear, is one calm sentence and says what will appear', () => {
   const clear = emptyCardsHTML(true);
-  assertArt(clear, 'clear');
-  assert.equal(text(clear), 'Nothing is waiting on you');
-  assert.match(clear, /^<p class="bt-empty" role="status">/);
+  assert.equal(arts(clear).length, 0);
+  assert.equal(text(clear), 'Nothing waits on you. Questions and finished work from your bots show up here.');
+  assert.match(clear, /^<p class="bt-calm" role="status">/);
+  assert.equal(text(emptyCardsHTML(true, true)), 'Nothing here. Choose All to see everything waiting on you.');
   const loading = emptyCardsHTML(false);
   assert.equal(text(loading), 'Loading…');
   assert.equal(arts(loading).length, 0);
-  const bots = botsHTML([]);
-  assertArt(bots, 'bots');
-  assert.match(text(bots), /No bots yet\. New bot$/);
 });
 
 test('the Bots list shows art for loading and for no bots, with the same words', () => {
@@ -64,7 +62,7 @@ test('an empty Board column shows art; a column with cards does not', () => {
   for (const item of arts(empty)) assert.match(item, /data-art="column" aria-hidden="true"/);
   const cells = [...empty.matchAll(/<p class="empty-col">([^]*?)<\/p>/g)].map(match => match[1]);
   assert.ok(cells.length >= 1);
-  for (const cell of cells) assert.equal(text(cell), 'Nothing here yet');
+  assert.deepEqual(cells.map(text), Object.values(EMPTY_COLUMN), 'each empty column says what lands in it');
   const full = deckBoardView({ cards: [{ number: 1, version: 1, board: 'product', title: 'One', status: 'doing', need: 'working', events: [] }], board, me: 'user:owner', bots: [] });
   assert.ok(arts(full).length < arts(empty).length);
 });
@@ -131,14 +129,10 @@ test('each import step shows one small cue beside its title and the words stay t
   assert.equal(arts(renderImport({ phase: 'error', error: 'Nope' }, {}, 'deck')).length, 0);
 });
 
-test('the rail note and Today section lines keep their words and gain art', () => {
+test('the rail note keeps its words and gains art', () => {
   const rail = shellTrees({});
   assertArt(rail, 'rail');
   assert.equal(text(rail), 'No bots yet');
-  const bots = botsHTML([]);
-  const header = bots.match(/<header>[^]*?<\/header>/)[0];
-  assertArt(header, 'rule');
-  assert.equal(text(header), 'Your bots Latest from each');
 });
 
 test('the section line and the Memory title piece stay off the phone and cost no height', () => {

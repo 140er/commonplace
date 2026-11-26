@@ -22,24 +22,24 @@ const api = (paths, rooms) => async (path) => {
 
 test('the inbox room is searched next to the project rooms and shows the exact words', async () => {
   const node = mount(), paths = [];
-  const ui = createMemory({ mount: node, boards: [board], me, api: api(paths, [{ wing: 'inbox', name: 'Agent notes' }]) });
+  const ui = createMemory({ mount: node, boards: [board], me, api: api(paths, [{ wing: 'inbox', name: 'App notes' }]) });
   await ui.search({ query: 'exact' });
   // One request covers every room, the agent-notes room included; the room is picked from each row.
   assert.deepEqual(paths.filter(path => path.startsWith('/api/memory/search')), ['/api/memory/search?q=exact&limit=25']);
   assert.ok(!paths.some(path => path.includes('notes%3Ainbox') || path.includes('/api/chat/notes')));
-  assert.match(node.innerHTML, /data-memory-room="notes:inbox"[^>]*>Agent notes/);
+  assert.match(node.innerHTML, /data-memory-room="notes:inbox"[^>]*>App notes/);
   assert.match(node.innerHTML, /data-memory-room="work"[^>]*>Workspace/);
   assert.ok(node.innerHTML.replace(/<\/?mark>/g, '').includes(text));
-  assert.ok(node.innerHTML.includes('Saved by') && node.innerHTML.includes('Agent notes'));
+  assert.ok(node.innerHTML.includes('Saved by') && node.innerHTML.includes('App notes'));
   ui.stop();
 });
 
 test('a room the server does not list, or a project that already owns the wing, adds nothing', async () => {
-  for (const rooms of [[], [{ wing: 'project_work', name: 'Agent notes' }]]) {
+  for (const rooms of [[], [{ wing: 'project_work', name: 'App notes' }]]) {
     const node = mount(), paths = [];
     const ui = createMemory({ mount: node, boards: [board], me, api: api(paths, rooms) });
     await ui.search({ query: 'exact' });
-    assert.ok(!node.innerHTML.includes('Agent notes'));
+    assert.ok(!node.innerHTML.includes('App notes'));
     assert.ok(!node.innerHTML.includes('second line'), 'a note from a room this person has no list entry for is not shown');
     ui.stop();
   }

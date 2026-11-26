@@ -173,8 +173,11 @@ export async function linkMemory({ result, destination, card, api = request }) {
 }
 
 export function renderMemory(state) {
-  const note = `${state.deletedNotice ? `<p role="status">${e(state.deletedNotice)}</p>` : ""}<div class="memory-note-entry"><button class="btn" data-memory-action="note" aria-expanded="${Boolean(state.note?.open)}">Add a note</button></div>${renderNote(state.note)}`;
-  if (state.look === "deck") return renderDeckMemory(state, { highlighted }).replace('<form class="memory-toolbar"', () => `${note}<form class="memory-toolbar"`);
+  const noteButton = `<button class="btn" data-memory-action="note" aria-expanded="${Boolean(state.note?.open)}">Add a note</button>`;
+  const notice = state.deletedNotice ? `<p role="status">${e(state.deletedNotice)}</p>` : "";
+  const note = `${notice}<div class="memory-note-entry">${noteButton}</div>${renderNote(state.note)}`;
+  // The Deck look groups Add a note with Import in the page header; the note form itself still opens above the search.
+  if (state.look === "deck") return renderDeckMemory(state, { highlighted, lead: noteButton }).replace('<form class="memory-toolbar"', () => `${notice}${renderNote(state.note)}<form class="memory-toolbar"`);
   const { boards = [], results = [], filters = {}, selected, busy, error, searched } = state;
   const options = (rows, selected) => rows.map(([value, label]) => `<option value="${e(value)}"${value === (selected || "") ? " selected" : ""}>${e(label)}</option>`).join("");
   const status = busy ? `Searching…${searched ? ` showing results for “${state.completedQuery}” until done` : ""}` : searched ? `${results.length} results${state.truncated ? " · more matches available; narrow your search" : ""}` : "";

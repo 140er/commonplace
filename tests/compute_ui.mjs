@@ -70,7 +70,7 @@ const cases = {
   async presentation() {
     const f = fixture();
     await f.open(inventory({ nodes: [{ ...node, board: undefined, interface: undefined, address: '192.0.2.20' }], scopes: [], executions: [] }));
-    assert.match(f.host.innerHTML, /Where your Coworkers run: an overview of everything first, then Add a machine, then cloud workspaces, then \(for the workspace owner\) the technical settings of target machines under Advanced\. A runner machine's own settings are in Admin, under Runner machines\./);
+    assert.match(f.host.innerHTML, /Where your bots run: an overview of everything first, then Add a machine, then cloud workspaces, then \(for the workspace owner\) the technical settings of target machines under Advanced\. A runner machine's own settings are in Admin, under Runner machines\./);
     assert.match(f.host.innerHTML, /No scripts saved yet\./);
     assert.doesNotMatch(f.host.innerHTML, /Set up pinned gateways|No immutable script bundles saved/);
     assert.match(f.host.innerHTML, /<p>192\.0\.2\.20:22<\/p>/);
@@ -92,7 +92,7 @@ const cases = {
     assert.ok(at('id="compute-scopes"') < at('id="compute-scripts"') && at('id="compute-scripts"') < at('id="compute-discoveries"') && at('id="compute-discoveries"') < at('id="compute-executions"') && at('id="compute-executions"') < at('</details></div><details class="compute-capabilities"'), 'scripts, observations and proposals are inside Advanced');
     assert.match(html, /<h2 id="compute-scripts">Scripts<\/h2>/, 'the script section is called Scripts, the word docs/compute/RUNNING.md uses');
     assert.doesNotMatch(html, /Workspace scripts/);
-    for (const sentence of ['A gateway is the door into one project’s network; Coworkers reach your machines through it.', 'A target is one machine behind a gateway that Coworkers may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
+    for (const sentence of ['A gateway is the door into one project’s network; bots reach your machines through it.', 'A target is one machine behind a gateway that bots may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
     assert.match(html, /Most people never need these\./);
     // What the person chose survives a re-render: open stays open, and it starts closed again on a fresh screen.
     f.toggleAdvanced(); f.click('refresh'); f.take('/api/compute').resolve(inventory({ executions: [] })); f.take('/api/boards').resolve({ boards: [{ slug: 'demo', name: 'Fixture project' }] }); await flush();

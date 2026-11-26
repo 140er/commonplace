@@ -38,11 +38,12 @@ for (const [label, base, route, drawer] of [
   for (let refresh = 0; refresh < 2; refresh++) {
     runInNewContext(`({${callback}}).phone()`, context);
     assert.match(mount.innerHTML, /data-deck="tabs"/);
-    for (const destination of ["today", "bots", "compute", "settings"]) {
-      assert.match(mount.innerHTML, new RegExp(`href="#/${destination}"`));
+    // The three tabs, and the places in the account sheet rendered beside them.
+    for (const destination of ["#/", "#/bots", "#/work", "#/settings", "#/compute"]) {
+      assert.match(mount.innerHTML, new RegExp(`href="${destination}"`));
       assert.ok(closes.length + 1 <= 2, "close drawer, then choose a tab");
     }
-    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>2<span/);
+    assert.match(mount.innerHTML, /data-nav="home"[\s\S]*>2<span/);
   }
   state.deck = undefined;
   runInNewContext(`({${callback}}).phone()`, context);
@@ -131,19 +132,19 @@ test("applyDeck marks the document and honours ?ui= once, keeping the rest of th
 });
 
 test("the bar offers Bots and Settings, and a Deck screen only once it is registered", () => {
-  const bare = deck.renderDeckBar({ hash: "#/bots/abc", screens: {} });
+  const bare = deck.renderDeckBar({ hash: "#/bots", screens: {} });
   assert.ok(bare.startsWith('<nav class="rail"'), "the shell gives this element its id");
-  assert.deepEqual([...bare.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["bots", "settings"], "no Home entry until the Home screen is registered");
+  assert.deepEqual([...bare.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["bots", "settings", "compute", "settings"], "no Waiting or Work entry until their screens are registered (the menu's Settings row, then the footer gear)");
   assert.equal((bare.match(/aria-current="page"/g) || []).length, 1);
   assert.match(bare, /href="#\/bots" data-nav="bots" aria-current="page"/);
-  const full = deck.renderDeckBar({ hash: "#/today", needs: 3, screens: { today() {}, compute() {} } });
-  assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["today", "bots", "compute", "settings"]);
-  assert.deepEqual([...deck.renderDeckBar({ hash: "#/", screens: { home() {}, today() {} } }).matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["home", "today", "bots", "settings"]);
-  assert.match(full, /data-nav="today" aria-current="page">[\s\S]*?Today<span class="count need">3/);
+  const full = deck.renderDeckBar({ hash: "#/", needs: 3 });
+  assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["home", "work", "bots", "settings", "compute", "settings"]);
+  assert.match(full, /data-nav="home" aria-current="page">[\s\S]*?Waiting on you<\/span><span class="count need">3/);
   assert.match(full, /class="deck-brand" href="#\/"/);
   assert.equal(deck.deckHome({}), "#/bots");
   assert.equal(deck.deckHome({ today() {} }), "#/today");
-  for (const [hash, section] of [["#/rules", "settings"], ["#/admin", "settings"], ["#/settings", "settings"], ["#/compute", "compute"], ["#/board/x", ""], ["#/memory?q=a", ""], ["", ""]]) assert.equal(deck.deckSection(hash), section, hash);
+  assert.equal(deck.deckHome(), "#/");
+  for (const [hash, section] of [["#/rules", ""], ["#/admin", ""], ["#/settings", "settings"], ["#/compute", ""], ["#/board/x", "work"], ["#/memory?q=a", "memory"], ["", "home"]]) assert.equal(deck.deckSection(hash), section, hash);
 });
 
 test("the bar keeps the shell's actions, escapes names and shows Admin to admins only", () => {
@@ -152,21 +153,22 @@ test("the bar keeps the shell's actions, escapes names and shows Admin to admins
   assert.match(html, /id="cmdk"/);
   assert.doesNotMatch(html, /<b>"W"|<i>Maya/);
   assert.match(html, /&lt;b&gt;&quot;W&quot;/);
-  for (const href of ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]) assert.equal((html.match(new RegExp(`href="${href}"`, "g")) || []).length, 1, href);
+  for (const href of ["#/memory", "#/console", "#/rules", "#/admin"]) assert.equal((html.match(new RegExp(`href="${href}"`, "g")) || []).length, 1, href);
+  assert.equal((html.match(/href="#\/boards"/g) || []).length, 0, "Projects is the sidebar heading (shown with projects), not an account menu row");
   for (const can_admin of [false, undefined, "true", 1]) assert.doesNotMatch(deck.renderDeckBar({ can_admin, screens: {} }), /#\/admin/);
   assert.doesNotMatch(html, /<style|style="/);
 });
 
-test("phone: a title bar and one tab per offered section", () => {
-  const tabs = deck.renderDeckTabs({ needs: 2, hash: "#/settings", screens: { compute() {} } });
-  assert.deepEqual([...tabs.matchAll(/href="#\/([a-z]+)"/g)].map((m) => m[1]), ["bots", "compute", "settings"]);
-  assert.match(tabs, /data-count="3"/);
-  assert.match(tabs, /data-nav="settings" aria-current="page"/);
-  assert.doesNotMatch(tabs, /class="count /, 'no waiting badge moves to Bots when Today is absent');
-  assert.doesNotMatch(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
-  assert.doesNotMatch(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
+test("phone: a title bar and the three phone tabs; Settings opens from the account sheet", () => {
+  const tabs = deck.renderDeckTabs({ needs: 2, hash: "#/settings" });
+  assert.deepEqual([...tabs.matchAll(/href="(#\/[a-z]*)" data-nav/g)].map((m) => m[1]), ["#/", "#/bots", "#/work", "#/memory"]);
+  assert.match(tabs, /data-count="4"/);
+  assert.doesNotMatch(tabs, /aria-current/, "Settings is not a tab");
+  assert.match(deck.renderDeckMore({ hash: "#/settings" }), /<a href="#\/settings" data-nav="settings" aria-current="page">/);
+  assert.match(tabs, /data-nav="home"[^>]*>[\s\S]*?class="count need">2/);
+  assert.doesNotMatch(deck.renderDeckTabs({ needs: 0, botsWaiting: 5 }), /class="count /);
   assert.match(deck.renderDeckTop({ hash: "#/bots" }), /<b>Bots<\/b>/);
-  assert.doesNotMatch(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
+  assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
   assert.match(deck.renderDeckTop(), /data-action="palette"/);
 });
 
@@ -175,9 +177,9 @@ test("the shell gets the Deck bar, title and tabs unless classic is chosen", () 
   assert.deepEqual([ui.bar({ workspace: "Northwind" }), ui.top(), ui.tabs({ needs: 1 })], ["", "", ""]);
   assert.doesNotMatch(rail.renderRail({ view: "bots" }) + rail.renderPhoneBar() + rail.renderPhoneTabs(), /data-deck/);
   s.setItem(deck.UI_KEY, "deck");
-  assert.match(ui.bar({ workspace: "Northwind", needs: 2, boards: [], view: "bots" }), /^<nav class="rail" data-deck="bar"[\s\S]*data-nav="today"[\s\S]*Northwind/);
+  assert.match(ui.bar({ workspace: "Northwind", needs: 2, boards: [], view: "bots" }), /^<nav class="rail" data-deck="bar"[\s\S]*data-nav="bots"[\s\S]*Northwind/);
   assert.match(ui.top(), /data-deck="top"/);
-  assert.match(ui.tabs({ needs: 1 }), /data-deck="tabs" data-count="3"/);
+  assert.match(ui.tabs({ needs: 1 }), /data-deck="tabs" data-count="4"/);
 });
 
 test("createDeck mounts a registered screen once, refreshes it, and stops it on leave", async () => {
@@ -213,8 +215,8 @@ test("the Look switch is added to Settings once and flips the look", () => {
   const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
   ui.settings(content); ui.settings(content); ui.settings(null); ui.settings({ querySelector: () => null });
   assert.equal((html.match(/id="look"/g) || []).length, 1);
-  assert.match(html, /data-look="deck" aria-pressed="false">Deck[\s\S]*data-look="classic" aria-pressed="true">Classic/);
-  assert.match(deck.lookHTML(true), /data-look="deck" aria-pressed="true">Deck/);
+  assert.match(html, /data-look="deck" aria-pressed="false">Commonplace[\s\S]*data-look="classic" aria-pressed="true">Classic/);
+  assert.match(deck.lookHTML(true), /data-look="deck" aria-pressed="true">Commonplace/);
   const [type, click] = d.listeners[0];
   assert.equal(type, "click");
   click({ target: { closest: () => null } });
@@ -236,7 +238,7 @@ test("the Look switch shows Deck as on for a first visit and turns it off for go
   const box = { querySelector: () => null, insertAdjacentHTML: (where, markup) => { html += markup; } };
   const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
   ui.settings({ querySelector: (q) => (q === ".settings" ? box : null) });
-  assert.match(html, /data-look="deck" aria-pressed="true">Deck[\s\S]*data-look="classic" aria-pressed="false">Classic/);
+  assert.match(html, /data-look="deck" aria-pressed="true">Commonplace[\s\S]*data-look="classic" aria-pressed="false">Classic/);
   ui.toggle();
   assert.deepEqual([ui.on(), s.getItem(deck.UI_KEY), reloads], [false, "classic", 1]);
   assert.equal(deck.deckOn(s), false, "the next visit stays classic");
@@ -259,7 +261,7 @@ test("Settings carries the workspace tools in the Deck look only, with Admin for
   assert.deepEqual(on.map(([where]) => where), ["afterbegin", "afterbegin", "afterbegin"]);
   assert.match(on[1][1], /Notifications[\s\S]*Connections[\s\S]*Workspace/);
   assert.deepEqual([...on[0][1].matchAll(/href="(#\/[a-z]+)"/g)].map((m) => m[1]), ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]);
-  assert.match(on[0][1], />Needs me<\/a>/);
+  assert.match(on[0][1], />Waiting on you<\/a>/);
   assert.doesNotMatch(on[0][1], /class="count /, "counts belong to the action navigation only");
   for (const can_admin of [false, undefined, "true"]) assert.doesNotMatch(make(true, { can_admin })[0][1], /#\/admin/);
   assert.doesNotMatch(deck.toolsHTML(), /<style|style="/);

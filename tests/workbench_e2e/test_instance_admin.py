@@ -75,12 +75,12 @@ def test_instance_console_member_admin_foreign_target_and_retry(hub, chromium, w
         if width < 700:
             page.locator(".deck-tab-more").click()
             expect(
-                page.locator("#deck-more").get_by_role("link", name="Instance console", exact=True)
+                page.locator("#deck-more").get_by_role("link", name="Server admin", exact=True)
             ).to_be_visible()
             page.keyboard.press("Escape")
         else:
             page.locator(".user-menu summary").click()
-            expect(page.get_by_role("link", name="Instance console", exact=True)).to_be_visible()
+            expect(page.get_by_role("link", name="Server admin", exact=True)).to_be_visible()
         assert reads and set(reads) == {"GET"}
         assert not errors
     finally:

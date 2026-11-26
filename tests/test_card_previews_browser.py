@@ -79,7 +79,7 @@ STATES = {
                 "state": "failed",
                 "reason": "contains_secret_like_text",
                 "reason_text": "Nothing was published: a file looked like it holds a credential.",
-                "next": "Ask the Coworker that published it to publish again without the "
+                "next": "Ask the bot that published it to publish again without the "
                 "credential in that file. Reply on this card.",
                 "revision": 0,
                 "url": None,
@@ -136,7 +136,7 @@ RULE = {
     "stop_days_after_pr": None,
     "max_age_days": None,
     "updated_at": None,
-    "text": "Previews are served until a person or the Coworker that published them stops them.",
+    "text": "Previews are served until a person or the bot that published them stops them.",
 }
 
 
@@ -219,7 +219,7 @@ def test_every_preview_state_reads_in_words_and_opens_in_one_click(browser, look
             section.locator("h3", has_text="Previews").wait_for()
             words = {
                 "ready": "Published and open to people who can open this card.",
-                "none": "No preview yet.",
+                "none": "No previews yet.",
                 "building": "The files are being saved.",
                 "stopped": "Use Open again to serve it.",
                 "failed": "Nothing was published: a file looked like it holds a credential.",
@@ -460,7 +460,7 @@ def test_invalid_rule_days_name_the_field_and_keep_the_value(browser):  # noqa: 
     page.route("**/api/previews**", previews_api)
     page.evaluate("location.hash='#/card/1'")
     section = page.locator("[data-card-previews]")
-    section.locator("summary").click()
+    section.locator("summary[data-preview-rule-summary]").click()
     field = section.locator('input[name="stop_days_after_pr"]')
     field.fill("366")
     section.get_by_role("button", name="Save rule").click()

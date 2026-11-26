@@ -3,7 +3,7 @@
 :root[data-ui="deck"] .center:has(.deck-memory) > #content { display: block; padding: 44px 40px 32px; overflow-y: auto; }
 :root[data-ui="deck"] [data-memory-mount] { min-width: 0; }
 :root[data-ui="deck"] .deck-memory { position: relative; width: 100%; max-width: 780px; height: auto; min-height: 0; margin: 0 auto; }
-:root[data-ui="deck"] .memory-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; padding-right: 200px; }
+:root[data-ui="deck"] .memory-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; padding-right: 340px; }
 :root[data-ui="deck"] .memory-heading h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
 :root[data-ui="deck"] .memory-heading p { margin: 0; color: var(--ink2); font-size: 13.5px; line-height: 1.5; }
 :root[data-ui="deck"] .deck-memory .btn { flex: none; border: 0; border-radius: var(--radius-control); background: var(--s2); color: var(--ink); box-shadow: none; font-size: 13.5px; }
@@ -39,9 +39,13 @@
 :root[data-ui="deck"] .memory-filterbar { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; }
 :root[data-ui="deck"] .memory-chip-scroll { display: contents; }
 :root[data-ui="deck"] .memory-room-count { color: var(--ink3); font-weight: 400; }
-:root[data-ui="deck"] .memory-map-launch { margin-left: auto; }
-:root[data-ui="deck"] .memory-history-launch, :root[data-ui="deck"] .memory-organise-launch { display: inline-flex; align-items: center; text-decoration: none; }
-:root[data-ui="deck"] .memory-import-launch { position: absolute; top: 18px; right: 0; display: inline-flex; align-items: center; gap: 8px; }
+:root[data-ui="deck"] .memory-actions { position: absolute; top: 18px; right: 0; display: flex; align-items: center; gap: 8px; }
+:root[data-ui="deck"] .memory-actions .btn { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; }
+/* Map, Saved threads and Organise memory are places to go, not filters: a row of their own under the search, as quiet
+   secondary buttons (the look of the other secondary buttons, smaller) so they read as clickable, not as captions. */
+:root[data-ui="deck"] .memory-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+:root[data-ui="deck"] .deck-memory .memory-tools .btn { display: inline-flex; align-items: center; min-height: 30px; padding: 0 12px; border: 1px solid var(--line3); border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font-size: 12.5px; font-weight: 550; text-decoration: none; cursor: pointer; }
+:root[data-ui="deck"] .deck-memory .memory-tools .btn:hover { border-color: var(--ink3); }
 :root[data-ui="deck"] .memory-filters { flex: none; color: var(--ink3); font-size: 12.5px; }
 :root[data-ui="deck"] .memory-filters summary { display: list-item; list-style-position: inside; white-space: nowrap; cursor: pointer; width: fit-content; min-height: 32px; padding: 6px 10px; border-radius: var(--radius-control); background: var(--card); box-sizing: border-box; }
 :root[data-ui="deck"] .memory-filters summary::marker { color: var(--ink3); }
@@ -81,9 +85,10 @@
 @media (max-width: 699px) {
   :root[data-ui="deck"] .center:has(.deck-memory) > #content { padding: 16px 16px 32px; }
   :root[data-ui="deck"] .memory-heading { display: none; }
-  :root[data-ui="deck"] .memory-map-launch { min-height: 44px; margin: 8px 0 0; }
-  :root[data-ui="deck"] .memory-history-launch, :root[data-ui="deck"] .memory-organise-launch { min-height: 44px; margin: 8px 0 0 8px; }
-  :root[data-ui="deck"] .memory-import-launch { position: static; align-self: flex-start; min-height: 44px; margin-top: 16px; }
+  /* Add a note and Import memory files are one row under the bar. */
+  :root[data-ui="deck"] .memory-actions { position: static; flex-wrap: wrap; margin: 0 0 12px; }
+  :root[data-ui="deck"] .memory-actions .btn, :root[data-ui="deck"] .deck-memory .memory-tools .btn { min-height: 44px; }
+  :root[data-ui="deck"] .memory-tools { margin: 4px 0 12px; }
   :root[data-ui="deck"] .memory-rooms button, :root[data-ui="deck"] .memory-filters summary { min-height: 44px; }
   :root[data-ui="deck"] .memory-filterbar { display: block; }
   :root[data-ui="deck"] .memory-chip-scroll { display: flex; gap: 4px; width: 100%; overflow-x: auto; padding-right: 16px; box-sizing: border-box; }

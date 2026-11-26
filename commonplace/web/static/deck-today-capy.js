@@ -1,11 +1,10 @@
 import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
-import { addStyles, placeMenu, primaryAction, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone, needsMeCount } from './deck-home-today.js';
+import { addStyles, primaryAction, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, avatar, timeHTML, needsMeCount } from './deck-home-today.js';
 import { previewText } from './needs-me.js';
-import { artHTML } from './deck-art.js';
 
-export const TITLE = 'Today';
+export const TITLE = 'Waiting on you';
 
 /** What approving does, in one plain line under the Approve button. */
 export const approveNote = who => `Approve means yes: ${who || 'the coworker'} goes ahead with this.`;
@@ -14,43 +13,81 @@ export const replyWords = (action, answering) => action === 'approve' ? { title:
 /** The line shown once a send succeeded: what was sent, to whom, and where the card went. */
 export function sentLine(card, action, request, who, answering = false) {
   const name = who || 'the coworker';
-  if (action === 'approve') return request?.options?.body?.then === 'done' ? 'Accepted. The card is done and left Today.' : `Approved. ${name} goes ahead. The card left Today and is back on its Board.`;
-  if (action === 'reject') return `Turned down. The card went back to ${name} and left Today.`;
-  return `${answering ? 'Answer' : 'Reply'} sent to ${name}. The card left Today and is back on its Board.`;
+  if (action === 'approve') return request?.options?.body?.then === 'done' ? 'Accepted. The card is done and left the list.' : `Approved. ${name} goes ahead. The card left the list and is back on its Board.`;
+  if (action === 'reject') return `Turned down. The card went back to ${name} and left the list.`;
+  return `${answering ? 'Answer' : 'Reply'} sent to ${name}. The card left the list and is back on its Board.`;
 }
 const enc = encodeURIComponent;
 
 
-// One card: a plain title, a short preview, the main action beside Hold and Reply. The stored words stay whole
-// behind "Show full text"; only the display is shortened.
-/** The line under the Today heading. The number is the shared needs-me count, the same one Home, the badges and the Board use. */
-export const summaryLine = (needs, date = new Date()) => `${date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })} · ${needsMeCount(needs)} waiting on you`;
+const MOVED = 'Moved to review.';
+// On a phone an answer longer than this takes the whole row, so its words do not wrap inside a half-width button.
+export const LONG_ANSWER = 18;
+const answerable = card => (card.actions || []).some(action => ['answer', 'accept'].includes(action));
+/** The two kinds the filter chips split the list into: a question to answer, or work to review and approve. */
+export const kindOf = card => card.review_kind === 'completion' || (card.actions || []).some(action => ['approve', 'accept', 'reject'].includes(action)) ? 'review' : 'question';
+/** The short verb after the bot's name. */
+export const verbOf = card => card.review_kind === 'completion' ? 'finished work' : kindOf(card) === 'review' ? 'wants your OK' : 'asks';
+/** The line in the top bar. The number is the shared needs-me count, the same one the sidebar, the badges and the Board use. */
+export const summaryLine = needs => { const count = needsMeCount(needs); return count ? `${count} ${count === 1 ? 'item' : 'items'} waiting` : 'Nothing is waiting'; };
+/** The filter chips: every count comes from the cards listed below them. */
+export function chipsHTML(list, filter = 'all') {
+  const counts = { all: list.length, question: list.filter(card => kindOf(card) === 'question').length, review: list.filter(card => kindOf(card) === 'review').length };
+  return [['all', 'All'], ['question', 'Questions'], ['review', 'Reviews']].map(([key, label]) => `<button type="button" class="bt-chip" data-bt-filter="${key}" aria-pressed="${filter === key}">${label} <b>${counts[key]}</b></button>`).join('');
+}
+/** One card's answers: the first is the main button, the others sit beside it, and a quiet Reply (or "See the work"
+ *  when the card cannot be answered here) ends the row. Every button goes through the same action code as the keys. */
+export function answersHTML(card, { busy = false } = {}, escape = e) {
+  const options = card.ask_options || [], actions = card.actions || [], disabled = busy ? ' disabled' : '';
+  const button = (cls, attrs, label) => `<button type="button" class="${cls}" ${attrs}${disabled}>${escape(displayText(label))}</button>`;
+  const buttons = [];
+  if (actions.includes('answer') && options.length) {
+    // An option that accepts finished work goes through Approve; any other option is sent as the chosen answer.
+    const accepted = actions.includes('accept') ? actionRequest(card, 'approve', { key: 'probe' })?.options.body.choice : undefined;
+    // Every choice the bot offered is a button: a hidden fourth answer would be an answer you cannot give.
+    options.forEach((option, index) => buttons.push(option === accepted ? [index, 'data-bt-action="approve"', option] : [index, `data-bt-action="reply" data-bt-choice="${index}"`, option]));
+  } else {
+    const main = primaryAction(card);
+    buttons.push([0, `data-bt-action="${main.action}"`, main.label]);
+    if (actions.includes('reject')) buttons.push([1, 'data-bt-action="reject"', 'Turn down']);
+  }
+  // Peer answers carry equal weight; only an action the item itself recommends (accepting finished work, or the
+  // one main action) is styled as primary. The first button keeps bt-approve so the A key still answers it.
+  const recommended = ([, attrs]) => attrs.includes('data-bt-action="approve"') || buttons.length === 1 || !options.length;
+  const html = buttons.map((entry, at) => button(`${at === 0 ? 'bt-approve ' : ''}${recommended(entry) && at === 0 ? 'bt-primary' : 'bt-secondary'}${displayText(entry[2]).length > LONG_ANSWER ? ' bt-long' : ''}`, entry[1], entry[2])).join('');
+  // Finished work and cards that cannot be answered here open the card; a question offers a typed Reply instead.
+  const quiet = !buttons.length || buttons[0][2] === 'Open' ? '' : kindOf(card) === 'review' || !answerable(card) ? button('bt-quiet', 'data-bt-open', 'See the work') : options.length ? button('bt-quiet bt-desktop-reply', 'data-bt-action="reply"', 'Reply') + button('bt-quiet', 'data-bt-open', 'See the work') : button('bt-quiet', 'data-bt-open', 'See the work');
+  return `<div class="bt-actions">${html}${quiet}</div>`;
+}
 
+// One card: the asker, the question as its title, one line of context and the answers. The stored words stay whole
+// behind "Show full text"; only the display is shortened.
 export function cardHTML(card, bots, { busy, errors, held, exiting, open = new Set() }, escape = e) {
   const bot = bots.find(bot => bot.board && bot.board === card.board);
-  const name = bot?.name || card.bot_name;
-  const approves = primaryAction(card).action === 'approve';
+  const name = displayText(bot?.name || card.bot_name || card.board || '');
+  const approves = primaryAction(card).action === 'approve' && !(card.ask_options || []).length;
   const fact = card.fact || card.bot_reason;
-  const waiting = (card.actions || []).some(action => ['approve', 'answer', 'accept', 'reject'].includes(action));
+  const waiting = answerable(card) || (card.actions || []).some(action => ['approve', 'reject'].includes(action));
   const words = card.body || card.ask || '';
-  const preview = previewText(displayText(card.display_body || words));
-  const full = words && words !== preview ? `<details class="bt-full" data-bt-full="${card.number}"${open.has(card.number) ? ' open' : ''}><summary>Show full text</summary><p class="bt-full-text">${escape(words)}</p></details>` : '';
-  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${approves ? `<p class="bt-approve-note">${escape(approveNote(name && displayText(name)))}</p>` : ''}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
+  const question = card.ask && card.ask !== MOVED ? card.ask : card.title;
+  const rest = String(card.review_context || (words.startsWith(question) ? words.slice(question.length) : words)).trim();
+  const flat = displayText(card.display_body || rest), preview = previewText(flat);
+  const askedFlat = displayText(card.display_title || question), asked = previewText(askedFlat, 220);
+  const long = preview !== flat || asked !== askedFlat || (rest && flat !== rest);
+  const full = long ? `<details class="bt-full" data-bt-full="${card.number}"${open.has(card.number) ? ' open' : ''}><summary>Show full text</summary><p class="bt-full-text">${escape(words)}</p></details>` : '';
+  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" data-bt-kind="${kindOf(card)}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(name)}</b>` : ''}<span class="bt-verb">${verbOf(card)}</span>${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(asked)}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${answersHTML(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${approves ? `<p class="bt-approve-note">${escape(approveNote(name))}</p>` : ''}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
 }
-export function botsHTML(bots, escape = e) {
-  return `<section class="bt-bots"><header><h2>Your bots</h2>${artHTML('rule')}<span>Latest from each</span></header><ul>${bots.map(bot => `<li><a href="#/bots/${enc(bot.id)}">${avatar(bot, escape)}<span class="bt-bot-copy"><b>${escape(displayText(bot.name))}${bot.state ? ` <i class="bt-dot" data-tone="${stateTone(bot.state)}" aria-label="${escape(stateName(bot.state))}"></i>` : ''}</b>${bot.last?.text ? `<span>${escape(displayText(bot.last.text))}</span>` : ''}</span>${timeHTML(bot.last?.at, escape)}</a></li>`).join('')}</ul>${bots.length ? '' : `<p class="bt-empty">${artHTML('bots')}No bots yet. <a href="#/bots?new=1">New bot</a></p>`}</section>`;
-}
-/** The Needs me list when nothing is open: all clear once loaded, otherwise the plain loading line. */
-export const emptyCardsHTML = loaded => `<p class="bt-empty" role="status">${loaded ? `${artHTML('clear')}Nothing is waiting on you` : 'Loading…'}</p>`;
+/** The list when nothing is open: one calm line once loaded, otherwise the plain loading line. */
+export const emptyCardsHTML = (loaded, filtered = false) => `<p class="bt-calm" role="status">${loaded ? filtered ? 'Nothing here. Choose All to see everything waiting on you.' : 'Nothing waits on you. Questions and finished work from your bots show up here.' : 'Loading…'}</p>`;
 export function mount(context) {
   const { root, api } = context, doc = root.ownerDocument || globalThis.document;
   addStyles(doc);
   const host = root.closest?.('.center') || root;
   host.classList.add('deck-today-capy');
-  root.innerHTML = `<div class="bt-scroll"><div class="bt-page"><header class="bt-title"><h1>Today</h1><p data-bt="summary">Loading…</p></header><p class="bt-confirm" data-bt="confirm" role="status" hidden></p><div class="bt-grid"><div class="bt-main"><section class="bt-list" data-bt="cards" aria-label="Needs me"></section><p class="bt-keys">A Approve · H Hold · R Reply · J K Move</p><div data-bt="bots"></div></div><aside class="bt-activity" aria-labelledby="bt-activity-title"><header><h2 id="bt-activity-title">Activity</h2>${artHTML('rule')}</header><ol data-bt="activity"></ol></aside></div><p class="bt-error" data-bt="error" role="alert" hidden></p></div></div><dialog class="bt-reply" aria-labelledby="bt-reply-h"><form><h2 id="bt-reply-h">Reply</h2><p data-bt="reply-title"></p><p class="bt-reply-note" data-bt="reply-note" hidden></p><label data-bt="choice-label">Choose an answer<select name="choice"></select></label><label><span data-bt="reply-label">Your reply</span><textarea name="reply" maxlength="8000" rows="3"></textarea></label><p class="bt-error" data-bt="reply-error" role="alert"></p><div><button type="button" data-bt-cancel>Cancel</button><button type="submit">Send reply</button></div></form></dialog>`;
+  root.innerHTML = `<header class="bt-bar"><h1>Waiting on you</h1><span class="bt-sub" data-bt="summary">Loading…</span><span class="bt-sp"></span><nav class="bt-chips" data-bt="chips" aria-label="Show"></nav></header><div class="bt-scroll"><div class="bt-col"><p class="bt-confirm" data-bt="confirm" role="status" hidden></p><section class="bt-list" data-bt="cards" aria-label="Waiting on you"></section><p class="bt-keys" data-bt="keys">Keys: J and K move between items, R replies, H puts an item on hold</p><section class="bt-recent" aria-labelledby="bt-recent-title"><h3 id="bt-recent-title">Since you last looked</h3><ol data-bt="activity"></ol></section><p class="bt-error" data-bt="error" role="alert" hidden></p></div></div><dialog class="bt-reply" aria-labelledby="bt-reply-h"><form><h2 id="bt-reply-h">Reply</h2><p data-bt="reply-title"></p><p class="bt-reply-note" data-bt="reply-note" hidden></p><label data-bt="choice-label">Choose an answer<select name="choice"></select></label><label><span data-bt="reply-label">Your reply</span><textarea name="reply" maxlength="8000" rows="3"></textarea></label><p class="bt-error" data-bt="reply-error" role="alert"></p><div><button type="button" data-bt-cancel>Cancel</button><button type="submit">Send reply</button></div></form></dialog>`;
   const region = name => root.querySelector(`[data-bt="${name}"]`);
   const dialog = root.querySelector('dialog'), form = dialog.querySelector('form');
-  let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', currentAnswering = false, confirmTimer = null, focused = null, needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
+  let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', currentAnswering = false, confirmTimer = null, focused = null, filter = 'all', needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
   const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set();
   const botName = card => (bots.find(bot => bot.board && bot.board === card.board)?.name || card.bot_name || '');
   function cards() {
@@ -58,22 +95,24 @@ export function mount(context) {
     for (const { card, index } of [...leaving.values()].sort((a, b) => a.index - b.index)) if (!list.some(item => item.number === card.number)) list.splice(Math.min(index, list.length), 0, card);
     return list;
   }
+  const visible = () => cards().filter(card => filter === 'all' || kindOf(card) === filter);
   function focus(number) {
     focused = number;
     root.querySelector(`[data-bt-card="${number}"]`)?.focus({ preventScroll: true });
   }
   function paint() {
     if (!active) return;
-    const list = cards(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
-    region('summary').textContent = summaryLine(needs);
-    region('cards').innerHTML = list.length ? list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded);
+    const all = cards(), list = visible(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
+    region('summary').textContent = loaded || needsMeCount(needs) ? summaryLine(needs) : 'Loading…';
+    region('chips').innerHTML = chipsHTML(all, filter);
+    region('keys').hidden = !list.length;
+    region('cards').innerHTML = list.length ? list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0);
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
     }
-    region('bots').innerHTML = botsHTML(bots);
-    const rows = groupActivity([...activity, ...events.map(event => event.activity)].filter(row => row?.text)).slice(0, 12);
-    region('activity').innerHTML = rows.length ? rows.map(row => activityHTML(row, e, openGroups.has(row.id))).join('') : '<li class="bt-empty">No recent activity.</li>';
+    const rows = groupActivity([...activity, ...events.map(event => event.activity)].filter(row => row?.text)).slice(0, 6), names = bots.map(bot => displayText(bot.name));
+    region('activity').innerHTML = rows.length ? rows.map(row => activityHTML(row, e, openGroups.has(row.id), names)).join('') : '<li class="bt-calm">Nothing new yet.</li>';
     for (const row of region('activity').querySelectorAll('.bt-new-activity')) for (const animation of row.getAnimations()) animation.currentTime = Math.max(0, Date.now() - Date.parse(row.dataset.at));
     if (mark && list.some(card => String(card.number) === mark)) focus(Number(mark));
   }
@@ -105,8 +144,10 @@ export function mount(context) {
         events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at)) || (b.seq || 0) - (a.seq || 0)).slice(0, 12).map(event => ({ ...event, activity: event.activity || activityEvent(event, bots, needs) }));
         seq = feed.value.seq || 0; eventEpoch = feed.value.epoch || '';
       } else if ([401, 403].includes(feed.reason?.status)) events = [];
+      // Until the roster has arrived, an event cannot name its bot: read its words again once it has.
+      events = events.map(event => event.named ? event : { ...event, activity: activityEvent(event, bots, needs), named: bots.length > 0 });
       region('error').hidden = queue.status !== 'rejected' && roster.status !== 'rejected';
-      region('error').textContent = queue.status === 'rejected' ? 'Today could not be refreshed. Try again.' : roster.status === 'rejected' ? 'Your bots could not be refreshed.' : '';
+      region('error').textContent = queue.status === 'rejected' ? 'This page could not be refreshed. Try again.' : roster.status === 'rejected' ? 'Your bots could not be refreshed.' : '';
       if (queue.status === 'rejected' && [401, 403, 404].includes(queue.reason?.status)) { needs = { count: 0 }; dialog.close(); current = null; }
       paint();
     };
@@ -160,7 +201,7 @@ export function mount(context) {
       const timer = setTimeout(() => {
         timers.delete(timer); if (!active) return;
         settled.add(stamp(card)); exiting.delete(stamp(card)); leaving.delete(stamp(card)); paint();
-        const remaining = cards(); if (remaining.length) focus(remaining[0].number);
+        const remaining = visible(); if (remaining.length) focus(remaining[0].number);
       }, 280); timers.add(timer);
     } catch (error) {
       if (!active) return;
@@ -171,14 +212,23 @@ export function mount(context) {
   }
   function onClick(event) {
     if (event.target.closest?.('[data-bt-cancel]')) { dialog.close(); current = null; return; }
+    const chip = event.target.closest?.('[data-bt-filter]');
+    if (chip) { filter = chip.dataset.btFilter; paint(); return; }
     const button = event.target.closest?.('[data-bt-action]'), article = button?.closest('[data-bt-card]');
     const card = cards().find(card => card.number === Number(article?.dataset.btCard));
-    if (card && button && !button.disabled) { event.preventDefault(); focused = card.number; void act(card, button.dataset.btAction, button.matches('.bt-primary') ? { answering: true } : {}); }
+    const open = event.target.closest?.('[data-bt-open]'), openCard = open && cards().find(card => card.number === Number(open.closest('[data-bt-card]')?.dataset.btCard));
+    if (openCard) { event.preventDefault(); ctx.go?.(`#/card/${openCard.number}`); return; }
+    if (!card || !button || button.disabled) return;
+    event.preventDefault(); focused = card.number;
+    // An answer button sends its own words straight away; the others open the reply dialog or act as before.
+    if (button.dataset.btChoice !== undefined) void act(card, 'reply', { submit: true, answering: true, choice: card.ask_options?.[Number(button.dataset.btChoice)] });
+    else void act(card, button.dataset.btAction, button.matches('.bt-primary') ? { answering: true } : {});
   }
   function onKey(event) {
     if (dialog.open || doc?.querySelector?.('dialog[open]')) return;
-    const action = todayKey(event, ctx.singleKeys?.() !== false), list = cards().filter(card => !exiting.has(stamp(card)));
-    if (!action || !list.length) return;
+    const action = todayKey(event, ctx.singleKeys?.() !== false), list = visible().filter(card => !exiting.has(stamp(card)));
+    // Approving takes a click on the button, never a single key: one stray key press must not ship work.
+    if (!action || action === 'approve' || !list.length) return;
     event.preventDefault(); event.stopPropagation?.();
     const index = list.findIndex(card => card.number === focused);
     if (['next', 'previous'].includes(action)) focus(list[index < 0 ? action === 'next' ? 0 : list.length - 1 : (index + (action === 'next' ? 1 : list.length - 1)) % list.length].number);
@@ -190,7 +240,7 @@ export function mount(context) {
     const choice = current.ask_options?.[Number(form.elements.choice.value)];
     void act(current, 'reply', { submit: true, answering: currentAnswering, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
   }
-  function onGroupToggle(event) { const group = event.target; if (group.matches?.('.bt-more') && group.open) placeMenu(group.querySelector('[role="menu"]'), doc?.defaultView || globalThis);  if (group.matches?.('.bt-full')) { const number = Number(group.dataset.btFull); if (group.open) openFull.add(number); else openFull.delete(number); return; }
+  function onGroupToggle(event) { const group = event.target; if (group.matches?.('.bt-full')) { const number = Number(group.dataset.btFull); if (group.open) openFull.add(number); else openFull.delete(number); return; }
     if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
   root.addEventListener('toggle', onGroupToggle, true);
   root.addEventListener('click', onClick); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);

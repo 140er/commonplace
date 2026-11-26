@@ -300,7 +300,8 @@ def _show_authorize(gateway, h, *, status=200):
                 consent += (
                     '<label><input type="checkbox" name="grant_import_read" value="1"> '
                     f"{escape(import_grant.READER_TEXT)}</label>"
-                    f"<small>{escape(import_grant.READER_DETAIL)}</small>"
+                    f"<details><summary>Details</summary><small>{escape(import_grant.READER_DETAIL)}"
+                    "</small></details>"
                 )
             else:
                 consent += f"<p>{escape(import_grant.OWNER_ONLY_TEXT)}</p>"
@@ -309,6 +310,8 @@ def _show_authorize(gateway, h, *, status=200):
                 consent += (
                     '<label><input type="checkbox" name="grant_decide" value="1"> '
                     f"{escape(decide_grant.SCOPE_TEXT)}</label>"
+                    f"<details><summary>Details</summary><small>{escape(decide_grant.SCOPE_DETAIL)}"
+                    "</small></details>"
                 )
             else:
                 consent += f"<p>{escape(decide_grant.OWNER_ONLY_TEXT)}</p>"

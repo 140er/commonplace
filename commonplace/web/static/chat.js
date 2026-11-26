@@ -358,7 +358,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       : lastActive ? `Agent last active at ${lastActive}.` : "";
     const acts = recovery === "no_answer"
       ? `<a class="btn sm primary" href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button class="btn sm" type="button" data-chat-ask-again>Ask again</button>`
-      : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>';
+      : '<p>Connect an app in Settings. Your message is delivered when it connects.</p>';
     // With a live delivery state from the server, the timed "Working on it…" guess is not shown,
     // and "Waiting for an agent" only while the server also finds no agent.
     const live = state.page.live?.message_id ? state.page.live : null;

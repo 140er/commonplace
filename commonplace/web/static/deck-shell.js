@@ -2,31 +2,48 @@
 import { escape as e, elapsed } from './api.js';
 import { botPage } from './routes.js';
 import { artHTML } from './deck-art.js';
+import { needsCards } from './needs-me.js';
 
-export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Cloud workspaces'], ['settings', 'Settings']];
-// A tab on a phone has room for about ten letters: the long name stays its accessible name, the visible text is short.
-const SHORT = { compute: 'Workspaces' };
-const tabLabel = (id, label) => SHORT[id] || label;
-const tabName = (id, label) => SHORT[id] ? ` aria-label="${label}"` : '';
+// The places, in the order the sidebar shows them. Waiting on you is home: what needs an answer comes first.
+export const SECTIONS = [['home', 'Waiting on you'], ['work', 'Work'], ['bots', 'Bots'], ['settings', 'Settings']];
+// The phone tab bar. One list, so changing the bar is a one-line edit.
+export const PHONE_TABS = [['home', 'Waiting', '#/'], ['bots', 'Bots', '#/bots'], ['work', 'Work', '#/work'], ['memory', 'Memory', '#/memory']];
+/** The place a route belongs to: 'home', 'work', 'bots', 'settings', or '' for the pages in the account menu. */
+export function placeOf(hash = '') {
+  const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
+  if (!name || name === 'home' || name === 'today' || name === 'needs') return 'home';
+  if (['work', 'board', 'boards', 'card', 'start'].includes(name)) return 'work';
+  return ['bots', 'settings', 'memory'].includes(name) ? name : '';
+}
+export const phoneTabs = ({ hash = '', section = placeOf(hash) } = {}) => PHONE_TABS.map(([id, label, href]) => ({ id, label, href, on: section === id }));
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
 const rows = value => Array.isArray(value) ? value : [];
 const enc = encodeURIComponent;
 const isHome = hash => ['', '#/', '#/home'].includes(hash || '');
 const current = yes => yes ? ' aria-current="page"' : '';
 const paths = {
-  home: '<path d="M2.5 7.5 8 2.5l5.5 5M4 6.5V13h8V6.5M6.5 13V9.5h3V13"/>',
+  menu: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>',
+  home: '<path d="M2 8.5 3.6 4h8.8L14 8.5V12H2zM2 8.5h3.2l.8 1.5h4l.8-1.5H14"/>',
+  work: '<rect x="2.5" y="3" width="4.5" height="10" rx="1"/><rect x="9" y="3" width="4.5" height="6.5" rx="1"/>',
   today: '<path d="M2 9l2-6h8l2 6v4H2zM2 9h3l1 2h4l1-2h3"/>',
   bots: '<rect x="2.5" y="5" width="11" height="8" rx="2"/><path d="M8 5V2.8M5.8 9h.1M10.2 9h.1"/>',
   compute: '<rect x="4" y="4" width="8" height="8" rx="1"/><path d="M6 1v3m4-3v3M6 12v3m4-3v3M1 6h3m-3 4h3m8-4h3m-3 4h3"/>',
   settings: '<path d="m6 2 .6-1h2.8l.6 1 .3 1.2 1.1.6 1.2-.3 1.4 2.4-.8.9v1.3l.8.9-1.4 2.4-1.2-.3-1.1.6L10 14H6l-.3-1.3-1.1-.6-1.2.3L2 10l.8-.9V7.8L2 6.9l1.4-2.4 1.2.3 1.1-.6z"/><circle cx="8" cy="8" r="2"/>',
   search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
   board: '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 3v10m4-10v10"/>',
-  memory: '<path d="m2 6 6-4 6 4M3 7v6m3-6v6m4-6v6m3-6v6M2 14h12"/>',
+  memory: '<path d="M3.5 2h8A1.5 1.5 0 0 1 13 3.5V14H5a1.5 1.5 0 0 1-1.5-1.5zM3.5 12.5A1.5 1.5 0 0 1 5 11h8M6.5 5h3.5"/>',
   edit: '<path d="M9 3H3v10h10V7M8 8l5-6 2 2-6 5H7z"/>',
   folder: '<path d="M2 4h5l1.5 2H14v7H2z"/>',
   chevron: '<path d="m6 4 4 4-4 4"/>',
   lock: '<rect x="3.5" y="7" width="9" height="7" rx="1.5"/><path d="M5.5 7V4a2.5 2.5 0 0 1 5 0v3"/>',
   more: '<circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/>',
+  needs: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.5l2 1.5"/>',
+  projects: '<path d="M2 4.5h12M2 8h12M2 11.5h8"/>',
+  rules: '<path d="M4 2.5h8v11H4zM6 5.5h4M6 8h4M6 10.5h2"/>',
+  console: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m5 7 2 1.5L5 10M8.5 10.5h3"/>',
+  pipeline: '<circle cx="4" cy="8" r="1.6"/><circle cx="12" cy="8" r="1.6"/><path d="M5.6 8h4.8"/>',
+  admin: '<path d="M8 2 3 4v4c0 3 2.2 5.2 5 6 2.8-.8 5-3 5-6V4z"/>',
+  close: '<path d="m4 4 8 8M12 4l-8 8"/>',
   mic: '<rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7v1a4.5 4.5 0 0 0 9 0V7M8 12.5V15m-3 0h6"/>',
 };
 const icon = name => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.bots}</svg>`;
@@ -84,9 +101,9 @@ export function shellTrees(options = {}) {
   }
   return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
     const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
+    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${states[bot.state]?.[1] === 'waiting' || (bot.kind === 'general' ? needsCards(options.needsQueue || {}).length > 0 : bot.board && needsCards(options.needsQueue || {}).some(card => card?.board === bot.board)) ? '<span class="deck-state-dot" data-state="waiting" role="img" aria-label="Waiting on you" title="Waiting on you"></span>' : ''}${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
-      const title = worker.name || worker.title || conversation?.title || 'Coworker';
+      const title = worker.name || worker.title || conversation?.title || 'Bot';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
       return `<li><a class="deck-tree-row" href="${href}"${current(hash === href)}><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`;
     }).join('')}</ul></div>`;
@@ -95,32 +112,54 @@ export function shellTrees(options = {}) {
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
 }
-const accountLinks = (options, { count = false } = {}) => { const { can_admin, can_manage_instance } = options; return `<a href="#/needs">Needs me${count ? badge(waiting(options), 'need', 'waiting on you') : ''}</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`; };
+// Everything that is not one of the places: reachable from the account menu (desktop) and the account sheet (phone), same rows in both.
+// Projects is not here: it is the sidebar heading on desktop and a part of Work on a phone.
+// The account menu and the phone's More sheet list the same places, in three labelled groups.
+const menuGroup = (label, items) => items ? `<p class="deck-menu-group">${label}</p>${items}` : '';
+const accountLinks = options => {
+  const { can_admin, can_manage_instance } = options, at = String(options.hash || '');
+  return menuGroup('Workspace', `<a href="#/settings" data-nav="settings"${current(options.section === 'settings')}>Settings</a><a href="#/compute" data-nav="compute"${current(at === '#/compute' || at.startsWith('#/compute/'))}>Cloud workspaces</a><a href="#/rules">Rules</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}`)
+    + menuGroup('Server', can_manage_instance === true ? '<a href="#/instance-admin">Server admin</a>' : '')
+    + menuGroup('Account', '<button data-action="shortcuts">Shortcuts</button><button data-action="switch-workspace">Switch workspace</button><button data-action="logout">Sign out</button>');
+};
+const roleLabel = options => ({ owner: 'Owner', member: 'Member' }[options.role]);
+// The routes that live in the account menu and the phone More sheet, so the phone's menu button can show the person's place.
+const MORE_ROUTES = /^#\/(?:settings|compute|rules|console|pipeline|admin|instance-admin)(?:[/?]|$)/;
+const projectRows = (options, hash) => rows(options.boards).map(board => {
+  const href = `#/board/${enc(board.slug)}`, waitingHere = needsCards(options.needsQueue || {}).filter(card => card?.board === board.slug).length;
+  const open = waitingHere > 0;
+  return `<a class="nav deck-project-row" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon('folder')}<span class="deck-row-label">${e(board.name || board.slug)}</span>${open ? `<small>${waitingHere} waiting</small>` : ''}</a>`;
+}).join('');
 export function renderShellBar(options) {
-  const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
-  const role = { owner: 'Owner', member: 'Member' }[options.role];
+  const { workspace = 'Commonplace', user = '', hash = '' } = options, section = options.section ?? placeOf(hash);
+  const role = roleLabel(options);
+  const offered = id => options.sections?.some(([place]) => place === id);
+  const threads = shellThreads(options), projects = projectRows(options, hash);
+  // The Projects pages belong to Work on a phone (its tab stays selected), but the sidebar marks the Projects heading, not Work.
+  const projectsPage = /^#\/(?:boards|start)(?:[/?]|$)/.test(hash);
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
-    <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button></div>
-    <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
-    <div class="deck-links">${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(isHome(hash))}>${icon('home')}Home</a>`}${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`).join('')}</div>
-    <div class="deck-rail-scroll"><button class="deck-rail-heading ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)} workspace</button><a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>
-    <h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading">Threads</h2><div data-deck-threads>${shellThreads(options)}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
-    <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details></div>
+    <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a></div>
+    <button type="button" class="deck-find" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}<span>Search</span><kbd aria-hidden="true">Ctrl K</kbd></button>
+    <a class="deck-new-thread nav" href="#/bots" data-deck-shell-action="new-thread">${icon('edit')}<span class="deck-row-label">New chat</span></a>
+    <div class="deck-links">${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(section === 'home')}>${icon('home')}<span class="deck-row-label">Waiting on you</span>${badge(waiting(options), 'need', 'waiting on you')}</a>`}${offered('work') ? `<a class="nav" href="#/work" data-nav="work"${current(section === 'work' && !projectsPage)}>${icon('work')}<span class="deck-row-label">Work</span></a>` : ''}<a class="nav" href="#/memory"${current(section === 'memory')}>${icon('memory')}<span class="deck-row-label">Memory</span></a></div>
+    <div class="deck-rail-scroll"><div class="deck-rail-group"><a class="deck-rail-heading" href="#/bots" data-nav="bots"${current(section === 'bots' && !shellBots(options).some(bot => { const href = botHref(bot); return hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`); }))}>Bots<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span></a><a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></div><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>${projects || projectsPage ? `<div class="deck-rail-group"><a class="deck-rail-heading deck-projects-heading" href="#/boards"${current(projectsPage)}>Projects</a></div><div class="deck-projects">${projects}</div>` : ''}</div>
+    <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role}, ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details><a class="deck-settings-link" href="#/settings" data-nav="settings"${current(section === 'settings')} aria-label="Settings" title="Settings">${icon('settings')}</a></div>
   </nav>`;
 }
+// Pages that are not one of the places still need a phone title, because the page heading hides on a phone.
+const PAGE_TITLES = { '#/bots/-/coworkers': 'Bot conversations', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
 export function renderShellTop(options) {
-  const { hash = '', section, user = '', board = null } = options;
-  const label = SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/memory') ? 'Memory' : hash === '#/pipeline' ? 'Pipeline' : hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
-  const boardPage = label === 'Board' && (!!board?.slug || /^#\/board(?:\/[^/?#]+)?(?:\?.*)?$/.test(hash));
-  return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a>${boardPage ? '' : `<b>${label}</b>`}<span class="spacer"></span><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
+  const { hash = '', user = '', board = null } = options;
+  const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];
+  const label = page || (board?.slug ? board.name || 'Board' : '') || (hash.startsWith('#/board') ? 'Board' : '') || (isHome(hash) || hash === '#/today' ? 'Waiting on you' : 'Commonplace');
+  return `<header class="m-top" data-deck="top"><button type="button" class="deck-phone-avatar" data-deck-shell-action="more" aria-haspopup="dialog" aria-controls="deck-more" aria-label="More: settings, cloud workspaces and account"${current(MORE_ROUTES.test(hash))} data-deck-waiting="false">${icon('menu')}</button><b>${e(label)}</b><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button></header>`;
 }
-// The phone has no rail, so every destination the rail and account menu offer lives in this sheet (rendered beside the tabs).
+// The phone has no sidebar, so every place outside the three tabs lives in this sheet, opened from the account button.
 // Any click inside it (a link, a button or the scrim) closes it; the shell's click handler does the work.
-export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel">${options.homeOn === false ? '' : `<a href="#/" data-nav="home"${current(isHome(options.hash))}>${icon('home')}Home</a>`}<a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
+export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel"><span class="deck-more-grabber" aria-hidden="true"></span><button type="button" class="deck-more-close" data-deck-shell-action="more-close" aria-label="Close">${icon('close')}</button><p class="deck-more-account"><b>${e(options.user || 'Account')}</b> · ${roleLabel(options) ? `${roleLabel(options)}, ` : ''}${e(options.workspace || 'Commonplace')}</p>${accountLinks(options)}</div></div>`;
 export function renderShellTabs(options) {
-  const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
-  const more = !section && !['#/', '#/home'].includes(hash);
-  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}${tabName(id, label)}>${icon(id)}${tabLabel(id, label)}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}<button type="button" class="deck-tab-more" data-deck-shell-action="more" aria-haspopup="dialog" aria-expanded="${options.moreOpen === true}" aria-controls="deck-more"${current(more)}>${icon('more')}More</button>${mic ? micButton('deck-tab-mic') : ''}</nav>`;
+  const tabs = phoneTabs(options);
+  return `<nav class="m-tabs" data-deck="tabs" data-count="${tabs.length}" aria-label="Main">${tabs.map(({ id, label, href, on }) => `<a href="${href}" data-nav="${id}"${current(on)}>${icon(id)}${label}${id === 'home' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}</nav>`;
 }
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
@@ -137,32 +176,28 @@ export function createDeckShell({ root, api, context, on }) {
     moreAt = open ? hashNow() : null;
     sheet.hidden = !open;
     if (open) sheet.setAttribute('role', 'dialog'); else sheet.removeAttribute('role');
-    root.querySelector('.deck-tab-more')?.setAttribute('aria-expanded', String(open));
+    root.querySelector('.deck-phone-avatar')?.setAttribute('aria-expanded', String(open));
     if (open) sheet.querySelector('a, button')?.focus();
   }
   const moreOpen = () => moreAt !== null && moreAt === hashNow();
-  const options = () => ({ bots, directory, closed, treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen() });
+  const options = () => ({ bots, directory, closed, treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen(), needsQueue: context?.()?.needs || {} });
   function chrome() {
     if (!on()) return;
-    const form = composer(), tabs = root?.querySelector?.('[data-deck="tabs"]');
+    const form = composer();
     if (form) {
       const ownMic = form.querySelector('[data-deck-shell-action="mic"]');
       const voiceMic = form.querySelector('[data-voice="mic"], [data-today="mic"], [data-bot-action="mic"]');
       if (voiceMic) ownMic?.remove();
       else if (!ownMic) (form.querySelector('.bh-toolbar, .cb-compose-bar') || form).insertAdjacentHTML('beforeend', micButton('deck-composer-mic'));
     }
-    if (!tabs) return;
-    const show = !['#/', '#/home'].includes(globalThis.location?.hash) && !form;
-    if (tabs.dataset.mic !== String(show)) tabs.dataset.mic = String(show);
-    const mic = tabs.querySelector('[data-deck-shell-action="mic"]');
-    if (show && !mic) tabs.insertAdjacentHTML('beforeend', micButton('deck-tab-mic'));
-    if (!show && mic) mic.remove();
   }
   if (root?.ownerDocument && globalThis.MutationObserver) new MutationObserver(chrome).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'open'] });
   function paint() {
     const tree = root?.querySelector?.('[data-deck-bots]'), threads = root?.querySelector?.('[data-deck-threads]');
     if (tree && tree.innerHTML !== shellTrees(options())) tree.innerHTML = shellTrees(options());
     if (threads && threads.innerHTML !== shellThreads(options())) threads.innerHTML = shellThreads(options());
+    const heading = root?.querySelector?.('[data-deck-threads-heading]');
+    if (heading) heading.hidden = !threads?.innerHTML;
     const unread = root?.querySelector?.('[data-deck-unread]');
     if (unread) unread.innerHTML = badge(shellUnread(options()), 'unread', 'unread');
     const status = root?.querySelector?.('[data-deck-rail-error]');
@@ -198,14 +233,27 @@ export function createDeckShell({ root, api, context, on }) {
     if (folder !== undefined) { if (event.target.open) closed.delete(folder); else closed.add(folder); }
   }, true);
   root?.addEventListener?.('click', event => {
+    // Choosing anything in the account menu closes it; the page it opens is the answer.
+    event.target?.closest?.('.user-links a, .user-links button')?.closest?.('details')?.removeAttribute?.('open');
     const action = event.target?.closest?.('[data-deck-shell-action]')?.dataset.deckShellAction;
     if (!action || !on()) return;
     const sheet = root.querySelector('#phone-tabs .deck-more');
     if (action === 'more' && sheet) { event.preventDefault(); showMore(sheet, sheet.hidden); }
     if (action === 'more-close' && sheet) showMore(sheet, false);
     if (action === 'retry') { event.preventDefault(); void sync(); }
-    if (action === 'new-thread' && globalThis.location?.hash === '#/') {
-      event.preventDefault(); root.querySelector('#content textarea, #content input')?.focus();
+    // New chat opens the General bot with its reply box ready; without one it falls back to the Bots list.
+    const general = action === 'new-thread' && shellBots(options()).find(bot => bot?.kind === 'general');
+    if (general) {
+      event.preventDefault();
+      if (globalThis.location) globalThis.location.hash = botHref(general);
+      let tries = 0;
+      // The bot page renders after the route change and may redraw once, so wait until its box is shown and kept focus.
+      const focus = () => {
+        const box = [...root.querySelectorAll('#content textarea[name="text"]')].find(item => item.getClientRects().length);
+        if (box && root.ownerDocument?.activeElement !== box) box.focus();
+        if (++tries < 40 && (!box || tries < 10)) setTimeout(focus, 50);
+      };
+      setTimeout(focus, 0);
     }
     if (action === 'mic') {
       event.preventDefault();
@@ -217,7 +265,7 @@ export function createDeckShell({ root, api, context, on }) {
   (root?.ownerDocument || root)?.addEventListener?.('keydown', event => {
     const sheet = root.querySelector('#phone-tabs .deck-more');
     if (event.key !== 'Escape' || !sheet || sheet.hidden) return;
-    showMore(sheet, false); root.querySelector('.deck-tab-more')?.focus();
+    showMore(sheet, false); root.querySelector('.deck-phone-avatar')?.focus();
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });
   return { options, sync, reset, roster(value) { identify(); bots = rows(value); rosterReady = true; paint(); } };

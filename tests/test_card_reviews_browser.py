@@ -24,13 +24,13 @@ ANSWERS = [
     {
         "choice": "again",
         "label": "Two more rounds",
-        "explain": "The Coworker gets two more rounds on these comments and on any that still wait.",
+        "explain": "The bot gets two more rounds on these comments and on any that still wait.",
     },
     {
         "choice": "mine",
         "label": "I will do it myself",
-        "explain": "The Coworker stops answering this pull request's comments. The card moves to "
-        "Backlog, so no Coworker picks it up while you work on them.",
+        "explain": "The bot stops answering this pull request's comments. The card moves to "
+        "Backlog, so no bot picks it up while you work on them.",
     },
     {
         "choice": "dismiss",
@@ -70,7 +70,7 @@ def comment(n, status, status_text, **extra):
 
 EVERY = [
     comment(1, "new", "New"),
-    comment(2, "working", "The Coworker is working on it"),
+    comment(2, "working", "The bot is working on it"),
     comment(3, "addressed", "Fixed", fix_commit=SHA, fix_confirmed=True, reply="Renamed it."),
     comment(
         4,
@@ -86,14 +86,14 @@ EVERY = [
         "needs_you",
         "Needs you",
         reason="coworker_asks",
-        reason_text="The Coworker needs a decision it cannot make.",
+        reason_text="The bot needs a decision it cannot make.",
         next="Read its note and decide.",
         note="Choosing another language is a product decision.",
     ),
     comment(
         6,
         "skipped",
-        "Not for the Coworker",
+        "Not for the bot",
         reason="author_not_trusted",
         reason_text="Written by someone the workspace does not act on.",
         next="Add them as a trusted reviewer, or ignore.",
@@ -153,7 +153,7 @@ WORDS = {
     "every-status": "6 comments:",
     "needs-you": "1 comment needs you.",
     "empty": "No review comments yet.",
-    "off": "The Coworker does not answer review comments in this project yet.",
+    "off": "The bot does not answer review comments in this project yet.",
     "offline": "Could not load the review comments.",
 }
 
@@ -374,7 +374,7 @@ def test_revealed_original_follows_the_current_comment_revision(
                     comment(
                         1,
                         "working" if rev == 1 else "new",
-                        "The Coworker is working on it" if rev == 1 else "New",
+                        "The bot is working on it" if rev == 1 else "New",
                         rev=rev,
                         text=f"Comment revision {rev}: [redacted].",
                         text_redacted=True,
@@ -449,7 +449,7 @@ def test_the_owner_answers_and_focus_holds_through_the_answer_and_a_background_r
     # The answer: said once in the status line, and focus moves to the heading (the buttons go).
     section.locator('[data-review-answer="again"]').click()
     section.locator("[data-review-status]").get_by_text(
-        "Done. The comments go back to the Coworker for another round."
+        "Done. The comments go back to the bot for another round."
     ).wait_for()
     assert posts == [{"choice": "again"}]
     page.wait_for_function(

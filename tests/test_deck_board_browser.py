@@ -142,7 +142,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             css = card.evaluate(
                 "el=>{const s=getComputedStyle(el);return [s.backgroundColor,s.borderLeftWidth,s.borderLeftColor]}"
             )
-            assert css[0] == "rgba(20, 19, 25, 0.94)"
+            assert css[0] == "rgb(28, 37, 48)"
             assert (css[1] == "2px") == (card.get_attribute("data-card") == "1")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         if size[0] == 390:
@@ -154,15 +154,23 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             pills = page.locator(".deck-board-states")
             pill_box = pills.bounding_box()
             actions = page.locator(".deck-board-phone-actions").bounding_box()
-            title = page.locator(".deck-board-heading h1").bounding_box()
             assert pill_box["x"] == 16 and pill_box["width"] == 358
             review = pills.locator('[data-board-column="review"]').bounding_box()
             assert review["x"] + review["width"] <= pill_box["x"] + pill_box["width"] - 16
             assert pill_box["y"] >= actions["y"] + actions["height"]
-            assert abs(actions["y"] + actions["height"] / 2 - title["y"] - title["height"] / 2) < 1
-            assert "16px" in pills.evaluate("el=>getComputedStyle(el).maskImage")
-            assert page.locator("#phone-bar b").count() == 0
-            assert page.locator("#phone-bar .deck-mark").is_visible()
+            # The phone header names the page, so the page heading is not drawn and the actions row
+            # sits at the right edge of the content.
+            assert not page.locator(".deck-board-heading h1").is_visible()
+            assert abs(actions["x"] + actions["width"] - (pill_box["x"] + pill_box["width"])) < 1
+            # The few states wrap instead of scrolling, so none hides past the edge and no fade is drawn.
+            assert pills.evaluate("el=>getComputedStyle(el).maskImage") == "none"
+            for pill in pills.locator("button").all():
+                box = pill.bounding_box()
+                assert box["x"] >= pill_box["x"]
+                assert box["x"] + box["width"] <= pill_box["x"] + pill_box["width"]
+            # The phone header carries the More menu button and the page title.
+            assert page.locator("#phone-bar .deck-phone-avatar").is_visible()
+            assert page.locator("#phone-bar b").inner_text().strip() != ""
             assert page.locator("#col-todo").bounding_box()["width"] == 358
             page.locator('[data-board-column="done"]').click()
             page.wait_for_function(
@@ -175,13 +183,8 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         suffix = "phone" if size[0] == 390 else "desktop"
         assert page.locator(".deck-board-heading h1").inner_text() == "Board"
         if size[0] == 1440:
-            filters = page.locator(".deck-board-filters").bounding_box()
-            add = page.locator(".board-tools .deck-board-add").bounding_box()
-            assert abs(add["x"] - filters["x"] - filters["width"] - 20) < 1
-            page.locator('[data-board-filter="state:review"]').click()
-            assert page.locator(".deck-board .card").count() == 1
-            assert page.locator(".deck-board .card").get_attribute("data-card") == "4"
-            page.locator('[data-board-filter="all"]').click()
+            # The four columns are right below, so the status chips are phone-only.
+            assert not page.locator(".deck-board-filters").is_visible()
             page.locator(".board-tools .deck-board-menu summary").click()
             assert page.locator('.board-tools [data-action="coordinator"]').is_visible()
             assert page.locator('.board-tools [data-board-filter="mine"]').is_visible()
@@ -191,7 +194,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         page.wait_for_selector(".deck-card-drawer")
         drawer = page.locator("#card-panel")
         assert drawer.get_attribute("role") == "dialog"
-        for text in ["Summary", "Bot", "Coworker", "Version", "Progress"]:
+        for text in ["Summary", "Bot", "Assigned to", "Version", "Progress"]:
             assert drawer.get_by_text(text, exact=True).count() >= 1
         assert drawer.locator(".deck-card-facts code").inner_text() == "abc1234"
         assert (
@@ -211,7 +214,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
                 if control.is_visible():
                     assert control.bounding_box()["height"] >= 44
         else:
-            assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "14px"
+            assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "12px"
         assert not drawer.locator('[data-form="comment"]').is_visible()
         assert drawer.locator(".ctx-body > [data-details-description]").is_visible()
         assert drawer.locator(".ctx-body > section:has(> .activity)").is_visible()

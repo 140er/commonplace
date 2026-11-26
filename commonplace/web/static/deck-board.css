@@ -10,6 +10,8 @@
 :root[data-ui="deck"] .deck-board-phone-tools, :root[data-ui="deck"] .deck-board-phone-actions { display: none; }
 :root[data-ui="deck"] .deck-board-title { min-width: 0; }
 :root[data-ui="deck"] .deck-board-filters { margin-right: 12px; }
+/* The four columns are right below: the status chips only earn their place on a phone, where one column shows at a time. */
+@media (min-width: 700px) { :root[data-ui="deck"] .deck-board-filters { display: none; } }
 :root[data-ui="deck"] .deck-board-filters span, :root[data-ui="deck"] .deck-board-states span { color: var(--ink3); margin-left: 4px; }
 :root[data-ui="deck"] .deck-board-menu { position: relative; flex: none; }
 :root[data-ui="deck"] .deck-board-menu summary { display: grid; place-items: center; width: 32px; height: 32px; list-style: none; background: var(--s2); border-radius: 8px; cursor: pointer; }
@@ -49,7 +51,9 @@
 :root[data-ui="deck"] .deck-card-drawer .ctx-head { border: 0; padding: 8px 16px 0; }
 :root[data-ui="deck"] .deck-card-drawer .ctx-tabs button { border: 0; font-size: 12.5px; }
 :root[data-ui="deck"] .deck-card-drawer .ctx-tabs [aria-selected="true"] { background: var(--s2); border-radius: 8px; }
-:root[data-ui="deck"] .deck-card-drawer .ctx-body { padding: 18px; gap: 24px; }
+:root[data-ui="deck"] .deck-card-drawer .ctx-body { padding: 18px 18px 32px; gap: 24px; }
+/* The body scrolls above the footer; a rule and a soft shadow mark where it ends, and the text stays fully readable. */
+:root[data-ui="deck"] .deck-card-drawer .ctx-foot { position: relative; border-top: 1px solid var(--line); box-shadow: 0 -10px 18px -6px rgb(0 0 0 / .45); }
 :root[data-ui="deck"] .deck-card-drawer .detail-h h2 { margin-top: 14px; font-size: 18px; line-height: 25px; font-weight: 600; }
 :root[data-ui="deck"] .deck-card-state { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink3); }
 :root[data-ui="deck"] .deck-card-summary p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.5; color: var(--ink2); }
@@ -65,6 +69,8 @@
 :root[data-ui="deck"] .deck-card-progress li span:last-child { margin-left: auto; font-size: 12.5px; }
 :root[data-ui="deck"] .deck-card-progress li.child { padding-left: 22px; }
 :root[data-ui="deck"] .deck-card-progress li.child::before { content: ''; position: absolute; left: 4px; top: -8px; width: 10px; height: 26px; border-left: 1px solid var(--line2); border-bottom: 1px solid var(--line2); border-bottom-left-radius: 3px; }
+:root[data-ui="deck"] .deck-card-status { margin: 0; color: var(--ink); font-size: 13.5px; }
+:root[data-ui="deck"] .deck-card-status > span:first-child { color: var(--ink3); }
 :root[data-ui="deck"] .deck-card-progress .live { color: var(--cyan); }
 :root[data-ui="deck"] .deck-card-progress .waiting { color: var(--amber); }
 :root[data-ui="deck"] .deck-card-drawer .hide { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; }
@@ -92,8 +98,10 @@
   :root[data-ui="deck"] .shell .deck-board { padding: 16px 16px 24px; }
   :root[data-ui="deck"] .shell[data-view="board"] .head { display: none; }
   :root[data-ui="deck"] .deck-board-heading { display: block; margin-bottom: 16px; }
-  :root[data-ui="deck"] .shell .center .deck-board-heading h1 { display: block; margin: 0; }
-  :root[data-ui="deck"] .deck-board-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  /* The phone bar already names the project; the page keeps its actions row and the switch link. */
+  :root[data-ui="deck"] .shell .center .deck-board-heading h1, :root[data-ui="deck"] .deck-board-intro .deck-board-name { display: none; }
+  :root[data-ui="deck"] body .deck-board-intro .deck-board-switch { margin-left: 0; }
+  :root[data-ui="deck"] .deck-board-title-row { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
   :root[data-ui="deck"] .deck-board-phone-actions { display: flex; flex: none; align-items: center; gap: 8px; }
   :root[data-ui="deck"] .deck-board-heading .board-tools { display: none; }
   :root[data-ui="deck"] .deck-board-phone-tools { display: block; margin-bottom: 16px; min-width: 0; }
@@ -112,7 +120,7 @@
   :root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 44px; padding: 0 12px; font-size: 14px; }
   :root[data-ui="deck"] .deck-board .card h3 { padding-right: 104px; }
   :root[data-ui="deck"] .shell #card-panel:has(.deck-card-drawer) { inset: 0; max-width: none; width: 100%; height: 100dvh; border: 0; border-radius: 0; }
-  :root[data-ui="deck"] .deck-card-drawer .ctx-body { padding: 16px; }
+  :root[data-ui="deck"] .deck-card-drawer .ctx-body { padding: 16px 16px 32px; }
   :root[data-ui="deck"] .deck-card-drawer a { display: inline-flex; align-items: center; min-height: 44px; }
   :root[data-ui="deck"] .deck-card-drawer .ctx-foot { padding: 16px 16px max(16px,env(safe-area-inset-bottom)); }
   :root[data-ui="deck"] .deck-card-drawer :is(button,a.btn,select,input,textarea) { min-height: 44px; }

@@ -81,7 +81,7 @@ WORKSPACE_ACTIONS = lifecycle.WORKSPACE_ACTIONS
 RUNNER_ACTIONS = ("drain", "resume")
 # Drain stops only the hub handing out card runs (``capacity.available`` is read by ``jobs.lease``); chat and
 # Coworker session leases do not read it. Every sentence about drain says this, from this one string.
-DRAIN_SCOPE = "No new card runs start here. Chat and Coworker sessions can still start here."
+DRAIN_SCOPE = "No new card runs start here. Chat and bot sessions can still start here."
 NO_RESUME = "Resuming is not available in this version."
 # The cloud workspace vocabulary of the workspaces list (compute-workspaces.js: NOT_STARTED_NOTE, NO_MACHINES_SENTENCE and
 # the "Saved, not started" label), so the overview and the list never describe one record in two ways. A test compares
@@ -191,15 +191,13 @@ def _cap_text(machine, facts):
 # for a run to finish) or "report" (the hub would hand it work once it reports).
 REASON_KINDS = ("no", "not_now", "slot", "report")
 ATTEST_STEP = "Attest it in Admin > Runner machines."
-SETUP_ONLY_BLOCKER = (
-    "This setup only checks the machine. Coworkers do not run on it in this version."
-)
+SETUP_ONLY_BLOCKER = "This setup only checks the machine. Bots do not run on it in this version."
 
 
 ADD_A_MACHINE = pairing.ADD_A_MACHINE
 GUIDED_SETUP_CODES = ("waiting_approval", "finishing_setup", "not_finished", "set_up")
 HIDDEN_LIMIT_CODES = (*GUIDED_SETUP_CODES, "not_approved")
-NO_CAPACITY = "Not used in this version: no Coworker runs on this machine"
+NO_CAPACITY = "Not used in this version: no bot runs on this machine"
 
 
 def pending_reason(pending):
@@ -207,7 +205,7 @@ def pending_reason(pending):
     (chip, sentence, next step) are the pairing's own (``pairing.pending_words``), the same on every screen."""
     code, label, sentence, step = pairing.pending_words(pending)
     if pending.get("accepted"):
-        sentence += " Coworkers do not run on it in this version."
+        sentence += " Bots do not run on it in this version."
     if code == "finishing_setup":
         return {
             "code": code,
@@ -1064,7 +1062,7 @@ def runner_status(machine, record, facts, now, reasons=None, setup_only=False):
             "set_up",
             "quiet",
             pairing.SET_UP_LABEL,
-            f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Coworkers do not run on it in this version.",
+            f"{pairing.SET_UP_SENTENCE[:-1]}, and this version only checks the machine: Bots do not run on it in this version.",
         )
     if reason == "never_reported":
         return _status(

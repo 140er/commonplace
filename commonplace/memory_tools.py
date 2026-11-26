@@ -791,7 +791,7 @@ def note_rooms(principal):
         return []
     if not policy.can_read_wing(AGENT_NOTES_WING):
         return []
-    return [{"wing": AGENT_NOTES_WING, "name": "Agent notes"}]
+    return [{"wing": AGENT_NOTES_WING, "name": "App notes"}]
 
 
 def note_composer(ctx, selected_wing=None):

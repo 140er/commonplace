@@ -32,12 +32,7 @@ expect = playwright_api.expect
 SCOPE = "memory:read memory:write cards:decide"
 DECIDE = "cards:decide"
 # A literal copy, so the file runs (and fails behaviourally) on a base without the scope.
-SCOPE_TEXT = (
-    "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
-    "Every answer is recorded with this connection, and you can stop this at any time "
-    "under Agents. It can answer only questions addressed to you, never another "
-    "person's, and only on boards you can write to."
-)
+SCOPE_TEXT = "Let this app answer what is waiting on you, as you."
 
 
 async def _shot(target, name):
@@ -97,13 +92,13 @@ async def consent_and_agents(hub):
             await page.goto(base + "/app/?ui=classic#/settings")
             section = page.locator(".agents-settings")
             await expect(section).to_be_visible(timeout=15000)
-            allow = "Allow answering Needs-me"
+            allow = "Let it answer what is waiting"
             for name, offered in (("plain-app", 1), ("child-agent", 0), ("seat-like", 0)):
                 agent_row = section.locator(".setting-row", has_text=name)
                 await expect(agent_row.get_by_role("button", name=allow)).to_have_count(offered)
             row = section.locator(".setting-row", has_text=app.connection)
             await expect(row.locator('[data-agent-decide="on"]')).to_have_text(
-                "Answers your Needs-me questions (cards:decide)"
+                "Answers what is waiting on you"
             )
             # The create form offers the same consent for a new token.
             form_box = section.locator(".agent-form").get_by_label(SCOPE_TEXT, exact=False)
@@ -127,7 +122,7 @@ async def consent_and_agents(hub):
             # And on the PAT: the row then offers to allow it again.
             await pat_row.get_by_role("button", name="Stop answering").click()
             await expect(
-                pat_row.get_by_role("button", name="Allow answering Needs-me")
+                pat_row.get_by_role("button", name="Let it answer what is waiting")
             ).to_be_visible()
             await _shot(section.locator("[data-agent-list]"), "agents-stopped.png")
             pat = hub.db.connection("phone-ui", hub.workspace)

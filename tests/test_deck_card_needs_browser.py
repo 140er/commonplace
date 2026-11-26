@@ -26,6 +26,9 @@ CARD = {
     "updated_at": "2026-01-01T12:00:00Z",
     "actions": [],
 }
+# The T3 redesign's tokens: raised (#1c2530) is the panel surface, the next step up (#243140) is a field.
+SURFACE = "rgb(28, 37, 48)"
+FIELD = "rgb(36, 49, 64)"
 BOARD = {"slug": "work", "name": "Release", "wing": "work", "cards": 1}
 
 
@@ -90,8 +93,9 @@ def open_screen(browser, screen, width, *, look="deck", css=None, populated=Fals
         page.locator('.card[data-card="1"]').click()
         page.wait_for_selector("#pocket-text")
     elif screen == "needs":
+        # Needs me is now Waiting on you, the home screen; #/needs opens it.
         page.evaluate("location.hash='#/needs'")
-        page.wait_for_selector(".needs-me")
+        page.wait_for_selector(".bt-card" if populated else ".bt-bar")
     page.evaluate("document.fonts.ready")
     page.evaluate("styles => { window.boardPills = styles; }", board_pills)
     return context, page
@@ -100,12 +104,22 @@ def open_screen(browser, screen, width, *, look="deck", css=None, populated=Fals
 def pill_styles(page, selector):
     return page.locator(selector).evaluate("""root => {
       const properties=['backgroundColor','color','fontSize','fontWeight','minHeight','borderRadius',
-        'paddingLeft','paddingRight'];
+        'paddingLeft','paddingRight','fontFamily'];
       const style=el=>Object.fromEntries(properties.map(key=>[key,getComputedStyle(el)[key]]));
       const seg=getComputedStyle(root.querySelector('.seg'));
       return {radius:seg.borderRadius,gap:seg.columnGap,background:seg.backgroundColor,border:seg.borderTopWidth,
         selected:style(root.querySelector('.seg [aria-pressed=true]')),
         idle:style(root.querySelector('.seg [aria-pressed=false]'))};
+    }""")
+
+
+def chip_styles(page):
+    return page.evaluate("""() => {
+      const properties=['backgroundColor','color','fontSize','fontWeight','fontFamily'];
+      const style=el=>Object.fromEntries(properties.map(key=>[key,getComputedStyle(el)[key]]));
+      return {radius:getComputedStyle(document.querySelector('.bt-chip')).borderRadius,
+        selected:style(document.querySelector('.bt-chip[aria-pressed=true]')),
+        idle:style(document.querySelector('.bt-chip[aria-pressed=false]'))};
     }""")
 
 
@@ -165,19 +179,20 @@ def browser():
 @pytest.mark.parametrize("width", [390, 1280])
 @pytest.mark.parametrize("screen", ["card", "needs"])
 def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen, width):
-    context, page = open_screen(browser, screen, width)
+    context, page = open_screen(browser, screen, width, populated=screen == "needs")
     try:
-        selector = ".workbench-details" if screen == "card" else ".needs-me"
+        selector = ".workbench-details" if screen == "card" else "#content"
         assert_contrast(page, selector)
+        surface = ".workbench-details" if screen == "card" else ".bt-card"
         assert (
-            page.locator(selector).evaluate("el=>getComputedStyle(el).backgroundColor")
-            == "rgba(20, 19, 25, 0.94)"
+            page.locator(surface).first.evaluate("el=>getComputedStyle(el).backgroundColor")
+            == SURFACE
         ), "Deck surface token not applied"
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         if screen == "card":
             assert page.locator("#pocket-text").evaluate(
                 "el=>({bg:getComputedStyle(el).backgroundColor,radius:getComputedStyle(el).borderRadius})"
-            ) == {"bg": "rgb(27, 26, 33)", "radius": "12px"}
+            ) == {"bg": FIELD, "radius": "12px"}
             for target in ["#pocket-text", "[data-details-description]", ".activity"]:
                 page.locator(target).scroll_into_view_if_needed()
             page.locator("#pocket-text").scroll_into_view_if_needed()
@@ -198,19 +213,21 @@ def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen
             if width == 390:
                 assert geometry["left"] == 16 and geometry["right"] <= width - 16
         else:
-            box = page.locator(selector).bounding_box()
+            box = page.locator(".bt-card").first.bounding_box()
             if width == 390:
-                assert box["x"] == 16 and box["width"] == width - 32
+                # The card sits inside the phone gutter, the same distance from both edges.
+                assert box["x"] == 14 and box["x"] + box["width"] == width - 14
             assert (
-                page.locator(selector).evaluate("el=>getComputedStyle(el).borderRadius") == "20px"
+                page.locator(".bt-card").first.evaluate("el=>getComputedStyle(el).borderRadius")
+                == "10px"
             )
-            pills = pill_styles(page, selector)
+            pills = chip_styles(page)
             assert pills["selected"]["backgroundColor"] != pills["idle"]["backgroundColor"]
             assert pills["selected"]["color"] != pills["idle"]["color"]
-            for key in ["approvals", "decisions", "reviews", "all"]:
-                page.locator(f'[data-needs-filter="{key}"]').click()
+            for key in ["question", "review", "all"]:
+                page.locator(f'[data-bt-filter="{key}"]').click()
                 assert (
-                    page.locator(f'[data-needs-filter="{key}"]').get_attribute("aria-pressed")
+                    page.locator(f'[data-bt-filter="{key}"]').get_attribute("aria-pressed")
                     == "true"
                 )
                 assert_contrast(page, selector)
@@ -220,9 +237,16 @@ def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen
 
 @pytest.mark.parametrize("width", [390, 1280])
 def test_needs_filter_segment_matches_the_board_segment(browser, width):
-    context, page = open_screen(browser, "needs", width)
+    context, page = open_screen(browser, "needs", width, populated=True)
     try:
-        assert pill_styles(page, ".needs-me") == page.evaluate("window.boardPills")
+        board, chips = page.evaluate("window.boardPills"), chip_styles(page)
+        # Waiting on you filters with chips; they share the Board segment's radius, font and selected ink,
+        # and the chosen chip reads as raised against the idle one, as on the Board.
+        assert chips["radius"] == board["radius"]
+        assert chips["selected"]["color"] == board["selected"]["color"]
+        assert chips["selected"]["fontFamily"] == board["selected"]["fontFamily"]
+        assert chips["selected"]["backgroundColor"] != chips["idle"]["backgroundColor"]
+        assert chips["idle"]["backgroundColor"] == board["idle"]["backgroundColor"]
     finally:
         context.close()
 
@@ -231,9 +255,8 @@ def test_needs_filter_segment_matches_the_board_segment(browser, width):
 def test_deck_populated_needs_list_is_readable(browser, width):
     context, page = open_screen(browser, "needs", width, populated=True)
     try:
-        page.wait_for_selector(".needs-me .row-item")
-        assert_contrast(page, ".needs-me")
-        if width == 1280:
-            assert_contrast(page, ".needs-detail")
+        page.wait_for_selector(".bt-card")
+        assert_contrast(page, "#content")
+        assert_contrast(page, ".bt-card")
     finally:
         context.close()

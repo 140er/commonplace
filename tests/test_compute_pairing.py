@@ -638,7 +638,7 @@ def test_a_setup_only_machine_makes_no_runner_claims_the_page_cannot_make(flow):
     made = flow.made()
     credentials = flow.connect(made)
     assert flow.accept(made)[0] == 200
-    only = "This setup only checks the machine. Coworkers do not run on it in this version."
+    only = "This setup only checks the machine. Bots do not run on it in this version."
 
     def check(attested):
         row = _overview_row(flow)

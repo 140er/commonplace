@@ -405,7 +405,7 @@ def test_coworker_panels_modes_sharing_and_overview(browser, size, tmp_path):
         assert page.locator('[data-cb-mode="steer"]').is_disabled()
         page.evaluate("show('#/bots')")
         page.wait_for_selector(".cb-bot-row")
-        assert page.get_by_text("3 coworkers", exact=True).is_visible()
+        assert page.get_by_text("3 conversations", exact=True).is_visible()
         if size[0] == 390:
             assert page.locator("#phone-bar .m-top > b").inner_text() == "Bots"
             assert page.locator("#phone-bar .m-top > b").is_visible()

@@ -42,7 +42,7 @@ def connect_page(browser):
         "memory": {"shared": True, "wing": "shared"},
         "models": {},
     }
-    state = {"conflicts": [SHARED_CONFLICT], "posts": []}
+    state = {"conflicts": [SHARED_CONFLICT], "posts": [], "unknown": []}
     with browser.new_context(viewport={"width": 1280, "height": 1000}) as context:
         page = context.new_page()
 
@@ -95,13 +95,20 @@ def connect_page(browser):
                 route.fulfill(
                     json={"coordinator": None, "candidates": [], "effect": {}, "board": "ledger"}
                 )
-            else:
-                assert path == "/api/chat-settings"
+            elif path.startswith("/api/pr-review/"):
+                # The project page also loads its review settings; a person who may not change them gets 403.
+                route.fulfill(status=403, json={"error": "owner only"})
+            elif path == "/api/chat-settings":
                 route.fulfill(json={"front": {"provider": "none"}})
+            else:
+                # An unknown request is answered, so the page never waits forever; the test then fails on it.
+                state["unknown"].append(path)
+                route.fulfill(status=404, json={"error": "not in this fixture"})
 
         page.route("**/*", route_request)
         page.goto("http://project.test/")
         yield page, state
+        assert state["unknown"] == [], f"requests this fixture does not answer: {state['unknown']}"
 
 
 def start_connect(page, entry):

@@ -86,7 +86,7 @@ const cases = {
   },
   empty() {
     const html = cardRunsHTML([]);
-    assert.ok(html.includes('No agent has been started on this card.'));
+    assert.ok(html.includes('No bot run has started on this card.'));
     assert.ok(!html.includes('data-run-cancel'));
   },
   escape() {
@@ -114,7 +114,7 @@ const cases = {
     assert.ok(cardRunsSlot(card).includes('Waiting for the machine to pick it up'));
     const again = fakeSlot();
     await attachCardRuns(again.mount, card, { api: async () => [] });
-    assert.ok(again.slot.innerHTML.includes('No agent has been started'));
+    assert.ok(again.slot.innerHTML.includes('No bot run has started'));
   },
   async hidden() {
     // A member (403) or a card that is gone (404): the section stays out of the panel.
@@ -227,18 +227,19 @@ const cases = {
     assert.ok(!free.includes('<option value="lab">'), 'only the first machine\'s projects are listed at first');
     // Nothing can be started: a plain reason and no button.
     const refused = cardRunsHTML([], '', { configured: false, refusal: 'no_machine', machines: [] });
-    assert.ok(refused.includes('No machine is ready'));
+    assert.ok(refused.includes('No runner machine is set up') && refused.includes('href="#/admin"'), 'no runner: Admin is where it is set up');
     // A machine from the setup guide only checks itself: the refusal says which step it is at and links the Add a machine card.
     for (const refusal of ['setup_waiting', 'setup_unfinished', 'setup_only']) {
       const html = cardRunsHTML([], '', { configured: refusal === 'setup_only', refusal, machines: [] });
-      assert.ok(html.includes('Coworkers do not run on it in this version.'), refusal);
+      assert.ok(html.includes('Bots do not run on it in this version.'), refusal);
       assert.ok(html.includes('href="#/compute"') && html.includes('Open Add a machine'), refusal);
       assert.ok(!/Workspace settings|Runner machines|attest|Needs me/i.test(html), `no dead end for a guided machine (${refusal})`);
     }
     assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_waiting', machines: [] }).includes('waits for your approval'));
     assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_unfinished', machines: [] }).includes('is not finished'));
-    // No machine at all points at Add a machine in Cloud workspaces, never at an Admin form.
-    assert.ok(refused.includes('Add one under Add a machine in Cloud workspaces') && refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
+    // No machine at all points where bots can run code: a runner machine in Admin, the same place the setup checklist
+    // sends "Add a machine". Cloud workspaces machines are only checked, so the card never sends people there to run.
+    assert.ok(refused.includes('Set one up in Admin') && refused.includes('href="#/admin"') && !refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
     // An Admin-enrolled machine is attested where that screen really is, and the text says where the provider instance id comes from.
     for (const refusal of ['machine_unavailable', 'binding_not_attested', 'not_writable', 'outside_worker_wing', 'worker_unavailable']) {
       const html = cardRunsHTML([], '', { configured: true, refusal });
@@ -323,7 +324,7 @@ const cases = {
       await wait(); await wait();
       assert.equal(posts, 1);
       assert.ok(one.slot.innerHTML.includes(expected), expected);
-      assert.ok(one.slot.innerHTML.includes('No agent has been started on this card.'));
+      assert.ok(one.slot.innerHTML.includes('No bot run has started on this card.'));
     }
     void slot; void handlers; void mount;
   },

@@ -592,3 +592,11 @@ def test_ineligible_owner_cannot_create_import_connection(journey):
     assert status == 403
     assert json.loads(raw) == {"error": import_grant.OWNER_ONLY_TEXT}
     assert db.connections(workspace) == before
+
+
+def test_reader_consent_states_the_wing_independent_scope():
+    """The plain consent keeps the old promise: imported history is readable regardless of read wings."""
+    detail = import_grant.READER_DETAIL
+    assert "even from wings this connection cannot otherwise read" in detail
+    assert "revoke this connection" in detail
+    assert "cards:" not in import_grant.READER_TEXT and "route" not in import_grant.READER_TEXT

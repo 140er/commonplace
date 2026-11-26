@@ -59,7 +59,7 @@ def test_look_is_at_the_top_and_switches_both_ways_on_the_same_screen(browser, w
         ]:
             assert top < page.locator(later).bounding_box()["y"], later
         assert page.get_by_role("group", name="Look").get_by_role("button").all_inner_texts() == [
-            "Deck",
+            "Commonplace",
             "Classic",
         ]
         errors, reads = watch(page)

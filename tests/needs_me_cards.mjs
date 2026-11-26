@@ -23,11 +23,14 @@ const visibleText = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 test('the primary action is visible on the card without opening Reply', () => {
   const approve = cardHTML(approval, [], state);
   assert.match(approve, /class="bt-approve bt-primary"[^>]*data-bt-action="approve"[^>]*>Approve</);
-  assert.match(approve, /data-bt-action="hold"[^>]*>Hold</);
-  assert.match(approve, /class="bt-desktop-reply"[^>]*>Reply</);
+  assert.match(approve, /class="bt-secondary"[^>]*data-bt-action="reject"[^>]*>Turn down</);
+  assert.match(approve, /class="bt-quiet"[^>]*data-bt-open[^>]*>See the work</);
+  // A question's own answers are the buttons: the first is the main one, each sends its own words.
   const answer = cardHTML(question, [], state);
-  assert.match(answer, /class="bt-approve bt-primary"[^>]*data-bt-action="reply"[^>]*>Answer</);
-  assert.doesNotMatch(answer, />Approve</);
+  assert.match(answer, /class="bt-approve bt-secondary"[^>]*data-bt-action="reply" data-bt-choice="0"[^>]*>Blue</);
+  assert.match(answer, /class="bt-secondary"[^>]*data-bt-action="reply" data-bt-choice="1"[^>]*>Orange</);
+  assert.match(answer, /class="bt-quiet bt-desktop-reply"[^>]*data-bt-action="reply"[^>]*>Reply</);
+  assert.doesNotMatch(answer, />Approve<|>Hold</);
   assert.match(cardHTML(review, [], state), /class="bt-approve bt-primary"[^>]*>Open</);
 });
 
@@ -70,8 +73,10 @@ test('Today, Home, the badges and the Board report the same count for the same q
   const needs = queue();
   const expected = 7;
   assert.equal(needsMeCount(needs), expected, 'a stale count field never wins over the listed cards');
-  assert.match(summaryLine(needs, new Date('2026-11-14T10:00:00Z')), new RegExp(`· ${expected} waiting on you$`));
-  assert.match(waitingHint(needs), new RegExp(`>${expected} waiting on you in Today<`));
+  assert.equal(summaryLine(needs), `${expected} ${expected === 1 ? 'item' : 'items'} waiting`);
+  assert.equal(summaryLine({ asks: [question] }), '1 item waiting');
+  assert.equal(summaryLine({ count: 0 }), 'Nothing is waiting');
+  assert.match(waitingHint(needs), new RegExp(`>${expected} waiting on you<`));
   const shown = { needs: needsMeCount(needs), bots: [{ id: 'a', name: 'A' }] };
   assert.match(renderDeckTabs(shown), new RegExp(`class="count need">${expected}`));
   assert.match(renderDeckBar(shown), new RegExp(`class="count need">${expected}`));
@@ -88,7 +93,9 @@ test('Today, Home, the badges and the Board report the same count for the same q
     assert.doesNotMatch(html.split('id="col-doing"')[0], /data-card="20"/, 'a card the queue does not list is not "Needs you"');
     assert.doesNotMatch(html, /data-needs-note/, 'one project holding the whole queue needs no explanation');
     const other = boardView({ board: { slug: 'other', name: 'Other' }, me: 'user:owner', bots: [], deck: true, cards: cards.slice(0, 2) });
-    assert.match(other, /data-needs-note>7 cards are waiting on you across all projects; 2 are in this one\./);
+    assert.match(other, /data-needs-note>2 here and 5 in other projects need you\./);
+    const none = boardView({ board: { slug: 'other', name: 'Other' }, me: 'user:owner', bots: [], deck: true, cards: [] });
+    assert.match(none, /data-needs-note>7 cards in other projects need you\./);
   } finally { setNeedsQueue(null); }
 });
 

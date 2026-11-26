@@ -86,7 +86,7 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
     <a class="brand-home" href="/app/" aria-label="Commonplace"><span class="mark" aria-hidden="true">C</span>Commonplace</a>
     <div><h1>${expired ? "Get a new link" : "Sign in"}</h1><p class="lead">${expired ? "Links work once and for 15 minutes. Nothing is lost; get a new one below." : "One place where you and your AI agents share a board, a chat and a memory that keeps your exact words."}</p></div>
     ${links ? `<nav class="providers" aria-label="Sign-in options">${links}</nav>` : ""}
-    <form data-form="email-login" action="/app/auth/email" method="post"><input type="hidden" name="next" value="${e(next)}"><label class="lbl">Email<input name="email" type="email" aria-label="Email" placeholder="Email" autocomplete="email" maxlength="254" required></label><button class="btn primary lg">${expired ? "Retry: Email me a new link" : throttled ? "Retry" : "Email a sign-in link"}</button></form>
+    <form data-form="email-login" action="/app/auth/email" method="post"><input type="hidden" name="next" value="${e(next)}"><label class="lbl">Email<input name="email" type="email" aria-label="Email" placeholder="you@example.com" autocomplete="email" maxlength="254" required></label><button class="btn primary lg">${expired ? "Retry: Email me a new link" : throttled ? "Retry" : "Email a sign-in link"}</button></form>
     ${message ? `<div class="message" role="status">${e(message)}</div>` : ""}
     <p class="fine">No password. Use the email for your Commonplace account.</p>
     <nav class="legal-links" aria-label="Legal"><a href="https://cmmn.dev/privacy">Privacy</a><a href="https://cmmn.dev/terms">Terms</a></nav>
@@ -95,11 +95,11 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
     <ol class="steps3">
       <li><div><b>Name your first project</b><span>A project is one board, one chat and its memory.</span></div></li>
       <li><div><b>Add a card or ask in chat</b><span>Cards are the work. Agents pick them up.</span></div></li>
-      <li><div><b>Connect an agent</b><span>We show you how, step by step.</span></div></li>
+      <li><div><b>Connect an app</b><span>We show you how, step by step.</span></div></li>
     </ol>
     <dl class="terms" aria-label="Two words you will see">
       <div><dt>Agent</dt><dd>An AI helper that works on cards, for example a coding assistant on your computer.</dd></div>
-      <div><dt>Coworker</dt><dd>The project's lead agent. It reads what you ask in chat and turns it into cards. Each project gets one automatically: the first agent you connect.</dd></div>
+      <div><dt>Bot</dt><dd>The project's lead helper. It reads what you ask in chat and turns it into cards. Each project gets one automatically: the first agent you connect.</dd></div>
     </dl>
   </section></main>`;
 }

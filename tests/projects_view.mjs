@@ -19,10 +19,10 @@ test("main shows the automatic seat and owner Connect without a picker", async (
   const html = ui.mainHTML(project, e);
   assert.match(html, /orchestrator:alpha/);
   assert.match(html, /not connected/i);
-  assert.match(html, /<button\b[^>]*>[\s\S]*?Connect agent/i);
+  assert.match(html, /<button\b[^>]*>[\s\S]*?Connect app/i);
   assert.doesNotMatch(html, /<select\b/);
   const member = ui.mainHTML({ ...project, can_configure: false, main: { ...project.main, connectable: false } }, e);
-  assert.doesNotMatch(member, /<button\b[^>]*>[\s\S]*?Connect agent/i);
+  assert.doesNotMatch(member, /<button\b[^>]*>[\s\S]*?Connect app/i);
   const waiting = ui.mainHTML({ ...project, main: { ...project.main, connected: true } }, e);
   assert.match(waiting, /no agent has used it yet/i);
   assert.doesNotMatch(waiting, /Connected/);
@@ -52,7 +52,7 @@ test("model fields show both roles and the chat copy points to Connect", async (
   assert.match(html, /<(?:input|select)\b/);
   // The no-orchestrator copy now lives in the chat pane's recovery strip, not in CHAT_COPY.
   const chat = await readFile(new URL("../commonplace/web/static/chat.js", import.meta.url), "utf8");
-  assert.match(chat, /Connect an agent in Settings\./);
+  assert.match(chat, /Connect an app in Settings\./);
 });
 
 test("project memory controls preserve owner consent and escape the memory name", async () => {

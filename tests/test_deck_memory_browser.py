@@ -132,7 +132,8 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
                     "el => { const row = el.closest('.memory-chip-scroll'); row.scrollLeft += el.getBoundingClientRect().left - row.getBoundingClientRect().left; }"
                 )
                 box = private.bounding_box()
-                assert box["x"] >= row_box["x"]
+                # scrollLeft snaps to whole pixels, so the chip may sit a fraction left of the row edge.
+                assert box["x"] >= row_box["x"] - 1
                 assert box["x"] + box["width"] <= row_box["x"] + row_box["width"] - 15
                 expect(private).to_have_text("Private notes 1")
             scroll.evaluate("el => el.scrollLeft = el.scrollWidth")
@@ -153,12 +154,14 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
             assert min(metrics) >= 44
             assert query.bounding_box()["height"] >= 44
             assert query.bounding_box()["y"] < page.locator(".memory-results").bounding_box()["y"]
-            assert (
-                page.get_by_role("button", name="Import memory files", exact=True).bounding_box()[
-                    "y"
-                ]
-                >= page.locator(".memory-results").bounding_box()["y"]
-            )
+            # Import sits in the actions row above the search; it stays on the first screen and
+            # does not push the results out of it.
+            import_box = page.get_by_role(
+                "button", name="Import memory files", exact=True
+            ).bounding_box()
+            assert import_box["height"] >= 44
+            assert import_box["y"] + import_box["height"] <= query.bounding_box()["y"]
+            assert page.locator(".memory-results").bounding_box()["y"] < 844
             assert (
                 page.locator(".memory-filters summary").evaluate(
                     "el => getComputedStyle(el).display"

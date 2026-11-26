@@ -75,7 +75,7 @@
 @keyframes pl-pulse { 50% { opacity: .25; } }
 .pl-mark[data-state="running"] circle:last-child { animation: pl-pulse 1.4s ease-in-out infinite; }
 
-.pl-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 28px 24px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); max-width: 560px; }
+.pl-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 28px 24px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); max-width: var(--page-width); }
 .pl-empty .cp-art { margin-bottom: 10px; }
 .pl-empty h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .pl-empty p { margin: 0 0 10px; color: var(--ink2); font-size: 13.5px; line-height: 1.55; }

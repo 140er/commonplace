@@ -181,7 +181,7 @@ const cases = {
     // Empty states say who can act, once, and disappear while a form is open or any workspace exists.
     const empty = fixture(); await empty.open();
     assert.match(text(empty.host.innerHTML), /Nothing here yet\. Choose New cloud workspace to create one\. A machine can be chosen later\./);
-    assert.equal((text(empty.host.innerHTML).match(/a separate place on one of your machines where Coworkers can run/g) || []).length, 1, 'the definition appears once, and says what it is meant to be, not that it runs');
+    assert.equal((text(empty.host.innerHTML).match(/a separate place on one of your machines where bots can run/g) || []).length, 1, 'the definition appears once, and says what it is meant to be, not that it runs');
     empty.click('create'); assert.doesNotMatch(text(empty.host.innerHTML), /Nothing here yet/, 'no stale empty sentence under an open form');
     empty.ui.stop();
   },

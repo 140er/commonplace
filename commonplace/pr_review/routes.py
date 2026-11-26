@@ -78,19 +78,19 @@ def _answers(rounds: int) -> list[dict]:
         {
             "choice": "again",
             "label": again,
-            "explain": f"The Coworker gets {more} on these comments and on any that still wait.",
+            "explain": f"The bot gets {more} on these comments and on any that still wait.",
         },
         {
             "choice": "mine",
             "label": mine,
-            "explain": "The Coworker stops answering this pull request's comments. The card moves "
-            "to Backlog, so no Coworker picks it up while you work on them.",
+            "explain": "The bot stops answering this pull request's comments. The card moves "
+            "to Backlog, so no bot picks it up while you work on them.",
         },
         {
             "choice": "dismiss",
             "label": ignore,
             "explain": "The waiting comments are set aside and nobody acts on them. The card goes "
-            "back to its Coworker.",
+            "back to its bot.",
         },
     ]
 

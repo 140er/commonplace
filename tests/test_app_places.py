@@ -80,9 +80,10 @@ def test_every_link_in_the_start_refusals_goes_to_a_route_the_app_serves():
         assert ROUTES[href] in app, f"the router does not serve {href}"
 
 
-def test_the_start_refusals_name_admin_for_runner_machines_and_cloud_workspaces_for_adding_one():
+def test_the_start_refusals_name_admin_for_runner_machines():
     block = _text(STATIC / "cardruns.js")
     refusals = block[block.index("const START_REFUSALS") : block.index("const START_LINKS")]
     assert "Workspace settings" not in refusals
-    assert "Add one under Add a machine in Cloud workspaces" in refusals
+    # With no runner machine the card names Admin, where bots' runner machines are set up (the setup checklist agrees).
+    assert "Set one up in Admin" in refusals and "Add one in Cloud workspaces" not in refusals
     assert refusals.count("Admin > Runner machines") >= 4

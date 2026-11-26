@@ -8,6 +8,8 @@
 :root[data-ui="deck"] .deck-compute .dc-actions { grid-area: 1 / 2 / 3 / 3; align-self: end; }
 :root[data-ui="deck"] .deck-compute .dc-action { min-height: 36px; padding: 0 12px; border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font-size: 13.5px; }
 :root[data-ui="deck"] .deck-compute .dc-action:hover { background: var(--s3); }
+:root[data-ui="deck"] .deck-compute .dc-action.dc-primary { background: var(--violet); color: var(--ground); }
+:root[data-ui="deck"] .deck-compute .dc-action.dc-primary:hover { background: var(--violet); filter: brightness(1.08); }
 /* Available width = canvas + 14px gutter + 300px inspector. */
 :root[data-ui="deck"] .deck-compute .topo { grid-template-columns: minmax(0,1fr) 300px; gap: 0 14px; }
 :root[data-ui="deck"] .deck-compute :is(.topo-stage,.topo-detail,.dc-enroll) { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: none; }
@@ -80,7 +82,9 @@
 :root[data-ui="deck"] .dc-facts dd { margin: 0; overflow-wrap: anywhere; }
 :root[data-ui="deck"] .dc-version { font: 12px/1.5 var(--mono); }
 :root[data-ui="deck"] .dc-more > summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--ink2); font-size: 13.5px; }
-:root[data-ui="deck"] .dc-enroll { width: calc(100% - 314px); padding: 18px; margin-top: 14px; }
+:root[data-ui="deck"] .dc-enroll { width: calc(100% - 314px); padding: 18px; margin-top: 16px; }
+/* The route card sits in the map's left column, one 16px gap under the card above it. */
+:root[data-ui="deck"] body #content > [data-compute-routes] { box-sizing: border-box; padding-right: 314px; margin-top: 16px; }
 :root[data-ui="deck"] .dc-enroll h2 { font-size: 13.5px; font-weight: 600; }
 :root[data-ui="deck"] .dc-enroll p { font-size: 13.5px; line-height: 1.5; color: var(--ink2); margin: 10px 0; }
 :root[data-ui="deck"] .dc-observed { font-size: 12.5px; color: var(--ink3); }
@@ -94,6 +98,7 @@
 @media (max-width: 999px) {
   :root[data-ui="deck"] .deck-compute .topo { grid-template-columns: minmax(0,1fr); }
   :root[data-ui="deck"] .dc-enroll { width: 100%; }
+  :root[data-ui="deck"] body #content > [data-compute-routes] { padding-right: 0; }
 }
 @media (max-width: 699px) {
   :root[data-ui="deck"] .shell #content.deck-workspace.dw-map { padding: 16px 16px 88px; }

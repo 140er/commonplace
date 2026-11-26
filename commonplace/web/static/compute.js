@@ -4,7 +4,7 @@ import { createPairing } from "./compute-pairing.js";
 import { createWorkspaces } from "./compute-workspaces.js";
 
 const BASE = "/api/compute";
-const intro = "Where your Coworkers run: an overview of everything first, then Add a machine, then cloud workspaces, then (for the workspace owner) the technical settings of target machines under Advanced. A runner machine's own settings are in Admin, under Runner machines.";
+const intro = "Where your bots run: an overview of everything first, then Add a machine, then cloud workspaces, then (for the workspace owner) the technical settings of target machines under Advanced. A runner machine's own settings are in Admin, under Runner machines.";
 const parts = (...values) => values.filter(value => value !== undefined && value !== null && String(value).trim()).join(" · ");
 const endpoint = row => row.address ? [row.address, row.port].filter(value => value !== undefined && value !== null && value !== "").join(":") : "";
 const enc = encodeURIComponent;
@@ -13,9 +13,9 @@ const limits = { hosts: 4096, concurrency: 64, rate_per_second: 100, duration_se
 // Technical settings sit behind one "Advanced" label; each section opens with a one-line plain explanation.
 export const ADVANCED = {
   label: "Advanced",
-  intro: "Most people never need these. They are the technical settings behind how Coworkers reach your machines.",
-  gateways: "A gateway is the door into one project’s network; Coworkers reach your machines through it.",
-  nodes: "A target is one machine behind a gateway that Coworkers may work on.",
+  intro: "Most people never need these. They are the technical settings behind how bots reach your machines.",
+  gateways: "A gateway is the door into one project’s network; bots reach your machines through it.",
+  nodes: "A target is one machine behind a gateway that bots may work on.",
   scopes: "A passive scope is a time-limited permission to look at a network, never to change it.",
 };
 // The one documented way to create a credential (docs/compute/RUNNING.md, "Provision a credential"); the form

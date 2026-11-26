@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { placeMenu, todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText, runUpdate, retryIntent, quietSelector } from '../commonplace/web/static/deck-home-today.js';
-import { cardHTML, activityText, approveNote, replyWords, sentLine } from '../commonplace/web/static/deck-today-capy.js';
+import { cardHTML, answersHTML, chipsHTML, kindOf, verbOf, activityText, approveNote, replyWords, sentLine } from '../commonplace/web/static/deck-today-capy.js';
 import { modelControls } from '../commonplace/web/static/deck-home.js';
 
 const card = { number: 7, version: 4, title: 'Review the release', actions: ['approve', 'reject'] };
@@ -140,12 +140,42 @@ test('a card menu is moved inside the viewport: right overhang, left overhang an
   placeMenu(cramped, view);
   assert.equal(cramped.style.bottom, '', 'no flip when there is no room above');
 });
-test('phone: Reply is an inline button and the menu only keeps what has no button', () => {
+test('phone: answer buttons are 44px tall and share a row, the quiet button takes its own line', () => {
   const css = readFileSync(new URL('../commonplace/web/static/deck-home-today.css', import.meta.url), 'utf8');
   const phone = css.slice(css.indexOf('@media (max-width: 699px)'));
-  assert.doesNotMatch(phone, /\.bt-desktop-reply\) \{ display: none/);
-  assert.match(phone, /\.bt-more:not\(:has\(\[data-bt-action="reject"\]\)\) \{ display: none/);
-  assert.match(phone, /\.bt-more \[role="menuitem"\]\[data-bt-action="reply"\] \{ display: none/);
+  assert.match(phone, /\.bt-actions \.bt-primary, :root\[data-ui="deck"\] \.bt-actions \.bt-secondary \{ flex: 1 1 0; min-width: 0; min-height: 44px/);
+  assert.match(phone, /\.bt-actions \.bt-quiet \{ flex: 0 0 100%; min-height: 44px/);
+  assert.doesNotMatch(css, /font-style: *italic|gradient/);
+});
+test('phone: an answer longer than 18 characters takes the whole row, a short one shares it', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-home-today.css', import.meta.url), 'utf8');
+  assert.match(css.slice(css.indexOf('@media (max-width: 699px)')), /\.bt-actions \.bt-secondary\.bt-long \{ flex: 1 1 100%; \}/);
+  const html = answersHTML({ ...card, actions: ['answer'], ask_options: ['Fix the footer menu first', 'Skip it'] }, {}, e);
+  assert.match(html, /class="bt-approve bt-secondary bt-long"[^>]*data-bt-choice="0"[^>]*>Fix the footer menu first</);
+  assert.match(html, /class="bt-secondary"[^>]*data-bt-choice="1"[^>]*>Skip it</);
+});
+test('the answers are the card buttons: first is main, an accepting option approves, every offered answer is a button', () => {
+  const ask = { ...card, actions: ['answer'], ask_options: ['One', 'Two', 'Three', 'Four'] };
+  const html = answersHTML(ask, {}, e);
+  assert.equal((html.match(/data-bt-choice=/g) || []).length, 4, "every offered answer is a button");
+  assert.match(html, /bt-approve bt-secondary[^>]*data-bt-choice="0"[^>]*>One</); assert.doesNotMatch(html, /bt-primary/, "peer answers carry equal weight");
+  assert.match(html, /data-bt-action="reply"[^>]*>Reply</);
+  const done = answersHTML({ ...card, actions: ['accept', 'answer'], review_kind: 'completion', ask_options: ['Accept the completed work', 'Return for more work'] }, {}, e);
+  assert.match(done, /bt-primary( bt-long)?" data-bt-action="approve"[^>]*>Accept the completed work</);
+  assert.match(done, /data-bt-choice="1"[^>]*>Return for more work</);
+  assert.match(done, /data-bt-open[^>]*>See the work</);
+  assert.match(answersHTML(ask, { busy: true }, e), /data-bt-choice="0" disabled/);
+  const open = answersHTML({ ...card, actions: ['answer'], ask_options: [] }, {}, e);
+  assert.doesNotMatch(open, /data-bt-choice/);
+  assert.match(open, /data-bt-open[^>]*>See the work</, 'every question can open its card');
+});
+test('the chips count the listed cards and the list kinds', () => {
+  const list = [card, { ...card, number: 8, actions: ['answer'], ask_options: ['A'] }, { ...card, number: 9, actions: ['accept'], review_kind: 'completion' }];
+  const html = chipsHTML(list, 'review');
+  assert.match(html, /data-bt-filter="all" aria-pressed="false">All <b>3<\/b>/);
+  assert.match(html, /data-bt-filter="question" aria-pressed="false">Questions <b>1<\/b>/);
+  assert.match(html, /data-bt-filter="review" aria-pressed="true">Reviews <b>2<\/b>/);
+  assert.deepEqual(list.map(item => [kindOf(item), verbOf(item)]), [['review', 'wants your OK'], ['question', 'asks'], ['review', 'finished work']]);
 });
 test('the reply dialog is named for the button pressed', () => {
   assert.deepEqual(replyWords('reply', true), { title: 'Answer', label: 'Your answer', submit: 'Send answer' });
@@ -170,4 +200,10 @@ test('phone: the mic keeps a gap to the tabs and the key hint is for keyboards o
   assert.match(shell, /\.deck-tab-mic \{[^}]*margin-left: 10px/);
   const bench = readFileSync(new URL('../commonplace/web/static/workbench.css', import.meta.url), 'utf8');
   assert.match(bench, /@media \(pointer: coarse\), \(max-width: 699px\) \{\s*\.workbench-board form\[data-board-add\] \.composer-keys \{ display: none/);
+});
+
+test('the key line says H puts an item on hold', () => {
+  const source = readFileSync(new URL('../commonplace/web/static/deck-today-capy.js', import.meta.url), 'utf8');
+  assert.match(source, /Keys: J and K move between items, R replies, H puts an item on hold</);
+  assert.doesNotMatch(source, /H holds an item/);
 });

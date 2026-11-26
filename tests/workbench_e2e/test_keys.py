@@ -184,7 +184,7 @@ def _(ui, seed):
 
 
 def _connect_dialog(p):
-    """03c: Connect an agent from the empty board. Returns whether that was a dialog.
+    """03c: Connect an app from the empty board. Returns whether that was a dialog.
 
     The shipped app opens project settings first; its Connect agent button then opens
     the setup dialog, so the later phases (03c2-03e) stay testable either way.
@@ -199,7 +199,7 @@ def _connect_dialog(p):
         p.locator("dialog[open] .btn.primary, [aria-modal='true'] .btn.primary").first.click()
         p.wait_for_selector("dialog[open] [data-project-token]", timeout=5000)
     else:
-        p.locator("button", has_text="Connect agent").first.click()
+        p.locator("button", has_text="Connect app").first.click()
     p.wait_for_selector("dialog[open], [aria-modal='true']:not([hidden])", timeout=5000)
     settle(p, 500)
     return direct

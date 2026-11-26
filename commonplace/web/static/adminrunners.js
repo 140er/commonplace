@@ -92,7 +92,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
   const guidedView = m => {
     const g = m.guided;
     const href = globalThis.document?.documentElement?.dataset?.ui === 'deck' ? '#/compute/management' : '#/compute';
-    const limitation = 'Coworkers do not run on it in this version.';
+    const limitation = 'Bots do not run on it in this version.';
     const notice = `${g.sentence} ${g.next}`.includes(limitation) ? '' : `<p>${limitation}</p>`;
     return `<article class="runner-machine runner-guided" aria-label="${e(m.label)}" data-guided="${e(g.state)}"><h3>${e(m.label)}</h3>
       <p class="runner-guided-state"><strong>${e(g.label)}</strong></p><p>${e(g.sentence)}</p><p>${e(g.next)}</p>${notice}

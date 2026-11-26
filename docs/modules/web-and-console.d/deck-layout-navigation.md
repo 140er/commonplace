@@ -1,0 +1,3 @@
+- **Promises:**
+
+  **Deck layout and navigation (round 8).** The desktop account menu and the phone More sheet offer the same rows, Settings first and no Projects (the sidebar heading is Projects; a phone keeps those pages under Work). The sheet is a bottom sheet headed by the account line. The account row is never marked current, and its menu closes on a route change. The phone menu button carries `aria-current` on the pages that live in the sheet. Every desktop page starts 20px under the 52px bar. Work lanes use three equal desktop columns with "Show N more" as a text link; the Board's project switch is a small "Switch project" button.

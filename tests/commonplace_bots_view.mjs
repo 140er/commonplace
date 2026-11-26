@@ -233,7 +233,7 @@ test("stopped and failed replies carry one plain note; redaction markers become 
 test("an event with an orchestrator block carries an Orchestrator label and escaped text", () => {
   const ctx = { open: new Set(), busy: new Set() };
   const reply = ui.messageHTML({ id: 4, role: "event", text: `Done <img src=x onerror=alert(1)> [redacted:key]`, blocks: [{ type: "orchestrator" }], state: "ok" }, ctx, e);
-  assert.match(reply, /<p class="bm-from">Coworker<\/p>/);
+  assert.match(reply, /<p class="bm-from">Bot<\/p>/);
   assert.doesNotMatch(reply, /<img/);
   assert.match(reply, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(reply, /<mark class="redacted">\[redacted:key\]<\/mark>/);
@@ -440,7 +440,7 @@ test("a decision button calls the decide route with the hydrated version and the
   const h = harness({ messages: [msg(1, "bot", { text: "Question", blocks: [decision] })], waiting: [decision] });
   h.state.extra["POST /api/cards/60/decide"] = async () => { h.state.messages = [msg(1, "bot", { text: "Question", blocks: [{ ...decision, open: false, answer: "Yes" }] })]; h.state.waiting = []; return { ok: true }; };
   await h.controller.show("b1");
-  assert.match(h.d.regions.waiting.innerHTML, /Waiting on you \(1\)/);
+  assert.match(h.d.regions.waiting.innerHTML, /1 waiting on you/);
   h.controller.click(el({ botsAction: "decide", work: "60", version: "4", choice: "Yes" }));
   await settle();
   const decide = h.calls.find((c) => c.path === "/api/cards/60/decide");
@@ -469,11 +469,13 @@ test("the waiting strip is one line with a count and opens to the questions", as
   const h = harness({ waiting: blocks });
   await h.controller.show("b1");
   const strip = h.d.regions.waiting.innerHTML;
-  assert.match(strip, /Waiting on you \(2\)/);
+  assert.match(strip, /2 waiting on you/);
+  assert.match(strip, /class="wait-act">Show 2 waiting/, "the toggle says what it opens");
   assert.equal((strip.match(/class="wait-toggle"/g) || []).length, 1);
   assert.doesNotMatch(strip, /Q60/);
   h.controller.click(el({ botsAction: "waiting" }));
   assert.match(h.d.regions.waiting.innerHTML, /Q60[^]*Q61/);
+  assert.match(h.d.regions.waiting.innerHTML, /class="wait-act">Hide/);
 });
 
 test("a confirm chip posts the pending id and accept flag, then shows the settled state", async () => {

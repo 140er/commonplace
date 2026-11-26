@@ -35,7 +35,7 @@ def test_person_lists_the_inbox_room_and_reads_the_agent_note_verbatim(hub):
     headers = cookie(hub)
     status, body = _person_get(hub, headers, "/api/memory/rooms")
     assert status == 200
-    assert body == {"rooms": [{"wing": "inbox", "name": "Agent notes"}]}
+    assert body == {"rooms": [{"wing": "inbox", "name": "App notes"}]}
     status, found = _person_get(hub, headers, "/api/memory/search?q=exact%20words&theme=inbox")
     assert status == 200
     assert [(row["id"], row["theme"], row["text"]) for row in found["results"]] == [
@@ -109,7 +109,7 @@ def test_another_workspace_owner_does_not_see_the_inbox_note(hub):
         actor=outsider,
     )
     assert _http(hub, foreign, "/api/memory/rooms")[1] == {
-        "rooms": [{"wing": "inbox", "name": "Agent notes"}]
+        "rooms": [{"wing": "inbox", "name": "App notes"}]
     }
     status, found = _http(hub, foreign, "/api/memory/search?q=exact&theme=inbox")
     assert status == 200 and found["results"] == []

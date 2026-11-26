@@ -178,8 +178,8 @@ def test_runtime_failure_copy_uses_display_names(monkeypatch):
     result = admin.runtime(
         SimpleNamespace(db=None), "workspace", SimpleNamespace(remaining=lambda: None), None
     )
-    assert result["orchestration"]["error"] == "Coworker management unavailable; try again"
-    assert result["orchestrators"]["error"] == "Coworkers unavailable; try again"
+    assert result["orchestration"]["error"] == "Bot management unavailable; try again"
+    assert result["orchestrators"]["error"] == "Bots unavailable; try again"
     assert result["machines"]["error"] == "Machines unavailable; try again"
 
 

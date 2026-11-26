@@ -122,15 +122,14 @@ def test_a_refused_attempt_says_when_it_started_and_what_a_person_can_do(console
             {"path": "config/env.js", "text": f"t='{leak}'"},
         ],
     )
-    # The Coworker gets its own words; the value is never repeated.
+    # The bot gets its own words; the value is never repeated.
     assert not ok and "Remove the credential from that file" in text and leak not in text
     shown = h.request(h.owner, "GET", f"/api/previews?card={number}")[1]["previews"][0]
     assert shown["state"] == "failed" and shown["published_at"] is None and shown["started_at"]
     assert shown["failure"] == {"file": "config/env.js", "kind": "github_token"}
     assert shown["reason_text"].startswith("Nothing was published")
     assert (
-        "Ask the Coworker that published it" in shown["next"]
-        and "Reply on this card." in shown["next"]
+        "Ask the bot that published it" in shown["next"] and "Reply on this card." in shown["next"]
     )
     assert "bundle" not in (shown["reason_text"] + shown["next"]).lower()
     assert "Try again" not in shown["next"]

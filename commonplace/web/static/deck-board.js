@@ -36,7 +36,9 @@ const botName = (card, options) => boardCopy(cardBot(card, options)?.name || car
 const avatar = name => `<span class="deck-board-avatar" aria-hidden="true">${e(Array.from(name)[0] || '?')}</span>`;
 const dot = tone => `<i class="deck-board-dot ${tone}" aria-hidden="true"></i>`;
 export const boardGroup = (card, me, needs) => needsOwner(card, me, needs) ? 'todo' : card.status === 'done' ? 'done' : card.status === 'review' ? 'review' : 'doing';
-const columns = [['todo', 'Needs you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
+// An empty column says what lands in it, so an empty board explains itself.
+export const EMPTY_COLUMN = { todo: 'Nothing waits on you. Questions and approvals land here.', doing: 'No card is being worked on.', review: 'Nothing is waiting for review.', done: 'Nothing shipped yet.' };
+const columns = [['todo', 'Waiting on you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
 function cardHTML(card, options, first) {
   const selected = options.selected === card.number, name = botName(card, options);
   return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(cardTitle(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(cardTitle(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div>${snoozedLine(card)}</article>`;
@@ -44,19 +46,22 @@ function cardHTML(card, options, first) {
 // Just after Add card: say which column holds the new card and the state the server gave it (the Deck has no
 // Todo column), read from the card itself so a queue that has not caught up cannot name another place; else the usual intro.
 export const addedNotice = (card, me) => `Added “${cardTitle(card.title)}” to ${columns.find(([status]) => status === boardGroup(card, me, null))[1]} (${stateWord(card, me, null)}).`;
-function boardNotice(cards, columns, { added, me }) {
+function boardNotice(cards, columns, { added, me, board }) {
   const card = added == null ? null : cards.find(item => item.number === added);
-  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>';
+  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : (board?.name ? `<p class="deck-board-intro"><b class="deck-board-name">${e(board.name)}</b><a class="deck-board-switch" href="#/boards" aria-label="Switch project">Switch project<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></a></p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>');
 }
-export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = 'todo', ...options }) {
+export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = '', ...options }) {
   const backlog = cards.filter(card => card.status === 'backlog' && !needsOwner(card, options.me));
   const count = status => cards.filter(card => (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status).length;
   // The Needs you column counts this project; Today counts every project. When they differ, say so in words.
   const queued = currentNeeds(), everywhere = queued ? needsMeCount(queued) : null;
-  const note = everywhere != null && everywhere !== count('todo') ? `<p class="deck-board-needs-note" data-needs-note>${everywhere} ${everywhere === 1 ? 'card is' : 'cards are'} waiting on you across all projects; ${count('todo')} ${count('todo') === 1 ? 'is' : 'are'} in this one.</p>` : '';
+  // A phone shows one column: without an explicit choice, open the first one that has cards rather than an empty Needs you.
+  if (!column) column = columns.map(([status]) => status).find(status => count(status) > 0) || 'todo';
+  const here = count('todo'), elsewhere = everywhere == null ? 0 : everywhere - here;
+  const note = everywhere != null && everywhere !== here ? `<p class="deck-board-needs-note" data-needs-note>${!here ? `${elsewhere} ${elsewhere === 1 ? 'card' : 'cards'} in other projects ${elsewhere === 1 ? 'needs' : 'need'} you.` : `${here} here and ${elsewhere} in other projects need you.`}</p>` : '';
   const columnHTML = columns.map(([status, name, tone]) => {
     const list = cards.filter(card => (!filter.startsWith('state:') || filter === `state:${status}`) && (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status);
-    return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || `<p class="empty-col">${artHTML('column')}Nothing here yet</p>`}</div></section>`;
+    return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || `<p class="empty-col">${artHTML('column')}${EMPTY_COLUMN[status]}</p>`}</div></section>`;
   }).join('');
   const stateFilters = [['all','All'], ...columns.map(([status,name]) => [`state:${status}`,name])];
   const add = '<button class="btn deck-board-add" data-action="new-card">Add card</button>';
@@ -72,7 +77,7 @@ export function drawerSummary(card, options = {}) {
   if (card.checks) steps.push(['Checks', {pass:'Passed',passed:'Passed',success:'Passed',pending:'Running',fail:'Failed',failure:'Failed'}[card.checks] || 'Not reported']);
   const stage = typeof card.stage === 'string' ? boardCopy(card.stage) : card.awaiting_release ? 'Release' : 'Change';
   const stateTone = state => /^(Pushed|Approved|Passed|Finished)$/.test(state) ? 'live' : state === 'Needs you' ? 'waiting' : 'idle';
-  return `<section class="deck-card-summary" aria-label="Summary"><h3 class="sr">Summary</h3><p>${e(boardCopy(card.summary || card.body)) || 'No summary recorded.'}</p></section><dl class="deck-card-facts"><dt>Bot</dt><dd>${avatar(name)}${bot ? `<a href="#/bots/${e(encodeURIComponent(bot.id))}">${e(name)}</a>` : e(name)}</dd><dt>Coworker</dt><dd>${e(boardCopy(coworker))}</dd>${version != null ? `<dt>Version</dt><dd><code>${e(version)}</code></dd>` : ''}</dl><section class="deck-card-progress" aria-label="Progress"><h3>Progress</h3><ol><li class="current"><span>${e(stage)}</span><span class="${stateTone(stateWord(card, options.me))}">${e(stateWord(card, options.me))}</span></li>${steps.map(([label,state]) => `<li class="child"><span>${label}</span><span class="${stateTone(state)}">${state}</span></li>`).join('')}</ol></section>`;
+  return `<section class="deck-card-summary" aria-label="Summary"><h3 class="sr">Summary</h3><p>${e(boardCopy(card.summary || card.body)) || 'No summary recorded.'}</p></section><dl class="deck-card-facts"><dt>Bot</dt><dd>${avatar(name)}${bot ? `<a href="#/bots/${e(encodeURIComponent(bot.id))}">${e(name)}</a>` : e(name)}</dd><dt>Assigned to</dt><dd>${e(boardCopy(coworker))}</dd>${version != null ? `<dt>Version</dt><dd><code>${e(version)}</code></dd>` : ''}</dl>${steps.length ? `<section class="deck-card-progress" aria-label="Progress"><h3>Progress</h3><ol><li class="current"><span>${e(stage)}</span><span class="${stateTone(stateWord(card, options.me))}">${e(stateWord(card, options.me))}</span></li>${steps.map(([label,state]) => `<li class="child"><span>${label}</span><span class="${stateTone(state)}">${state}</span></li>`).join('')}</ol></section>` : ''}`;
 }
 export function drawerActions(card, me) {
   const reply = '<button class="btn ghost" data-deck-reply-toggle aria-expanded="false" aria-controls="deck-card-reply">Reply</button>';

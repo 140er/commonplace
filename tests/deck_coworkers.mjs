@@ -13,10 +13,10 @@ test('overview groups one divided list per section, counts real coworkers and ma
   const html = capyRosterHTML({ bots, conversations: [{ bot_ids: ['a'] }] });
   assert.equal((html.match(/class="cb-folder"/g) || []).length, 2);
   assert.equal((html.match(/aria-label="Private bot"/g) || []).length, 1);
-  assert.match(html, /1 coworker</); assert.match(html, /3 coworkers</); assert.match(html, /2<span class="sr"> unread/);
+  assert.match(html, /1 conversation</); assert.match(html, /3 conversations</); assert.match(html, /2<span class="sr"> unread/);
   assert.match(html, /href="#\/bots\/a"/); assert.doesNotMatch(html, /href="#\/bots\/a\/coworkers"/);
   assert.doesNotMatch(capyRosterHTML({ bots: [{ id: 'x', name: 'X' }] }), /Private bot|cb-unread/);
-  assert.match(capyRosterHTML({ bots: [{ id: 'p', name: 'Project', board: 'p' }] }), /1 coworker</);
+  assert.match(capyRosterHTML({ bots: [{ id: 'p', name: 'Project', board: 'p' }] }), /1 conversation</);
 });
 test('absent owns and log never produce simulated rows or panels', () => {
   assert.equal(ownedPaths(), null); assert.equal(liveLog(), null);
@@ -149,4 +149,14 @@ test('slice styles are Deck scoped, token based, and keep the phone composer in 
   const bots = overviewBots([{ id: 'a', name: 'Atlas', mine: true }], [{ id: 'a', name: 'Other label', section: 'Workspace', private: true }, { id: 'b', name: 'Harbor' }]);
   assert.equal(bots.length, 2); assert.equal(bots[0].name, 'Atlas'); assert.equal(bots[0].section, 'Workspace'); assert.equal(bots[0].mine, true);
   assert.equal(bots[1].coworkerOnly, true);
+});
+
+test('a bot that waits on you says so as a word under its name, on desktop and on a phone', () => {
+  const html = capyRosterHTML({ bots: [{ id: 'w', name: 'Waits', state: 'needs_you' }, { id: 'b', name: 'Busy', state: 'working' }, { id: 'i', name: 'Idle' }] });
+  assert.match(html, /<small class="cb-state-word" data-tone="waiting" aria-hidden="true">Waiting on you<\/small>/);
+  assert.match(html, /data-tone="working" aria-hidden="true">Working<\/small>/);
+  const css = readFileSync(new URL('../commonplace/web/static/deck-coworkers.css', import.meta.url), 'utf8');
+  const everywhere = css.slice(0, css.indexOf('@media'));
+  assert.match(everywhere, /\.cb-bot-row \.cb-state-word, :root\[data-ui="deck"\] \.cb-bot-row \.cb-dot\[data-tone="idle"\] \{ display: none; \}/, 'other states keep only the dot with its label');
+  assert.match(everywhere, /\.cb-bot-row \.cb-state-word\[data-tone="waiting"\] \{ display: block; flex-basis: 100%;/, 'only waiting rows get the word, at every width');
 });

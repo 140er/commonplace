@@ -27,6 +27,7 @@ test("no providers preserves the email form and legal navigation without a messa
   const html = signinView({});
   assert.match(html, /<h1>Sign in<\/h1>/);
   assert.match(html, emailForm);
+  assert.ok(html.match(emailForm)[0].includes('aria-label="Email" placeholder="you@example.com"'), "the placeholder shows an example, not the label again");
   assert.ok(html.includes(legal));
   assert.doesNotMatch(html, /role="status"|class="provider"|Create your workspace|Your name/);
   for (const field of ['name="email"', 'type="email"', 'autocomplete="email"', 'maxlength="254"', 'required', '<input type="hidden" name="next" value="">', 'Email a sign-in link']) assert.ok(html.includes(field));
@@ -378,7 +379,7 @@ test("RED dialog: project creation is a labelled dialog and sign-in uses the app
   assert.match(html, /aria-labelledby="create-project-heading"/);
   assert.match(html, /id="create-project-heading">Create your first project/);
   const signin = signinView({});
-  for (const selector of ['class="auth-l"', 'class="auth-r"', 'What happens next', 'Agent', 'Coworker']) assert.ok(signin.includes(selector));
+  for (const selector of ['class="auth-l"', 'class="auth-r"', 'What happens next', 'Agent', 'Bot']) assert.ok(signin.includes(selector));
   assert.doesNotMatch(signin, /Create your workspace|Your name/);
   const expired = signinView({ error: signinMessage("expired") });
   assert.match(expired, /<h1>Get a new link<\/h1>/);

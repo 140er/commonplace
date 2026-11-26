@@ -8,16 +8,19 @@ import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { arrangeCapySettings, capyPolicyPresentation } from './deck-settings-capy.js';
 import { createDeckAppearance } from './deck-appearance.js';
-import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
+import { SECTIONS, placeOf, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
 import { arrangeSettings, selectSettings } from './deck-settings.js';
 import { needsMeCount } from './needs-me.js';
+// Same rule as the rail's role line: an explicit role wins, otherwise a workspace admin is its owner.
+const isOwner = me => me?.role ? me.role === 'owner' : me?.can_admin === true;
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
 // mount returns { refresh?(context), stop?() }. A name without a loader is not offered in the bar.
 export const SCREENS = {
-  home: () => import('./deck-home.js'),
+  home: () => import('./deck-today-capy.js'),
   today: () => import('./deck-today-capy.js'),
+  work: () => import('./deck-work.js'),
   compute: () => import('./deck-workspace.js'),
   pipeline: () => import('./deck-pipeline.js'),
   coworkers: () => import('./deck-workspace.js'),
@@ -49,11 +52,7 @@ export function applyDeck({ doc = globalThis.document, loc = globalThis.location
 }
 
 /** The bar section a route belongs to; '' for the workspace tools reached from the account menu. */
-export function deckSection(hash = '') {
-  const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
-  if (name === 'bots' || name === 'today' || name === 'compute') return name;
-  return ['settings', 'rules', 'admin'].includes(name) ? 'settings' : '';
-}
+export const deckSection = placeOf;
 export const deckSections = (screens = SCREENS) => SECTIONS.filter(([id]) => id === 'bots' || id === 'settings' || screens[id]);
 /** Home is the undimmed hero; older screen registries keep their fallback. */
 export const deckHome = (screens = SCREENS) => screens.home ? '#/' : screens.today ? '#/today' : '#/bots';
@@ -69,13 +68,13 @@ export const renderDeckMore = options => renderShellMore(shellOptions(options));
 /** The Look section at the top of Settings: Deck or Classic, saved in this browser only. */
 export function lookHTML(on) {
   const pick = (look, label, chosen) => `<button type="button" class="opt" data-deck-action="look" data-look="${look}" aria-pressed="${chosen ? 'true' : 'false'}">${label}</button>`;
-  return `<section class="settings-section" id="look"><h2>Look</h2><p>Deck puts what waits on you first and moves the workspace tools into the account menu. Classic is the older layout. The choice is saved in this browser.</p><div class="look-switch" role="group" aria-label="Look">${pick('deck', 'Deck', on)}${pick('classic', 'Classic', !on)}</div></section>`;
+  return `<section class="settings-section" id="look"><h2>Look</h2><p>Choose the layout of this app. Classic is the older one. The choice is saved in this browser.</p><div class="look-switch" role="group" aria-label="Look">${pick('deck', 'Commonplace', on)}${pick('classic', 'Classic', !on)}</div></section>`;
 }
 
 /** The workspace tools as one Settings section. The phone layout shows it, because a phone has no account menu. */
 export function toolsHTML({ can_admin = false } = {}) {
   const row = (href, label) => `<a href="${href}">${label}</a>`;
-  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me')}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules')}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
+  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Waiting on you')}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules')}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
 }
 
 /** The shell's handle on Deck. Everything it needs comes in, so it runs without a browser.
@@ -84,7 +83,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
   const shell = createDeckShell({ root, api, context, on: () => deckOn(storage) });
   const appearance = createDeckAppearance({ root, context, on: () => deckOn(storage), doc, storage });
   let active = null;
-  const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
+  const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)(?:\?[^#]*)?$/.exec(base || '')?.[1] || '';
   const owns = (base) => typeof screens[name(base)] === 'function' && (deckOn(storage) || (!!workspaceRoute(base) && base !== '#/compute'));
   function leave() { active?.ui?.stop?.(); active = null; }
   async function show(base, { background = false, epoch = 0 } = {}) {
@@ -95,7 +94,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     if (epoch !== screen()) return;
     leave();
     active = { base, ui: module.mount({ root: root.querySelector('#content'), api, e, ...context(), route: base }) };
-    title(id === 'coworkers' ? 'Coworkers' : module.TITLE || 'Commonplace');
+    title(id === 'coworkers' ? 'Bot conversations' : module.TITLE || 'Commonplace');
   }
   function settings(content) {
     const box = content?.querySelector?.('.settings');
@@ -104,7 +103,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
       const { me, needs } = context() || {};
       box.insertAdjacentHTML('afterbegin', toolsHTML({ needs: needsMeCount(needs), can_admin: me?.can_admin }));
     }
-    if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
+    if (deckOn(storage)) arrangeSettings(box, { owner: isOwner(context()?.me) });
     if (!box.querySelector('#look')) box.insertAdjacentHTML('afterbegin', lookHTML(deckOn(storage)));
     appearance.settings(box);
     if (deckOn(storage)) arrangeCapySettings(box, { api, context });

@@ -14,7 +14,7 @@ const preview = (extra = {}) => ({
 const attempt = (extra = {}) => preview({ revision: 0, url: null, published_at: null, started_at: '2026-11-19T09:00:00Z', ...extra });
 const found = (previews, extra = {}) => ({
   previews, usage: { ready: 1, bytes: 3 * 1024 * 1024 }, limits: { max_ready: 25, max_workspace_bytes: 500 * 1024 * 1024 },
-  rule: { stop_days_after_pr: null, max_age_days: null, updated_at: null, text: 'Previews are served until a person or the Coworker that published them stops them.' },
+  rule: { stop_days_after_pr: null, max_age_days: null, updated_at: null, text: 'Previews are served until a person or the bot that published them stops them.' },
   can_set_rule: false, ...extra,
 });
 const wait = () => new Promise((done) => setTimeout(done, 0));
@@ -83,7 +83,7 @@ const cases = {
       preview(),
       attempt({ id: 'pv_0000000000000001', name: 'docs', state: 'building', reason: 'storing', reason_text: 'The files are being saved.', next: 'This takes a few seconds; the card updates by itself.' }),
       preview({ id: 'pv_0000000000000002', name: 'old', state: 'stopped', reason: 'stopped_by_person', reason_text: 'Stopped by a person. The files are kept.', next: 'Use Open again on this card to serve it.', url: '/p/pv_0000000000000002/' }),
-      attempt({ id: 'pv_0000000000000003', name: 'bad', state: 'failed', reason: 'no_index_html', reason_text: 'Nothing was published: the files had no index.html at the top.', next: 'Ask the Coworker that published it to publish again with an index.html at the top of the files. Reply on this card.' }),
+      attempt({ id: 'pv_0000000000000003', name: 'bad', state: 'failed', reason: 'no_index_html', reason_text: 'Nothing was published: the files had no index.html at the top.', next: 'Ask the bot that published it to publish again with an index.html at the top of the files. Reply on this card.' }),
     ]));
     for (const text of ['Ready', 'Being published', 'Stopped', 'Could not be published', 'The files are being saved.', 'the card updates by itself', 'Use Open again on this card', 'Nothing was published', 'Reply on this card.', 'version 2', '2 KiB', 'key for 30 minutes', 'share the preview, not the address', 'reload it from the card', 'saved page', 'inside a viewer', 'cannot move the viewer', 'Open only previews from people you trust', 'Stopping never deletes the files', '1 of 25 previews served', '3 MiB of 500 MiB used (stopped previews still count)']) {
       assert.ok(html.includes(text), `missing: ${text}`);
@@ -122,8 +122,9 @@ const cases = {
   },
   empty() {
     const html = cardPreviewsHTML(found([], { usage: { ready: 0, bytes: 0 } }));
-    assert.ok(html.includes('No preview yet. When a Coworker publishes one for this card, it appears here and stays after it finishes working.'));
+    assert.ok(html.includes('No previews yet. When a bot publishes one for this card, it appears here and stays after it finishes working.'));
     assert.ok(html.includes('0 KiB of 500 MiB used') && !html.includes('key for 30 minutes') && !html.includes('work session'));
+    assert.match(html, /<details class="preview-usage" data-preview-usage><summary>Details<\/summary><p class="run-reason">0 of 25 previews served[^]*\(stopped previews still count\)\.<\/p><\/details>/, 'the quota numbers sit behind Details');
   },
   escape() {
     const html = cardPreviewsHTML(found([preview({ name: '<img src=x onerror=alert(1)>', reason_text: '<b>x</b>', published_by: '"><script>' })]));

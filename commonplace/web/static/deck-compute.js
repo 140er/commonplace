@@ -157,7 +157,7 @@ export function machineState(machine) {
  * draw them when the topology read is empty or fails. The hub carries no status; a machine carries its
  * enrollment state (Ready, Waiting for attestation, Off) once, on the node, and nothing is said about sites or routes. */
 export function runnerGraph(rows) {
-  const nodes = [{ key: HUB, values: { kind: 'hub', name: 'Commonplace', role: 'Hub' } }];
+  const nodes = [{ key: HUB, values: { kind: 'hub', name: 'This server', role: 'Hub' } }];
   const links = [], status = { nodes: { [HUB]: 'none' }, links: {} };
   for (const machine of rows) {
     const state = machineState(machine), id = `${HUB}>${machine.id}`;
@@ -262,14 +262,14 @@ export function mount(context) {
   }
   function actions() {
     const host = region('actions');
-    if (host) host.innerHTML = '<button class="dc-action" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
+    if (host) host.innerHTML = '<button class="dc-action dc-primary" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action" type="button" data-compute-action="map">Map it with a bot</button>' : '');
   }
   const tabs = root.parentElement?.querySelector(':scope > .dw-tabs');
   let tabsHome = null;
   function frame() {
     if (tabs && !tabsHome) tabsHome = { parent: tabs.parentNode, next: tabs.nextSibling };
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
-    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add one to see it here. A cloud workspace can still be saved without one (Management tab).</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
+    root.innerHTML = '<header class="dc-title"><h1>Cloud workspaces</h1><p class="dc-explain">The map shows your machines and how they connect. Add and change cloud workspaces under Management.</p><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>A cloud workspace can still be saved without a machine (Management tab).</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
     topAdd ??= mountComputeTopAction(shell, hash=>ctx.go(hash));
     placeActions(); framed = true; actions();
