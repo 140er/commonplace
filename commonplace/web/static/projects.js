@@ -1132,7 +1132,13 @@ export function mountWorkspaceModels(host, { api, e, value, current = () => true
   }
   function render(message = "", ownMessage = "") {
     if (!active()) return;
+    // A redraw (own accounts loaded, an account linked) keeps picks not saved yet.
+    const picks = [...host.querySelectorAll("[data-workspace-models] select[data-model-role]")].map((select) => [select.name, select.value]);
     host.innerHTML = workspaceModelsHTML(view, e) + (view.can_configure ? modeHTML(record, e) : "") + ownAccountsHTML(own, e);
+    for (const [name, value] of picks) {
+      const select = host.querySelector(`[data-workspace-models] select[name="${name}"]`);
+      if (select && [...select.options].some((option) => option.value === value)) select.value = value;
+    }
     const ownStatus = () => host.querySelector("[data-own-status]");
     if (ownMessage && ownStatus()) ownStatus().textContent = ownMessage;
     bindOwn(ownStatus);
