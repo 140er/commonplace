@@ -52,3 +52,7 @@ def test_owner_edits_machine_requesters_and_fails_closed(hub):
 
 def test_two_requester_edits_in_a_row_use_the_version_the_first_returned(hub):
     run(hub, "requesters-chain")
+
+
+def test_owner_reads_trust_levels_and_changes_one_with_confirm(hub):
+    run(hub, "trust")

@@ -4,7 +4,7 @@ import logging
 import re
 from pathlib import Path
 
-from commonplace import bots_grant, control_db, decide_grant, import_grant, urls
+from commonplace import bots_grant, control_db, decide_grant, import_grant, trust_levels, urls
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import (
@@ -389,6 +389,22 @@ def _update_read_wings(gateway, h, principal, row, data):
     )
 
 
+def _update_trust(gateway, h, principal, row, data):
+    if set(data) != {"trust"} or type(data["trust"]) is not str:
+        send_json(h, 400, {"error": trust_levels.CHOICE_TEXT})
+        return
+    try:
+        gateway.db.set_connection_trust(
+            row["id"], data["trust"], actor=principal, workspace_ref=principal.workspace_id
+        )
+    except ControlError as exc:
+        # Owner-safe reasons: inactive, trusted, runner or bot, or a level the policy refuses.
+        send_json(h, 409, {"error": str(exc)})
+        return
+    fresh = gateway.db.connection(row["id"], principal.workspace_id)
+    send_json(h, 200, {"connection": connection_view(fresh, **decide_view(gateway, principal))})
+
+
 def _consents(data, db, principal):
     if any(
         key in data and type(data[key]) is not bool for key in ("import", "import_read", "decide")
@@ -407,7 +423,9 @@ def _patch(gateway, h, principal, row, data):
     if principal.role != "owner" and not _own_bots_body(principal, row, data):
         send_json(h, 403, {"error": bots_grant.NOT_YOURS_TEXT})
         return
-    if "decide" in data:
+    if "trust" in data:
+        _update_trust(gateway, h, principal, row, data)
+    elif "decide" in data:
         _update_decide(gateway, h, principal, row, data)
     elif set(data) & {"bots_chat", "bots_confirm", "bots_learned"}:
         _update_bots(gateway, h, principal, row, data)

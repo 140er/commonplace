@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlsplit
 
-from commonplace import control_db, redact
+from commonplace import control_db, decide_grant, redact, trust_levels
 from commonplace.compute import pairing
 from commonplace.console.authority import status
 from commonplace.http_util import log_failure, path_parts, require_principal, send_json
@@ -140,6 +140,24 @@ def users(conn, workspace_id, context, after=None):
     }
 
 
+def machinery_ids(conn, workspace_id, context):
+    """Connections whose level comes from their own setup: runner connections and project bots."""
+    found = set()
+    for table in ("runner_connections", "project_orchestrators"):
+        if has_table(conn, context, table):
+            found.update(
+                row[0]
+                for row in select(
+                    conn,
+                    context,
+                    f"SELECT t.connection_id FROM {table} t JOIN connections c "
+                    "ON c.id=t.connection_id WHERE c.workspace_id=?",
+                    (workspace_id,),
+                )
+            )
+    return found
+
+
 def connections(conn, workspace_id, context, after=None):
     count = select(
         conn,
@@ -160,6 +178,7 @@ def connections(conn, workspace_id, context, after=None):
         (workspace_id, *(after or ()), PAGE_SIZE + 1),
     ).fetchall()
     result = []
+    machinery = machinery_ids(conn, workspace_id, context)
     for row in rows[:PAGE_SIZE]:
         context.remaining()
         # This inventory keeps its existing projection; display names belong to Settings.
@@ -187,6 +206,12 @@ def connections(conn, workspace_id, context, after=None):
                 else "active"
             ),
             user_disabled=bool(row["user_disabled"]),
+            trust_summary=trust_levels.TEXT.get(policy.trust, ""),
+        )
+        view["trust_change"] = trust_levels.change_view(
+            row,
+            active=view["state"] == "active",
+            machinery=row["id"] in machinery or row["client"] == decide_grant.SEAT_CLIENT,
         )
         # Stored auth and origin are enums, never arbitrary display strings.
         view["auth"] = view["auth"] if view["auth"] in ("pat", "oauth") else None
@@ -194,6 +219,7 @@ def connections(conn, workspace_id, context, after=None):
         result.append(view)
     return {
         "connections": result,
+        "trust_levels": trust_levels.levels(),
         "count": count,
         **page(rows, "created_at", workspace_id, "connections"),
     }

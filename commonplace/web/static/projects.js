@@ -1215,8 +1215,14 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
   const machines = orchestration.machines || [];
   function render() {
     if (!active()) return;
-    host.innerHTML = `<details class="orchestration-controls"><summary>Bot start permissions</summary><p>Trust lets this seat request starts on selected machines, read permitted project data and repository rules, release and approve cards, annotate cards and stamp trusted submissions. It can view start status and cancel its own starts. It cannot create boards or launch handoffs.</p>${machines.map(m => `<label><input type="checkbox" data-trust-machine value="${e(m.id)}" ${busy ? "disabled" : ""}> ${e(m.label)}</label>`).join("")}<p><label><input type="checkbox" data-trust-confirm ${busy ? "disabled" : ""}> I approve these permissions</label></p><button type="button" class="btn" data-trust-grant ${busy || !machines.length ? "disabled" : ""}>Trust and allow starts</button>${trusted ? `<button type="button" class="btn ghost" data-trust-remove ${busy ? "disabled" : ""}>Remove trust</button>` : ""}<p role="status">${e(status)}</p></details>`;
-    host.querySelector("[data-trust-grant]").onclick = () => {
+    // Without a machine there is nothing to give start permission on: say so and link to adding one.
+    const addMachine = globalThis.document?.documentElement?.dataset?.ui === "deck" ? "#/compute/management" : "#/compute";
+    const form = machines.length
+      ? `${machines.map(m => `<label><input type="checkbox" data-trust-machine value="${e(m.id)}" ${busy ? "disabled" : ""}> ${e(m.label)}</label>`).join("")}<p><label><input type="checkbox" data-trust-confirm ${busy ? "disabled" : ""}> I approve these permissions</label></p><button type="button" class="btn" data-trust-grant ${busy ? "disabled" : ""}>Trust and allow starts</button>`
+      : `<p>No machine is registered yet, so there is nothing to give start permission on. <a href="${addMachine}">Add a machine</a> first.</p>`;
+    host.innerHTML = `<details class="orchestration-controls"><summary>Bot start permissions</summary><p>Trust lets this seat request starts on selected machines, read permitted project data and repository rules, release and approve cards, annotate cards and stamp trusted submissions. It can view start status and cancel its own starts. It cannot create boards or launch handoffs.</p>${form}${trusted ? `<button type="button" class="btn ghost" data-trust-remove ${busy ? "disabled" : ""}>Remove trust</button>` : ""}<p role="status">${e(status)}</p></details>`;
+    const grant = host.querySelector("[data-trust-grant]");
+    if (grant) grant.onclick = () => {
       const selected = [...host.querySelectorAll("[data-trust-machine]:checked")].map(input => input.value);
       if (!host.querySelector("[data-trust-confirm]").checked || !selected.length) {
         host.querySelector("[role=status]").textContent = "Select machines and approve the permissions first";
