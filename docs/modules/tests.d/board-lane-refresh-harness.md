@@ -1,0 +1,1 @@
+- **Promises:** The node harnesses that slice `boardView` out of the shell stub the lane-queue helper, so a change to which cards the owner queue lists cannot turn them red without the board's own browser check (`tests/test_card_action_refresh_browser.py`) failing first.

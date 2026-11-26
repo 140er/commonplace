@@ -88,6 +88,7 @@ import { boardRoute, resolveRoute } from "./routes.js";
 import { showLoading } from "./loading.js";
 import { applyDeck, createDeck } from "./deck.js";
 import { createNeedLedger } from "./deck-home-today.js";
+import { currentNeeds, needsCards as queuedCards } from "./needs-me.js";
 import { releaseBlock } from "./release-block.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
@@ -145,6 +146,8 @@ function deckNeedsChanged(card) {
   state.needs = deckNeedsLedger.apply(state.needs, state.me);
   navigation();
 }
+// The Deck groups cards by the owner queue, which is read beside the card list: the cards it lists are part of what a lane shows.
+const laneQueueKey = () => queuedCards(currentNeeds() || {}).map((card) => card.number).sort((a, b) => a - b).join(",");
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
@@ -635,7 +638,8 @@ function boardView() {
   const options = { board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column };
   // Counts/readiness do not change card markup. Retain the mounted tree on a
   // revisit and skip identical polls; changed cards keep their unchanged peers.
-  const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], fromBar });
+  const queued = laneQueueKey();
+  const signature = JSON.stringify({ ...options, board: [board.slug, board.name, board.prefix], fromBar, queued });
   const mounted = content.querySelector(".workbench-board");
   if ((!state.restoringBoard && signature !== cached.signature) || !mounted) {
     const html = fromBar + renderBoard(options);
@@ -647,7 +651,7 @@ function boardView() {
       next.querySelectorAll(".card[data-card]").forEach(row => {
         const old = oldRows.get(row.dataset.card);
         if (!old) return;
-        if (cached.cardSignatures?.get(row.dataset.card) !== byNumber.get(row.dataset.card) || cached.presentation !== JSON.stringify([options.bots, options.filter, options.sheet])) {
+        if (cached.cardSignatures?.get(row.dataset.card) !== byNumber.get(row.dataset.card) || cached.presentation !== JSON.stringify([options.bots, options.filter, options.sheet, queued])) {
           old.replaceChildren(...row.childNodes);
           for (const attribute of [...old.attributes]) if (!row.hasAttribute(attribute.name)) old.removeAttribute(attribute.name);
           for (const attribute of row.attributes) old.setAttribute(attribute.name, attribute.value);
@@ -662,7 +666,8 @@ function boardView() {
     } else content.innerHTML = html;
     cached.signature = signature;
     cached.cardSignatures = new Map(cards.map(card => [String(card.number), JSON.stringify(card)]));
-    cached.presentation = JSON.stringify([options.bots, options.filter, options.sheet]);
+    cached.presentation = JSON.stringify([options.bots, options.filter, options.sheet, queued]);
+    cached.queued = queued;
   }
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
@@ -1359,6 +1364,9 @@ async function refresh({ background = false, events = [] } = {}) {
     void ownerNeeds.then((needs) => {
       if (!current()) return;
       state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me); navigation();
+      // The queue lands after the board paints; a card that left it (released, moved, answered) changes lane now, not on reload.
+      const board = state.base.startsWith("#/board/") && state.deck?.on() && !state.renderPending && root.querySelector(".workbench-board") ? state.boardCache?.get(decodeURIComponent(state.base.split("/")[2])) : null;
+      if (board && board.queued !== laneQueueKey()) { const saved = remember(); boardView(); restore(saved); }
     }).catch(() => {});
     void ruleRead.then((rules) => { if (current() && rules) { state.rulesWaiting = rules.waiting; navigation(); } }).catch(() => {});
     void rosterRead.then((roster) => {

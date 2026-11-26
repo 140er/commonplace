@@ -53,7 +53,7 @@ const context = {loadRouteModule: async () => {}, state, root, e, enc: encodeURI
   MutationObserver: class {constructor(fn) {this.fn=fn; observers.push(this);} observe() {} disconnect() {this.disconnected = true;}},
   Event: class {constructor(type) {this.type=type;}},
   setTimeout(fn, ms) {const key = {}; timers.set(key, {fn, ms}); return key;}, clearTimeout(key) {timers.delete(key);},
-  title(_text, actions) {titleActions = actions;}, cardId: () => '', chatTag: () => '', cancelCard() {}, renderBoard: () => 'board', bindBoard: () => () => {}, boardDispose: null,
+  title(_text, actions) {titleActions = actions;}, cardId: () => '', chatTag: () => '', cancelCard() {}, laneQueueKey: () => '', renderBoard: () => 'board', bindBoard: () => () => {}, boardDispose: null,
   boardsView() {}, markOpenCard() {}, fillChatTimes() {}, mountProjectPanel: async () => {}, remember: () => ({}), restore() {}, refresh() {},
 };
 const run = (s) => runInNewContext(s, context);
