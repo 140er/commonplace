@@ -60,7 +60,9 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 page.wait_for_function(
                     """() => {
                         const heading = document.querySelector('.compute-title h1');
-                        return heading && getComputedStyle(heading).fontSize === '24px';
+                        const scale = getComputedStyle(document.documentElement)
+                            .getPropertyValue('--title-size').trim();
+                        return heading && scale && getComputedStyle(heading).fontSize === scale;
                     }"""
                 )
                 # The technical settings start behind one "Advanced" label; opening it stays open across saves.

@@ -118,7 +118,7 @@ def add_parsers(sub) -> None:
 
     def common(parser):
         parser.add_argument("--workspace", required=True)
-        parser.add_argument("--board", help="board slug (roles, seats, orchestrator proposal)")
+        parser.add_argument("--board", help="board slug (roles, seats, Coworker proposal)")
         parser.add_argument("--by", help="acting owner (default: the first admin)")
 
     s = actions.add_parser("export", help="write a template package (no tokens, no memory)")

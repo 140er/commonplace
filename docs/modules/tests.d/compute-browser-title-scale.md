@@ -1,0 +1,2 @@
+- **Promises:** The Cloud workspaces browser check waits for the page heading to take the Deck type scale (`--title-size`) instead of a hard-coded pixel size, so a change to the scale cannot leave it waiting for a size nothing sets.
+- **Tests:** `tests/test_compute_browser.py::test_compute_browser_enrollment_scope_and_exact_approval` reads the scale from the page and compares the heading's computed size to it.
