@@ -27,6 +27,7 @@ never imported. Findings carry paths and kinds, never the matching text.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
@@ -73,7 +74,6 @@ _CONFIG_KEYS = {"schema", "limits", "roles", "workflows"}
 _GRANT_KEYS = {"runner", "triggers", "mcps"}  # reach outside the workspace: owner acceptance
 _SCAN_KINDS = tuple(kind for kind in redact.KINDS if kind not in ("too_long", "json_secret_key"))
 _MARKER = re.compile(r"\[(?:redacted|omitted):[a-z_]+\]")
-_key_cache: dict[str, bool] = {}
 
 
 class TemplateError(ToolError):
@@ -98,16 +98,24 @@ class Source:
 # ------------------------------------------------------------------ secrets
 
 
+@functools.lru_cache(maxsize=2048)
+def _named_secret(key: str) -> bool:
+    return bool(redact.redact_value({key: "x"})[1])
+
+
 def _secret_key(key: Any) -> bool:
-    if not isinstance(key, str):
-        return False
-    if key not in _key_cache:
-        _key_cache[key] = bool(redact.redact_value({key: "x"})[1])
-    return _key_cache[key]
+    return isinstance(key, str) and _named_secret(key)
+
+
+def _key_kinds(key: Any) -> list[str]:
+    """Credential shapes in the key text itself (a name, not a secret-NAMED key)."""
+    return redact.find_kinds(key, _SCAN_KINDS) if isinstance(key, str) else []
 
 
 def _join(path: str, key: Any) -> str:
-    return f"{path}.{key}" if path else str(key)
+    """Paths never carry key text that looks like a credential."""
+    label = "<key>" if _key_kinds(key) else str(key)
+    return f"{path}.{label}" if path else label
 
 
 def scan(value: Any, path: str = "") -> list[dict]:
@@ -116,6 +124,7 @@ def scan(value: Any, path: str = "") -> list[dict]:
     if isinstance(value, dict):
         for key, item in value.items():
             here = _join(path, key)
+            found.extend({"path": here, "kind": kind} for kind in _key_kinds(key))
             if _secret_key(key) and not (isinstance(item, str) and _MARKER.fullmatch(item)):
                 found.append({"path": here, "kind": "json_secret_key"})
             found.extend(scan(item, here))
@@ -129,14 +138,21 @@ def scan(value: Any, path: str = "") -> list[dict]:
 
 def _redacted(value: Any, path: str, out: list[dict]) -> Any:
     if isinstance(value, dict):
-        clean = {}
+        clean: dict = {}
         for key, item in value.items():
             here = _join(path, key)
+            name = key
+            kinds = _key_kinds(key)
+            if kinds:
+                out.append({"path": here, "kinds": kinds})
+                name = redact.redact_tail(key, 2 * len(key) + 64)
+                while name in clean:
+                    name += "_"
             if _secret_key(key) and not (isinstance(item, str) and _MARKER.fullmatch(item)):
                 out.append({"path": here, "kinds": ["json_secret_key"]})
-                clean[key] = "[redacted:json_secret_key]"
+                clean[name] = "[redacted:json_secret_key]"
             else:
-                clean[key] = _redacted(item, here, out)
+                clean[name] = _redacted(item, here, out)
         return clean
     if isinstance(value, list):
         return [_redacted(item, f"{path}[{i}]", out) for i, item in enumerate(value)]
@@ -347,14 +363,57 @@ def _goal_paths(goals: list[dict], key: str, parent_key: str, ident: str) -> lis
     return out
 
 
-def _check_shape(content: dict) -> bool:
-    for name, items in content.items():
-        if name in ("orch_config",):
-            if not isinstance(items, dict):
-                return False
-        elif name in SECTIONS and not (
-            isinstance(items, list) and all(isinstance(i, dict) for i in items)
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+_REQUIRED = {
+    "roles": {"name": str},
+    "seats": {"role": str, "name": str},
+    "skills": {"id": str},
+    "routines": {"name": str},
+    "goals": {"title": str},
+    "memory": {"wing": str, "room": str, "text": str},
+}
+
+
+def _entries_ok(name: str, items: Any) -> bool:
+    if not isinstance(items, list):
+        return False
+    for entry in items:
+        if not isinstance(entry, dict):
+            return False
+        if any(not isinstance(entry.get(k), t) for k, t in _REQUIRED[name].items()):
+            return False
+        if name == "goals" and not (
+            _is_int(entry.get("ref")) and (entry.get("parent") is None or _is_int(entry["parent"]))
         ):
+            return False
+    return True
+
+
+def _config_ok(items: Any) -> bool:
+    if not isinstance(items, dict):
+        return False
+    config = items.get("config")
+    if config is None:
+        return True
+    if not isinstance(config, dict):
+        return False
+    roles = config.get("roles", {})
+    return isinstance(roles, dict) and all(isinstance(r, dict) for r in roles.values())
+
+
+def _check_shape(package: dict) -> bool:
+    if not all(isinstance(r, dict) for r in package.get("redactions", [])) or not isinstance(
+        package.get("redactions", []), list
+    ):
+        return False
+    for name, items in package["content"].items():
+        if name == "orch_config":
+            if not _config_ok(items):
+                return False
+        elif name in SECTIONS and not _entries_ok(name, items):
             return False
     return True
 
@@ -424,7 +483,7 @@ def preview(package: Any, target: Source, *, include_memory: bool = False) -> di
         refused.append(_refuse("digest_mismatch", "content differs from its digest"))
     if "memory" in content and package.get("memory_included") is not True:
         refused.append(_refuse("memory_not_declared", "memory present but not declared"))
-    if not _check_shape(content):
+    if not _check_shape(package):
         refused.append(_refuse("package_invalid", "a section has the wrong shape"))
     result["findings"] = scan(content) + scan(package.get("redactions", []), "redactions")
     if result["findings"]:
@@ -473,12 +532,22 @@ def _read_only(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _missing_table(exc: sqlite3.OperationalError) -> bool:
+    return "no such table" in str(exc)
+
+
+def _unreadable() -> TemplateError:
+    return TemplateError("store_unreadable", "a workspace store could not be read; retry")
+
+
 def _rows(db, sql: str, args: tuple) -> list:
     try:
         with db._lock:
             return db._conn.execute(sql, args).fetchall()
-    except sqlite3.OperationalError:  # the table does not exist yet: nothing to read
-        return []
+    except sqlite3.OperationalError as exc:
+        if _missing_table(exc):  # the table does not exist yet: nothing to read
+            return []
+        raise _unreadable() from None  # locked or I/O error: not an empty section
 
 
 def _json(text: str) -> Any:
@@ -499,7 +568,9 @@ def read_source(db, workspace_id: str, directory: str | Path, board: str | None)
         try:
             with orch_store.Store.existing(directory).connection() as conn:
                 version = orch_store.accepted_in(conn, board)
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if not _missing_table(exc):
+                raise _unreadable() from None
             version = None
         source.config_body = version.body if version else None
     if board:
@@ -546,6 +617,8 @@ def read_source(db, workspace_id: str, directory: str | Path, board: str | None)
                 ]
             finally:
                 conn.close()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if not _missing_table(exc):
+                raise _unreadable() from None
             source.goals = []
     return source

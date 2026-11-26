@@ -234,6 +234,66 @@ def test_preview_rejects_non_object_and_oversized_packages():
         wt.load_package("{not json")
 
 
+def test_credential_shaped_keys_are_scanned_redacted_and_never_echoed():
+    found = wt.scan({"goals": [{TOKEN: "x"}]})
+    assert [f["kind"] for f in found] == ["cmmn_token"]
+    assert TOKEN not in dump(found) and found[0]["path"] == "goals[0].<key>"
+    # export: a routine template keyed by a token is renamed to its marker and reported
+    src = source(
+        routines=[
+            {
+                "name": "R",
+                "template": {TOKEN: "v", "title": "t"},
+                "schedule": {},
+                "timezone": "UTC",
+                "state": "active",
+            }
+        ]
+    )
+    pkg = wt.build_package(src, ("routines",))
+    assert TOKEN not in dump(pkg) and pkg["redactions"][0]["path"] == "routines[0].template.<key>"
+    # preview: an unknown section named like a token is refused without echoing it
+    bad = wt.build_package(source(), ("goals",))
+    bad["content"][TOKEN] = []
+    result = wt.preview(wt.seal(bad), source(goals=[]))
+    assert result["ok"] is False and result["findings"][0]["path"] == "<key>"
+    assert TOKEN not in dump(result)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda c: c["goals"][0].pop("ref"),
+        lambda c: c["goals"][0].update(title=None),
+        lambda c: c["goals"][0].update(parent=[1]),
+        lambda c: c["goals"][0].update(ref=True),
+        lambda c: c["roles"][0].pop("name"),
+        lambda c: c["roles"].append("not-a-dict"),
+        lambda c: c.update(seats={"role": "main"}),
+        lambda c: c["orch_config"].update(config=["x"]),
+        lambda c: c["orch_config"]["config"].update(roles=[]),
+        lambda c: c["orch_config"]["config"]["roles"].update(main="x"),
+        lambda c: c["routines"][0].update(name=5),
+    ],
+)
+def test_malformed_sealed_packages_are_refused_not_crashed(mutate):
+    pkg = wt.build_package(source(), ("roles", "seats", "routines", "goals", "orch_config"))
+    mutate(pkg["content"])
+    result = wt.preview(wt.seal(pkg), source())
+    assert result["ok"] is False
+    assert "package_invalid" in {r["code"] for r in result["refused"]}
+
+
+def test_malformed_redactions_are_refused():
+    pkg = wt.build_package(source(), ("goals",))
+    assert "package_invalid" in {
+        r["code"] for r in wt.preview({**pkg, "redactions": ["x"]}, source())["refused"]
+    }
+    assert "package_invalid" in {
+        r["code"] for r in wt.preview({**pkg, "redactions": {}}, source())["refused"]
+    }
+
+
 # ------------------------------------------------------------------ real stores
 
 
@@ -384,3 +444,32 @@ def test_cli_memory_flag_is_refused_without_a_reader(tmp_path, capsys):
         ]
     )
     assert code != 0 and "memory_unavailable" in capsys.readouterr().err
+
+
+def test_a_locked_or_broken_store_is_an_error_not_an_empty_section(workspace, monkeypatch):
+    import sqlite3
+
+    db, directory = workspace
+
+    def locked(path):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(wt, "_read_only", locked)
+    with pytest.raises(ToolError, match="store_unreadable"):
+        wt.read_source(db, "ws_a", directory, BOARD)
+    monkeypatch.undo()
+
+    class Broken:
+        _lock = __import__("threading").Lock()
+
+        class _conn:
+            @staticmethod
+            def execute(*a):
+                raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(ToolError, match="store_unreadable"):
+        wt.read_source(Broken, "ws_a", directory, BOARD)
+
+
+def test_scan_key_cache_is_bounded():
+    assert wt._named_secret.cache_info().maxsize is not None

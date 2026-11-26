@@ -41,7 +41,7 @@ triggers, MCP urls and `secret_ref`s, user ids and row ids are absent by constru
 (`find_kinds` for detection of any length, `redact_tail` for replacement): a credential-shaped
 value becomes its marker and is listed in `redactions` by path and kind. Keys that look like
 credentials (`redact_value`) are treated the same. Verbatim memory is never rewritten: a hit
-refuses the export. A final scan fails closed. The scanner is deliberately broad, so ordinary
+refuses the export. Key text is scanned too (a credential-shaped key is renamed to its marker on export, refused on preview, and shown as `<key>` in paths). A final scan fails closed. The scanner is deliberately broad, so ordinary
 prose such as `auth: OAuth` can be redacted; that errs toward leaving text out.
 
 ## Preview and collision rules

@@ -15,7 +15,7 @@
 
 - **How it fails:**
 
-  - Refusals carry a stable code (`memory_needs_opt_in`, `memory_contains_secret`, `memory_unavailable`, `no_live_config`, `package_too_large`, `package_invalid`) and never contain package or workspace text.
+  - Refusals carry a stable code (`memory_needs_opt_in`, `memory_contains_secret`, `memory_unavailable`, `no_live_config`, `package_too_large`, `package_invalid`, `store_unreadable`) and never contain package or workspace text. A locked or unreadable store is an error (`store_unreadable`), never an empty section; a missing table reads as empty. A malformed package (wrong section shapes, missing keys) is refused with `package_invalid`, not a crash.
 
 - **Tests:**
 
