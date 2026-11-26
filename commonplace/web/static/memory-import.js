@@ -16,6 +16,27 @@ const formats = [
 const scopeLabel = (scope) => scope === "private" ? "Your private imported history" : "Workspace conversations";
 // One small dithered cue beside the Deck title for each step; the title and every word below it stay as they are.
 const stepArt = { choose: "step-choose", preview: "step-preview", reading: "step-progress", previewing: "step-progress", importing: "step-progress", report: "step-report" };
+const reasonNote = (rules) => rules ? '<p class="memory-import-hint" data-import-reason role="status" hidden></p>' : "";
+// The server owns which destination takes which file type; this only applies what /rules says.
+export function applyRules(form, rules) {
+  const format = form?.elements?.format, scope = form?.elements?.scope;
+  if (!rules?.destinations || !format || !scope?.options) return;
+  const [source, , label] = formats[Number(format.value)] || [];
+  const rule = (value) => rules.destinations.find((row) => row.scope === value);
+  const accepts = (row) => row?.sources?.includes(source);
+  const usable = (row) => accepts(row) && row.available !== false;
+  const options = [...scope.options];
+  for (const option of options) option.disabled = !usable(rule(option.value));
+  const open = options.find((option) => !option.disabled);
+  if (open && scope.value !== open.value && options.find((option) => option.value === scope.value)?.disabled) scope.value = open.value;
+  const note = form.querySelector?.("[data-import-reason]"), submit = form.querySelector?.('[type="submit"]');
+  const homes = rules.destinations.filter(accepts);
+  const blocked = !open;
+  const fits = homes.length < rules.destinations.length || blocked;
+  const text = blocked ? (homes.find((row) => row.reason)?.reason || `${label} cannot be saved here.`) : fits ? `${label} can only be saved into ${homes.filter(usable).map((row) => scopeLabel(row.scope).toLowerCase()).join(" or ")}.` : "";
+  if (note) { note.textContent = text; note.hidden = !text; note.setAttribute?.("role", blocked ? "alert" : "status"); }
+  if (submit) submit.disabled = blocked;
+}
 const plainError = (error) => String(error || "").replace(/(?:you can )?retry safely\.?/gi, "Nothing was saved twice. Try again.");
 
 export function renderImport(state, me = {}, look = "classic") {
@@ -28,13 +49,13 @@ export function renderImport(state, me = {}, look = "classic") {
     <header><h1 id="memory-import-title" tabindex="-1">${heading}</h1>${deck ? artHTML(stepArt[phase]) : ""}</header>
     ${phase === "choose" ? (deck ? `<p class="memory-import-intro">Bring in old chats. Each message is saved with your exact words.</p><p class="memory-import-hint">Each memory is marked with the file it came from.</p><form data-import-choose>
       <div class="memory-import-group"><label for="import-format">Where it comes from</label><select id="import-format" name="format">${formats.map(([source, , label], index) => source === "native-memory" && me.can_admin !== true ? "" : `<option value="${index}">${e(label)}</option>`).join("")}</select></div>
-      <div class="memory-import-group"><label for="import-scope">Save into</label><select id="import-scope" name="scope" aria-describedby="import-scope-hint"><option value="threads">Workspace conversations</option>${me.can_admin === true ? '<option value="private">Your private imported history</option>' : ""}</select><p id="import-scope-hint" class="memory-import-hint">Everyone who can read this workspace's conversations will see these. For private history, import in your personal workspace.</p></div>
+      <div class="memory-import-group"><label for="import-scope">Save into</label><select id="import-scope" name="scope" aria-describedby="import-scope-hint"><option value="threads">Workspace conversations</option>${me.can_admin === true ? '<option value="private">Your private imported history</option>' : ""}</select><p id="import-scope-hint" class="memory-import-hint">Everyone who can read this workspace's conversations will see these. For private history, import in your personal workspace.</p>${reasonNote(state.rules)}</div>
       <div class="memory-import-group"><label for="import-file">File</label><div class="memory-import-file"><span class="memory-import-picker"><span class="btn">Choose file</span><input id="import-file" name="file" type="file" accept=".json,.jsonl,.ndjson,.md,.txt" aria-describedby="import-file-hint" required></span><span data-import-filename aria-live="polite">No file chosen</span></div><p id="import-file-hint" class="memory-import-hint">One text file, up to 4 MB. No ZIP files or attachments.</p></div>
       <div class="memory-import-actions"><button class="btn" type="button" data-import-action="close">Cancel</button><button class="btn primary" type="submit">Preview file</button></div>
       </form>` : `<p>Choose one export. Your exact words are kept.</p><form data-import-choose>
       <label>Export format<select name="format">${formats.map(([source, , label], index) => source === "native-memory" && me.can_admin !== true ? "" : `<option value="${index}">${e(label)}</option>`).join("")}</select></label>
       <label>Destination<select name="scope"><option value="threads">Workspace conversations</option>${me.can_admin === true ? '<option value="private">Your private imported history</option>' : ""}</select></label>
-      <p class="memory-import-hint">Workspace access rules apply. Private history requires your personal workspace.</p>
+      <p class="memory-import-hint">Workspace access rules apply. Private history requires your personal workspace.</p>${reasonNote(state.rules)}
       <label>Export file<input name="file" type="file" accept=".json,.jsonl,.ndjson,.md,.txt" required></label>
       <p class="memory-import-hint">UTF-8, up to 4 MiB. One conversation, facts or memory-text file. No ZIPs or attachments.</p>
       <div class="memory-import-actions"><button class="btn primary" type="submit">Preview file</button><button class="btn" type="button" data-import-action="close">Cancel</button></div>
@@ -47,11 +68,12 @@ export function renderImport(state, me = {}, look = "classic") {
 }
 
 export function createMemoryImport({ mount, me, api = request, onClose = () => {}, look = mount.ownerDocument?.documentElement?.dataset.ui || "classic" }) {
-  let state = { phase: "choose" }, upload = null, stopped = false, epoch = 0;
+  let state = { phase: "choose" }, upload = null, stopped = false, epoch = 0, rules = null;
   function draw() {
     if (stopped) return;
-    mount.innerHTML = renderImport(state, me, look);
+    mount.innerHTML = renderImport({ ...state, rules }, me, look);
     mount.querySelector("#memory-import-title")?.focus();
+    if (state.phase === "choose") applyRules(mount.querySelector("form[data-import-choose]"), rules);
   }
   function reset() { ++epoch; upload = null; state = { phase: "choose" }; draw(); }
   async function choose(event) {
@@ -68,7 +90,8 @@ export function createMemoryImport({ mount, me, api = request, onClose = () => {
     draw();
     try {
       if (file.size > MAX_FILE_BYTES) throw new Error("size");
-      if (!(source === "native-memory" ? /\.(md|txt)$/i : /\.(json|jsonl|ndjson)$/i).test(file.name)) throw new Error("type");
+      const accepted = rules?.extensions?.[source];
+      if (!(accepted ? accepted.some((suffix) => file.name.toLowerCase().endsWith(suffix)) : (source === "native-memory" ? /\.(md|txt)$/i : /\.(json|jsonl|ndjson)$/i).test(file.name))) throw new Error("type");
       // Keep BOMs and CR/LF exactly; invalid UTF-8 is refused, never replaced.
       const transcript = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
       if (stopped || visit !== epoch) return;
@@ -113,13 +136,19 @@ export function createMemoryImport({ mount, me, api = request, onClose = () => {
       if (button) button.disabled = !state.consent;
       return;
     }
-    if (!event.target.matches('input[type="file"]')) return;
-    const filename = mount.querySelector("[data-import-filename]");
-    if (filename) filename.textContent = event.target.files[0]?.name || "No file chosen";
+    if (event.target.matches('input[type="file"]')) {
+      const filename = mount.querySelector("[data-import-filename]");
+      if (filename) filename.textContent = event.target.files[0]?.name || "No file chosen";
+    } else if (event.target.matches('select[name="format"]')) applyRules(event.target.form, rules);
   }
   mount.addEventListener("submit", choose);
   mount.addEventListener("click", click);
   mount.addEventListener("change", change);
   draw();
+  void Promise.resolve(api("/api/memory/import/rules")).then((found) => {
+    if (stopped || !Array.isArray(found?.destinations)) return;
+    rules = found;
+    if (state.phase === "choose") draw();
+  }, () => {});
   return { stop() { stopped = true; ++epoch; upload = null; state = {}; mount.removeEventListener("submit", choose); mount.removeEventListener("click", click); mount.removeEventListener("change", change); } };
 }

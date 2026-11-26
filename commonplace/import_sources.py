@@ -16,6 +16,37 @@ from .sync_protocol import MEMORY_FORMAT, MEMORY_IMPORT_SOURCE
 # use a separate private grant and are never offered as conversation exports.
 SOURCES = ("claude-code", "codex", "cursor", "t3", "grok-bot", "chatgpt", "claude-ai")
 
+# The one table of which destination takes which source. The server checks every import against
+# it and the web form reads it from GET /api/memory/import/rules, so they cannot disagree.
+DESTINATIONS = {"threads": SOURCES, "private": (*SOURCES, MEMORY_IMPORT_SOURCE)}
+EXTENSIONS = {
+    **{source: (".json", ".jsonl", ".ndjson") for source in SOURCES},
+    MEMORY_IMPORT_SOURCE: (".md", ".txt"),
+}
+
+
+def scope_for(path: str) -> str:
+    return "private" if path == "grant" else "threads"
+
+
+def accepts(scope: str, source: str) -> bool:
+    return source in DESTINATIONS.get(scope, ())
+
+
+def rules(private_available: bool, private_reason: str) -> dict:
+    """The table in the shape the form reads; availability is per person and workspace."""
+    destinations = [
+        {"scope": scope, "sources": list(sources), "available": True}
+        for scope, sources in DESTINATIONS.items()
+    ]
+    for row in destinations:
+        if row["scope"] == "private" and not private_available:
+            row.update(available=False, reason=private_reason)
+    return {
+        "destinations": destinations,
+        "extensions": {source: list(suffixes) for source, suffixes in EXTENSIONS.items()},
+    }
+
 
 def _timestamp(value):
     if isinstance(value, str):
