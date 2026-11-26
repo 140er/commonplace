@@ -16,6 +16,7 @@ import importlib.util
 import os
 import re
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -155,7 +156,7 @@ def served_empty(tmp_path, monkeypatch):
     yield from _serve(tmp_path, monkeypatch, machine=False)
 
 
-def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=None):
+def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=None, clock=False):
     width, height = viewport or SIZES[size]
     phone = width < 700
     touch = phone if touch is None else touch  # a tablet can be touch without being a phone width
@@ -165,6 +166,8 @@ def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=None):
     context.add_cookies([{"name": sessions.COOKIE, "value": cookie or fx.cookie, "url": fx.origin}])
     page = context.new_page()
     page.set_default_timeout(20000)
+    if clock:  # the page's timers become steppable; time still flows by itself
+        page.clock.install(time=int(time.time() * 1000))
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on(
@@ -183,11 +186,11 @@ def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=None):
     return context, page, errors
 
 
-def _run(fx, ui, size, body, cookie=None, viewport=None, touch=None):
+def _run(fx, ui, size, body, cookie=None, viewport=None, touch=None, clock=False):
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
-            context, page, errors = _open(browser, fx, ui, size, cookie, viewport, touch)
+            context, page, errors = _open(browser, fx, ui, size, cookie, viewport, touch, clock)
             body(page, f"{ui}-{size}", context)
             assert errors == []
             context.close()
@@ -299,6 +302,31 @@ def _assert_bar_sits_on_the_tab_bar(page):
     assert bar["bottom"] <= edge + 1.5, geometry
     assert abs(bar["bottom"] - edge) <= 1.5 or panel["bottom"] - bar["bottom"] <= 14, geometry
     assert bar["height"] <= 70, "Review and Cancel share one 44px row"
+
+
+@pytest.mark.parametrize("ui", UIS)
+def test_a_background_repaint_keeps_focus_on_the_saved_row(served, ui):
+    """After a save, focus sits on the saved row's heading; the screen's own later repaint (the overview
+    re-reads once the list changed) must not take it away from keyboard and screen-reader users."""
+    fx = served
+    fx.make(name="Acceptance box")
+
+    def body(page, label, context):
+        row = page.locator("[data-ws-id]").first
+        row.get_by_role("button", name="Change settings for Acceptance box").click()
+        page.get_by_role("spinbutton", name="Memory (GiB)").fill("8")
+        page.get_by_role("button", name="Review the change").click()
+        page.get_by_role("button", name="Confirm and save").click()
+        expect(page.locator("[data-ws-notice]")).to_contain_text("Saved “Acceptance box”")
+        heading = row.get_by_role("heading", name="Acceptance box")
+        expect(heading).to_be_focused()
+        assert fx.listed()[0]["memory_mib"] == 8192
+        # The clock step makes the overview notice the changed list and repaint the whole screen.
+        page.clock.run_for(11000)
+        expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
+        expect(heading).to_be_focused()
+
+    _run(fx, ui, "desktop", body, clock=True)
 
 
 @pytest.mark.parametrize("ui", UIS)

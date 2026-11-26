@@ -1,0 +1,2 @@
+- **Promises:** After a cloud workspace is saved, the saved row's heading keeps focus through the Compute screen's own later repaint, in the Classic and the Deck look; the test steps the page clock to force that repaint instead of waiting for it.
+- **Tests:** `tests/test_compute_workspaces_browser.py` (`test_a_background_repaint_keeps_focus_on_the_saved_row`, `test_owner_creates_edits_and_reads_status`).

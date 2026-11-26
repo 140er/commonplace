@@ -1,0 +1,3 @@
+### Cloud workspaces keep focus on the saved row after a screen repaint
+
+After "Confirm and save" the section moves focus to the saved row's heading, so keyboard and screen-reader users know the save worked and where it landed. The Compute screen then repaints as a whole once the overview has read the changed list, and that repaint used to drop focus to the page because `holdFocus` in `commonplace/web/static/compute-workspaces.js` could not name a row heading. It now restores focus on the focused row heading (`[data-ws-id] .compute-ws-name`) like it does for the form heading and the row buttons, in the Classic and the Deck look. `tests/test_compute_workspaces_browser.py` pins it by stepping the page clock to force that repaint.
