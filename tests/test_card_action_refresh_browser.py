@@ -53,6 +53,7 @@ def serve_writes(page, cards, queue, reads):
                 content_type="application/json",
             )
         elif match and request.method in ("PATCH", "POST"):
+            reads.append("WRITE")
             card = next(c for c in cards if c["number"] == int(match.group(1)))
             body = request.post_data_json or {}
             if match.group(2) == "approve":
@@ -68,6 +69,31 @@ def serve_writes(page, cards, queue, reads):
             route.fallback()
 
     page.route("**/api/**", handler)
+
+
+# A squeezed header wraps its words one per line: report every visible text node under the selector
+# that spans more than one line, once the fonts are in.
+WRAPPED_TEXT = """async (selector) => {
+  await document.fonts.ready;
+  const root = document.querySelector(selector), walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const wrapped = [];
+  let nodes = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.textContent.trim()) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const tops = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top)));
+    if (!tops.size) continue;
+    nodes += 1;
+    if (tops.size > 1) wrapped.push(node.textContent.trim());
+  }
+  return { nodes, wrapped };
+}"""
+
+
+def reads_after_write(reads, path):
+    """Reads of one path that came after the action's own write, so no earlier refresh is counted."""
+    return reads[reads.index("WRITE") + 1 :].count(path)
 
 
 def lane(page, number):
@@ -113,8 +139,6 @@ def test_moving_a_card_changes_its_lane_behind_the_open_panel(browser, width):  
         open_card(page, 4)
         page.locator('#card-panel [data-action="card-menu"]').click()
         page.locator('.card-menu [data-menu-move="doing"]').wait_for()
-        page.wait_for_timeout(500)
-        reads.clear()
         page.locator('.card-menu [data-menu-move="doing"]').click()
         page.wait_for_function(
             "()=>document.querySelector(\".deck-board .card[data-card='4']\")"
@@ -122,8 +146,9 @@ def test_moving_a_card_changes_its_lane_behind_the_open_panel(browser, width):  
             timeout=5000,
         )
         assert not page.locator("#card-panel").is_hidden(), "the panel stays open"
-        assert reads.count("/api/boards/product/cards") == 1, reads
-        assert reads.count("/api/needs-me") == 1, reads
+        page.wait_for_load_state("networkidle")
+        assert reads_after_write(reads, "/api/boards/product/cards") == 1, reads
+        assert reads_after_write(reads, "/api/needs-me") == 1, reads
         assert untouched(page), "the page was reloaded"
         assert errors == []
     finally:
@@ -143,8 +168,6 @@ def test_releasing_a_card_changes_its_lane_behind_the_open_panel(browser, width)
         open_card(page, 6)
         form = page.locator('#card-panel form[data-form="release-origin"]')
         form.locator('input[name="reason"]').fill("Checked the source")
-        page.wait_for_timeout(500)
-        reads.clear()
         form.locator("[data-release-origin]").click()
         page.wait_for_function(
             "()=>document.querySelector(\".deck-board .card[data-card='6']\")"
@@ -152,8 +175,9 @@ def test_releasing_a_card_changes_its_lane_behind_the_open_panel(browser, width)
             timeout=5000,
         )
         assert not page.locator("#card-panel").is_hidden(), "the panel stays open"
-        assert reads.count("/api/boards/product/cards") == 1, reads
-        assert reads.count("/api/needs-me") == 1, reads
+        page.wait_for_load_state("networkidle")
+        assert reads_after_write(reads, "/api/boards/product/cards") == 1, reads
+        assert reads_after_write(reads, "/api/needs-me") == 1, reads
         assert untouched(page), "the page was reloaded"
         assert errors == []
     finally:
@@ -168,23 +192,13 @@ def test_board_header_keeps_its_layout_with_the_panel_open(browser, width, named
     try:
         open_board(page)
         open_card(page, 2)
-        page.wait_for_timeout(500)
-        metrics = page.evaluate(
-            """() => {
-              const intro = document.querySelector('.deck-board-intro');
-              const line = parseFloat(getComputedStyle(intro).lineHeight) || 20;
-              const words = intro.textContent.trim().split(/\\s+/).length;
-              return { title: document.querySelector('.deck-board-title').getBoundingClientRect().width,
-                       tools: document.querySelector('.deck-board .board-tools').getBoundingClientRect().width,
-                       lines: Math.round(intro.getBoundingClientRect().height / line), words };
-            }"""
-        )
+        metrics = page.evaluate(WRAPPED_TEXT, ".deck-board-heading")
         if SHOTS:
             Path(SHOTS).mkdir(parents=True, exist_ok=True)
             page.screenshot(
                 path=str(Path(SHOTS) / f"header-{width}-{'named' if named else 'unnamed'}.png")
             )
-        assert metrics["lines"] <= max(1, metrics["words"] // 3), f"one word per line: {metrics}"
+        assert metrics["nodes"] > 0 and metrics["wrapped"] == [], f"the header wraps: {metrics}"
     finally:
         page.close()
 
@@ -196,18 +210,10 @@ def test_classic_header_keeps_its_layout_with_the_panel_open(browser, width):  #
         open_board(page, look="classic")
         page.locator('.card[data-card="2"] h3 a').click()
         page.wait_for_selector("#card-panel:not([hidden]) .workbench-details")
-        page.wait_for_timeout(500)
-        metrics = page.evaluate(
-            """() => {
-              const title = document.querySelector('#title'), head = title.closest('.head');
-              const line = parseFloat(getComputedStyle(title).lineHeight) || 20;
-              return { title: title.getBoundingClientRect().width, head: head.getBoundingClientRect().width,
-                       lines: Math.round(title.getBoundingClientRect().height / line), text: title.textContent };
-            }"""
-        )
+        metrics = page.evaluate(WRAPPED_TEXT, "#title")
         if SHOTS:
             Path(SHOTS).mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(Path(SHOTS) / f"header-{width}-classic.png"))
-        assert metrics["lines"] <= 1 and metrics["title"] >= 80, f"the title is squeezed: {metrics}"
+        assert metrics["nodes"] > 0 and metrics["wrapped"] == [], f"the title wraps: {metrics}"
     finally:
         page.close()
