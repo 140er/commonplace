@@ -89,7 +89,7 @@ export function arrangeSettings(box, { owner = false } = {}) {
   if (policy) policy.textContent = 'Action permissions';
   // No notification service on this server: the card has no action, so it folds to one quiet line.
   // The wording (owner or member) comes from the section itself.
-  if (phone?.querySelector('[data-phone-push-unavailable]')) {
+  if (phone?.querySelector('[data-no-phone-push]')) {
     phone.classList?.add('deck-quiet-line');
     phone.querySelector('h2')?.classList?.add('sr');
   }

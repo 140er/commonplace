@@ -1009,7 +1009,7 @@ function phonePushView(data, owner = false) {
   const off = '<button data-action="phone-push-off">Turn off</button>';
   let body;
   // The owner is the one who sets the server up, so never tell them to ask the owner.
-  if (!data.available) body = `<p data-phone-push-unavailable>${e(owner ? "Phone push isn't available on this server." : "Phone push isn't available on this server. Ask the workspace owner to set it up.")}</p>${data.subscription ? off : ""}`;
+  if (!data.available) body = `<p data-no-phone-push>${e(owner ? "Phone push isn't available on this server." : "Phone push isn't available on this server. Ask the workspace owner to set it up.")}</p>${data.subscription ? off : ""}`;
   else if (!data.subscription && !data.eligible) body = `<p>${e(home)}</p>`;
   else if (!data.subscription) body = `<p>${e(how)}</p><button data-action="phone-push-on">Turn on</button><p>${e(home)}</p><p>${e(pause)}</p>`;
   else {
@@ -1020,7 +1020,7 @@ function phonePushView(data, owner = false) {
 }
 function todayEmailView(data) {
   let body;
-  if (!data.available) body = `<p data-today-email-unavailable>${e("Email isn't set up on this server.")}</p>`;
+  if (!data.available) body = `<p data-no-email>${e("Email isn't set up on this server.")}</p>`;
   else if (data.enabled) body = `<p>New items waiting on you are emailed to ${e(data.address)}. Each email has the title and a link, never the card text.</p><button data-action="today-email-off">Turn off</button>`;
   else body = `<p>Get an email at ${e(data.address)} when a new item is waiting on you in Today. Each email has the title and a link, never the card text. A burst of items arrives as one email.</p><button data-action="today-email-on">Turn on</button>`;
   return `<section class="settings-section" id="today-email"><h2>Email for Today</h2>${body}</section>`;

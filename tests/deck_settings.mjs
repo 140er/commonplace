@@ -75,7 +75,7 @@ test('an unavailable phone push section folds to one quiet line and keeps its ow
     const added = [];
     const notice = {textContent:owner?"Phone push isn't available on this server.":"Phone push isn't available on this server. Ask the workspace owner to set it up."};
     const heading = {classList:{add:name=>added.push(`h2.${name}`)}};
-    const section = {querySelector:q=>q==='h2'?heading:q==='[data-phone-push-unavailable]'?notice:null,classList:{add:name=>added.push(`section.${name}`)}};
+    const section = {querySelector:q=>q==='h2'?heading:q==='[data-no-phone-push]'?notice:null,classList:{add:name=>added.push(`section.${name}`)}};
     const connection = {querySelector:()=>null};
     const box = {querySelector:q=>q==='#phone-push'?section:q==='.agents-settings'?connection:null,
       querySelectorAll:()=>[],prepend(){},insertAdjacentHTML(){}};
