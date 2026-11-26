@@ -3,6 +3,7 @@ export const PROJECT_COPY = Object.freeze({
   statusPrivate: "status private", connect: "Connect app", settings: "Project settings",
   sharedExplain: "This project keeps its memory in the shared section that every project uses. A connected app here could read and change all of it.",
   ownWing: "Give this project its own memory section",
+  wingRecommend: "Recommended: its own memory section. The connected app then reads and changes only this project's memory, not what other projects keep.",
   allowShared: "Allow this connected app to read and write all shared memory",
   ownWingEffect: "Connected apps that can only read shared memory will stop seeing this project. Its bot may be cleared. This can't be undone here.",
   ownWingDone: "This project now has its own memory section.",
@@ -19,7 +20,7 @@ export const PROJECT_COPY = Object.freeze({
 });
 
 export function sharedWingHTML(payload, e, { allowShared = true } = {}) {
-  return `<section class="form-tile"><h2 id="project-wing-title">Project memory</h2><p>${e(payload.explanation || PROJECT_COPY.sharedExplain)}</p><p>${e(payload.fix?.effect || PROJECT_COPY.ownWingEffect)}</p><button type="button" class="blockbtn" data-wing-choice="own">${e(PROJECT_COPY.ownWing)}</button>${allowShared ? `<button type="button" class="opt" data-wing-choice="shared">${e(PROJECT_COPY.allowShared)}</button>` : ""}<button type="button" class="opt" data-wing-choice="cancel">Cancel</button></section>`;
+  return `<section class="form-tile"><h2 id="project-wing-title">Project memory</h2><p>${e(payload.explanation || PROJECT_COPY.sharedExplain)}</p><p>${e(PROJECT_COPY.wingRecommend)}</p><p>${e(payload.fix?.effect || PROJECT_COPY.ownWingEffect)}</p><button type="button" class="blockbtn" data-wing-choice="own">${e(PROJECT_COPY.ownWing)}</button>${allowShared ? `<button type="button" class="opt" data-wing-choice="shared">${e(PROJECT_COPY.allowShared)}</button>` : ""}<button type="button" class="opt" data-wing-choice="cancel">Cancel</button></section>`;
 }
 
 // These are plain text: callers assign them with textContent.
@@ -172,7 +173,8 @@ function chooseSharedWing(payload, e, options) {
     modal.dialog.querySelectorAll("[data-wing-choice]").forEach(button => {
       button.onclick = () => { choice = button.dataset.wingChoice; modal.dismiss(); };
     });
-    modal.show();
+    // The least-sharing choice is the default.
+    modal.show('[data-wing-choice="own"]');
   });
 }
 
@@ -367,27 +369,38 @@ async function requestConnect({ api, path, project, e, active, ask, onWing, onSt
     if (project.main.source === "coordinator") body.replace = true;
   }
   let wingChanged = false;
+  // A project on shared memory is asked about it before anything is requested, so the
+  // happy path never shows an error. The server still refuses an unconsented shared grant.
+  const askWing = async (payload, wingPath) => {
+    const choice = await chooseSharedWing(payload, e);
+    if (choice === "cancel" || !active()) return false;
+    onStatus("");
+    if (choice === "shared") body.allow_shared = true;
+    else {
+      const owned = await onWing(wingPath);
+      if (!active()) return false;
+      wingChanged = owned.changed;
+    }
+    return true;
+  };
+  if (project.memory?.shared && !await askWing({}, `${path}/wing`)) return null;
   for (;;) {
     try { return await api(`${path}/orchestrator/connect`, { method: "POST", body }); }
     catch (error) {
       if (!active()) return null;
-      if (error.status === 409) onStatus(connectConflict(error.payload));
       if (error.status === 409 && error.payload?.error === "shared_wing") {
-        const choice = await chooseSharedWing(error.payload, e);
-        if (choice === "cancel" || !active()) return null;
-        onStatus("");
-        if (choice === "shared") body.allow_shared = true;
-        else {
-          const owned = await onWing(error.payload.fix.path);
-          if (!active()) return null;
-          wingChanged = owned.changed;
-        }
+        // The project view was stale: the server's refusal still gets the same question.
+        if (!await askWing(error.payload, error.payload.fix.path)) return null;
       } else if (error.status === 409 && error.payload?.error === "replaces current orchestrator" && !body.replace) {
+        onStatus(connectConflict(error.payload));
         const copy = { title: "Replace the bot?", body: `<p>${wingChanged ? PROJECT_COPY.ownWingDone + " " : ""}Connect replaces the current bot.</p>`, action: "Connect" };
         if (!await ask(copy)) return null;
         onStatus("");
         body.replace = true;
-      } else throw error;
+      } else {
+        if (error.status === 409) onStatus(connectConflict(error.payload));
+        throw error;
+      }
     }
   }
 }
