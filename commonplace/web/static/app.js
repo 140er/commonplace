@@ -556,7 +556,7 @@ function needsCards() {
 function needsView() {
   // Keep the Speak/Stop node (and its focus) through live refreshes.
   const speak = root.querySelector('[data-action="speak-digest"]'), focused = speak && document.activeElement === speak;
-  title("Needs me", `${speech.supported ? '<button class="btn speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : ""}<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>`);
+  title("Waiting on you", `${speech.supported ? '<button class="btn speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : ""}<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>`);
   if (speak) { root.querySelector('[data-action="speak-digest"]')?.replaceWith(speak); if (focused) speak.focus({ preventScroll: true }); }
   speechView();
   // An open card owns the shared side panel; the list comes back with the route.
@@ -605,8 +605,8 @@ function askStrip(card, about) {
     const at = hhmm(hold.updated_at || hold.release_at);
     return { text: `Released · You are asking about ${about.title}${at ? `, released at ${at}` : ""}. It can't be recalled here.`, backLabel: "Back to the approval" };
   }
-  if (card.proposal_status === "pending" || hold) return { text: `Approval · You are asking about ${about.title} Approve or decline it in Needs me.`, backLabel: "Back to the approval" };
-  return { text: `Decision · You are asking about ${about.title}`, backLabel: "Back to Needs me" };
+  if (card.proposal_status === "pending" || hold) return { text: `Approval · You are asking about ${about.title} Approve or decline it in Waiting on you.`, backLabel: "Back to the approval" };
+  return { text: `Decision · You are asking about ${about.title}`, backLabel: "Back to Waiting on you" };
 }
 function boardView() {
   const board = currentBoard();
@@ -995,7 +995,7 @@ function removeAssignmentForm(card) {
 function handoffForm(card, prefill = {}) {
   voice.stop();
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
-  panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" list="handoff-recipients" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><datalist id="handoff-recipients"><option value="coordinator">This project's Coworker</option><option value="anyone">Return to the pool</option><option value="owner">Workspace owner</option></datalist><p class="set-note">Use coordinator for this project's Coworker, anyone for the pool, owner, or an agent name.</p><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" list="handoff-recipients" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><datalist id="handoff-recipients"><option value="coordinator">This project's bot</option><option value="anyone">Return to the pool</option><option value="owner">Workspace owner</option></datalist><p class="set-note">Use coordinator for this project's bot, anyone for the pool, owner, or an agent name.</p><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
   // On Needs me the panel holds the item's detail: it waits while the form is open.
   if (onNeeds()) state.needsUI?.pause(true);
 }
@@ -1042,7 +1042,7 @@ async function settingsView(epoch) {
     plan: { path: "/api/plan", name: "Plan", view: planView },
     orchestration: { path: "/api/settings/orchestration", name: "Bot management", view: () => '<section class="settings-section"><h2>Bot management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
     chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
-    connections: { path: "/api/connections", name: "Agents", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
+    connections: { path: "/api/connections", name: "Connected apps", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
     phone: { path: "/api/phone-push", name: "Phone notifications", view: phonePushView, ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },
     hooks: { path: "/api/webhooks", name: "Webhooks", view: (value) => `<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${(value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks")}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section>` },
   };

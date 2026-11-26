@@ -136,8 +136,8 @@ async function main() {
     assert.doesNotMatch(f.mount.innerHTML,/<img/);
     assert.match(section(f.mount.innerHTML,'connections'),/Loading/);
     f.expire(); await flush();
-    assert.match(section(f.mount.innerHTML,'connections'),/Connections timed out\. Retry\./);
-    assert.match(section(f.mount.innerHTML,'connections'),/aria-label="Retry Connections"/);
+    assert.match(section(f.mount.innerHTML,'connections'),/Connected apps timed out\. Retry\./);
+    assert.match(section(f.mount.innerHTML,'connections'),/aria-label="Retry Connected apps"/);
     assert.match(section(f.mount.innerHTML,'users'),/person@example.com/);
     assert.equal(f.timers.size,0);
     for(const key of ['deploy','backups']) assert.match(section(f.mount.innerHTML,key),/Instance administrator access required/);
@@ -146,7 +146,7 @@ async function main() {
   } else if(which==='lifecycle') {
     const f=fixture(createAdmin); f.ui.show();
     f.requests[0].resolve(userData('First')); f.requests[1].reject(new Error('source canary')); await flush();
-    assert.match(section(f.mount.innerHTML,'connections'),/Connections unavailable\. Retry\./);
+    assert.match(section(f.mount.innerHTML,'connections'),/Connected apps unavailable\. Retry\./);
     assert.doesNotMatch(f.mount.innerHTML,/source canary/);
     f.click('connections'); await flush();
     assert.equal(f.requests.length,7); assert.ok(f.requests[6].path.endsWith('/connections'));

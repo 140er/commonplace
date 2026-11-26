@@ -42,7 +42,7 @@ export function assignmentRefusal(error) {
   const current = payload.current;
   let reason = error.message;
   if (error.status === 409 && current?.status === "doing" && current.assignee) {
-    reason = `${actor(current.assignee)}${current.assignee.startsWith("conn:") ? " (agent)" : ""} has started working on this card, so its assignment stays.`;
+    reason = `${actor(current.assignee)}${current.assignee.startsWith("conn:") ? " (connected app)" : ""} has started working on this card, so its assignment stays.`;
   } else if (payload.code === "handoff_refused") {
     if (payload.error === "Card is reserved for another connection; the workspace owner can move it.") {
       reason = "Only the workspace owner can remove this assignment.";
@@ -55,8 +55,8 @@ export function assignmentRefusal(error) {
 
 export function detailsAuthor(ref, board = {}) {
   if (!ref) return "";
-  if (ref === board.coordinator) return `${board.name || board.slug} Coworker`;
-  return String(ref).startsWith("conn:") ? `${actor(ref)} (agent)` : actor(ref);
+  if (ref === board.coordinator) return `${board.name || board.slug} bot`;
+  return String(ref).startsWith("conn:") ? `${actor(ref)} (connected app)` : actor(ref);
 }
 
 // Events arrive in append order. A later comment must never reset the ask clock.

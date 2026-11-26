@@ -9,13 +9,13 @@ import pytest
 STATIC = Path(__file__).resolve().parents[1] / "commonplace/web/static"
 CONNECT = "/api/projects/ledger/orchestrator/connect"
 OWN = "Give this project its own memory section"
-SHARED = "Allow this agent to read and write all shared memory"
+SHARED = "Allow this connected app to read and write all shared memory"
 SHARED_CONFLICT = {
     "error": "shared_wing",
     "explanation": "This project uses shared memory. An agent could read and change all of it.",
     "fix": {"path": "/api/projects/ledger/wing", "label": OWN},
 }
-OTHER_CONFLICT = {"error": "The Coworker connection changed; try again"}
+OTHER_CONFLICT = {"error": "The bot connection changed; try again"}
 
 
 @pytest.fixture(scope="module")
@@ -167,12 +167,12 @@ def test_replacement_409_cancel_keeps_conflict_and_next_step(connect_page, entry
     page, state = connect_page
     state["conflicts"] = [{"error": "replaces current orchestrator"}]
     button = start_connect(page, entry)
-    dialog = page.get_by_role("alertdialog", name="Replace the Coworker?", exact=True)
+    dialog = page.get_by_role("alertdialog", name="Replace the bot?", exact=True)
     dialog.get_by_role("button", name="Cancel", exact=True).click()
     expect(button).to_be_enabled()
     status = page.locator("[data-project-connect-status]")
     text = status.inner_text()
-    assert "already has a Coworker" in text
+    assert "already has a bot" in text
     assert "confirm its replacement" in text
     assert status.is_visible()
     assert state["posts"] == [(CONNECT, {})]
@@ -187,10 +187,10 @@ def test_other_connect_409_shows_reason_in_orchestrator_section(connect_page):
     expect(button).to_be_enabled()
     status = page.locator("[data-project-connect-status]")
     text = status.inner_text()
-    assert "Could not connect the agent." in text
+    assert "Could not connect the app." in text
     assert OTHER_CONFLICT["error"] in text, f"missing conflict reason: {text!r}"
     assert status.is_visible(), "the other 409 must be visible without a dialog"
-    assert status.locator("..").get_by_role("heading", name="Coworker", exact=True).count()
+    assert status.locator("..").get_by_role("heading", name="Bot", exact=True).count()
 
 
 @pytest.mark.parametrize("choice", ["own", "shared"])

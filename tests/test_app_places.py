@@ -15,7 +15,7 @@ STATIC = ROOT / "web" / "static"
 RENDERED = {
     "Cloud workspaces": ("compute.js", "<h1>Cloud workspaces</h1>"),
     "Add a machine": ("compute-pairing.js", ">Add a machine</h2>"),
-    "Needs me": ("rail.js", "Needs me"),
+    "Waiting on you": ("rail.js", "Waiting on you"),
     "Admin": ("rail.js", ">Admin<"),
     "Runner machines": ("adminrunners.js", ">Runner machines</h2>"),
     "Advanced": ("compute.js", 'label: "Advanced"'),

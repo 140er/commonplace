@@ -161,14 +161,14 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             "Free plan",
             "Bot management",
             "Chat",
-            "Agents",
+            "Connected apps",
             "Scheduled prompts",
             "Tool policy",
             "Phone notifications",
             "Webhooks",
             "Look",
         ]
-        renamed = {"Agents": "Connected apps", "Tool policy": "What bots may do without asking"}
+        renamed = {"Tool policy": "What bots may do without asking"}
         for old in old_sections:
             heading = page.get_by_role("heading", name=renamed.get(old, old), exact=True)
             heading.scroll_into_view_if_needed()

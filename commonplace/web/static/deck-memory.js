@@ -58,7 +58,7 @@ export function savedBy(row, people = {}, viewer = "") {
   const resolved = actor(connection);
   if (connection && resolved !== String(connection).replace(/^(conn:|user:)/, "") && !/^owner$/i.test(resolved)) return resolved;
   // An unresolved connection is an internal identifier, not a display name.
-  if (row.author && row.author !== ref && !/^(conn:|user:)/.test(row.author) && !/^owner$/i.test(row.author)) return row.author.replace(/ \(agent\)$/, "");
+  if (row.author && row.author !== ref && !/^(conn:|user:)/.test(row.author) && !/^owner$/i.test(row.author)) return row.author.replace(/ \((?:agent|connected app)\)$/, "");
   return row.kind === "reply" ? "Quick reply" : "Unknown author";
 }
 function savedTime(row) {

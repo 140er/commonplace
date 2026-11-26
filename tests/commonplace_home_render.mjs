@@ -76,7 +76,7 @@ if (which === "need_items") {
     // The rail no longer lists projects: the release shows in the Needs me count of the account menu.
     const rail = nodes["#board-nav"].outerHTML;
     assert.ok(!rail.includes('class="proj"'), "The rail lists no projects");
-    assert.match(rail, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> items<\/span>/, "Owner origin release must count in the Needs me total");
+    assert.match(rail, /href="#\/needs">Waiting on you<span class="count need">3<span class="sr"> items<\/span>/, "Owner origin release must count in the Needs me total");
     assert.deepEqual(home.needItems(needs).map(({ card }) => card.number), [22, 7, 1], "Release must rank after you and before plan, regardless of card number");
     context.needsView(); await flush();
     assert.equal(shows.at(-1), origin.number, "Origin approval must remain selected when opening Needs me");

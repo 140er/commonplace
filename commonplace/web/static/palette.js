@@ -22,11 +22,11 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   }
   if (board) {
     add('new-card', `New card in ${board.name || board.slug}`, 'Actions', { action: 'new-card', board: board.slug, key: 'C' });
-    add('new-request', 'New request to the Coworker', 'Actions', { action: 'open-chat', board: board.slug, key: '/' });
+    add('new-request', 'New request to the bot', 'Actions', { action: 'open-chat', board: board.slug, key: '/' });
   }
   add('new-project', 'New project', 'Actions', { action: 'new-board' });
   for (const project of boards) add(`board-${project.slug}`, project.name || project.slug, 'Projects', { href: `#/board/${encode(project.slug)}`, board: project.slug });
-  add('needs', 'Needs me', 'Go to', { href: '#/needs', key: 'G N' });
+  add('needs', 'Waiting on you', 'Go to', { href: '#/needs', key: 'G N' });
   add('memory', 'Memory', 'Go to', { href: '#/memory', key: 'G M' });
   if (board) {
     add('board', 'Go to board', 'Go to', { href: `#/board/${encode(board.slug)}`, key: 'G B' });
@@ -147,10 +147,10 @@ function itemIcon(item) {
 const shortcutRows = [
   ['⌘K / Ctrl K', 'Search or do (palette)', true],
   ['C', 'New card'], ['/', 'Open the chat and put the cursor in it'],
-  ['G then B / N / M', 'Go to board / Needs me / memory'],
+  ['G then B / N / M', 'Go to board / Waiting on you / memory'],
   ['J / K', 'Next / previous item'], ['Enter', 'Open selected card'],
   ['E', 'Edit the selected field'], ['M', 'Move card to…'],
-  ['R', 'Ask a question (Needs me)'], ['Y / L', 'Copy exact words / link to card (memory notes)'],
+  ['R', 'Ask a question (Waiting on you)'], ['Y / L', 'Copy exact words / link to card (memory notes)'],
   ['Z', 'Stop a pending send (while shown)'], [']', 'Close the chat, or hide the side panel'],
   ['?', 'Keyboard shortcuts'], ['Esc', 'Close a dialog, the palette, or the chat', true],
 ];
@@ -206,7 +206,7 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
   function open(options = {}) {
     context = options; mode = 'commands';
     show('Command palette');
-    dialog.innerHTML = `<div class="pin">${icon('search')}<input type="text" role="combobox" aria-label="Search or run an action" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" autocomplete="off" spellcheck="false"><span class="scope">${context.board ? `in ${e(context.board.name || context.board.slug)}` : 'Workspace'}</span>${context.deck ? `<button type="button" class="palette-close" data-palette-action="close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>` : ''}</div><ul class="pl" id="palette-results" role="listbox" aria-label="Results"></ul><div class="pfoot">${context.deck ? '<span class="palette-hint">↑↓ move · ↵ run</span><span class="note"></span>' : '<span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span class="note">Every action except Approve and Decline, which stay in Needs me</span>'}<button class="btn ghost sm" data-palette-action="close">Close <kbd>Esc</kbd></button></div>`;
+    dialog.innerHTML = `<div class="pin">${icon('search')}<input type="text" role="combobox" aria-label="Search or run an action" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" autocomplete="off" spellcheck="false"><span class="scope">${context.board ? `in ${e(context.board.name || context.board.slug)}` : 'Workspace'}</span>${context.deck ? `<button type="button" class="palette-close" data-palette-action="close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>` : ''}</div><ul class="pl" id="palette-results" role="listbox" aria-label="Results"></ul><div class="pfoot">${context.deck ? '<span class="palette-hint">↑↓ move · ↵ run</span><span class="note"></span>' : '<span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span class="note">Every action except Approve and Decline, which stay in Waiting on you</span>'}<button class="btn ghost sm" data-palette-action="close">Close <kbd>Esc</kbd></button></div>`;
     const input = dialog.querySelector('[role="combobox"]');
     input.value = options.query || '';
     renderResults(input.value); input.focus();

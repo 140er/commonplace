@@ -23,6 +23,6 @@ test('Deck palette uses product destinations and only live bot names, preserving
   assert.deepEqual(paletteItems({ items }).map(item => item.label), ['New chat', 'Waiting on you', 'Work', 'Bots', 'Cloud workspaces', 'Memory', 'Board', 'Settings', 'General', 'Work']);
   assert.equal(paletteItems({ items, query: 'GENERAL' })[0].href, '#/bots/one');
   assert.equal(paletteItems({ items, query: 'board' })[0].href, '#/board/work');
-  assert.ok(paletteItems().some(item => item.label === 'Needs me'));
+  assert.ok(paletteItems().some(item => item.label === 'Waiting on you'));
   assert.ok(!items.some(item => item.action === 'approve'));
 });

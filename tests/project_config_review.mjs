@@ -104,7 +104,7 @@ if (caseName === "member") {
   await click('[data-config-reject="2"]');
   if (caseName === "classic_bytes") snapshot();
   assert.equal(posts().length, 0, "Reject must ask before writing");
-  assert.match(host.innerHTML, /Reject Coworker config v2\?/);
+  assert.match(host.innerHTML, /Reject bot config v2\?/);
   assert.match(host.innerHTML, /current config/);
   assert.equal(host.querySelector('[data-config-accept="2"]').disabled, true);
   if (caseName === "cancel") {
@@ -137,7 +137,7 @@ if (caseName === "member") {
   }
 }
 if (caseName === "classic_bytes") assert.deepEqual(snapshots, [
-  "035449945ce241cca9dafe7040dd898435ce912fb93d82243dd3e772be69d300",
-  "ccc8efe383f5531c48b83f653d1d6b61c34c92f54acc1cf701cb03d699ec8b16",
-  "e5bebf5a75c73c7832f092c1915f818a5e762fdffaa4b3367de03d2834400a21",
+  "afe9ffcfe0c3188c0aad45336973572c283023875f11eed30d75d66c8646dcef",
+  "492f42c780fd91661eb4a3803ade73d4fadfc5fdacf69f3ade3578dcbd88540c",
+  "6ddedc8a6bf5958ad10a86ede096241862796cbbbed8ac2c198e57db99d9416a",
 ]);

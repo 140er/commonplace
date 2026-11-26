@@ -279,7 +279,7 @@ def test_browser_removal_shows_server_refusal(browser, hub, fresh, refusal, widt
         error = page.locator("#card-panel .assignment-refusal")
         error.wait_for()
         expected = {
-            "active": "receiver (agent) has started working on this card, so its assignment stays.",
+            "active": "receiver (connected app) has started working on this card, so its assignment stays.",
             "non-owner": "Only the workspace owner can remove this assignment.",
             "origin": "This card is still locked by the bot that made it. The owner can unlock it in the card, then try again.",
         }[refusal]

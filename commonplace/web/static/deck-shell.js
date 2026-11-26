@@ -147,7 +147,7 @@ export function renderShellBar(options) {
   </nav>`;
 }
 // Pages that are not one of the places still need a phone title, because the page heading hides on a phone.
-const PAGE_TITLES = { '#/bots/-/coworkers': 'Bot conversations', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Needs me', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
+const PAGE_TITLES = { '#/bots/-/coworkers': 'Bot conversations', '#/memory': 'Memory', '#/pipeline': 'Pipeline', '#/needs': 'Waiting on you', '#/boards': 'Projects', '#/start': 'Projects', '#/console': 'Console', '#/rules': 'Rules', '#/admin': 'Admin', '#/instance-admin': 'Server admin', '#/compute': 'Cloud workspaces', '#/settings': 'Settings', '#/work': 'Work', '#/bots': 'Bots' };
 export function renderShellTop(options) {
   const { hash = '', user = '', board = null } = options;
   const page = Object.entries(PAGE_TITLES).find(([prefix]) => hash === prefix || hash.startsWith(`${prefix}/`) || hash.startsWith(`${prefix}?`))?.[1];

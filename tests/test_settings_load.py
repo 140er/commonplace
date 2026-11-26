@@ -126,7 +126,7 @@ const context = {
   showError(value) { screenError = value; },
   // The tool policy mounts into its own section; tests/tool_policy_view.mjs covers that module.
   mountToolPolicy() {},
-  voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<section class="settings-section"><h2>Agents</h2></section>',
+  voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<section class="settings-section"><h2>Connected apps</h2></section>',
   // Scheduled prompts mount into their own section; tests/agent_schedules_view.mjs covers that module.
   mountAgentSchedules() {},
 };
@@ -151,7 +151,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
     blocked = false;
     values['/api/connections'] = { wings: failure === 'stale' ? ['shared'] : null, wings_state: failure };
     await context.refresh();
-    assert.match(html, /Agents/);
+    assert.match(html, /Connected apps/);
     assert.match(html, failure === 'unavailable' ? /Memory wings unavailable/ : /Still loading memory wings/);
     assert.match(html, /data-action="retry"/);
     return;
@@ -224,7 +224,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
   await advance(10000);
   const visible = html + screenError;
   const label = {
-    '/api/connections': 'Agents', '/api/webhooks': 'Webhooks', '/api/plan': 'Plan',
+    '/api/connections': 'Connected apps', '/api/webhooks': 'Webhooks', '/api/plan': 'Plan',
     '/api/phone-push': 'Phone notifications', '/api/chat-settings': 'Chat',
     '/api/settings/orchestration': 'Bot management',
   }[path] || path;

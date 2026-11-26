@@ -19,13 +19,13 @@ export function projectSubline(board) {
   if (board.counts == null && board.counts_state) return board.counts_state === 'unavailable' ? 'Counts unavailable' : 'Still loading counts';
   const agents = count(board.agents_working);
   const doing = count(board.counts?.doing);
-  return agents ? `${agents} agent${agents === 1 ? '' : 's'} working` : doing ? `${doing} doing` : 'Idle';
+  return agents ? `${agents} bot${agents === 1 ? '' : 's'} working` : doing ? `${doing} doing` : 'Idle';
 }
 
 // The Workspace group of the account menu: the screens people only visit to set things up.
 // Shared by the desktop rail and the phone top bar so both list the same entries.
 function menuLinks({ needs = 0, rulesWaiting = 0, can_admin = false, can_manage_instance = false } = {}) {
-  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a><a href="#/compute">Cloud workspaces</a>${can_admin === true ? '<a href="#/compute-map">Compute map</a>' : ''}</div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="logout">Sign out</button>`;
+  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Waiting on you${badge(needs, 'items')}</a><a href="#/console">Console</a><a href="#/compute">Cloud workspaces</a>${can_admin === true ? '<a href="#/compute-map">Compute map</a>' : ''}</div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="logout">Sign out</button>`;
 }
 
 // Pure markup: the shell delegates data-action clicks and owns navigation/state.

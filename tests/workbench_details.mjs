@@ -39,7 +39,7 @@ const cases = {
     assert.equal(state.since, card.events[2].at);
     assert.equal(quoted(html, 'data-context-text'), card.events[2].context);
     assert.ok(html.includes('Blocked since <time datetime="2026-10-01T12:40:00Z"'));
-    assert.ok(html.includes('Otto') || html.includes('otto (agent)'));
+    assert.ok(html.includes('Otto') || html.includes('otto (connected app)'));
     assert.ok(html.includes(`href="#/memory?q=${encodeURIComponent(card.ask)}"`));
     assert.equal(detailsContext(card, 'user:leon').needsMe, true);
     assert.equal(detailsContext(card, 'user:leon').blocked, false);
@@ -59,11 +59,11 @@ const cases = {
     const result = renderDetails(proposal, opts);
     assert.ok(result.includes('Context (exact words)'));
     assert.equal(quoted(result, 'data-context-text'), proposal.body);
-    assert.ok(result.includes('— builder (agent)'));
+    assert.ok(result.includes('— builder (connected app)'));
     assert.ok(result.includes(`<h3>${proposal.title}</h3>`));
     assert.ok(!result.includes('Blocked since'));
     assert.ok(!renderDetails({ ...proposal, events: [] }, opts).includes('— —'));
-    assert.equal(details.detailsAuthor('conn:lead', board), 'Atlas Coworker');
+    assert.equal(details.detailsAuthor('conn:lead', board), 'Atlas bot');
   },
   actions() {
     for (const marker of ['data-action="edit-card"', 'data-action="panel-move"', 'data-action="handoff"', 'data-form="comment"', 'value="review"', 'value="backlog"', 'name="text"', 'data-draft="comment-21"', 'data-version="4"']) assert.ok(html.includes(marker), marker);

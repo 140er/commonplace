@@ -1,0 +1,4 @@
+- **Owns:** The wording of the classic action-permissions intro.
+- **Promises:** The intro names bots and Waiting on you like the rest of the app; the permission choices and their stored values are unchanged.
+- **How it fails:** Only text is affected; a stale word never changes what Ask first holds.
+- **Tests:** `tests/tool_policy_view.mjs` covers the rendered section.
