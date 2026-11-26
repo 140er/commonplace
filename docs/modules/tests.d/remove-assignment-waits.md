@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_remove_assignment.py` waits for the pickup sentence, the refusal heading, text and Close button, the kept refusal after a background refresh, and the owner-only explanation to be visible, instead of reading visibility once while the drawer may still be rendering.

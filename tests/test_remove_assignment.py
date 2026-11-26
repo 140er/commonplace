@@ -14,6 +14,13 @@ from tests.test_commonplace_origin_holder_release import edit, snapshot
 from tests.test_commonplace_stranded_reservations import reserved
 
 
+def shown(locator):
+    """Wait until the element is visible (a page may still be rendering); fails after Playwright's timeout."""
+    from playwright.sync_api import expect
+
+    expect(locator).to_be_visible()
+
+
 def reservation(fresh, refusal=None):
     if refusal == "origin":
         _, receiver, number = reserved(fresh)
@@ -193,11 +200,13 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
         reason = form.get_by_label("Reason" if look == "deck" else "Reason (required)", exact=True)
         assert reason.get_attribute("required") is not None
         assert form.locator('input[name="to"]').count() == 0
-        assert form.get_by_text(
-            "Anyone who can work on this project can pick it up."
-            if look == "deck"
-            else "Anyone eligible to work on this board can pick it up."
-        ).is_visible()
+        shown(
+            form.get_by_text(
+                "Anyone who can work on this project can pick it up."
+                if look == "deck"
+                else "Anyone eligible to work on this board can pick it up."
+            )
+        )
         if look == "deck":
             assert form.locator("h2").evaluate("el=>getComputedStyle(el).fontSize") == "24px"
             assert form.locator("textarea").evaluate("""el=>({
@@ -283,14 +292,14 @@ def test_browser_removal_shows_server_refusal(browser, hub, fresh, refusal, widt
             "non-owner": "Only the workspace owner can remove this assignment.",
             "origin": "This card is still locked by the bot that made it. The owner can unlock it in the card, then try again.",
         }[refusal]
-        assert error.get_by_role("heading", name="Assignment not removed").is_visible()
-        assert error.get_by_text(expected, exact=True).is_visible()
+        shown(error.get_by_role("heading", name="Assignment not removed"))
+        shown(error.get_by_text(expected, exact=True))
         assert error.locator("button").count() == 1
-        assert error.get_by_role("button", name="Close", exact=True).is_visible()
+        shown(error.get_by_role("button", name="Close", exact=True))
         assert page.locator("#card-panel form, #card-panel textarea").count() == 0
         # A background refresh must preserve the refusal until it is dismissed.
         page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
-        assert error.is_visible()
+        shown(error)
         assert snapshot(fresh.owner, card["number"]) == before
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         shot(page, "deck", f"refusal-{refusal}", width)
@@ -307,9 +316,7 @@ def test_browser_non_owner_has_explanation_instead_of_action(browser, hub, fresh
     fresh.cookie = member_cookie(hub, fresh)
     context, page = open_drawer(browser, hub, fresh, card, width, "deck", removable=False)
     try:
-        assert page.get_by_text(
-            "Only the workspace owner can change this.", exact=True
-        ).is_visible()
+        shown(page.get_by_text("Only the workspace owner can change this.", exact=True))
         assert page.locator('[data-action="remove-assignment"]').count() == 0
     finally:
         context.close()
