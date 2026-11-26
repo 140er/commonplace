@@ -335,6 +335,8 @@ class Hub:
         body = {"request": unescape(match[1].decode()), "decision": "allow"}
         if tick:
             body["grant_import"] = "1"
+        if b'name="approve_client"' in page.raw:
+            body["approve_client"] = "1"  # the owner approves the new client
         status, headers, _ = self.client.request(
             path,
             "POST",
