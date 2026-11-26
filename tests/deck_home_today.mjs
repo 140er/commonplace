@@ -4,7 +4,6 @@ import { test } from 'node:test';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { placeMenu, todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText, runUpdate, retryIntent, quietSelector } from '../commonplace/web/static/deck-home-today.js';
 import { cardHTML, answersHTML, chipsHTML, kindOf, verbOf, activityText, approveNote, replyWords, sentLine } from '../commonplace/web/static/deck-today-capy.js';
-import { modelControls } from '../commonplace/web/static/deck-home.js';
 
 const card = { number: 7, version: 4, title: 'Review the release', actions: ['approve', 'reject'] };
 test('keys respect editing, modifiers, repeats, dialogs and the single-key preference', () => {
@@ -26,13 +25,6 @@ test('a stale read cannot restore a settled count, and a workspace switch clears
   assert.equal(ledger.apply(needs, me).count, 0);
   assert.equal(ledger.apply({ ...needs, approvals: [{ ...card, version: 5 }] }, me).count, 1);
   assert.equal(ledger.apply(needs, { ...me, workspace: 'two' }).count, 1);
-});
-test('model and effort choices require the live additive contract and configured provider', () => {
-  const catalog = [{ provider: 'local', model: 'small' }, { provider: 'other', model: 'large' }];
-  assert.deepEqual(modelControls({ id: 'old' }, catalog), { models: [], efforts: [] });
-  const offered = modelControls({ model: 'current', reasoning_effort: null }, catalog, { ready: true, label: 'local/current' });
-  assert.deepEqual(offered.models, ['current', 'small']);
-  assert.deepEqual(offered.efforts, ['low', 'medium', 'high', 'xhigh', 'max']);
 });
 test('writes use only offered actions, exact versions and a stable idempotency key', () => {
   assert.deepEqual(actionRequest(card, 'approve', { key: 'attempt-1' }), {

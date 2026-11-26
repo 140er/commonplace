@@ -1,8 +1,8 @@
 // The Work screen: lanes grouped like the Board, counts, project chips, "Show more", the empty lane, escaping and the mount contract.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
-import { LANES, SHOWN, TITLE, cardHTML, chipsHTML, healthHTML, laneHTML, mount, openCounts, pageHTML, projectFrom, workHash, workItems } from '../commonplace/web/static/deck-work.js';
+import { readFileSync, readdirSync } from 'node:fs';
+import { CARD_READS, LANES, SHOWN, TITLE, cardHTML, chipsHTML, healthHTML, laneHTML, mount, openCounts, pageHTML, projectFrom, settledPool, workHash, workItems } from '../commonplace/web/static/deck-work.js';
 import { boardGroup } from '../commonplace/web/static/deck-board.js';
 import { setNeedsQueue } from '../commonplace/web/static/needs-me.js';
 import { SCREENS } from '../commonplace/web/static/deck.js';
@@ -230,4 +230,72 @@ test('desktop lanes use three equal columns and Show N more is a text link, not 
   const css = readFileSync(new URL('../commonplace/web/static/deck-work.css', import.meta.url), 'utf8');
   assert.match(css, /@media \(min-width: 1100px\) \{ \.deck-work \.wk-cards \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \} \}/);
   assert.match(css, /\.deck-work \.wk-more \{ grid-column: 2;[^}]*border: 0; background: none;[^}]*text-decoration: underline/);
+});
+
+// ---- bounded card reads ----
+const flush = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
+
+test('settledPool keeps item order, reports failures per item and never runs more than the limit at once', async () => {
+  let running = 0, peak = 0;
+  const results = await settledPool([1, 2, 3, 4, 5, 6, 7], async item => {
+    running++; peak = Math.max(peak, running);
+    await flush();
+    running--;
+    if (item === 3) throw new Error('down');
+    return item * 10;
+  }, 3);
+  assert.equal(peak, 3);
+  assert.deepEqual(results.map(result => result.status), ['fulfilled', 'fulfilled', 'rejected', 'fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+  assert.deepEqual(results.filter(result => result.status === 'fulfilled').map(result => result.value), [10, 20, 40, 50, 60, 70]);
+  assert.deepEqual(await settledPool([], async () => 1), []);
+});
+
+test('more projects do not mean more parallel card reads than the bound on a refresh', async () => {
+  const many = Array.from({ length: 11 }, (_, index) => ({ slug: `p${index}`, name: `Project ${index}` }));
+  const gates = new Map(), requested = [];
+  let inFlight = 0, peak = 0;
+  const api = path => {
+    if (path === '/api/bots') return Promise.resolve({ bots: [] });
+    requested.push(path);
+    inFlight++; peak = Math.max(peak, inFlight);
+    return new Promise(resolve => gates.set(path, () => { inFlight--; resolve({ cards: [card(requested.length, { board: path.split('/')[3] })] }); }));
+  };
+  const root = fakeRoot();
+  const ui = mount({ root, api, me: { actor: me }, boards: many, route: '#/work' });
+  await flush();
+  assert.equal(requested.length, CARD_READS, 'only the bound is asked at first');
+  assert.equal(CARD_READS, 4);
+  while (gates.size) {
+    const [path, release] = gates.entries().next().value;
+    gates.delete(path); release();
+    await flush();
+  }
+  assert.equal(requested.length, many.length, 'every project is still read');
+  assert.ok(peak <= CARD_READS, `at most ${CARD_READS} in flight, saw ${peak}`);
+  assert.match(root.innerHTML, /Card 11/);
+  // A second refresh obeys the same bound.
+  peak = 0;
+  ui.refresh({ boards: many });
+  await flush();
+  while (gates.size) {
+    const [path, release] = gates.entries().next().value;
+    gates.delete(path); release();
+    await flush();
+  }
+  assert.ok(peak <= CARD_READS && peak > 0);
+  ui.stop();
+});
+
+test('a stylesheet manifest without a styles list does not stop a screen from mounting', () => {
+  const saved = globalThis.commonplaceAssetManifest;
+  globalThis.commonplaceAssetManifest = { version: 1, routes: {} };
+  try {
+    const root = fakeRoot();
+    const ui = mount({ root, api: async () => ({ bots: [], cards: [] }), me: { actor: me }, boards: [], route: '#/work' });
+    ui.stop();
+  } finally { globalThis.commonplaceAssetManifest = saved; }
+  const dir = new URL('../commonplace/web/static/', import.meta.url);
+  for (const name of readdirSync(dir).filter(file => file.endsWith('.js'))) {
+    assert.doesNotMatch(readFileSync(new URL(name, dir), 'utf8'), /commonplaceAssetManifest\??\.styles\.includes/, `${name} guards a missing styles list`);
+  }
 });

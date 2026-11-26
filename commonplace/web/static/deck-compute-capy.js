@@ -110,7 +110,7 @@ export function phoneTree(nodes, links) {
 }
 
 export function computeStyles(doc) {
-  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-compute-capy.css')) return;
+  if (globalThis.commonplaceAssetManifest?.styles?.includes('deck-compute-capy.css')) return;
   if (!doc?.head || doc.querySelector('link[data-compute-capy]')) return;
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-compute-capy.css', import.meta.url).href;

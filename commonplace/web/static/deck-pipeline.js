@@ -123,7 +123,7 @@ export const pageHTML = ({ prs = null, demo = false, error = '', choices = new M
 };
 
 function styles(doc) {
-  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-pipeline.css')) return;
+  if (globalThis.commonplaceAssetManifest?.styles?.includes('deck-pipeline.css')) return;
   if (!doc?.head || doc.querySelector('link[data-pipeline-style]')) return;
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-pipeline.css', import.meta.url).href;

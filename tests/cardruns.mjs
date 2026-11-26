@@ -247,6 +247,7 @@ const cases = {
     }
     const attest = cardRunsHTML([], '', { configured: true, refusal: 'binding_not_attested' });
     assert.ok(attest.includes('provider instance id') && attest.includes('providerInstances'));
+    assert.ok(!attest.includes('~/') && !attest.includes('settings.json') && attest.includes('T3 settings stored on that machine'), 'the setting is placed in plain words, with no file path');
     // A card nobody may take shows neither the control nor a complaint.
     for (const refusal of ['not_todo', 'assigned', 'blocked_by', 'waiting_on_person', 'proposal_open']) {
       const html = cardRunsHTML([], '', { configured: true, refusal });

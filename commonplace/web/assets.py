@@ -30,7 +30,6 @@ ROUTES = {
     "needs": ["needs.js", "details.js", "board.js", "children.js", "chatdock.js"],
     "decide": ["decide.js", "decide-swipe.js"],
     "bots": ["bots.js"],
-    "home": ["deck-home.js"],
     "today": ["deck-today-capy.js"],
     "compute": ["deck-workspace.js"],
     "coworkers": ["deck-workspace.js"],
