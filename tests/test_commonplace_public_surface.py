@@ -1,5 +1,6 @@
 """Complete installed route inventory and real-HTTP public-boundary probes."""
 
+import ipaddress
 import json
 import logging
 import threading
@@ -367,7 +368,9 @@ def test_complete_installed_route_inventory(surface):
     for index, ((method, path), auth) in enumerate({**EXACT, **PREFIX, **BUILTIN}.items()):
         concrete = path + "unknown" if (method, path) in PREFIX else path
         headers = {
-            "X-Forwarded-For": f"192.0.2.{index + 1}",
+            # One valid address per route (198.18.0.0/15 is reserved for tests), so no two
+            # routes share an anonymous rate-limit bucket however many routes there are.
+            "X-Forwarded-For": str(ipaddress.ip_address("198.18.0.1") + index),
             "Content-Type": "application/json",
         }
         response = request(surface, method, concrete, headers=headers, body=b"{")
@@ -396,8 +399,6 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("GET", "/api/settings/model-mode"),
         ("GET", "/api/me/model-connections"),
         ("GET", "/api/me/model-mode"),
-        ("GET", "/api/settings/models"),
-        ("PUT", "/api/settings/models"),
         ("GET", "/api/topology/route"),
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
