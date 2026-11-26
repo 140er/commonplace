@@ -471,6 +471,7 @@ def complete(*args):
     sys.exit(0)
 signal.signal(signal.SIGUSR1,complete)
 print('https://auth.openai.com/codex/device',flush=True)
+import time; time.sleep(0.5)  # the code arrives in a later write, as on a slow machine
 print('ABCD-EFGH',flush=True)
 signal.pause()
 """
@@ -489,8 +490,14 @@ signal.pause()
     login = DeviceLogin()
     try:
         login.advance(s.client, s.requests["login"], scope)
-        assert login.selector.select(timeout=5), "the synthetic CLI must provide its device prompt"
-        login.advance(s.client, s.requests["login"], scope)
+        # The CLI prints its URL and its code as two writes; wait on its output until both have arrived (the
+        # prompt is presented), not for one fixed read, so a slow machine cannot split the prompt across reads.
+        waited_until = time.monotonic() + 30
+        while not login.presented:
+            remaining = waited_until - time.monotonic()
+            assert remaining > 0, "the synthetic CLI must provide its device prompt"
+            login.selector.select(timeout=remaining)
+            login.advance(s.client, s.requests["login"], scope)
         assert login.presented
         shown = approvals.reveal(
             s.gateway, s.owner, s.config["machine_id"], s.requests["login"]["id"]
