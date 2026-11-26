@@ -1,6 +1,7 @@
 import { loadRouteStyles } from "./route-styles.js";
 import { boundedRequest } from "./request-deadline.js";
 import { waitingTotal } from "./bot-counts.js";
+import { seatedIn } from "./head-actions.js";
 
 // Controllers load only for their route or an explicitly opened panel. Failed imports can retry.
 let deckPaletteItems, mountWorkspaceOrchestration, mountProjectPanel, mountAgentSchedules, mountToolPolicy, eventItem,
@@ -518,7 +519,10 @@ function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
   // A redraw keeps focus on the same header control (Details, Chat).
   const head = root.querySelector("#head-actions"), active = document.activeElement, keep = active?.closest?.("#head-actions") && active.id;
+  // A page's main action, seated in the bar by the page itself, survives the redraw.
+  const seated = seatedIn(head);
   head.innerHTML = actions;
+  if (seated) head.append(seated);
   if (keep) head.querySelector(`#${CSS.escape(keep)}`)?.focus({ preventScroll: true });
   document.title = `${text} · Commonplace`;
 }
