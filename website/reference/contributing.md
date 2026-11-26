@@ -25,10 +25,8 @@ The `pre-commit install` step matters: the repo pins ruff to the exact version C
 ## Running Tests
 
 ```bash
-uv run pytest tests/ -v
+python -m commonplace.guards.prepush --manual --base origin/develop
 ```
-
-All tests must pass before submitting a PR. Tests should run without API keys or network access.
 
 ## Running Benchmarks
 
@@ -47,7 +45,7 @@ See [Benchmarks](/reference/benchmarks) for data download instructions.
 1. Fork the repo and create a feature branch: `git checkout -b feat/my-thing`
 2. Write your code
 3. Add or update tests if applicable
-4. Run `uv run pytest tests/ -v` — everything must pass
+4. Run `python -m commonplace.guards.prepush --manual --base origin/develop`
 5. Commit with clear [conventional commits](https://www.conventionalcommits.org/):
    - `feat: add Notion export format`
    - `fix: handle empty transcript files`

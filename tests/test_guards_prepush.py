@@ -5,10 +5,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from commonplace.guards import prepush
+from commonplace.guards.stacks import CommandResult, PlannedCommand
 
 
 def _git(repo, *args):
@@ -137,6 +139,37 @@ def test_selection_is_sorted_and_deduplicated(tree):
     assert got.files == ("tests/test_guards_stacks.py", "tests/test_stacks_extra.py")
 
 
+def test_gate_tests_appends_existing_guard_files_after_affected_tests(tree):
+    for name in prepush.GUARD_TESTS:
+        _write(tree / name)
+    got = prepush.gate_tests(tree, ["commonplace/guards/stacks.py"], guards=True)
+    assert got.files == ("tests/test_guards_stacks.py",) + prepush.GUARD_TESTS
+
+
+def test_gate_tests_without_the_ci_flag_stays_on_affected_tests(tree):
+    for name in prepush.GUARD_TESTS:
+        _write(tree / name)
+    got = prepush.gate_tests(tree, ["commonplace/guards/stacks.py"], guards=False)
+    assert got.files == ("tests/test_guards_stacks.py",)
+
+
+def test_gate_tests_does_not_repeat_a_guard_file_that_changed(tree):
+    for name in prepush.GUARD_TESTS:
+        _write(tree / name)
+    got = prepush.gate_tests(tree, ["tests/test_eval_guards.py"], guards=True)
+    assert got.files.count("tests/test_eval_guards.py") == 1
+    assert got.files[1:] == prepush.GUARD_TESTS[1:]
+
+
+def test_ci_workflow_calls_the_prepush_entrypoint_and_not_the_full_suite():
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "python -m commonplace.guards.prepush --ci" in workflow
+    assert "pytest tests/ -v" not in workflow
+    assert "pytest tests/ --ignore" not in workflow
+
+
 # ── budget ─────────────────────────────────────────────────────────────
 
 
@@ -220,6 +253,20 @@ def test_elapsed_alarm_never_cuts_off_a_check_or_omits_later_checks(repo, monkey
     assert report.exit_code == 0 and report.complete
     assert report.total_seconds == 40.0
     assert "TIME ALARM" in text and "QUICK CHECK PASSED" in text
+
+
+def test_strict_mode_fails_when_a_step_is_cut_off(repo, monkeypatch):
+    _fake_ruff(repo)
+    monkeypatch.setattr(
+        prepush,
+        "_test_step",
+        Mock(return_value=prepush.StepOutcome("tests", "incomplete", detail="test interrupted")),
+    )
+    report, text = _run(repo, budget=1.0, strict=True)
+    assert report.exit_code == 1
+    assert report.failed is False
+    assert "CI GATE FAILED" in text
+    assert "not a pass" in text
 
 
 def test_a_test_failure_after_the_elapsed_alarm_still_blocks_the_push(repo, monkeypatch):
@@ -333,6 +380,47 @@ def test_main_with_only_a_delete_has_nothing_to_check(repo, monkeypatch, capsys)
     stdin = io.StringIO(f"(delete) {'0' * 40} refs/heads/old {head}\n")
     assert prepush.main(["origin", "url"], stdin=stdin) == 0
     assert "nothing to check" in capsys.readouterr().err
+
+
+def test_ci_flag_runs_the_hook_entrypoint(repo, monkeypatch, capsys):
+    _fake_ruff(repo)
+    for name in prepush.GUARD_TESTS:
+        _write(repo / name, "def test_guard():\n    assert True\n")
+    monkeypatch.chdir(repo)
+    code = prepush.main(["--ci", "--base", "main", "--budget", "20"])
+    err = capsys.readouterr().err
+    assert code == 0, err
+    assert "commonplace CI gate" in err
+    assert "CI GATE PASSED" in err
+    assert "5 test files" in err
+    assert "not the full test suite and not CI" not in err
+
+
+@pytest.mark.parametrize("guard", prepush.GUARD_TESTS)
+@pytest.mark.parametrize("invalid_kind", ["missing", "directory"])
+def test_ci_fails_before_running_tests_when_a_mandatory_guard_is_not_a_file(
+    repo, monkeypatch, guard, invalid_kind
+):
+    for name in prepush.GUARD_TESTS:
+        _write(repo / name)
+    path = repo / guard
+    path.unlink()
+    if invalid_kind == "directory":
+        path.mkdir()
+    command = PlannedCommand(name="pytest", argv=(sys.executable, "-m", "pytest"))
+    run = Mock(return_value=CommandResult(command, "passed", 0.0, "", []))
+    monkeypatch.setattr(prepush, "run_command", run)
+
+    report, text = _run(repo, changed=["README.md"], guards=True, strict=True)
+
+    assert report.exit_code == 1
+    tests = next(outcome for outcome in report.outcomes if outcome.name == "tests")
+    assert tests.status == "failed"
+    assert guard in tests.detail
+    assert "mandatory guard" in tests.detail
+    assert "CI GATE FAILED" in text
+    assert "CI GATE PASSED" not in text
+    run.assert_not_called()
 
 
 def test_a_bad_budget_value_does_not_block_the_push(repo, monkeypatch, capsys):

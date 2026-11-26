@@ -95,10 +95,7 @@ This Chroma-specific recovery preserves drawer/closet IDs, verbatim content and 
 Normal tests mock model inference and require no downloaded weights:
 
 ```bash
-python -m pytest tests/ -q --ignore=tests/benchmarks \
-  --cov=mempalace --cov-report=term
-ruff check .
-ruff format --check .
+python -m commonplace.guards.prepush --manual --base origin/develop
 ```
 
 Real-model integration tests are explicitly opt in:
