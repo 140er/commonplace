@@ -1,0 +1,4 @@
+- **Owns:** `docs/usability-audit-372/670-*.png`, the before, confirm-step and saved views of the Admin connections section for the trust-level change (gap 10 of the usability audit).
+- **Promises:** The screenshots come from throwaway instances with synthetic connections and show no token or real account; the guide `docs/usability-audit-372.md` is unchanged.
+- **How it fails:** Not covered by a test; a stale screenshot only misdescribes the Admin page.
+- **Tests:** `tests/test_docs_obligations.py` and `tests/test_docs_fragments.py` keep the fragment well formed.
