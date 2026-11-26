@@ -494,5 +494,5 @@ def test_release_journey_memory_and_release_names_exist_in_the_default_deck_look
     assert 'name="Search saved memory"' in source
     assert 'name="Search memory"' not in source
     assert "Search saved memory</label>" in (static / "deck-memory.js").read_text()
-    assert "data-deck-release>Approve<" in (static / "deck-board.js").read_text()
-    assert 'name="Approve"' in source
+    assert "Release reason<input" in (static / "release-block.js").read_text()
+    assert 'get_by_label("Release reason")' in source

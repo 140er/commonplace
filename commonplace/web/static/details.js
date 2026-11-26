@@ -292,11 +292,6 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
       event.target.closest("[data-deck-reply-toggle]").setAttribute("aria-expanded", String(!reply?.hidden));
       if (!reply?.hidden) reply?.querySelector("textarea")?.focus();
     }
-    else if (event.target.closest("[data-deck-release]")) {
-      const controls = mount.querySelector("[data-deck-card-controls]");
-      if (controls) controls.open = true;
-      mount.querySelector('[data-form="release-origin"] [name="reason"]')?.focus();
-    }
     else if (event.target.closest("[data-card-type-save]")) {
       void saveCardType(mount, current, api).then((updated) => {
         if (!updated) return;

@@ -88,6 +88,7 @@ import { boardRoute, resolveRoute } from "./routes.js";
 import { showLoading } from "./loading.js";
 import { applyDeck, createDeck } from "./deck.js";
 import { createNeedLedger } from "./deck-home-today.js";
+import { releaseBlock } from "./release-block.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -842,10 +843,6 @@ function boardsView() {
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
-function releaseControl(card) {
-  if (!card.awaiting_release || !card.can_approve) return "";
-  return `<form class="callout info" data-form="release-origin" data-card="${card.number}"><h3>Waiting for release</h3><p>Nobody can start this card until it is released.</p><label>Reason<input name="reason" required maxlength="500"></label><button class="blockbtn" data-release-origin>Release</button></form>`;
-}
 // Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
 const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
@@ -892,9 +889,8 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // Only an ask waiting on this person needs these versioned answer controls; Activity already lists the rest (m10).
     const asks = card.ask != null && card.ask_to === state.me.actor ? `<ol class="log">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") })}</ol>` : "";
     if (tab === "details") {
-      const controls = panel.querySelector("[data-deck-card-controls]") || panel.querySelector(".ctx-body");
-      controls?.insertAdjacentHTML("afterbegin", releaseControl(card));
       const activity = panel.querySelector(".ctx-body");
+      activity?.insertAdjacentHTML("afterbegin", releaseBlock(card));
       if (activity) {
         const extra = `${asks}${callTree(card)}`;
         activity.insertAdjacentHTML("beforeend", state.deck?.on() ? drawerCopy(extra, cardId(board, card.number)) : extra);

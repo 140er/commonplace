@@ -1037,6 +1037,9 @@ class BoardService(lifecycle.LifecycleMixin):
                 result["awaiting_release"] = True
                 if q.person or row["proposal_status"] != "pending":
                     result["can_approve"] = self._can_release_origin(q, row)
+                # Who made the card and how far they are trusted: only for someone who can release it.
+                if result.get("can_approve"):
+                    result["creator"] = self._creator_trust(row)
             if self._feature_on():
                 result.update(
                     blocked_by=[
@@ -1401,6 +1404,25 @@ class BoardService(lifecycle.LifecycleMixin):
         except (ControlError, ValueError, TypeError):
             return None
 
+    def _creator_trust(self, row):
+        """Who created a waiting card and how far that creator is trusted, for the release block."""
+        name = people(self.ctx, row["created_by"] or "").removeprefix("conn:")
+        creator = self._creator_connection(row)
+        policy = None
+        if creator is not None:
+            try:
+                q = self.ctx.db.authenticate_connection(creator["id"])
+            except (ControlError, ValueError, TypeError):
+                q = None
+            policy = q.policy if q is not None else None
+        if policy is None:
+            return {"name": name, "trust": None, "inbox_only": None}
+        return {
+            "name": name,
+            "trust": policy.trust,
+            "inbox_only": policy.write_wing in ("inbox", "wing_inbox"),
+        }
+
     def _top_level_origin(self, row):
         try:
             if row["agent_parent"] is not None or row["status"] not in ("todo", "doing", "review"):
@@ -1629,7 +1651,17 @@ class BoardService(lifecycle.LifecycleMixin):
         person = p.person and p.role == "owner"
         if person:
             if state == "coordinator":
-                return None
+                # The owner sees every waiting card in Today whether or not a Coworker is connected.
+                # A pending proposal or plan is already in Today, where it explains the release it needs.
+                if _plan_waiting(row) or row["proposal_status"] == "pending":
+                    return None
+                why = (
+                    "Restricted-origin work has not been released. The board coordinator can release it, "
+                    "and so can you as the workspace owner: use Release with a reason."
+                )
+                item = self._origin_card(conn, row, why, person=True, configuration=False)
+                item["coordinator_live"] = True
+                return item
             why = {
                 "owner": "Restricted-origin work has not been released. No live coordinator with all required release grants is available. You are the workspace owner: use task_approve with a reason to release its origin.",
                 "creator": "Restricted-origin work has not been released. The live board coordinator is this card's creator. Appoint an independent coordinator in board settings, or release it yourself from the card.",
@@ -1650,7 +1682,11 @@ class BoardService(lifecycle.LifecycleMixin):
             why = f"Restricted-origin work held by {holder} has not been released. You are this board's coordinator: use task_approve with a reason to release its origin."
         else:
             return None
-        configuration = person and state != "owner"
+        return self._origin_card(
+            conn, row, why, person=person, configuration=person and state != "owner"
+        )
+
+    def _origin_card(self, conn, row, why, *, person, configuration):
         if _plan_waiting(row) or row["proposal_status"] == "pending":
             why += " Origin release does not approve the pending proposal or plan; separate review is still required."
         item = self._card(conn, row)
@@ -2454,7 +2490,8 @@ class BoardService(lifecycle.LifecycleMixin):
                 if not self.principal.policy.can_read_wing(row["board_wing"]):
                     continue
                 item = self._origin_item(conn, row)
-                if item is not None:
+                # A card a live coordinator can release is in Today, but it needs no owner recovery.
+                if item is not None and not item.get("coordinator_live"):
                     counts = waiting.setdefault(row["board"], [0, 0])
                     counts[item["approval_kind"] == "origin_configuration"] += 1
         return [

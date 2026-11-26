@@ -43,7 +43,7 @@ phone another action. Labels and kinds retain their website meanings:
 | --- | --- | --- | --- |
 | `answer` | Offered choice label or Answer / decision or completion | `cards:decide:person` | `POST /api/person/cards/<number>/decide` with `version` and `choice` or `reply`. |
 | `accept` | Accept / completion | `cards:decide:person` | Same decide route, with `version`, `reply` and `then: "done"`. |
-| `approve` | Approve / proposal or plan; Release origin / origin | `cards:approve:person` | `POST /api/person/cards/<number>/approve` with `version`, `approve: true` and an optional `reason` (required for origin release). |
+| `approve` | Approve / proposal or plan; Release / origin | `cards:approve:person` | `POST /api/person/cards/<number>/approve` with `version`, `approve: true` and an optional `reason` (required for origin release). |
 | `reject` | Decline / proposal; Reject / plan | `cards:approve:person` | Same approve route, with `version`, `approve: false` and optional `reason`. |
 
 Other web action IDs, including navigation, recovery and configuration, are not

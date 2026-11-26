@@ -134,7 +134,8 @@ def test_a_lease_only_holder_sees_the_card_it_can_release(hub, env):
     env.resume(principal)
     assert seat.release_boards()
     assert number in numbers(seat.approvals_for_me())
-    assert number not in numbers(env.owner_board.approvals_for_me())
+    # The owner keeps the card in Today as well: a live coordinator does not take it away (#663).
+    assert number in numbers(env.owner_board.approvals_for_me())
     assert not other.release_boards()
     assert numbers(other.approvals_for_me()) == []
 
@@ -290,7 +291,7 @@ def test_a_member_role_lease_holder_sees_its_card(hub, env, trust_after):
     assert seat.principal.policy.trust == trust_after
     assert seat.release_boards()
     assert number in numbers(seat.approvals_for_me())
-    assert number not in numbers(env.owner_board.approvals_for_me())
+    assert number in numbers(env.owner_board.approvals_for_me())
 
 
 @pytest.mark.parametrize("roles", ["none", "two"])

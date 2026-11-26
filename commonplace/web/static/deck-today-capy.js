@@ -7,12 +7,13 @@ import { previewText } from './needs-me.js';
 export const TITLE = 'Waiting on you';
 
 /** What approving does, in one plain line under the Approve button. */
-export const approveNote = who => `Approve means yes: ${who || 'the coworker'} goes ahead with this.`;
+export const approveNote = (who, release = false) => release ? 'Release means this card can now be picked up.' : `Approve means yes: ${who || 'the coworker'} goes ahead with this.`;
 /** The names a reply dialog takes from what the person pressed: Answer opens "Answer", Reply opens "Reply". */
-export const replyWords = (action, answering) => action === 'approve' ? { title: 'Reason for approval', label: 'Your reason', submit: 'Approve' } : answering ? { title: 'Answer', label: 'Your answer', submit: 'Send answer' } : { title: 'Reply', label: 'Your reply', submit: 'Send reply' };
+export const replyWords = (action, answering, release = false) => action === 'approve' && release ? { title: 'Release this card', label: 'Release reason', submit: 'Release' } : action === 'approve' ? { title: 'Reason for approval', label: 'Your reason', submit: 'Approve' } : answering ? { title: 'Answer', label: 'Your answer', submit: 'Send answer' } : { title: 'Reply', label: 'Your reply', submit: 'Send reply' };
 /** The line shown once a send succeeded: what was sent, to whom, and where the card went. */
 export function sentLine(card, action, request, who, answering = false) {
   const name = who || 'the coworker';
+  if (action === 'approve' && card.approval_kind === 'origin') return 'Released. The card left the list and can now be picked up.';
   if (action === 'approve') return request?.options?.body?.then === 'done' ? 'Accepted. The card is done and left the list.' : `Approved. ${name} goes ahead. The card left the list and is back on its Board.`;
   if (action === 'reject') return `Turned down. The card went back to ${name} and left the list.`;
   return `${answering ? 'Answer' : 'Reply'} sent to ${name}. The card left the list and is back on its Board.`;
@@ -27,7 +28,7 @@ const answerable = card => (card.actions || []).some(action => ['answer', 'accep
 /** The two kinds the filter chips split the list into: a question to answer, or work to review and approve. */
 export const kindOf = card => card.review_kind === 'completion' || (card.actions || []).some(action => ['approve', 'accept', 'reject'].includes(action)) ? 'review' : 'question';
 /** The short verb after the bot's name. */
-export const verbOf = card => card.review_kind === 'completion' ? 'finished work' : kindOf(card) === 'review' ? 'wants your OK' : 'asks';
+export const verbOf = card => card.approval_kind === 'origin' ? 'is waiting for release' : card.review_kind === 'completion' ? 'finished work' : kindOf(card) === 'review' ? 'wants your OK' : 'asks';
 /** The line in the top bar. The number is the shared needs-me count, the same one the sidebar, the badges and the Board use. */
 export const summaryLine = needs => { const count = needsMeCount(needs); return count ? `${count} ${count === 1 ? 'item' : 'items'} waiting` : 'Nothing is waiting'; };
 /** The filter chips: every count comes from the cards listed below them. */
@@ -75,7 +76,7 @@ export function cardHTML(card, bots, { busy, errors, held, exiting, open = new S
   const askedFlat = displayText(card.display_title || question), asked = previewText(askedFlat, 220);
   const long = preview !== flat || asked !== askedFlat || (rest && flat !== rest);
   const full = long ? `<details class="bt-full" data-bt-full="${card.number}"${open.has(card.number) ? ' open' : ''}><summary>Show full text</summary><p class="bt-full-text">${escape(words)}</p></details>` : '';
-  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" data-bt-kind="${kindOf(card)}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(name)}</b>` : ''}<span class="bt-verb">${verbOf(card)}</span>${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(asked)}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${answersHTML(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${approves ? `<p class="bt-approve-note">${escape(approveNote(name))}</p>` : ''}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
+  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" data-bt-kind="${kindOf(card)}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(name)}</b>` : ''}<span class="bt-verb">${verbOf(card)}</span>${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(asked)}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${answersHTML(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${approves ? `<p class="bt-approve-note">${escape(approveNote(name, card.approval_kind === 'origin'))}</p>` : ''}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
 }
 /** A proposed Coworker config: who proposed it, what changes in one line, the diff behind "Changes", and Accept or
  *  Reject. Rejecting asks once first, with the same words as the project's config list. Same markup as a card. */
@@ -177,12 +178,12 @@ export function mount(context) {
   function openReply(card, action = 'reply', answering = false) {
     if (action === 'reply' && !(card.actions || []).some(action => ['answer', 'accept'].includes(action))) { ctx.go?.(`#/card/${card.number}`); return; }
     current = card; currentAction = action; currentAnswering = answering;
-    const words = replyWords(action, answering);
+    const words = replyWords(action, answering, card.approval_kind === 'origin');
     dialog.querySelector('h2').textContent = words.title;
     region('reply-label').textContent = words.label;
     form.querySelector('[type="submit"]').textContent = words.submit;
     region('reply-note').hidden = action !== 'approve';
-    region('reply-note').textContent = action === 'approve' ? approveNote(displayText(botName(card))) : '';
+    region('reply-note').textContent = action === 'approve' ? approveNote(displayText(botName(card)), card.approval_kind === 'origin') : '';
     region('reply-title').textContent = displayText(card.title);
     const choices = card.ask_options || [];
     form.elements.choice.innerHTML = '<option value="">Reply in your own words</option>' + choices.map((choice, i) => `<option value="${i}">${e(displayText(choice))}</option>`).join('');
@@ -199,7 +200,7 @@ export function mount(context) {
     if (!active || busy.has(card.number) || settled.has(stamp(card)) || exiting.has(stamp(card))) return;
     if (action === 'approve' && card.approval_kind?.startsWith('origin') && !extra.submit) { openReply(card, action); return; }
     if (action === 'reply' && !extra.submit) { openReply(card, 'reply', extra.answering === true); return; }
-    if (action === 'approve' && card.approval_kind?.startsWith('origin') && !extra.reason?.trim()) { region('reply-error').textContent = 'Write a reason for this approval.'; return; }
+    if (action === 'approve' && card.approval_kind?.startsWith('origin') && !extra.reason?.trim()) { region('reply-error').textContent = `Write a reason for this ${card.approval_kind === 'origin' ? 'release' : 'approval'}.`; return; }
     const signature = JSON.stringify([stamp(card), action, extra.reply, extra.choice, extra.reason]), answering = extra.answering === true || currentAnswering;
     if (!attempts.has(signature)) attempts.set(signature, globalThis.crypto.randomUUID());
     const request = actionRequest(card, action, { ...extra, key: attempts.get(signature) });
@@ -211,7 +212,7 @@ export function mount(context) {
       if (!active) return;
       if (current?.number === card.number) { dialog.close(); current = null; }
       const at = new Date().toISOString();
-      activity.unshift({ at, text: `${action === 'approve' ? 'You approved' : action === 'reject' ? 'You turned down' : action === 'hold' ? 'You held' : answering ? 'You answered' : 'You replied to'} ${displayText(card.title)}`, fresh: true });
+      activity.unshift({ at, text: `${action === 'approve' ? card.approval_kind === 'origin' ? 'You released' : 'You approved' : action === 'reject' ? 'You turned down' : action === 'hold' ? 'You held' : answering ? 'You answered' : 'You replied to'} ${displayText(card.title)}`, fresh: true });
       leaving.set(stamp(card), { card, index: Math.max(0, cards().findIndex(item => item.number === card.number)) });
       confirm(sentLine(card, action, request, displayText(botName(card)), answering));
       needs = removeNeed(needs, card); ctx.onNeedsChanged?.(card);
