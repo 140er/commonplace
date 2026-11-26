@@ -25,6 +25,7 @@ Routes (``<b>`` board slug, ``<r>`` role, ``<v>`` version number, ``<k>`` step k
     POST /api/orch/boards/<b>/roles/<r>/heartbeat       orch_heartbeat
     POST /api/orch/boards/<b>/roles/<r>/release         orch_release
     POST /api/orch/boards/<b>/roles/<r>/force-release   orch_force_release
+    POST /api/orch/boards/<b>/roles/<r>/owner-resume    signed-in owner only; resume + release, no token
     POST /api/orch/boards/<b>/roles/<r>/card-starts     orch_card_start (201 new, 200 same step)
     POST /api/orch/boards/<b>/roles/<r>/journal         orch_journal_intent
     POST /api/orch/boards/<b>/roles/<r>/journal/<k>     orch_journal_record
@@ -51,6 +52,7 @@ from . import tools
 PREFIX = "/api/orch/"
 _NUMBER = re.compile(r"v?([1-9][0-9]{0,8})")
 _INTEGER_QUERY = ("version", "old", "new")
+OWNER_RESUME = "orch_owner_resume"  # a web action, not an MCP tool: it is not in OPERATIONS
 
 
 def _number(value: str, key: str) -> int:
@@ -96,6 +98,7 @@ def resolve(method: str, parts: list) -> tuple[str, dict]:
             "heartbeat": "orch_heartbeat",
             "release": "orch_release",
             "force-release": "orch_force_release",
+            "owner-resume": OWNER_RESUME,
             "card-starts": "orch_card_start",
             "journal": "orch_journal_intent",
             "gates": "orch_gate_open",
@@ -122,6 +125,8 @@ def visible(principal, gateway, name: str) -> bool:
 
     if principal.person:
         return getattr(principal, "runner", None) is None
+    if name == OWNER_RESUME:
+        return True  # reaches the handler, which refuses non-owners with owner_only
     tool = extensions.get(name)
     return principal.policy.refusal(name) is None and tool.usable_by(principal, gateway)
 
@@ -177,7 +182,11 @@ def install(gateway) -> None:
                 handler.close_connection = True
                 send_json(handler, 403, {"error": "tool not allowed for this connection"})
                 return
-            if handler.command == "GET":
+            if name == OWNER_RESUME:
+                body = read_json(handler)
+                with rest_write(ctx, handler, "orch_resume", body):
+                    result = tools.owner_resume(ctx, **_merge(body, path_args))
+            elif handler.command == "GET":
                 result = tools.dispatch(ctx, name, _merge(_query(handler), path_args))
             else:
                 body = read_json(handler)

@@ -316,6 +316,18 @@ def resume(ctx, board, role, force=False, session_id=None):
     return durable.resume(ctx, board, role, force=bool(force))
 
 
+def owner_resume(ctx, board, role):
+    """Web "Resume" for the signed-in owner (not a Coworker tool: it hands out no token)."""
+    from . import durable
+
+    _owner(ctx)
+    _board(ctx, board)
+    result = durable.owner_resume(ctx, board, role)
+    _arm(ctx, board)
+    _emit(ctx, "orch.lease.resumed", board, board=board, role=role, epoch=result["epoch"])
+    return result
+
+
 def heartbeat(ctx, board, role, epoch, token):
     from . import durable
 

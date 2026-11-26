@@ -202,10 +202,15 @@ who holds the project's coordinator lease (role `main`), when it runs out, the a
 config version and how many steps are open, in doubt or still unstarted Todo cards. It
 reads `GET /api/orch/boards/<slug>/roles/main/checkpoint`, which claims and renews
 nothing, and is visible to anyone who can read the board. A signed-in owner also gets
-**End lease**, with a confirm; it calls `POST /api/orch/boards/<slug>/roles/main/force-release`,
-the owner-only route that already exists. Members, agent tokens and people of other
-workspaces are refused. Ending a lease changes no step: unfinished work stays listed
-(it becomes "in doubt" when the next coordinator claims the lease). The checkpoint
+**Stop Coworker**, with a confirm; it calls `POST /api/orch/boards/<slug>/roles/main/force-release`,
+the owner-only route that already exists. When nobody coordinates, the owner gets
+**Resume Coworker**, also with a confirm: the Coworker may claim its lease again and look at
+Todo cards, and no lease is kept for the owner. Members, agent tokens and people of other
+workspaces are refused. Stopping changes no step: unfinished work stays listed
+(it becomes "in doubt" when the next coordinator claims the lease). The row also lists
+card starts that failed, each with its reason, and recent stops, resumes and claims with
+who did them and when. Voiding a step, reassigning it and retiring an experiment are
+not offered here yet. The checkpoint
 does not say since when the lease is held or when it was last renewed, so only the
 expiry time is shown.
 

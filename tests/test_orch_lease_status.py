@@ -153,3 +153,72 @@ def test_a_person_of_another_workspace_cannot_end_this_lease(env, hub):
     assert status == 200 and theirs["lease"] is None
     assert lease_of(env)["live"] is True
     assert [e for e in env.events() if e["kind"] == "orch.lease.forced"] == []
+
+
+# ------------------------------------------------- Stop and Resume from Project settings
+
+RESUME = f"{BASE}/owner-resume"
+
+
+def history_of(env):
+    status, body = env.person("GET", f"{BASE}/checkpoint")
+    assert status == 200, body
+    return body["history"]
+
+
+def test_owner_resume_lets_the_next_coordinator_claim_and_hands_out_no_token(env):
+    lease = claim(env)
+    assert env.person("POST", f"{BASE}/force-release", {})[0] == 200
+    status, body = env.person("POST", RESUME, {})
+    assert status == 200, body
+    assert body["resumed"] is True and body["epoch"] == lease["epoch"] + 1
+    assert "token" not in str(body).lower()
+    # The owner's own claim was handed back inside the call: the Coworker can claim at once.
+    assert lease_of(env)["live"] is False
+    status, claimed = env.rest("POST", f"{BASE}/resume", {}, token=env.b_token)
+    assert status == 200 and claimed["epoch"] == lease["epoch"] + 2
+
+
+def test_owner_resume_is_refused_while_a_lease_is_live(env):
+    claim(env)
+    status, body = env.person("POST", RESUME, {})
+    assert (status, body.get("code")) == (409, "held"), body
+    assert lease_of(env)["live"] is True
+
+
+def test_stop_and_resume_are_recorded_in_the_history(env):
+    claim(env)
+    env.person("POST", f"{BASE}/force-release", {})
+    env.person("POST", RESUME, {})
+    history = history_of(env)
+    kinds = [row["event"] for row in history]
+    assert kinds[:2] == ["owner_resume", "force_release"]
+    owner_rows = [row for row in history if row["event"] in {"force_release", "owner_resume"}]
+    assert all(row["actor"] and row["at"] for row in owner_rows)
+    assert "token" not in str(history).lower()
+    events = [e["kind"] for e in env.events()]
+    assert "orch.lease.forced" in events and "orch.lease.resumed" in events
+
+
+@pytest.mark.parametrize("who", ["member", "agent", "seat", "signed_out"])
+def test_owner_resume_is_refused_for_everyone_but_the_signed_in_owner(env, hub, who):
+    claim(env)
+    env.person("POST", f"{BASE}/force-release", {})
+    path = f"/api/orch/{RESUME}"
+    if who == "member":
+        member = hub.db.create_user("member@example.com")
+        hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
+        cookie = cookie_for(hub, "member@example.com", workspace=hub.workspace)
+        status, body = http(hub.port, "POST", path, cookie=cookie, body={})
+        expected = (403, "owner_only")
+    elif who == "signed_out":
+        status, body = http(hub.port, "POST", path, body={})
+        assert status == 401, body
+        assert "owner_resume" not in [row["event"] for row in history_of(env)]
+        return
+    else:
+        token = env.a_token if who == "agent" else env.seat_token
+        status, body = env.rest("POST", RESUME, {}, token=token)
+        expected = (403, "owner_only")
+    assert (status, body.get("code")) == expected, body
+    assert "owner_resume" not in [row["event"] for row in history_of(env)]

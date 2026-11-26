@@ -1,5 +1,6 @@
-// Project settings > Orchestrator: who coordinates this project right now, and the owner's "End lease".
-// Reads the orchestrator checkpoint (read-only: it claims and renews nothing) and calls force-release.
+// Project settings > Coworker: who coordinates this project right now, and the owner's Stop and Resume.
+// Reads the checkpoint (read-only: it claims and renews nothing). Stop calls force-release; Resume calls
+// owner-resume, which claims and hands the lease straight back on the server (no token reaches the page).
 // Recovery view (G20): the restore status, the open findings and the steps of the role, all read-only, plus
 // one safe owner action: acknowledge a restore (typed text, explicit preview). The page never claims a lease,
 // sends a heartbeat, stamps a result, or voids, reassigns or retires anything; the server checks every call.
@@ -12,6 +13,13 @@ export const ORCH_COPY = Object.freeze({
   loadError: "Could not load the coordinator status.",
   endError: "Could not end the lease. Nothing was changed. Try again.",
   notOwner: "Only the workspace owner can end a lease.",
+  resumeError: "Could not resume the Coworker. Nothing was changed. Try again.",
+  resumeNotOwner: "Only the workspace owner can resume the Coworker. Nothing was changed.",
+  resumeHeld: "A Coworker is already running on this project. Nothing was changed.",
+  resumeRestore: "Acknowledge the restore first. Nothing was changed.",
+  resumeNoConfig: "This project has no accepted Coworker config yet. Nothing was changed.",
+  resumed: "Coworker resumed. It can claim its lease and pick up Todo cards again.",
+  resumeConfirm: "Resuming lets the Coworker claim its lease again and look at Todo cards. It does not start work by itself, and no lease is kept for you.",
   gone: "This project is no longer available.",
   alreadyEnded: "The lease had already ended.",
   ended: "Lease ended. Unfinished work stays listed below for the next coordinator to settle.",
@@ -36,6 +44,29 @@ export const RECOVERY_COPY = Object.freeze({
   stepsNone: "No steps are recorded for the main role.",
   notOffered: "Voiding a step, reassigning it and retiring an experiment are not offered on this page yet. The owner does those through the Coworker tools.",
 });
+
+/** Why a card start failed (the codes the start and its retries record); unknown codes are named. */
+export const MISS_REASONS = Object.freeze({
+  at_cap: "the project is at its agent limit",
+  project_limit: "the project is at its agent limit",
+  busy: "the machine was busy",
+  settings_unavailable: "settings could not be read",
+  config_changed: "the Coworker config changed while it started",
+  worker_unavailable: "the machine is not reachable",
+  started_recently: "a start of this card ran a moment ago",
+  retry_exhausted: "automatic retries ran out",
+  card_changed: "the card changed before it started",
+  card_not_found: "the card is gone",
+  not_allowed: "the Coworker is not allowed to start it",
+  not_configured: "no Coworker config is accepted",
+  orchestration_disabled: "Coworker starts are switched off for the workspace",
+  path_overlap: "another running card works on the same files",
+  plan_pending: "the card's plan is waiting for approval",
+});
+const HISTORY_EVENTS = Object.freeze({
+  claim: "Claimed", force: "Taken over", release: "Gave up", force_release: "Stopped", owner_resume: "Resumed",
+});
+const PEOPLE = /^(user|person):/; // a signed-in person; the checkpoint does not say whose name it is
 
 const plural = (n, one, many) => `${n >= LIST_CAP ? `${LIST_CAP}+` : n} ${n === 1 ? one : many}`;
 const person = name => String(name || "").replace(/^conn:/, "") || "an agent";
@@ -114,6 +145,22 @@ export function findingsHTML(findings, e, now = Date.now()) {
   return `<details data-orch-findings open><summary>${e(`${n} open ${findings.length === 1 ? "finding" : "findings"}`)}</summary>${findings.length >= LIST_CAP ? `<p class="set-note">${e(RECOVERY_COPY.findingsCapped)}</p>` : ""}<ul>${findings.map(item).join("")}</ul></details>`;
 }
 
+/** Card starts that failed, newest first, each with its reason; "" when none. */
+export function missesHTML(misses, e, now = Date.now()) {
+  if (!Array.isArray(misses) || !misses.length) return "";
+  const n = misses.length >= LIST_CAP ? `${LIST_CAP}+` : misses.length;
+  const item = m => `<li>Card #${e(m.card)} did not start · ${e(MISS_REASONS[m.code] || `a reason this page does not know (${m.code})`)}${m.created_at ? ` · ${e(when(m.created_at, now))}` : ""}</li>`;
+  return `<details data-orch-misses open><summary>${e(`${n} card ${misses.length === 1 ? "start" : "starts"} failed`)}</summary><ul>${misses.slice(0, 20).map(item).join("")}</ul></details>`;
+}
+
+/** Who stopped, resumed or claimed the lease, and when. "" when nothing is recorded. */
+export function historyHTML(history, e, now = Date.now()) {
+  if (!Array.isArray(history) || !history.length) return "";
+  const who = actor => PEOPLE.test(String(actor || "")) ? "a person" : person(actor);
+  const item = h => `<li>${e(HISTORY_EVENTS[h.event] || h.event)} by ${e(who(h.actor))}${h.at ? ` · ${e(when(h.at, now))}` : ""}</li>`;
+  return `<details data-orch-history><summary>Recent Coworker activity</summary><ul>${history.slice(0, 10).map(item).join("")}</ul></details>`;
+}
+
 const jobStates = view => new Map((view.jobs || []).map(j => [j.step_key, j.state]));
 
 /** Steps of the role grouped by what a person can do about them; settle-first groups open by default. */
@@ -159,7 +206,7 @@ function recoveryHTML(view, e, {restore, restoreView, now}) {
   return `<h3>Recovery</h3><p class="set-note" data-orch-scope>${e(scope)}</p><h4>Restore</h4>${restoreHTML(restore, e, {...restoreView, now})}<h4>Findings</h4>${findingsHTML(view.findings, e, now)}<h4>Steps</h4>${stepsHTML(rest, e)}<p class="set-note" data-orch-not-offered>${e(RECOVERY_COPY.notOffered)}</p>`;
 }
 
-export function orchStatusHTML(view, e, {canEnd = false, confirming = false, busy = false, status = "", now = Date.now(), restore, restoreView = {}} = {}) {
+export function orchStatusHTML(view, e, {canEnd = false, confirming = false, resuming = false, busy = false, status = "", now = Date.now(), restore, restoreView = {}} = {}) {
   if (!view) return `<p role="status" data-orch-status>${e(status || ORCH_COPY.loadError)}</p>`;
   const {lease, config} = view, counts = orchCounts(view), live = Boolean(lease?.live);
   const unsettled = [...(view.in_doubt || []), ...(view.needs_person || [])];
@@ -169,9 +216,12 @@ export function orchStatusHTML(view, e, {canEnd = false, confirming = false, bus
   const configLine = config ? `Accepted config: version ${e(config.version)}.` : "No Coworker config is accepted yet.";
   const stays = !live && counts.open ? '<p class="set-note" data-orch-stays>Unfinished work stays listed here until a new coordinator claims the lease and settles it.</p>' : "";
   const end = canEnd && live ? (confirming
-    ? `<div class="callout wait" data-orch-confirm role="group" aria-label="End the lease"><p>End ${e(person(lease.holder))}'s lease? ${e(ORCH_COPY.confirm)}</p><button type="button" class="btn sm" data-orch-end-confirm ${busy ? "disabled" : ""}>End lease</button> <button type="button" class="btn ghost sm" data-orch-end-cancel ${busy ? "disabled" : ""}>Keep it</button></div>`
-    : `<button type="button" class="btn sm" data-orch-end ${busy ? "disabled" : ""}>End lease…</button>`) : "";
-  return `<h3>Coordinator</h3><p data-orch-lease><span class="tag ${live ? "ok" : ""}">${live ? "Live" : lease ? "Ended" : "None"}</span> ${e(leaseSentence(lease, now))}</p><p class="set-note" data-orch-counts>${e(parts.join(" · "))}. ${configLine}</p>${factoryHTML(view.factory, e)}${stays}${unsettled.length ? `<details data-orch-doubt><summary>${e(plural(unsettled.length, "step to settle", "steps to settle"))}</summary><ul>${unsettled.slice(0, 20).map(s => stepItem(s, e, jobStates(view))).join("")}</ul></details>` : ""}${end}${recoveryHTML(view, e, {restore, restoreView: {...restoreView, busy}, now})}<button type="button" class="btn ghost sm" data-orch-refresh ${busy ? "disabled" : ""}>Refresh</button><p role="status" data-orch-status>${e(status)}</p>`;
+    ? `<div class="callout wait" data-orch-confirm role="group" aria-label="Stop the Coworker"><p>Stop ${e(person(lease.holder))}? ${e(ORCH_COPY.confirm)}</p><button type="button" class="btn sm" data-orch-end-confirm ${busy ? "disabled" : ""}>Stop Coworker</button> <button type="button" class="btn ghost sm" data-orch-end-cancel ${busy ? "disabled" : ""}>Keep it</button></div>`
+    : `<button type="button" class="btn sm" data-orch-end ${busy ? "disabled" : ""}>Stop Coworker…</button>`) : "";
+  const resume = canEnd && !live ? (resuming
+    ? `<div class="callout wait" data-orch-resume-confirm-box role="group" aria-label="Resume the Coworker"><p>Resume the Coworker? ${e(ORCH_COPY.resumeConfirm)}</p><button type="button" class="btn sm" data-orch-resume-confirm ${busy ? "disabled" : ""}>Resume Coworker</button> <button type="button" class="btn ghost sm" data-orch-resume-cancel ${busy ? "disabled" : ""}>Not now</button></div>`
+    : `<button type="button" class="btn sm" data-orch-resume ${busy ? "disabled" : ""}>Resume Coworker…</button>`) : "";
+  return `<h3>Coordinator</h3><p data-orch-lease><span class="tag ${live ? "ok" : ""}">${live ? "Live" : lease ? "Ended" : "None"}</span> ${e(leaseSentence(lease, now))}</p><p class="set-note" data-orch-counts>${e(parts.join(" · "))}. ${configLine}</p>${factoryHTML(view.factory, e)}${stays}${missesHTML(view.misses, e, now)}${historyHTML(view.history, e, now)}${unsettled.length ? `<details data-orch-doubt><summary>${e(plural(unsettled.length, "step to settle", "steps to settle"))}</summary><ul>${unsettled.slice(0, 20).map(s => stepItem(s, e, jobStates(view))).join("")}</ul></details>` : ""}${end}${resume}${recoveryHTML(view, e, {restore, restoreView: {...restoreView, busy}, now})}<button type="button" class="btn ghost sm" data-orch-refresh ${busy ? "disabled" : ""}>Refresh</button><p role="status" data-orch-status>${e(status)}</p>`;
 }
 
 /** Mounts below `anchor` (a node inside the Orchestrator section). Shows nothing when the
@@ -186,7 +236,7 @@ export async function mountOrchStatus(anchor, {project, api, e, current = () => 
   }
   const active = () => current() && host.isConnected;
   const base = `/api/orch/boards/${encodeURIComponent(project.board)}/roles/${ORCH_ROLE}`;
-  let view = null, restore = null, confirming = false, ackOpen = false, typed = "", busy = false, status = "";
+  let view = null, restore = null, confirming = false, resuming = false, ackOpen = false, typed = "", busy = false, status = "";
   // false when the status is not for this person to see (hidden); a failed read shows the error.
   async function load() {
     try { view = await api(`${base}/checkpoint`); }
@@ -202,11 +252,14 @@ export async function mountOrchStatus(anchor, {project, api, e, current = () => 
   }
   function render() {
     if (!active()) return;
-    host.innerHTML = orchStatusHTML(view, e, {canEnd: Boolean(project.can_configure), confirming, busy, status, now: now(), restore, restoreView: {canAck: Boolean(project.can_configure), confirming: ackOpen, typed}});
+    host.innerHTML = orchStatusHTML(view, e, {canEnd: Boolean(project.can_configure), confirming, resuming, busy, status, now: now(), restore, restoreView: {canAck: Boolean(project.can_configure), confirming: ackOpen, typed}});
     const on = (name, fn, event = "onclick") => { const node = host.querySelector(`[data-orch-${name}]`); if (node) node[event] = fn; };
     on("end", () => { confirming = true; status = ""; render(); });
     on("end-cancel", () => { confirming = false; render(); });
     on("end-confirm", endLease);
+    on("resume", () => { resuming = true; status = ""; render(); });
+    on("resume-cancel", () => { resuming = false; render(); });
+    on("resume-confirm", resumeCoworker);
     on("restore", () => { ackOpen = true; typed = ""; status = ""; render(); });
     on("restore-cancel", () => { ackOpen = false; typed = ""; render(); });
     on("restore-text", event => {
@@ -246,6 +299,21 @@ export async function mountOrchStatus(anchor, {project, api, e, current = () => 
       message = error?.status === 403 ? ORCH_COPY.notOwner : error?.status === 404 ? ORCH_COPY.gone : ORCH_COPY.endError;
     }
     busy = false; confirming = false; status = message;
+    if (await load() && active()) render();
+  }
+  async function resumeCoworker() {
+    if (busy) return;
+    busy = true; status = ""; render();
+    let message;
+    try {
+      await api(`${base}/owner-resume`, {method: "POST", body: {}});
+      message = ORCH_COPY.resumed;
+    } catch (error) {
+      const code = error?.payload?.code;
+      message = code === "held" ? ORCH_COPY.resumeHeld : code === "restore_pending" ? ORCH_COPY.resumeRestore : code === "not_configured" ? ORCH_COPY.resumeNoConfig
+        : error?.status === 403 ? ORCH_COPY.resumeNotOwner : error?.status === 404 ? ORCH_COPY.gone : ORCH_COPY.resumeError;
+    }
+    busy = false; resuming = false; status = message;
     if (await load() && active()) render();
   }
   if (await load() && active()) render();
