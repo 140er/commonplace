@@ -140,7 +140,7 @@
      as Projects and Rules already do. The same elements keep their in-page styles' look through these rules. */
   :root[data-ui="deck"] body .shell .center > .head #head-actions :is(.bots-actions, .memory-actions) { position: static; display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; }
   :root[data-ui="deck"] body .shell .center > .head #head-actions :is(.bots-new, .bots-new-chat, .dc-action, .memory-actions .btn, .deck-board-add) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 30px; height: 30px; padding: 0 12px; margin: 0; border-radius: var(--radius-control); font-size: 13.5px; font-weight: 600; white-space: nowrap; }
-  :root[data-ui="deck"] body .shell .center > .head #head-actions .dc-action.dc-primary { border: 0; background: var(--violet); color: var(--ground); }
+  :root[data-ui="deck"] body .shell .center > .head #head-actions .dc-action.dc-primary { border: 0; background: var(--primary); color: var(--ground); }
   :root[data-ui="deck"] body .shell .center > .head #head-actions .dc-action:not(.dc-primary) { border: 0; background: var(--s2); color: var(--ink); }
   /* Board and Memory keep the project chat in the page, not in the bar: only their own action shows. */
   :root[data-ui="deck"] body .shell .center:has(:is(.deck-board, .deck-memory)) > .head #head-actions > :not(.deck-board-add, .memory-actions) { display: none; }
