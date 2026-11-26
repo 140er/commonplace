@@ -32,6 +32,7 @@ from commonplace.bots.errors import (
 )
 from commonplace.bots.learn_schema import LEARN_SCHEMA, MEMORY_TRIGGER
 from commonplace.bots.lifecycle import LifecycleMixin
+from commonplace.bots.project_links import SCHEMA_LINKS, ProjectLinksMixin
 from commonplace.bots.shares import SCHEMA_SHARES, SharesMixin, added_columns, ensure_request_index
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -189,7 +190,7 @@ def open_bots(gateway, workspace_id: str) -> "BotStore":
     return stores[workspace_id]
 
 
-class BotStore(SharesMixin, LifecycleMixin):
+class BotStore(SharesMixin, LifecycleMixin, ProjectLinksMixin):
     def __init__(self, supervisor, workspace_id, sharing=None):
         """``sharing``: callable answering the workspace switch for sharing bots (absent: off)."""
         self._sharing = sharing
@@ -225,6 +226,7 @@ class BotStore(SharesMixin, LifecycleMixin):
                 conn.executescript(_SCHEMA)
                 self._upgrade(conn)
                 conn.executescript(SCHEMA_SHARES)
+                conn.executescript(SCHEMA_LINKS)
             except Exception:
                 conn.close()
                 raise
@@ -337,7 +339,8 @@ class BotStore(SharesMixin, LifecycleMixin):
     def ensure_defaults(self, user_id, boards) -> None:
         """One general bot and one project bot per ``(slug, name)``; never recreates an archived one.
 
-        Stops at the live-bot bound; the general bot is created first.
+        Stops at the live-bot bound; the general bot is created first. Then links each project that
+        has no row yet to a bot (see ``project_links``); a link already there is never touched.
         """
         wanted = [("general", None, "General", "Anything across your projects")] + [
             ("project", slug, name[:NAME_MAX] or slug, "") for slug, name in boards
@@ -359,6 +362,7 @@ class BotStore(SharesMixin, LifecycleMixin):
                     (uuid.uuid4().hex, user_id, name, job, kind, board, stamp()),
                 )
                 live += 1
+            self._seed(conn, user_id, boards)
 
     def update(self, bot_id, user_id, **fields) -> dict:
         """Change name, job, instructions or ``archived`` (bool) of one bot."""

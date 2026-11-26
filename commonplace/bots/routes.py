@@ -4,6 +4,9 @@ app holding ``bots:chat`` (``bots:confirm`` for confirm).
     GET    /api/bots                       {bots, model:{ready,label,code}, can_configure}
     POST   /api/bots                       {name, job?, instructions?, board?} -> 201 {bot}
     PATCH  /api/bots/<id>                  {name?, job?, instructions?, archived?} -> {bot} (owner)
+    GET    /api/bots/<id>/projects         {projects} the project slugs under the bot (owner)
+    PUT    /api/bots/<id>/projects/<slug>  {} -> {projects} puts the project under the bot (owner)
+    DELETE /api/bots/<id>/projects/<slug>  {projects} puts it back to Unassigned (owner, idempotent)
     GET    /api/bots/<id>/messages         ?thread=&after=&before=&limit= -> {bot, messages, waiting, running}
     POST   /api/bots/<id>/messages         ?thread= {text, request_id} -> text/event-stream
                                            (?stream=0 -> {message, reply} when the turn ends)
@@ -92,7 +95,21 @@ def _who(gateway, user_id) -> dict:
     return {"id": user_id, "name": access.display_name(gateway, user_id)}
 
 
-def _view(gateway, bot, asks, working=()) -> dict:
+def _placed(gateway, principal, bots, boards=None) -> dict:
+    """``{bot id: [slug, ...]}`` of the projects this person can read, under their own live bots."""
+    if boards is None:
+        boards = BoardService(ToolContext(principal=principal, gateway=gateway)).board_directory(
+            names_only=True
+        )
+    links = bots.project_links(principal.user_id)
+    placed: dict = {}
+    for board in boards:
+        if board["slug"] in links:
+            placed.setdefault(links[board["slug"]], []).append(board["slug"])
+    return placed
+
+
+def _view(gateway, bot, asks, working=(), placed=None) -> dict:
     waiting = sum(1 for ask in asks if bot["board"] in (None, ask["board"]))
     last = bot["last"]
     return {
@@ -113,6 +130,7 @@ def _view(gateway, bot, asks, working=()) -> dict:
         },
         "unread": bot["unread"],
         "waiting": waiting,
+        "projects": list((placed or {}).get(bot["id"], ())) if bot["mine"] else [],
         "state": "needs_you" if waiting else "working" if bot["id"] in working else "idle",
     }
 
@@ -135,6 +153,7 @@ def _bot(gateway, principal, bot_id) -> dict:
         bots.roster(principal.user_id, bot_id)[0],
         _asks(gateway, principal),
         _working(gateway, principal, bots),
+        _placed(gateway, principal, bots),
     )
 
 
@@ -158,7 +177,8 @@ def _listing(gateway, h, principal):
     working = _working(gateway, principal, bots)
     from commonplace.projects import readiness
 
-    rows = [_view(gateway, bot, asks, working) for bot in bots.roster(principal.user_id)]
+    placed = _placed(gateway, principal, bots, boards)
+    rows = [_view(gateway, bot, asks, working, placed) for bot in bots.roster(principal.user_id)]
     states = {None: readiness.snapshot(gateway, principal)}
     readable = {b["slug"] for b in boards}
     for bot in rows:
@@ -795,6 +815,77 @@ def _threads_patch(gateway, h, principal, bot_id, rest):
     send_json(h, 200, {"thread": _thread_view(thread)})
 
 
+# Projects under a bot: the sidebar tree. The bot's owner arranges it; a project reads only if the
+# person can read it, and a member holding a share of the bot has no say (403).
+
+
+def _slug(gateway, h, principal, rest):
+    """The readable project slug named by ``rest``, else None after a 404 or a 400."""
+    if len(rest) != 1:
+        _error(h, 404, "not_found", "Not found")
+        return None
+    boards = BoardService(ToolContext(principal=principal, gateway=gateway)).board_directory(
+        names_only=True
+    )
+    if rest[0] not in {b["slug"] for b in boards}:
+        _error(h, 400, "invalid", "Unknown project")
+        return None
+    return rest[0]
+
+
+def _audit_move(gateway, principal, bot_id, board, before, after) -> None:
+    """One control-database row per real change: ids and project slugs, never text."""
+    gateway.db.audit(
+        action="bot_project:move",
+        decision="ok",
+        workspace_id=principal.workspace_id,
+        user_id=principal.user_id,
+        reason=f"project={board} from={before or 'unassigned'} to={after or 'unassigned'}",
+        target_ids=[bot_id],
+    )
+
+
+def _projects_get(gateway, h, principal, bot_id, rest):
+    if rest:
+        _error(h, 404, "not_found", "Not found")
+        return
+    bots = _bots(gateway, principal)
+    if not _owner(gateway, h, principal, bots, bot_id):
+        return
+    send_json(h, 200, {"projects": _placed(gateway, principal, bots).get(bot_id, [])})
+
+
+def _projects_put(gateway, h, principal, bot_id, rest):
+    if not _web_only(h):
+        return
+    bots = _bots(gateway, principal)
+    if not _owner(gateway, h, principal, bots, bot_id):
+        return
+    board = _slug(gateway, h, principal, rest)
+    if board is None:
+        return
+    if h.headers.get("Content-Length", "0") != "0" and _body(h, set()) is None:
+        return  # the move needs no body; one that is sent must still be an empty object
+    before = bots.move_project(principal.user_id, board, bot_id)
+    if before != bot_id:
+        _audit_move(gateway, principal, bot_id, board, before, bot_id)
+    send_json(h, 200, {"projects": _placed(gateway, principal, bots).get(bot_id, [])})
+
+
+def _projects_delete(gateway, h, principal, bot_id, rest):
+    if not _web_only(h):
+        return
+    bots = _bots(gateway, principal)
+    if not _owner(gateway, h, principal, bots, bot_id):
+        return
+    board = _slug(gateway, h, principal, rest)
+    if board is None:
+        return
+    if bots.release_project(principal.user_id, bot_id, board):
+        _audit_move(gateway, principal, bot_id, board, bot_id, None)
+    send_json(h, 200, {"projects": _placed(gateway, principal, bots).get(bot_id, [])})
+
+
 # The workspace switch for sharing
 
 
@@ -842,6 +933,9 @@ HANDLERS = {
     ("POST", "shares"): _shares_post,
     ("PATCH", "shares"): _shares_patch,
     ("DELETE", "shares"): _shares_delete,
+    ("GET", "projects"): _projects_get,
+    ("PUT", "projects"): _projects_put,
+    ("DELETE", "projects"): _projects_delete,
     ("GET", "threads"): _threads_get,
     ("POST", "threads"): _threads_post,
     ("PATCH", "threads"): _threads_patch,

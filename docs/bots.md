@@ -455,6 +455,15 @@ This part describes what the screens do; the server side is in [Routes](#routes)
 comes first). It is the first entry in the left rail and the first tab on a phone; **Memory** is
 the only other primary entry. The number next to Bots counts the questions waiting on you.
 
+**Projects under their bot.** The left rail shows one tree instead of two lists: each bot opens onto
+the projects you keep under it, and projects that sit under no bot of yours are gathered under
+**Unassigned**. A bot with no projects still shows and opens onto a short note. Tap the arrow in front
+of a bot (or press the right and left arrow keys on it) to open or fold it; the rail remembers what you
+folded on this device, and the bot or project you are looking at is always opened for you. To move a
+project, use the dots on its row (or press M on it) and choose another of your bots or Unassigned. The
+tree is yours: it shows only the projects you can read, and moving a project changes nothing for
+anyone else. On a phone the same tree sits on the Bots screen, below the list of bots.
+
 **Where the rest went.** Projects, Needs me and Console sit under **Workspace** in the account
 menu (your name at the bottom of the rail, the menu button at the top left on a phone), next to
 Rules, Workspace settings and, for owners, Admin. Nothing was removed: every project, task,

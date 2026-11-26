@@ -3,6 +3,7 @@ import { escape as e, elapsed } from './api.js';
 import { botPage } from './routes.js';
 import { artHTML } from './deck-art.js';
 import { needsCards } from './needs-me.js';
+import { UNASSIGNED, botNode, currentNode, loadCollapsed, projectTree, saveCollapsed, treeKey } from './deck-tree.js';
 
 // The places, in the order the sidebar shows them. Waiting on you is home: what needs an answer comes first.
 export const SECTIONS = [['home', 'Waiting on you'], ['work', 'Work'], ['bots', 'Bots'], ['settings', 'Settings']];
@@ -91,23 +92,73 @@ const botCoworkers = (bot, directory) => {
   if (bot.shellKind !== 'coworker') return [];
   return rows(directory.conversations).filter(item => rows(item.bot_ids).some(id => String(id) === String(bot.id)));
 };
-export function shellTrees(options = {}) {
-  const { directory = {}, hash = '', closed = new Set() } = options, groups = new Map();
-  const roster = shellBots(options), labels = botInitials(roster);
+// The tree is built in two steps: a model (which rows exist, which are open, which one takes the tab stop),
+// then markup. Every bot is a row that opens onto its projects (and, for a coworker, its conversations);
+// projects with no bot of the person's sit under Unassigned. A row is open unless it was folded on this
+// device, and the row holding the page being viewed is open until the person folds it on that page.
+function treeModel(options) {
+  const { directory = {}, hash = '', collapsed = new Set(), manual = new Set() } = options;
+  const roster = shellBots(options), labels = botInitials(roster), tree = projectTree({ bots: roster, boards: options.boards });
+  const at = currentNode(hash, tree), items = [], groups = new Map();
+  const open = (node, holdsCurrent) => !collapsed.has(node) || (holdsCurrent && !manual.has(node));
+  const selectedHere = href => hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
   for (const bot of roster) {
+    const personal = bot.shellKind === 'personal', node = personal ? botNode(bot.id) : `coworker:${bot.id}`, href = botHref(bot);
+    const projects = personal ? tree.under.get(String(bot.id)) || [] : [];
+    const talks = botCoworkers(bot, directory).map(worker => {
+      const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
+      const link = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
+      return { worker, link, title: worker.name || worker.title || conversation?.title || 'Bot' };
+    });
+    const entry = { bot, node, href, selected: selectedHere(href), projects, talks, label: labels.get(bot), key: node };
+    entry.expanded = open(node, at === node || talks.some(talk => hash === talk.link));
     const group = typeof bot.section === 'string' ? bot.section.trim() : '';
     if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(bot);
+    groups.get(group).push(entry);
   }
-  return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
-    const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${states[bot.state]?.[1] === 'waiting' || (bot.kind === 'general' ? needsCards(options.needsQueue || {}).length > 0 : bot.board && needsCards(options.needsQueue || {}).some(card => card?.board === bot.board)) ? '<span class="deck-state-dot" data-state="waiting" role="img" aria-label="Waiting on you" title="Waiting on you"></span>' : ''}${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
-      const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
-      const title = worker.name || worker.title || conversation?.title || 'Bot';
-      const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
-      return `<li><a class="deck-tree-row" href="${href}"${current(hash === href)}><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`;
-    }).join('')}</ul></div>`;
-  }).join('')}${group ? '</details>' : ''}`).join('') || `<p class="deck-rail-empty">${artHTML('rail')}${!options.treeState || options.treeState === 'ready' ? 'No bots yet' : options.treeState === 'unavailable' ? 'Could not load bots' : 'Still loading bots…'}</p>`;
+  const lonely = options.rosterReady === false ? [] : tree.unassigned;
+  const unassigned = lonely.length ? { projects: lonely, expanded: open(UNASSIGNED, at === UNASSIGNED) } : null;
+  for (const entries of groups.values()) for (const entry of entries) {
+    items.push({ key: entry.key, current: entry.selected });
+    if (entry.expanded) {
+      for (const project of entry.projects) items.push({ key: `project:${project.slug}`, current: atProject(hash, project.slug) });
+      for (const talk of entry.talks) items.push({ key: `talk:${talk.link}`, current: hash === talk.link });
+    }
+  }
+  if (unassigned) {
+    items.push({ key: UNASSIGNED, current: false });
+    if (unassigned.expanded) for (const project of unassigned.projects) items.push({ key: `project:${project.slug}`, current: atProject(hash, project.slug) });
+  }
+  const stop = (items.find(item => item.current) || items[0])?.key;
+  return { groups, unassigned, stop, roster };
+}
+const atProject = (hash, slug) => { const href = `#/board/${enc(slug)}`; return hash === href || hash.startsWith(`${href}/`); };
+const chevronNode = node => `<span class="deck-node-chevron" data-deck-toggle="${e(node)}" aria-hidden="true">${icon('chevron')}</span>`;
+const treeHint = text => `<li role="none"><span class="deck-tree-empty" role="treeitem" aria-level="2" aria-disabled="true">${text}</span></li>`;
+export const treeAttrs = html => html.includes('role="treeitem"') ? ' role="tree" aria-label="Bots and projects"' : '';
+export function shellTrees(options = {}) {
+  const { hash = '', scope = 'rail', moving = null } = options, model = treeModel(options);
+  const waitingIn = slug => needsCards(options.needsQueue || {}).filter(card => card?.board === slug).length;
+  const mine = model.roster.filter(bot => bot.shellKind === 'personal' && bot.mine !== false);
+  let counter = 0;
+  const holder = slug => [...model.groups.values()].flat().find(entry => entry.projects.some(project => project.slug === slug))?.bot.id;
+  const tab = key => key === model.stop ? 0 : -1;
+  const projectRow = project => {
+    const href = `#/board/${enc(project.slug)}`, waiting = waitingIn(project.slug), key = `project:${project.slug}`;
+    const mover = moving === project.slug ? `<div class="deck-move" role="group" aria-label="Move ${e(project.name)}"><label for="deck-move-${scope}">Move under</label><select id="deck-move-${scope}" data-deck-move-select="${e(project.slug)}"><option value="">Unassigned</option>${mine.map(bot => `<option value="${e(bot.id)}"${String(holder(project.slug)) === String(bot.id) ? ' selected' : ''}>${e(bot.name || 'Bot')}</option>`).join('')}</select></div>` : '';
+    return `<li role="none" class="deck-project-li"><a class="deck-tree-row deck-project-row" href="${href}"${current(atProject(hash, project.slug))} role="treeitem" aria-level="2" tabindex="${tab(key)}" data-deck-item="${e(key)}" aria-keyshortcuts="M"><span class="deck-tree-name">${e(project.name)}</span>${waiting ? `<small>${waiting} waiting</small>` : ''}</a>${mine.length ? `<button type="button" class="deck-move-btn" tabindex="-1" data-deck-move="${e(project.slug)}" aria-expanded="${moving === project.slug}" aria-label="Move ${e(project.name)} under another bot or Unassigned">${icon('more')}</button>` : ''}${mover}</li>`;
+  };
+  const botHTML = entry => {
+    const { bot, node, href, selected, projects, talks, label, expanded } = entry, id = `deck-tree-${scope}-${counter++}`;
+    const waiting = states[bot.state]?.[1] === 'waiting' || (bot.kind === 'general' ? needsCards(options.needsQueue || {}).length > 0 : bot.board && needsCards(options.needsQueue || {}).some(card => card?.board === bot.board));
+    const hint = bot.shellKind === 'personal' ? 'No projects yet' : 'No conversations yet';
+    const children = [...projects.map(projectRow), ...talks.map(({ worker, link, title }) => `<li role="none"><a class="deck-tree-row" href="${link}"${current(hash === link)} role="treeitem" aria-level="2" tabindex="${tab(`talk:${link}`)}" data-deck-item="${e(`talk:${link}`)}"><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`)];
+    return `<div class="deck-bot-tree" role="none"><a class="deck-bot-row" href="${href}"${current(selected)} role="treeitem" aria-level="1" aria-expanded="${expanded}" aria-owns="${id}" tabindex="${tab(node)}" data-deck-item="${e(node)}">${chevronNode(node)}<span class="deck-bot-avatar" aria-hidden="true">${e(label)}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${waiting ? '<span class="deck-state-dot" data-state="waiting" role="img" aria-label="Waiting on you" title="Waiting on you"></span>' : ''}${bot.private === true ? `<span class="deck-private" role="img" aria-label="Private bot" title="Private: only you can see this bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul role="group" id="${id}"${expanded ? '' : ' hidden'}>${children.join('') || treeHint(hint)}</ul></div>`;
+  };
+  const folders = [...model.groups].map(([group, entries]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${(options.closed || new Set()).has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${entries.map(botHTML).join('')}${group ? '</details>' : ''}`).join('');
+  const lone = model.unassigned, loneId = `deck-tree-${scope}-unassigned`;
+  const unassigned = lone ? `<div class="deck-bot-tree" role="none"><div class="deck-bot-row deck-unassigned-row" role="treeitem" aria-level="1" aria-expanded="${lone.expanded}" aria-owns="${loneId}" tabindex="${tab(UNASSIGNED)}" data-deck-item="${UNASSIGNED}" data-deck-toggle="${UNASSIGNED}">${chevronNode(UNASSIGNED)}<span class="deck-bot-name">Unassigned</span></div><ul role="group" id="${loneId}"${lone.expanded ? '' : ' hidden'}>${lone.projects.map(projectRow).join('')}</ul></div>` : '';
+  return folders + unassigned || `<p class="deck-rail-empty">${artHTML('rail')}${!options.treeState || options.treeState === 'ready' ? 'No bots yet' : options.treeState === 'unavailable' ? 'Could not load bots' : 'Still loading bots…'}</p>`;
 }
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
@@ -125,16 +176,11 @@ const accountLinks = options => {
 const roleLabel = options => ({ owner: 'Owner', member: 'Member' }[options.role]);
 // The routes that live in the account menu and the phone More sheet, so the phone's menu button can show the person's place.
 const MORE_ROUTES = /^#\/(?:settings|compute|rules|console|pipeline|admin|instance-admin)(?:[/?]|$)/;
-const projectRows = (options, hash) => rows(options.boards).map(board => {
-  const href = `#/board/${enc(board.slug)}`, waitingHere = needsCards(options.needsQueue || {}).filter(card => card?.board === board.slug).length;
-  const open = waitingHere > 0;
-  return `<a class="nav deck-project-row" href="${href}"${current(hash === href || hash.startsWith(`${href}/`))}>${icon('folder')}<span class="deck-row-label">${e(board.name || board.slug)}</span>${open ? `<small>${waitingHere} waiting</small>` : ''}</a>`;
-}).join('');
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '' } = options, section = options.section ?? placeOf(hash);
   const role = roleLabel(options);
   const offered = id => options.sections?.some(([place]) => place === id);
-  const threads = shellThreads(options), projects = projectRows(options, hash);
+  const threads = shellThreads(options), trees = shellTrees(options);
   // The Projects pages belong to Work on a phone (its tab stays selected), but the sidebar marks the Projects heading, not Work.
   const projectsPage = /^#\/(?:boards|start)(?:[/?]|$)/.test(hash);
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
@@ -142,7 +188,7 @@ export function renderShellBar(options) {
     <button type="button" class="deck-find" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}<span>Search</span><kbd aria-hidden="true">Ctrl K</kbd></button>
     <a class="deck-new-thread nav" href="#/bots" data-deck-shell-action="new-thread">${icon('edit')}<span class="deck-row-label">New chat</span></a>
     <div class="deck-links">${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(section === 'home')}>${icon('home')}<span class="deck-row-label">Waiting on you</span>${badge(waiting(options), 'need', 'waiting on you')}</a>`}${offered('work') ? `<a class="nav" href="#/work" data-nav="work"${current(section === 'work' && !projectsPage)}>${icon('work')}<span class="deck-row-label">Work</span></a>` : ''}<a class="nav" href="#/memory"${current(section === 'memory')}>${icon('memory')}<span class="deck-row-label">Memory</span></a></div>
-    <div class="deck-rail-scroll"><div class="deck-rail-group"><a class="deck-rail-heading" href="#/bots" data-nav="bots"${current(section === 'bots' && !shellBots(options).some(bot => { const href = botHref(bot); return hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`); }))}>Bots<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span></a><a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></div><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p>${projects || projectsPage ? `<div class="deck-rail-group"><a class="deck-rail-heading deck-projects-heading" href="#/boards"${current(projectsPage)}>Projects</a></div><div class="deck-projects">${projects}</div>` : ''}</div>
+    <div class="deck-rail-scroll"><div class="deck-rail-group"><a class="deck-rail-heading" href="#/bots" data-nav="bots"${current(section === 'bots' && !shellBots(options).some(bot => { const href = botHref(bot); return hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`); }))}>Bots<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span></a><a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></div><div data-deck-bots${treeAttrs(trees)}>${trees}</div><h2 class="deck-rail-heading" data-deck-threads-heading${threads ? '' : ' hidden'}>Threads</h2><div data-deck-threads>${threads}</div><p class="deck-rail-error" data-deck-rail-error hidden></p><p class="deck-rail-error" data-deck-tree-note role="status" hidden></p>${rows(options.boards).length || projectsPage ? `<div class="deck-rail-group"><a class="deck-rail-heading deck-projects-heading" href="#/boards"${current(projectsPage)}>Projects</a></div>` : ''}</div>
     <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role}, ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details><a class="deck-settings-link" href="#/settings" data-nav="settings"${current(section === 'settings')} aria-label="Settings" title="Settings">${icon('settings')}</a></div>
   </nav>`;
 }
@@ -164,13 +210,17 @@ export function renderShellTabs(options) {
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
 
-export function createDeckShell({ root, api, context, on }) {
+const hashNow0 = () => globalThis.location?.hash || '';
+export function createDeckShell({ root, api, context, on, storage = null }) {
   let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '', rosterReady = false, directoryReady = false, syncedAt = 0;
   const closed = new Set();
+  // Folded tree rows are remembered per device; `manual` holds the rows folded or opened by hand on the current page, so the page's own row opens again on the next route.
+  const collapsed = loadCollapsed(storage), manual = new Set();
+  let manualAt = hashNow0(), moving = null, moveNote = '';
   const composer = () => [...(root?.querySelectorAll?.(composerSelector) || [])].find(form => !form.closest('[hidden]') && form.getClientRects().length);
   // The sheet stays open across the shell's refreshes, and closes when the route changes.
   let moreAt = null;
-  const hashNow = () => globalThis.location?.hash || '';
+  const hashNow = hashNow0;
   // role="dialog" is present only while the sheet is open, so a closed sheet is never mistaken for a dialog.
   function showMore(sheet, open) {
     moreAt = open ? hashNow() : null;
@@ -180,7 +230,11 @@ export function createDeckShell({ root, api, context, on }) {
     if (open) sheet.querySelector('a, button')?.focus();
   }
   const moreOpen = () => moreAt !== null && moreAt === hashNow();
-  const options = () => ({ bots, directory, closed, treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen(), needsQueue: context?.()?.needs || {} });
+  const options = () => {
+    // A new page lets its own row open again; rows folded by hand on the previous page keep their saved state.
+    if (manualAt !== hashNow()) { manualAt = hashNow(); manual.clear(); moving = null; }
+    return { bots, directory, closed, collapsed, manual, moving, rosterReady, boards: rows(context?.()?.boards), treeState: error ? 'unavailable' : rosterReady && directoryReady ? 'ready' : 'loading', hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen(), needsQueue: context?.()?.needs || {} };
+  };
   function chrome() {
     if (!on()) return;
     const form = composer();
@@ -192,9 +246,20 @@ export function createDeckShell({ root, api, context, on }) {
     }
   }
   if (root?.ownerDocument && globalThis.MutationObserver) new MutationObserver(chrome).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'open'] });
+  // A host is repainted only when its markup changed, and keyboard focus stays on the same row across the repaint.
+  const painted = new WeakMap();
+  const itemOf = (host, key) => [...host.querySelectorAll('[data-deck-item]')].find(item => item.dataset.deckItem === key);
+  function fill(host, html) {
+    if (painted.get(host) === html) return;
+    const active = root.ownerDocument?.activeElement, key = active && host.contains?.(active) ? active.closest?.('[data-deck-item]')?.dataset?.deckItem : undefined;
+    host.innerHTML = html;
+    painted.set(host, html);
+    if (key !== undefined) itemOf(host, key)?.focus?.();
+    if (html.includes('role="treeitem"')) { host.setAttribute?.('role', 'tree'); host.setAttribute?.('aria-label', 'Bots and projects'); } else { host.removeAttribute?.('role'); host.removeAttribute?.('aria-label'); }
+  }
   function paint() {
-    const tree = root?.querySelector?.('[data-deck-bots]'), threads = root?.querySelector?.('[data-deck-threads]');
-    if (tree && tree.innerHTML !== shellTrees(options())) tree.innerHTML = shellTrees(options());
+    const hosts = ['[data-deck-bots]', '[data-deck-bots-page]'].map(selector => root?.querySelector?.(selector)).filter(Boolean), threads = root?.querySelector?.('[data-deck-threads]');
+    for (const host of hosts) fill(host, shellTrees({ ...options(), scope: host.hasAttribute?.('data-deck-bots-page') ? 'page' : 'rail' }));
     if (threads && threads.innerHTML !== shellThreads(options())) threads.innerHTML = shellThreads(options());
     const heading = root?.querySelector?.('[data-deck-threads-heading]');
     if (heading) heading.hidden = !threads?.innerHTML;
@@ -202,6 +267,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (unread) unread.innerHTML = badge(shellUnread(options()), 'unread', 'unread');
     const status = root?.querySelector?.('[data-deck-rail-error]');
     if (status) { status.hidden = !error; status.innerHTML = error ? 'Could not load the bot tree. <button data-deck-shell-action="retry">Retry</button>' : ''; }
+    for (const note of root?.querySelectorAll?.('[data-deck-tree-note]') || []) { note.hidden = !moveNote; note.textContent = moveNote; }
   }
   function reset() { generation++; bots = []; directory = {}; closed.clear(); pending = null; error = ''; rosterReady = directoryReady = false; syncedAt = 0; }
   function identify() {
@@ -227,6 +293,66 @@ export function createDeckShell({ root, api, context, on }) {
     })().finally(() => { if (token === generation) { pending = null; syncedAt = Date.now(); } });
     return pending;
   }
+  // The tree: fold and unfold rows, move a project under another bot, and the keyboard rules of a tree.
+  const hostOf = target => target?.closest?.('[data-deck-bots], [data-deck-bots-page]');
+  const items = host => [...host.querySelectorAll('[role="treeitem"]')].filter(item => item.getAttribute('aria-disabled') !== 'true' && !item.closest('[hidden]'));
+  const holderOf = slug => { for (const [id, projects] of projectTree({ bots: shellBots(options()), boards: options().boards }).under) if (projects.some(project => project.slug === slug)) return id; return ''; };
+  function fold(node, open) {
+    if (open) collapsed.delete(node); else collapsed.add(node);
+    manual.add(node);
+    saveCollapsed(storage, collapsed);
+    paint();
+  }
+  const refocus = (host, key) => { if (host?.isConnected !== false) itemOf(host, key)?.focus?.(); };
+  function startMove(host, slug) {
+    moving = moving === slug ? null : slug; moveNote = '';
+    paint();
+    if (moving) host.querySelector('select[data-deck-move-select]')?.focus?.(); else refocus(host, `project:${slug}`);
+  }
+  // One request, then the roster is read back so the tree shows what the server holds, not what was asked.
+  async function move(host, slug, target) {
+    const before = holderOf(slug);
+    moving = null; moveNote = '';
+    try {
+      if (target !== before) {
+        if (target) await api(`/api/bots/${enc(target)}/projects/${enc(slug)}`, { method: 'PUT', timeoutMs: 10000 });
+        else await api(`/api/bots/${enc(before)}/projects/${enc(slug)}`, { method: 'DELETE', timeoutMs: 10000 });
+        const fresh = await api('/api/bots', { timeoutMs: 10000 });
+        if (Array.isArray(fresh?.bots)) { bots = fresh.bots; context?.()?.onRoster?.(fresh.bots); }
+      }
+    } catch { moveNote = 'Could not move the project. Try again.'; }
+    paint();
+    refocus(host, `project:${slug}`);
+  }
+  root?.addEventListener?.('change', event => {
+    const select = event.target?.closest?.('select[data-deck-move-select]'), host = hostOf(select);
+    if (select && host && on()) void move(host, select.dataset.deckMoveSelect, select.value);
+  });
+  root?.addEventListener?.('focusin', event => {
+    const item = event.target?.closest?.('[role="treeitem"]'), host = hostOf(item);
+    if (!host) return;
+    for (const other of host.querySelectorAll('[role="treeitem"][tabindex="0"]')) if (other !== item) other.setAttribute('tabindex', '-1');
+    item.setAttribute('tabindex', '0');
+  });
+  root?.addEventListener?.('keydown', event => {
+    const host = hostOf(event.target);
+    if (!host || !on() || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target.closest?.('select')) {
+      if (event.key === 'Escape') { const slug = moving; moving = null; paint(); if (slug) refocus(host, `project:${slug}`); }
+      return;
+    }
+    const item = event.target.closest?.('[role="treeitem"]');
+    if (!item) return;
+    const key = item.dataset.deckItem || '';
+    if (key.startsWith('project:') && (event.key.toLowerCase() === 'm' || event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) { event.preventDefault(); startMove(host, key.slice(8)); return; }
+    const folds = item.hasAttribute('aria-expanded');
+    if (folds && (event.key === 'Enter' || event.key === ' ') && item.dataset.deckToggle !== undefined) { event.preventDefault(); fold(key, item.getAttribute('aria-expanded') !== 'true'); refocus(host, key); return; }
+    const list = items(host), result = treeKey(event.key, list.map(row => ({ level: Number(row.getAttribute('aria-level')), expandable: row.hasAttribute('aria-expanded'), expanded: row.getAttribute('aria-expanded') === 'true' })), list.indexOf(item));
+    if (!result) return;
+    event.preventDefault();
+    if (result.focus !== undefined) list[result.focus]?.focus?.();
+    else { fold(key, result.toggle); refocus(host, key); }
+  });
   root?.addEventListener?.('toggle', event => {
     if (event.target?.isConnected === false) return;
     const folder = event.target?.dataset?.deckFolder;
@@ -235,6 +361,12 @@ export function createDeckShell({ root, api, context, on }) {
   root?.addEventListener?.('click', event => {
     // Choosing anything in the account menu closes it; the page it opens is the answer.
     event.target?.closest?.('.user-links a, .user-links button')?.closest?.('details')?.removeAttribute?.('open');
+    const chevron = event.target?.closest?.('[data-deck-toggle]'), mover = event.target?.closest?.('[data-deck-move]'), host = hostOf(chevron || mover);
+    if (host && on()) {
+      event.preventDefault();
+      if (chevron) { const row = chevron.closest('[role="treeitem"]'), key = row?.dataset?.deckItem; if (key) { fold(key, row.getAttribute('aria-expanded') !== 'true'); refocus(host, key); } } else startMove(host, mover.dataset.deckMove);
+      return;
+    }
     const action = event.target?.closest?.('[data-deck-shell-action]')?.dataset.deckShellAction;
     if (!action || !on()) return;
     const sheet = root.querySelector('#phone-tabs .deck-more');
