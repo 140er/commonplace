@@ -43,7 +43,7 @@ test("each role says whose account runs it and whether your own account is linke
 
 test("your own accounts list shows labels and machines, never a credential field", () => {
   const html = ui.ownAccountsHTML({ connections: [{ id: "mc_0000000000000001", provider: "grok", label: "my Grok", machine: "own-1" }], use_own: false }, e);
-  assert.match(html, /grok login/);
+  assert.match(html, /grok login --device-auth/);
   assert.match(html, /data-own-remove="mc_0000000000000001"/);
   assert.doesNotMatch(html, /type="password"|api key<\/label>|name="token"|name="key"/i);
   assert.match(ui.ownAccountsHTML({ connections: [] }, e), /No own account linked yet/);
@@ -63,4 +63,14 @@ test("a missing connection and an expired sign-in each get one row for that pers
   assert.match(html, /data-account-item="grok:own-1"/);
   assert.match(html, /2 items/);
   assert.doesNotMatch(html, /Nothing needs you right now/);
+});
+
+test("the owner's account switch shows the current choice and says nothing falls back", () => {
+  assert.equal(ui.modeHTML(undefined, e), "");
+  const unset = ui.modeHTML(null, e);
+  assert.match(unset, /<option value="unset" selected>Current setup \(nothing chosen\)<\/option>/);
+  const personal = ui.modeHTML({ mode: "personal", allow_person_override: false }, e);
+  assert.match(personal, /<option value="personal" selected>Each person&#39;s own account<\/option>/);
+  assert.match(personal, /Nothing falls back to another account or provider/);
+  assert.match(ui.modeHTML({ mode: "hybrid", allow_person_override: true }, e), /name="allow_person_override" checked/);
 });

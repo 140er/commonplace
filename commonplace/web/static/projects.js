@@ -1080,19 +1080,54 @@ export function workspaceModelsHTML(view, e) {
 // "Your own accounts": the reader's own signed-in subscriptions. The sign-in itself happens on their
 // machine in the provider's CLI (for Grok: `grok login`); this list holds a provider, a label and the
 // machine, never a credential. Absent where the runner is not installed.
+// Owner only: whose account runs these roles (the workspace's model mode, card #617). The settings
+// screen with the effect preview is a later slice; this is the plain switch.
+export const MODE_WORDS = {
+  unset: "Current setup (nothing chosen)",
+  org: "The workspace's account",
+  personal: "Each person's own account",
+  hybrid: "The workspace's account, or a person's own where allowed",
+};
+export function modeHTML(record, e) {
+  if (record === undefined) return "";
+  const current = record?.mode || "unset";
+  const options = Object.entries(MODE_WORDS).map(([value, words]) => `<option value="${value}"${value === current ? " selected" : ""}>${e(words)}</option>`).join("");
+  return `<form data-workspace-mode><h3>Whose account runs these roles</h3><label>Account<select name="mode">${options}</select></label><label class="set-check"><input type="checkbox" name="allow_person_override"${record?.allow_person_override ? " checked" : ""}> People may use their own account (only with the last choice)</label><p class="set-note">To run a role on your own subscription, such as Grok, choose each person's own account and link yours below. Nothing falls back to another account or provider.</p><button class="opt" type="submit">Save account choice</button><p role="status" data-workspace-mode-status></p></form>`;
+}
+
 export function ownAccountsHTML(own, e) {
   if (!own) return "";
   const rows = (own.connections || []).map((item) => `<li><span><b>${e(item.label)}</b> · ${e(item.provider)} · ${e(item.machine)}</span><button class="btn sm" type="button" data-own-remove="${e(item.id)}" aria-label="Remove ${e(item.label)}">Remove</button></li>`).join("");
-  return `<section data-own-accounts><h3>Your own accounts</h3><p class="set-note">To use your own subscription, sign in on one of your runner machines first: install the provider's command line tool and sign in from that machine's terminal (for Grok: <code>grok login</code>, which signs in with your Grok account in the browser). Turn that provider on in the runner, then add the machine here. No API key is asked for or stored.</p>${rows ? `<ul class="set-list" data-own-list>${rows}</ul>` : '<p class="set-note" data-own-empty>No own account linked yet.</p>'}<form data-own-add><label>Provider<input name="provider" maxlength="128" autocomplete="off" placeholder="grok" required></label><label>Label<input name="label" maxlength="60" autocomplete="off" placeholder="my Grok subscription" required></label><label>Machine<input name="machine" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Link this account</button></form><p role="status" data-own-status></p></section>`;
+  return `<section data-own-accounts><h3>Your own accounts</h3><p class="set-note">To use your own subscription, sign in on one of your runner machines first: install the provider's command line tool and sign in from that machine's terminal (for Grok: <code>grok login --device-auth</code>, which shows a link and a code; open the link, sign in with your Grok account and enter the code). Turn that provider on in the runner, then add the machine here. No API key is asked for or stored.</p>${rows ? `<ul class="set-list" data-own-list>${rows}</ul>` : '<p class="set-note" data-own-empty>No own account linked yet.</p>'}<form data-own-add><label>Provider<input name="provider" maxlength="128" autocomplete="off" placeholder="grok" required></label><label>Label<input name="label" maxlength="60" autocomplete="off" placeholder="my Grok subscription" required></label><label>Machine<input name="machine" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Link this account</button></form><p role="status" data-own-status></p></section>`;
 }
 
 export function mountWorkspaceModels(host, { api, e, value, current = () => true }) {
-  let view = value, own = null;
+  let view = value, own = null, record;
   const active = () => current() && host.isConnected;
   async function loadOwn(message = "") {
     try { own = await api("/api/me/model-connections"); } catch { own = null; }
     try { view = await api("/api/settings/models"); } catch { /* keep the last view */ }
+    if (view.can_configure) {
+      try { record = (await api("/api/settings/model-mode")).workspace; } catch { record = undefined; }
+    }
     render("", message);
+  }
+  function bindMode() {
+    const form = host.querySelector("[data-workspace-mode]");
+    if (!form) return;
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const mode = form.querySelector('[name="mode"]').value, allow = form.querySelector('[name="allow_person_override"]').checked;
+      const note = form.querySelector("[data-workspace-mode-status]");
+      if (allow && mode !== "hybrid") { note.textContent = "Allowing people's own accounts needs the last choice."; return; }
+      try {
+        if (mode === "unset") { if (record) await api("/api/settings/model-mode", { method: "DELETE" }); }
+        else await api("/api/settings/model-mode", { method: "PUT", body: { mode, allow_person_override: allow } });
+        if (active()) await loadOwn();
+        const saved = host.querySelector("[data-workspace-mode-status]");
+        if (saved) saved.textContent = "Account choice saved.";
+      } catch { if (active()) note.textContent = "Could not save the account choice."; }
+    };
   }
   function bindOwn(ownStatus) {
     const add = host.querySelector("[data-own-add]");
@@ -1118,10 +1153,11 @@ export function mountWorkspaceModels(host, { api, e, value, current = () => true
   }
   function render(message = "", ownMessage = "") {
     if (!active()) return;
-    host.innerHTML = workspaceModelsHTML(view, e) + ownAccountsHTML(own, e);
+    host.innerHTML = workspaceModelsHTML(view, e) + (view.can_configure ? modeHTML(record, e) : "") + ownAccountsHTML(own, e);
     const ownStatus = () => host.querySelector("[data-own-status]");
     if (ownMessage && ownStatus()) ownStatus().textContent = ownMessage;
     bindOwn(ownStatus);
+    bindMode();
     const form = host.querySelector("[data-workspace-models]"), status = form.querySelector("[data-workspace-model-status]");
     if (message) status.textContent = message;
     if (!view.can_configure) return;
