@@ -56,7 +56,8 @@ three lines and a count. Nothing in a read holds a token, a key or a credential:
 #### Apply
 
 Only the signed-in owner (a web session, never an agent token and never a token with role owner) applies a
-proposal, by posting the `sha256` shown. The server first moves the row from `proposed` to `applying` in one
+proposal, by posting the `sha256` shown to `POST /api/setup-proposals/<id>/apply`. The owner's own agent
+gets 403 `owner_only`; anyone else gets the 404 of an unknown route. The server first moves the row from `proposed` to `applying` in one
 statement that also checks the digest, so one proposal is applied at most once. It then runs each item as
 that owner through the existing service paths, in body order:
 
@@ -73,7 +74,7 @@ transaction cannot cover them. Each item therefore has its own result: `{ok: tru
 `{ok: false, error}`. A Coworker whose bot failed is skipped with `bot_failed`. The proposal ends
 `applied` when every item succeeded and `partial` otherwise; it is never retried in place, and the rest can
 be proposed again. Every item result is written as soon as it is known, so an interrupted apply shows what
-was created. Rejecting moves `proposed` to `rejected` and changes nothing else; a proposal that is ignored
+was created. Rejecting (`POST /api/setup-proposals/<id>/reject` with the same `{sha256}`) moves `proposed` to `rejected` and changes nothing else; a proposal that is ignored
 stays `proposed` and changes nothing.
 
 #### Read-back and audit

@@ -8,6 +8,11 @@ diff against the workspace as it is now.
 Only the workspace owner reads or proposes: the signed-in owner or a connection of the owner.
 Everyone else gets :class:`Hidden` (the REST 404 of an unknown route). Proposing writes only the
 proposal row; nothing else in the workspace changes.
+
+Only the signed-in owner (a web session) applies or rejects, bound to the exact ``sha256`` shown.
+Apply runs every item as that owner through the existing service paths: the Coworker bot store
+(``create_bot``, never with a connection), a project-bound Coworker conversation
+(``create_conversation``) and ``models.catalog_add`` / ``models.put`` / ``models.put_workspace``.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from datetime import datetime, timezone
 
 from commonplace import redact
 from commonplace.projects import models
-from commonplace.projects.types import MODEL_ROLES
+from commonplace.projects.types import MODEL_ROLES, ProjectDenied
 
 logger = logging.getLogger(__name__)
 
@@ -518,3 +523,214 @@ def _emit(ctx, kind: str, number: int, sha: str) -> None:
         )
     except Exception as exc:
         log_failure(logger, "setup proposal event failed", exc)
+
+
+# ---------------------------------------------------------------- decide
+
+
+def is_signed_in_owner(principal) -> bool:
+    """The owner in a web session: the only principal that applies or rejects a setup."""
+    return (
+        is_owner(principal)
+        and getattr(principal, "person", False)
+        and getattr(principal, "auth", None) == "session"
+    )
+
+
+def _decidable(ctx, number):
+    """The proposal row for a decision; Hidden for anyone who may not see it."""
+    principal, db = ctx.principal, ctx.db
+    require_owner(principal)
+    if not is_signed_in_owner(principal):
+        raise SetupError(
+            "owner_only", "only the signed-in owner can approve or reject a setup", status=403
+        )
+    if type(number) is not int or number < 1:
+        raise Hidden()
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT * FROM setup_proposals WHERE workspace_id=? AND id=?",
+            (principal.workspace_id, number),
+        ).fetchone()
+    if row is None:
+        raise Hidden()
+    return row
+
+
+def _claim(ctx, number: int, sha: str, status: str) -> None:
+    """Move ``proposed`` to ``status`` only for the exact digest shown; refuse anything else."""
+    principal, db = ctx.principal, ctx.db
+    if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{64}", sha) is None:
+        raise SetupError(
+            "sha256_invalid", "sha256 must be 64 lowercase hex characters", path="sha256"
+        )
+    with db._tx() as conn:
+        claimed = conn.execute(
+            "UPDATE setup_proposals SET status=?, decided_by=?, decided_at=? "
+            "WHERE workspace_id=? AND id=? AND status='proposed' AND digest=?",
+            (status, principal.actor, _now(), principal.workspace_id, number, sha),
+        ).rowcount
+        if claimed:
+            return
+        row = conn.execute(
+            "SELECT status FROM setup_proposals WHERE workspace_id=? AND id=?",
+            (principal.workspace_id, number),
+        ).fetchone()
+    if row["status"] != "proposed":
+        raise SetupError(
+            "not_proposed", f"this setup is already {row['status']}", path="status", status=409
+        )
+    raise SetupError(
+        "sha256_mismatch",
+        "this is not the version you approved; read it again",
+        path="sha256",
+        status=409,
+    )
+
+
+def _record(ctx, number: int, results: list, status: str | None = None) -> None:
+    """Write the results so far (and the final status) right after each item."""
+    principal, db = ctx.principal, ctx.db
+    payload = json.dumps(results, ensure_ascii=False, sort_keys=True)
+    with db._tx() as conn:
+        if status is None:
+            conn.execute(
+                "UPDATE setup_proposals SET results=? WHERE workspace_id=? AND id=?",
+                (payload, principal.workspace_id, number),
+            )
+        else:
+            conn.execute(
+                "UPDATE setup_proposals SET results=?, status=? WHERE workspace_id=? AND id=?",
+                (payload, status, principal.workspace_id, number),
+            )
+
+
+def _attempt(item: dict, call, *args) -> dict:
+    """Run one item; its result is ``ok`` with what it created, or ``ok: false`` with a code.
+
+    A failure never stops the next item and never leaves the proposal in ``applying``."""
+    from commonplace.chat.coworkers.store import StoreError
+    from commonplace.http_util import log_failure
+
+    try:
+        item.update(ok=True, **call(*args))
+    except StoreError as exc:
+        item.update(ok=False, error=exc.code)
+    except models.UnknownModel:
+        item.update(ok=False, error="unknown_model")
+    except ProjectDenied:
+        item.update(ok=False, error="owner_only")
+    except ValueError:
+        item.update(ok=False, error="invalid")
+    except Exception as exc:
+        log_failure(logger, "setup item failed", exc)
+        item.update(ok=False, error="failed")
+    return item
+
+
+def _apply_bot(store, user_id, bot) -> dict:
+    created = store.create_bot(user_id, bot["name"], bot["instructions"])
+    return {"id": created["id"], "name": created["name"]}
+
+
+def _apply_coworker(store, user_id, item, bot_id) -> dict:
+    created = store.create_conversation(
+        user_id, "dm", item["title"], bot_ids=[bot_id], board=item["board"]
+    )
+    return {"id": created["id"], "title": created["title"]}
+
+
+def _apply_models(ctx, scope, roles) -> dict:
+    principal, db = ctx.principal, ctx.db
+    offered = {(c.provider, c.model) for c in models.options(db, principal.workspace_id, scope)}
+    for choice in roles.values():
+        if choice is not None and (choice["provider"], choice["model"]) not in offered:
+            models.catalog_add(db, principal, scope, choice)
+    if scope == models.WORKSPACE:
+        models.put_workspace(db, principal, roles)
+        effective = models.workspace_roles(db, principal.workspace_id)
+    else:
+        models.put(db, principal, scope, roles)
+        effective = models.effective_roles(db, principal.workspace_id, scope)
+    return {"roles": {role: effective[role].public() for role in roles}}
+
+
+def apply(ctx, number, sha) -> dict:
+    """Apply one proposal as the signed-in owner, item by item through the existing services.
+
+    The digest check and the move to ``applying`` are one statement, so a proposal applies at
+    most once and a changed proposal never applies. Each item result is stored as soon as it is
+    known; the proposal ends ``applied`` (every item succeeded) or ``partial``."""
+    from commonplace.chat.coworkers.store import open_store
+
+    principal, db = ctx.principal, ctx.db
+    _decidable(ctx, number)
+    _claim(ctx, number, sha, "applying")
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT body FROM setup_proposals WHERE workspace_id=? AND id=?",
+            (principal.workspace_id, number),
+        ).fetchone()
+    body = validate(json.loads(row["body"]))
+    results: list = []
+    bot_ids: dict = {}
+    store = open_store(ctx.gateway, principal.workspace_id)
+    for bot in body["bots"]:
+        item = _attempt(
+            {"kind": "bot", "key": bot["key"]}, _apply_bot, store, principal.user_id, bot
+        )
+        if item["ok"]:
+            bot_ids[bot["key"]] = item["id"]
+        results.append(item)
+        _record(ctx, number, results)
+    for coworker in body["coworkers"]:
+        item = {"kind": "coworker", "key": coworker["key"], "board": coworker["board"]}
+        bot_id = bot_ids.get(coworker["bot"])
+        if bot_id is None:
+            item.update(ok=False, error="bot_failed")
+        else:
+            item["bot_id"] = bot_id
+            _attempt(item, _apply_coworker, store, principal.user_id, coworker, bot_id)
+        results.append(item)
+        _record(ctx, number, results)
+    chosen = body.get("models") or {}
+    scopes = [(models.WORKSPACE, chosen["workspace"])] if "workspace" in chosen else []
+    scopes += list(chosen.get("projects", {}).items())
+    boards = readable_boards(ctx)
+    for scope, roles in scopes:
+        item = {"kind": "models", "board": None if scope == models.WORKSPACE else scope}
+        if scope != models.WORKSPACE and scope not in boards:
+            item.update(ok=False, error="unknown_project")
+        else:
+            _attempt(item, _apply_models, ctx, scope, roles)
+        results.append(item)
+        _record(ctx, number, results)
+    status = "applied" if all(item["ok"] for item in results) else "partial"
+    _record(ctx, number, results, status)
+    db.audit(
+        action="setup.apply",
+        decision="ok" if status == "applied" else "partial",
+        workspace_id=principal.workspace_id,
+        user_id=principal.user_id,
+        auth=principal.auth,
+        target_ids=(f"v{number}", sha, *(item["id"] for item in results if item.get("id"))),
+    )
+    _emit(ctx, "setup.applied", number, sha)
+    return show(ctx, number)
+
+
+def reject(ctx, number, sha) -> dict:
+    """The owner says no to the version shown: ``proposed`` becomes ``rejected``, nothing else."""
+    principal, db = ctx.principal, ctx.db
+    _decidable(ctx, number)
+    _claim(ctx, number, sha, "rejected")
+    db.audit(
+        action="setup.reject",
+        decision="ok",
+        workspace_id=principal.workspace_id,
+        user_id=principal.user_id,
+        auth=principal.auth,
+        target_ids=(f"v{number}", sha),
+    )
+    _emit(ctx, "setup.rejected", number, sha)
+    return show(ctx, number)
