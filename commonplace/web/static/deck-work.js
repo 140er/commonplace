@@ -12,7 +12,7 @@ export const LANES = [
   ['review', 'In review', '', 'Nothing is waiting for review.'],
   ['done', 'Shipped', 'ok', 'Nothing shipped yet.'],
 ];
-export const NO_MACHINE = 'No computer is connected, so bots can plan but not run code.';
+export const NO_MACHINE = 'No runner machine is set up, so bots can plan but not run code.';
 
 const boardName = board => board?.name || board?.slug || 'Project';
 const initial = name => Array.from(String(name || ''))[0]?.toUpperCase() || '?';
@@ -66,7 +66,7 @@ export function healthHTML(bots) {
   const ready = live.filter(bot => Object.values(bot.readiness || {}).every(row => !row?.state || row.state === 'done' || row.state === 'not_needed')).length;
   const machine = live.some(bot => bot.readiness?.machine?.state === 'done');
   const count = ready ? `${ready} ${ready === 1 ? 'bot' : 'bots'} ready` : 'No bots are ready yet';
-  return `<p class="wk-health" data-wk-health><span>${statusIcon('bots', ready ? 'ok' : '')}${count}</span>${machine ? '' : `<span>${statusIcon('compute')}<span>${NO_MACHINE} <a href="#/compute">Connect one in Cloud workspaces</a></span></span>`}</p>`;
+  return `<p class="wk-health" data-wk-health><span>${statusIcon('bots', ready ? 'ok' : '')}${count}</span>${machine ? '' : `<span>${statusIcon('compute')}<span>${NO_MACHINE} <a href="#/admin">Set one up in Admin</a></span></span>`}</p>`;
 }
 
 export function chipsHTML(boards, counts, project, cards = new Map()) {

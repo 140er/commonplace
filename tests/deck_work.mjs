@@ -108,14 +108,14 @@ test('an empty lane says one quiet sentence; nothing at all shows four of them',
   assert.match(html, /data-project="app" aria-pressed="false">App <b>0<\/b>/, 'a loaded project with nothing open counts 0');
 });
 
-test('the health line counts ready bots and links Cloud workspaces when no machine is connected', () => {
+test('the health line counts ready bots and points to Admin when no runner machine is set up', () => {
   const ready = { model: { state: 'done' }, machine: { state: 'done' }, key: { state: 'not_needed' } };
   const html = healthHTML([{ id: 'a', readiness: ready }, { id: 'b', readiness: ready }, { id: 'c', readiness: { model: { state: 'needs_you' } } }, { id: 'd', archived: true, readiness: ready }]);
   assert.match(text(html), /^2 bots ready$/);
-  assert.doesNotMatch(html, /#\/compute/, 'a connected machine needs no sentence');
-  assert.match(text(healthHTML([{ id: 'a', readiness: { model: { state: 'done' } } }])), /^1 bot ready No computer is connected, so bots can plan but not run code\. Connect one in Cloud workspaces$/);
-  assert.match(healthHTML([{ id: 'a', readiness: { model: { state: 'done' } } }]), /<a href="#\/compute">Connect one in Cloud workspaces<\/a>/);
-  assert.match(text(healthHTML([])), /^No bots are ready yet No computer is connected/);
+  assert.doesNotMatch(html, /#\/admin/, 'a set-up runner machine needs no sentence');
+  assert.match(text(healthHTML([{ id: 'a', readiness: { model: { state: 'done' } } }])), /^1 bot ready No runner machine is set up, so bots can plan but not run code\. Set one up in Admin$/);
+  assert.match(healthHTML([{ id: 'a', readiness: { model: { state: 'done' } } }]), /<a href="#\/admin">Set one up in Admin<\/a>/);
+  assert.match(text(healthHTML([])), /^No bots are ready yet No runner machine is set up/);
   const both = healthHTML([]);
   assert.equal((both.match(/<svg class="wk-ico/g) || []).length, 2, 'each status line has its own icon, not a list bullet');
   assert.doesNotMatch(both, /wk-dot/);
