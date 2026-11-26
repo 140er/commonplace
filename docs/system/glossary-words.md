@@ -1,4 +1,4 @@
-# Words in the app and the tool names (card #667)
+### Words in the app and the tool names (card #667)
 
 The user guide section is "Words used in Commonplace" in `docs/projects.md`. This page keeps the technical names next to it. Nothing below is renamed by card #667: only visible labels change.
 
@@ -6,7 +6,7 @@ One name for each thing. The same word is used in the sidebar, in Settings, on t
 card, in the status list, in the Move menu and in these guides. Where a tool or an API route has to
 keep an older name, the table says which one it is.
 
-## Cards and where they sit
+#### Cards and where they sit
 
 A card has one **status**. The board shows cards in **lanes**, and a lane groups statuses.
 
@@ -30,7 +30,7 @@ is stored and what you set.
 now are listed too, greyed out, with what to do first (for example "Move it to Doing first.").
 The server makes the final decision and refuses a move you may not make.
 
-## Names in the app, the tools and these guides
+#### Names in the app, the tools and these guides
 
 | Concept | In the app | Tool or API name | Chosen name, and why |
 |---|---|---|---|
@@ -45,7 +45,7 @@ The server makes the final decision and refuses a move you may not make.
 | Things waiting on a person | Waiting on you (sidebar and lane) | `needs_me` | **Waiting on you**. The tool keeps its name |
 | Saved words | Memory | `memory_save`, `memory_search` | **Memory** |
 
-## If you read an older guide or a screenshot
+#### If you read an older guide or a screenshot
 
 - "Bots" in Admin, with project rows, now reads Projects.
 - "Needs me" in a tool or a log is the Waiting on you lane.
