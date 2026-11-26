@@ -161,6 +161,7 @@ for (const service of ['Revoked; stop unconfirmed', 'Stopped']) {
   assert.match(html, /name="provider_instance_id" required value="codex-main"/);
   assert.equal((html.match(/providerInstances/g) || []).length, 2, 'every Attest form says where to read the value');
   assert.match(PROVIDER_HINT, /T3 settings/);
+  assert.doesNotMatch(PROVIDER_HINT, /~\/|settings\.json/, 'the hint names no file path');
   // A machine that reported its scope is confirmed against that report; one that did not sends the plain body.
   assert.deepEqual(attestBody({ topics: 'worker', provider_instance_id: 'codex-main', worker_connection_id: 'c' }, reported), { topics: ['worker'], provider_instance_id: 'codex-main', worker_connection_id: 'c', grant_scope_sha256: 'a'.repeat(64), expected_scope_epoch: 4 });
   assert.deepEqual(attestBody({ topics: 'worker', provider_instance_id: 'p', worker_connection_id: 'c' }, machine()), { topics: ['worker'], provider_instance_id: 'p', worker_connection_id: 'c' });

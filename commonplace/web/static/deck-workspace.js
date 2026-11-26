@@ -18,7 +18,7 @@ const status = (state, word) => `<span class="dw-status">${statusMark(state)}<sp
 
 function styles(doc) {
   for (const name of ['deck-workspace', 'compute', 'coworkers']) {
-    if (globalThis.commonplaceAssetManifest?.styles.includes(name + '.css')) continue;
+    if (globalThis.commonplaceAssetManifest?.styles?.includes(name + '.css')) continue;
     if (!doc?.head || doc.querySelector(`link[data-workspace-style="${name}"]`)) continue;
     const link = doc.createElement('link');
     link.rel = 'stylesheet'; link.href = new URL(`./${name}.css`, import.meta.url).href;
