@@ -208,7 +208,8 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
                 form.locator(".confirm-removal").evaluate(
                     "el=>getComputedStyle(el).backgroundColor"
                 )
-                == "rgb(230, 237, 244)"
+                # The confirm action uses the one primary colour of the redesign.
+                == "rgb(155, 187, 224)"
             )
             if width == 390:
                 assert form.locator("textarea").bounding_box()["x"] == 16
