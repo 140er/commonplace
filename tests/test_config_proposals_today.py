@@ -5,8 +5,12 @@ with the proposer by display name, a plain-words summary and the diff, and accep
 rejecting goes through the existing orchestrator routes. Names and text are synthetic.
 """
 
+import dataclasses
+
 from commonplace import sessions
+from commonplace.boards.service import BoardService
 from commonplace.orch import proposals, schema, store as orch_store
+from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.runner_harness import http
 from tests.test_orch_surfaces import BOARD, FRESH, config_text, env as env, sha
@@ -42,7 +46,7 @@ def test_owner_sees_a_proposed_config_with_name_summary_and_diff(env):
     assert item["sha256"] == digest and item["channel"] == "live"
     assert item["proposed_by"] == "conn:orch-a" and item["proposer_name"] == "orch-a"
     assert item["summary"] == "Agent limit: 3 to 5"
-    assert "max_agents" in item["diff"] and "3" in item["diff"] and "5" in item["diff"]
+    assert item["diff"] == "~ limits.max_agents: 3 -> 5\n"
     assert body["count"] == before["count"] + 1
 
 
@@ -58,8 +62,8 @@ def test_the_coworker_seat_is_named_after_its_project(env):
 def test_a_member_never_sees_config_proposals(env):
     propose_limit(env, 5)
     status, body = feed(env, member_cookie(env))
-    assert "config_proposals" not in (body if isinstance(body, dict) else {}), body
-    assert status != 200 or not body.get("count")
+    assert status == 403, (status, body)
+    assert "config_proposals" not in body
 
 
 def test_an_agent_token_does_not_get_the_proposals(env):
@@ -95,11 +99,25 @@ def test_rejecting_through_the_item_leaves_the_current_config(env):
     assert {v["version"]: v["status"] for v in configs["versions"]}[version] == "rejected"
 
 
-def test_a_board_the_owner_cannot_read_is_not_listed(env):
+def test_a_board_in_a_wing_the_reader_cannot_read_is_not_listed(env):
     text = config_text(board="closed")
     orch_store.open_store(env.hub.gateway, env.ws).propose(env.a, "closed", text, connections=[])
-    boards = [i["board"] for i in feed(env)[1]["config_proposals"]]
-    assert "closed" not in boards or env.owner.policy.can_read_wing("closed")
+    propose_limit(env, 5)
+
+    def listed(principal):
+        return {i["board"] for i in BoardService(env.ctx(principal))._config_proposals()}
+
+    assert listed(env.owner) == {"closed", BOARD}
+    narrowed = dataclasses.replace(
+        env.owner,
+        policy=Policy.build(
+            profile="full",
+            scopes=["memory:read", "memory:write"],
+            read_wings=["shared"],
+            trust="trusted",
+        ),
+    )
+    assert listed(narrowed) == {BOARD}
 
 
 def test_decided_versions_are_not_listed(env):

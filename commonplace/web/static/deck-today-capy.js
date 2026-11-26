@@ -82,12 +82,13 @@ export function cardHTML(card, bots, { busy, errors, held, exiting, open = new S
 export function configHTML(item, { busy = new Set(), errors = new Map(), confirming = new Set(), open = new Set() } = {}, escape = e) {
   const key = configKey(item), disabled = busy.has(key) ? ' disabled' : '';
   const who = displayText(item.proposer_name || item.proposed_by || ''), project = displayText(item.board_name || item.board);
+  const live = !item.channel || item.channel === 'live';
   const where = item.channel && item.channel !== 'live' ? ` (experiment ${displayText(String(item.channel).replace(/^exp:/, ''))})` : '';
   const asked = previewText(displayText(item.summary || 'A new config'), 220);
   const changes = `<details class="bt-full" data-bt-config-changes="${escape(key)}"${open.has(key) ? ' open' : ''}><summary>Changes</summary><p class="bt-full-text" data-config-diff>${escape(item.diff ?? 'Could not load the changes')}</p></details>`;
   const actions = confirming.has(key)
     ? `<div class="bt-actions" role="group" aria-label="Reject config ${escape(item.ref)}"><p class="bt-body">Reject config ${escape(item.ref)}? The current config stays in use. This version cannot be accepted after rejection.</p><button type="button" class="bt-approve bt-secondary" data-bt-config-action="reject-confirm"${disabled}>Reject version</button><button type="button" class="bt-quiet" data-bt-config-action="cancel"${disabled}>Cancel</button></div>`
-    : `<div class="bt-actions"><button type="button" class="bt-approve bt-primary" data-bt-config-action="accept"${disabled}>Accept</button><button type="button" class="bt-secondary" data-bt-config-action="reject"${disabled}>Reject</button></div><p class="bt-approve-note">Accept means yes: ${escape(project)} uses ${escape(item.ref)} from now on.</p>`;
+    : `<div class="bt-actions"><button type="button" class="bt-approve bt-primary" data-bt-config-action="accept"${disabled}>Accept</button><button type="button" class="bt-secondary" data-bt-config-action="reject"${disabled}>Reject</button></div><p class="bt-approve-note">${escape(live ? `Accept means yes: ${project} uses ${item.ref} from now on.` : `Accept means yes: ${item.ref} is accepted as an experiment. The live config for ${project} does not change.`)}</p>`;
   return `<article class="bt-card bt-waiting" data-bt-config="${escape(key)}" data-bt-kind="review" tabindex="-1" aria-labelledby="bt-title-${escape(key)}"><header>${who ? `${avatar({ name: who }, escape)}<b>${escape(who)}</b>` : ''}<span class="bt-verb">suggests a new config</span>${timeHTML(item.proposed_at, escape)}</header><h2 id="bt-title-${escape(key)}">${escape(asked)}</h2><p class="bt-body bt-preview">${escape(project)}: config ${escape(item.ref)}${escape(where)}</p>${changes}${actions}${errors.has(key) ? `<p class="bt-error" role="alert">${escape(errors.get(key))}</p>` : ''}</article>`;
 }
 /** The list when nothing is open: one calm line once loaded, otherwise the plain loading line. */
@@ -121,7 +122,7 @@ export function mount(context) {
     const all = cards(), list = visible(), proposed = visibleConfigs(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
     region('summary').textContent = loaded || needsMeCount(needs) ? summaryLine(needs) : 'Loading…';
     region('chips').innerHTML = chipsHTML([...all, ...configs().map(item => ({ ...item, actions: ['approve', 'reject'] }))], filter);
-    region('keys').hidden = !list.length;
+    region('keys').hidden = !(list.length || proposed.length);
     region('cards').innerHTML = list.length || proposed.length ? proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0);
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);

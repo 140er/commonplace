@@ -49,7 +49,10 @@ test('the item names the proposer, says the change in one line and expands to th
   assert.match(html, /Accept means yes: Acme uses v2 from now on\./);
   assert.match(configHTML(proposal(), { open: new Set(['config:acme:2']) }, e), /data-bt-config-changes="config:acme:2" open>/);
   assert.match(configHTML(proposal({ diff: null }), {}, e), /Could not load the changes/);
-  assert.match(configHTML(proposal({ channel: 'exp:trial' }), {}, e), /experiment trial/);
+  const trial = configHTML(proposal({ channel: 'exp:trial' }), {}, e);
+  assert.match(trial, /experiment trial/);
+  assert.match(trial, /The live config for Acme does not change\./);
+  assert.doesNotMatch(trial, /uses v2 from now on/);
 });
 
 test('names and diffs are escaped, never markup', () => {
