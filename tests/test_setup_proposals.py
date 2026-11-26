@@ -136,7 +136,7 @@ def test_every_read_carries_plain_words_changes_against_the_workspace_now(projec
     assert coworker["text"] == 'Creates a Coworker on work with the bot "Work lead": "Work"'
     models = {(line["board"], line["role"]): line for line in by_kind["model"]}
     assert models[(None, "main")]["action"] == "unchanged"
-    assert models[(None, "main")]["text"] == "Workspace default Coworker: stays grok/grok-4.7"
+    assert models[(None, "main")]["text"] == "Workspace default Bot: stays grok/grok-4.7"
     assert models[(None, "worker")]["action"] == "set"
     assert models[("work", "reviewer")]["action"] == "set"
     # A model not on the project's list yet is added to it first on apply, and the line says so.

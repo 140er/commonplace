@@ -54,7 +54,8 @@ INSTRUCTIONS_MAX = 4_000
 TITLE_MAX = 120
 SUMMARY_LINES = 3
 STATUSES = ("proposed", "applying", "applied", "partial", "rejected")
-ROLE_WORDS = {"main": "Coworker", "worker": "builder", "reviewer": "reviewer", "gate": "gate"}
+# The words of the Agent models pickers in Settings and project settings.
+ROLE_WORDS = {"main": "Bot", "worker": "Builder", "reviewer": "Reviewer", "gate": "Gate"}
 
 
 class SetupError(ValueError):
