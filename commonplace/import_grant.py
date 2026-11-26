@@ -15,7 +15,7 @@ READER_DETAIL = (
     "Covers history imported through app connections in this workspace, including imports from "
     "your other connections. History imported while signed in, live session captures and other "
     "people's history are not included. Multipart conversations, imported facts and native memory "
-    "files count too, whichever wings this connection can read. To stop access, revoke this "
+    "files count too, even from wings this connection cannot otherwise read. To stop access, revoke this "
     "connection and reconnect with this box unticked."
 )
 GRANT_PREFIX = "import-private"

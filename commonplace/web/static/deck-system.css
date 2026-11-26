@@ -1,4 +1,4 @@
-/* Commonplace design system, after the T3 Code app (140er/t3code-home apps/web): its dark palette, Geist, compact
+/* Commonplace design system, in a dark, compact desktop-app style: its dark palette, Geist, compact
    rows, a sidebar beside one canvas. Loaded last, so it settles what the per-screen files leave open; the per-screen
    files read these tokens. Inert in the classic look. No italic anywhere. */
 @font-face { font-family: Geist; src: url("fonts/geist-latin.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
