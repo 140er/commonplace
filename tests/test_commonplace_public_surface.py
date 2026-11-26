@@ -48,6 +48,7 @@ EXACT = {
     ("PUT", "/api/me/model-use-own"): "authenticated",
     ("GET", "/api/me/model-mode"): "authenticated",
     **{(method, "/api/settings/models"): "authenticated" for method in ("GET", "PUT", "POST")},
+    **{(method, "/api/setup-proposals"): "authenticated" for method in ("GET", "POST")},
     ("GET", "/api/learned"): "authenticated",
     ("GET", "/api/learning/settings"): "authenticated",
     ("PATCH", "/api/learning/settings"): "authenticated",
@@ -265,6 +266,7 @@ PREFIX = {
     ("POST", "/api/console/agents/"): "authenticated",
     ("GET", "/api/chat/"): "authenticated",
     **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT", "PATCH")},
+    ("GET", "/api/setup-proposals/"): "authenticated",
     **{(method, "/api/learned/"): "authenticated" for method in ("GET", "PATCH", "DELETE")},
     ("POST", "/api/learned/"): "authenticated",
 }

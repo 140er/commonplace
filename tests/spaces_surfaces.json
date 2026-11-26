@@ -1819,6 +1819,264 @@
           "name": "session_start"
         },
         {
+          "description": "Propose one setup for the workspace owner to approve in one tap: bots (key, name, instructions), a Coworker per project bound to one of those bots (key, board, bot key, title) and a model per role (main, worker, reviewer, gate) for projects and the workspace default ({provider, model}, or null to clear). Nothing changes until the signed-in owner approves this exact version by its sha256. Never put a token, key or password in a setup.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "bots": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              "coworkers": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "board": {
+                      "type": "string"
+                    },
+                    "bot": {
+                      "description": "The key of a bot in this setup.",
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "board",
+                    "bot"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 40,
+                "type": "array"
+              },
+              "models": {
+                "additionalProperties": false,
+                "properties": {
+                  "projects": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gate": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "main": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "worker": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "workspace": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "gate": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "main": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "reviewer": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "worker": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "name": "setup_propose"
+        },
+        {
+          "description": "Read setup proposals: one by id, or the newest (optionally of one status: proposed, applying, applied, partial, rejected). Each has its sha256, the plain-words changes it makes against the workspace now and, once the owner decided, who decided and the created ids.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "proposed",
+                  "applying",
+                  "applied",
+                  "partial",
+                  "rejected"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "setup_show"
+        },
+        {
           "description": "Create a space (the same operation as board_add).",
           "inputSchema": {
             "additionalProperties": false,
@@ -2962,6 +3220,8 @@
       "rules_get",
       "rules_publish",
       "session_start",
+      "setup_propose",
+      "setup_show",
       "space_add",
       "space_list",
       "space_own_wing",
@@ -6150,6 +6410,264 @@
           "name": "session_start"
         },
         {
+          "description": "Propose one setup for the workspace owner to approve in one tap: bots (key, name, instructions), a Coworker per project bound to one of those bots (key, board, bot key, title) and a model per role (main, worker, reviewer, gate) for projects and the workspace default ({provider, model}, or null to clear). Nothing changes until the signed-in owner approves this exact version by its sha256. Never put a token, key or password in a setup.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "bots": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              "coworkers": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "board": {
+                      "type": "string"
+                    },
+                    "bot": {
+                      "description": "The key of a bot in this setup.",
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "board",
+                    "bot"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 40,
+                "type": "array"
+              },
+              "models": {
+                "additionalProperties": false,
+                "properties": {
+                  "projects": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "gate": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "main": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "reviewer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "worker": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "workspace": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "gate": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "main": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "reviewer": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      },
+                      "worker": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "model"
+                        ],
+                        "type": [
+                          "object",
+                          "null"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "name": "setup_propose"
+        },
+        {
+          "description": "Read setup proposals: one by id, or the newest (optionally of one status: proposed, applying, applied, partial, rejected). Each has its sha256, the plain-words changes it makes against the workspace now and, once the owner decided, who decided and the created ids.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "proposed",
+                  "applying",
+                  "applied",
+                  "partial",
+                  "rejected"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "setup_show"
+        },
+        {
           "description": "Create a space (the same operation as board_add).",
           "inputSchema": {
             "additionalProperties": false,
@@ -7286,6 +7804,8 @@
       "rules_get",
       "rules_publish",
       "session_start",
+      "setup_propose",
+      "setup_show",
       "space_add",
       "space_list",
       "space_own_wing",
