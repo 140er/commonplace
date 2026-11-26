@@ -459,3 +459,6 @@
 :root[data-ui="deck"] body .deck-work .wk-meta { color: var(--ink2); font-size: 13px; }
 :root[data-ui="deck"] body .deck-board .card-meta { color: var(--ink2); font-size: 12.5px; }
 :root[data-ui="deck"] body .deck-work .wk-lane-name b, :root[data-ui="deck"] body .deck-board .col-count { color: var(--ink2); }
+
+/* Times and small status words read clearly on the dark surfaces. */
+:root[data-ui="deck"] body .shell :is(time, .wk-meta time, .cb-bot-at, .deck-bot-time, .bt-age) { color: var(--ink2); }

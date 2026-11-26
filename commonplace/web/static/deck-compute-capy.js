@@ -70,7 +70,7 @@ export function decorateComputePanel(html, summary, phone = false) {
 }
 
 export function addMachineHTML() {
-  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><p class="dc-observed">Machines added here are checked and shown on the map. Bots run their code on a runner machine set up in Admin.</p></section>`;
+  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p></section>`;
 }
 
 /** The media query is observable without a browser. CSS is a second, immediate fallback. */

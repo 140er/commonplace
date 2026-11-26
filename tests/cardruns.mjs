@@ -227,7 +227,7 @@ const cases = {
     assert.ok(!free.includes('<option value="lab">'), 'only the first machine\'s projects are listed at first');
     // Nothing can be started: a plain reason and no button.
     const refused = cardRunsHTML([], '', { configured: false, refusal: 'no_machine', machines: [] });
-    assert.ok(refused.includes('No machine is ready'));
+    assert.ok(refused.includes('No runner machine is set up') && refused.includes('href="#/admin"'), 'no runner: Admin is where it is set up');
     // A machine from the setup guide only checks itself: the refusal says which step it is at and links the Add a machine card.
     for (const refusal of ['setup_waiting', 'setup_unfinished', 'setup_only']) {
       const html = cardRunsHTML([], '', { configured: refusal === 'setup_only', refusal, machines: [] });
@@ -237,8 +237,9 @@ const cases = {
     }
     assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_waiting', machines: [] }).includes('waits for your approval'));
     assert.ok(cardRunsHTML([], '', { configured: false, refusal: 'setup_unfinished', machines: [] }).includes('is not finished'));
-    // No machine at all points at Add a machine in Cloud workspaces, never at an Admin form.
-    assert.ok(refused.includes('Add one in Cloud workspaces') && refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
+    // No machine at all points where bots can run code: a runner machine in Admin, the same place the setup checklist
+    // sends "Add a machine". Cloud workspaces machines are only checked, so the card never sends people there to run.
+    assert.ok(refused.includes('Set one up in Admin') && refused.includes('href="#/admin"') && !refused.includes('href="#/compute"') && !refused.includes('Workspace settings') && !refused.includes('Start agent'));
     // An Admin-enrolled machine is attested where that screen really is, and the text says where the provider instance id comes from.
     for (const refusal of ['machine_unavailable', 'binding_not_attested', 'not_writable', 'outside_worker_wing', 'worker_unavailable']) {
       const html = cardRunsHTML([], '', { configured: true, refusal });

@@ -716,14 +716,14 @@ def test_the_start_refusal_on_a_card_names_the_real_place_for_each_step_of_a_gui
         _shot_of(page, "[data-run-start-why]", f"{label}-14-card-start-refusal-{name}-text")
 
     def body(page, label, context):
-        # 1. No machine at all: add one under Add a machine in Cloud workspaces.
+        # 1. No machine at all: bots run code on a runner machine, which is set up in Admin.
         refusal(
             page,
             label,
             "no-machine",
-            "Add one in Cloud workspaces",
-            "Open Cloud workspaces",
-            "#/compute",
+            "Set one up in Admin",
+            "Open Admin > Runner machines",
+            "#/admin",
         )
         # 2. A machine from the guide that connected and waits for approval.
         _, setup = fx.add(label="card-box")

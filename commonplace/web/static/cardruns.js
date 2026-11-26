@@ -49,7 +49,7 @@ export const refusalWords = (error) => {
 // Why a start cannot happen, in plain words with the next action. The key is the server's stable
 // code (a refused start carries it as `code`; the options route returns it as `refusal`).
 const START_REFUSALS = {
-  no_machine: "No machine is ready to run an agent yet. Add one in Cloud workspaces; for now a machine only checks itself, and bots do not run on it.",
+  no_machine: "No runner machine is set up, so a bot cannot run this card yet. Set one up in Admin; machines on the Cloud workspaces map are only checked.",
   machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
   binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
   setup_waiting: "The machine you added connected and waits for your approval. Bots do not run on it in this version.",
@@ -76,7 +76,7 @@ const START_REFUSALS = {
 };
 // Where the person goes for the one working next step of a refusal.
 const ADD_LINK = ["#/compute", "Open Add a machine"], ADMIN_LINK = ["#/admin", "Open Admin > Runner machines"];
-const START_LINKS = { no_machine: ["#/compute", "Open Cloud workspaces"], setup_waiting: ADD_LINK, setup_unfinished: ADD_LINK, setup_only: ADD_LINK, machine_unavailable: ADMIN_LINK, binding_not_attested: ADMIN_LINK, not_writable: ADMIN_LINK, outside_worker_wing: ADMIN_LINK, worker_unavailable: ADMIN_LINK };
+const START_LINKS = { no_machine: ADMIN_LINK, setup_waiting: ADD_LINK, setup_unfinished: ADD_LINK, setup_only: ADD_LINK, machine_unavailable: ADMIN_LINK, binding_not_attested: ADMIN_LINK, not_writable: ADMIN_LINK, outside_worker_wing: ADMIN_LINK, worker_unavailable: ADMIN_LINK };
 // The card cannot be started whatever the setup: show no Start control and no complaint.
 export const NOT_CLAIMABLE = ["not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by"];
 const TEXT_CODES = { "card already has an active start": "active_start", "card was started recently": "started_recently" };
