@@ -157,8 +157,8 @@ MEASURE = """() => {
   const style=e=>{const s=getComputedStyle(e);return {background:s.backgroundColor,color:s.color,
     fontSize:s.fontSize,fontWeight:s.fontWeight,radius:s.borderRadius,padding:s.padding};};
   const button=card.querySelector('.runner-primary'), check=card.querySelector('[type=checkbox]');
-  return {scale:devicePixelRatio,card:rect(card),surface:rect(document.querySelector('.needs-me')),
-    count:rect(document.querySelector('.needs-me > .bar > .sub')),pageTitle:rect(document.querySelector('#title')),
+  return {scale:devicePixelRatio,card:rect(card),surface:rect(document.querySelector('.bt-col')),
+    count:rect(document.querySelector('.bt-bar > .bt-sub')),
     grid:{...rect(grid),...style(grid),columns:getComputedStyle(grid).gridTemplateColumns.split(' ').length,
       gap:getComputedStyle(grid).gap,userSelect:getComputedStyle(grid).userSelect,
       groups:[...grid.children].map(e=>({text:e.textContent,...rect(e)}))},
@@ -206,16 +206,15 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
         assert before["stepLine"]["color"] == "rgb(148, 148, 148)"
         assert before["stepLine"]["y"] + before["stepLine"]["height"] <= before["title"]["y"]
         assert before["refuse"]["color"] == "rgb(240, 112, 138)"
-        assert before["card"]["width"] == (720 if width == 1280 else 326)
+        assert before["card"]["width"] == (720 if width == 1280 else 362)
+        # The card sits in the Deck's page column: it shares the column's left edge with the count line, and on a
+        # phone the column's own 14px side padding is the only inset.
+        assert before["count"]["x"] == before["card"]["x"]
         if width == 1280:
-            # The Deck surface lines up with the page title and insets its content by 16px.
-            assert before["surface"]["x"] == before["pageTitle"]["x"]
-            assert before["card"]["x"] - before["surface"]["x"] == 16
-            assert before["count"]["x"] == before["card"]["x"]
+            assert before["card"]["x"] == before["surface"]["x"]
         else:
-            assert before["surface"]["x"] == 16
-            assert before["card"]["x"] - before["surface"]["x"] == 16
-            assert before["count"]["x"] == before["card"]["x"]
+            assert before["surface"]["x"] == 0
+            assert before["card"]["x"] - before["surface"]["x"] == 14
             assert before["grid"]["x"] == before["card"]["x"]
             assert before["instruction"]["x"] == before["card"]["x"]
             assert before["instruction"]["width"] == before["card"]["width"]

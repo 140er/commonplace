@@ -2,7 +2,8 @@ import { activityEvent, groupActivity, activityHTML } from './deck-home-activity
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
 import { addStyles, primaryAction, needsCards, configProposals, setupProposals, removeNeed, removeConfig, removeSetup, configKey, setupKey, todayKey, stamp, displayText, actionRequest, avatar, timeHTML, needsMeCount } from './deck-home-today.js';
-import { previewText } from './needs-me.js';
+import { previewText, runnerSetupItems } from './needs-me.js';
+import { runnerConsent, runnerConsentClick, runnerConsentChange, adoptConsentStyle } from './runnerconsent.js';
 
 export const TITLE = 'Waiting on you';
 
@@ -118,7 +119,7 @@ export function appliedLine(result, item) {
 export const emptyCardsHTML = (loaded, filtered = false) => `<p class="bt-calm" role="status">${loaded ? filtered ? 'Nothing here. Choose All to see everything waiting on you.' : 'Nothing waits on you. Questions and finished work from your bots show up here.' : 'Loading…'}</p>`;
 export function mount(context) {
   const { root, api } = context, doc = root.ownerDocument || globalThis.document;
-  addStyles(doc);
+  addStyles(doc); adoptConsentStyle(doc);
   const host = root.closest?.('.center') || root;
   host.classList.add('deck-today-capy');
   root.innerHTML = `<header class="bt-bar"><h1>Waiting on you</h1><span class="bt-sub" data-bt="summary">Loading…</span><span class="bt-sp"></span><nav class="bt-chips" data-bt="chips" aria-label="Show"></nav></header><div class="bt-scroll"><div class="bt-col"><p class="bt-confirm" data-bt="confirm" role="status" hidden></p><section class="bt-list" data-bt="cards" aria-label="Waiting on you"></section><p class="bt-keys" data-bt="keys">Keys: J and K move between items, R replies, H puts an item on hold</p><section class="bt-recent" aria-labelledby="bt-recent-title"><h3 id="bt-recent-title">Since you last looked</h3><ol data-bt="activity"></ol></section><p class="bt-error" data-bt="error" role="alert" hidden></p></div></div><dialog class="bt-reply" aria-labelledby="bt-reply-h"><form><h2 id="bt-reply-h">Reply</h2><p data-bt="reply-title"></p><p class="bt-reply-note" data-bt="reply-note" hidden></p><label data-bt="choice-label">Choose an answer<select name="choice"></select></label><label><span data-bt="reply-label">Your reply</span><textarea name="reply" maxlength="8000" rows="3"></textarea></label><p class="bt-error" data-bt="reply-error" role="alert"></p><div><button type="button" data-bt-cancel>Cancel</button><button type="submit">Send reply</button></div></form></dialog>`;
@@ -138,17 +139,21 @@ export function mount(context) {
   const visibleConfigs = () => filter === 'all' || filter === 'review' ? configs() : [];
   const setups = () => setupProposals(needs).filter(item => !settledSetups.has(setupKey(item)));
   const visibleSetups = () => filter === 'all' || filter === 'review' ? setups() : [];
+  // Machine setup steps are decisions for the owner too: they sit under All and Reviews with the proposals.
+  const runnerSetups = () => runnerSetupItems(needs);
+  const visibleRunnerSetups = () => filter === 'all' || filter === 'review' ? runnerSetups() : [];
+  let consentBusy = false;
   function focus(number) {
     focused = number;
     root.querySelector(`[data-bt-card="${number}"]`)?.focus({ preventScroll: true });
   }
   function paint() {
     if (!active) return;
-    const all = cards(), list = visible(), proposed = visibleConfigs(), suggested = visibleSetups(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
+    const all = cards(), list = visible(), proposed = visibleConfigs(), suggested = visibleSetups(), consents = visibleRunnerSetups(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
     region('summary').textContent = loaded || needsMeCount(needs) ? summaryLine(needs) : 'Loading…';
-    region('chips').innerHTML = chipsHTML([...all, ...[...setups(), ...configs()].map(item => ({ ...item, actions: ['approve', 'reject'] }))], filter);
+    region('chips').innerHTML = chipsHTML([...all, ...[...setups(), ...configs()].map(item => ({ ...item, actions: ['approve', 'reject'] })), ...runnerSetups().map(item => ({ ...item, actions: ['approve'] }))], filter);
     region('keys').hidden = !(list.length || proposed.length || suggested.length);
-    region('cards').innerHTML = list.length || proposed.length || suggested.length ? suggested.map(item => setupHTML(item, { busy, errors, confirming, open: openChanges })).join('') + proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0 || setups().length > 0);
+    region('cards').innerHTML = list.length || proposed.length || suggested.length || consents.length ? consents.map(runnerConsent).join('') + suggested.map(item => setupHTML(item, { busy, errors, confirming, open: openChanges })).join('') + proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0 || setups().length > 0 || runnerSetups().length > 0);
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
@@ -175,7 +180,10 @@ export function mount(context) {
       if (!alive()) return;
       const [queue, roster, feed] = results;
       if (queue.status === 'fulfilled') {
+        const before = new Map(runnerSetups().map(item => [item.id, item]));
         needs = queue.value || { count: 0 };
+        // A card the person is working in keeps its own state (confirm step, error, result) across a refresh.
+        for (const item of runnerSetups()) for (const key of ['ui_result', 'ui_device', 'ui_refusing', 'ui_error']) if (before.get(item.id)?.[key] !== undefined) item[key] = before.get(item.id)[key];
         for (const card of needsCards(needs)) if (settled.has(stamp(card)) || exiting.has(stamp(card))) needs = removeNeed(needs, card);
         for (const item of configProposals(needs)) if (settledConfigs.has(configKey(item))) needs = removeConfig(needs, item);
         for (const item of setupProposals(needs)) if (settledSetups.has(setupKey(item))) needs = removeSetup(needs, item);
@@ -313,8 +321,19 @@ export function mount(context) {
     else void decideConfig(item, action === 'reject-confirm' ? 'reject' : 'accept');
     return true;
   }
+  function onConsentClick(event) {
+    const button = event.target.closest?.('[data-runner-consent]');
+    if (!button) return false;
+    event.preventDefault();
+    if (button.disabled) return true;
+    void runnerConsentClick(button, {
+      items: runnerSetups(), mount: root, api, stopped: () => !active, busy: () => consentBusy, setBusy: value => { consentBusy = value; },
+      remove: item => { needs = { ...needs, runner_setup: needs.runner_setup.filter(row => row.machine_id !== item.machine_id || row.id === item.id) }; },
+    });
+    return true;
+  }
   function onClick(event) {
-    if (onSetupClick(event) || onConfigClick(event)) return;
+    if (onConsentClick(event) || onSetupClick(event) || onConfigClick(event)) return;
     if (event.target.closest?.('[data-bt-cancel]')) { dialog.close(); current = null; return; }
     const chip = event.target.closest?.('[data-bt-filter]');
     if (chip) { filter = chip.dataset.btFilter; paint(); return; }
@@ -328,6 +347,7 @@ export function mount(context) {
     if (button.dataset.btChoice !== undefined) void act(card, 'reply', { submit: true, answering: true, choice: card.ask_options?.[Number(button.dataset.btChoice)] });
     else void act(card, button.dataset.btAction, button.matches('.bt-primary') ? { answering: true } : {});
   }
+  const onConsentChange = event => runnerConsentChange(event, consentBusy);
   function onKey(event) {
     if (dialog.open || doc?.querySelector?.('dialog[open]')) return;
     const action = todayKey(event, ctx.singleKeys?.() !== false), list = visible().filter(card => !exiting.has(stamp(card)));
@@ -348,10 +368,10 @@ export function mount(context) {
     if (group.matches?.('.bt-full')) { const number = Number(group.dataset.btFull); if (group.open) openFull.add(number); else openFull.delete(number); return; }
     if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
   root.addEventListener('toggle', onGroupToggle, true);
-  root.addEventListener('click', onClick); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);
+  root.addEventListener('click', onClick); root.addEventListener('change', onConsentChange); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);
   paint(); void refresh();
   return { refresh, stop() {
     active = false; generation++; read?.abort(); writes.forEach(controller => controller.abort()); timers.forEach(clearTimeout); clearTimeout(confirmTimer);
-    dialog.close(); root.removeEventListener('toggle', onGroupToggle, true); root.removeEventListener('click', onClick); form.removeEventListener('submit', onSubmit); doc?.removeEventListener('keydown', onKey, true); host.classList.remove('deck-today-capy');
+    dialog.close(); root.removeEventListener('toggle', onGroupToggle, true); root.removeEventListener('click', onClick); root.removeEventListener('change', onConsentChange); form.removeEventListener('submit', onSubmit); doc?.removeEventListener('keydown', onKey, true); host.classList.remove('deck-today-capy');
   } };
 }

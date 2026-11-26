@@ -1,4 +1,4 @@
-import { runnerConsent, consentStyle, decideRunner } from "./runnerconsent.js";
+import { runnerConsent, consentStyle, runnerConsentClick, runnerConsentChange } from "./runnerconsent.js";
 import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
 import { cardId } from "./board.js";
@@ -536,38 +536,10 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
     if (button.hasAttribute("data-runner-consent")) {
-      const item = (data.needs.runner_setup || []).find(row => row.id === button.dataset.runnerConsent);
-      const card = button.closest('[data-runner-consent-card]');
-      if (!item || !card || busy || item.ui_result) return;
-      const action = button.dataset.runnerConsentAction;
-      if (action === 'refuse-start' || action === 'refuse-cancel') {
-        item.ui_refusing = action === 'refuse-start'; item.ui_error = '';
-        card.outerHTML = runnerConsent(item);
-        const updated = [...mount.querySelectorAll('[data-runner-consent-card]')].find(el => el.dataset.runnerConsentCard === item.id);
-        updated?.querySelector(`[data-runner-consent-action="${item.ui_refusing ? 'refuse-cancel' : 'refuse-start'}"]`)?.focus();
-        return;
-      }
-      if (action !== 'refuse' && !card.querySelector('[data-runner-fingerprint]')?.checked) return;
-      if (action === 'refuse' && !item.ui_refusing) return;
-      busy = true;
-      for (const control of card.querySelectorAll('button,input')) control.disabled = true;
-      card.querySelector('[data-runner-consent-status]').textContent = 'Saving…';
-      try {
-        const result = await decideRunner(api, item, action);
-        if (stopped) return;
-        if (action === 'device') {
-          if (result.url !== 'https://auth.openai.com/codex/device' || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(result.user_code)) throw new Error();
-          item.ui_device = result.user_code;
-        }
-        item.ui_result = action === 'refuse' ? 'refused' : 'confirmed';
-        item.ui_error = '';
-        if (action === 'refuse') data.needs.runner_setup = data.needs.runner_setup.filter(row => row.machine_id !== item.machine_id || row.id === item.id);
-      } catch {
-        if (!stopped) item.ui_error = 'Could not save. Refresh Needs me to check the current setup before trying again.';
-      } finally {
-        busy = false;
-        if (!stopped) card.outerHTML = runnerConsent(item);
-      }
+      await runnerConsentClick(button, {
+        items: data.needs.runner_setup || [], mount, api, stopped: () => stopped, busy: () => busy, setBusy: (value) => { busy = value; },
+        remove: (item) => { data.needs.runner_setup = data.needs.runner_setup.filter(row => row.machine_id !== item.machine_id || row.id === item.id); },
+      });
       return;
     }
     // Picking an item takes the shared panel back from whatever paused the detail.
@@ -624,12 +596,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       try { await refreshHolds(); } catch (failure) { onError(failure); }
     }
   }
-  const consentChange = event => {
-    if (!event.target.matches?.('[data-runner-fingerprint]')) return;
-    const card = event.target.closest('[data-runner-consent-card]');
-    const primary = card?.querySelector('.runner-primary');
-    if (primary) primary.disabled = busy || !event.target.checked;
-  };
+  const consentChange = event => runnerConsentChange(event, busy);
   const visibility = () => { if (!doc.hidden) void refreshHolds().catch(onError); };
   for (const root of mounts) { root.addEventListener("click", click); root.addEventListener("keydown", keydown); root.addEventListener("change", consentChange); }
   doc?.addEventListener("visibilitychange", visibility);
