@@ -330,6 +330,8 @@ def test_connection_inventory_preserves_fields_with_a_stored_display_name(hub):
         "bots_learned",
         "bots_grantable",
         "trust",
+        "trust_summary",
+        "trust_change",
         "scopes",
         "activity",
         "state",
