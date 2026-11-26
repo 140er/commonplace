@@ -984,6 +984,24 @@ def test_r10c_live_accept_between_attempts_is_409_and_keeps_the_job(world):
     assert (row["id"], row["config_version"], row["state"]) == (job, 1, "queued")
 
 
+def test_r10e_a_workspace_grok_choice_pins_the_grok_provider_and_a_project_choice_wins(world):
+    """Card #661: with no project choice the start runs on the workspace's choice for the role
+    (Grok 4.7 here) and launches on the runner's ``grok`` provider; a project choice wins."""
+    first, second = world.card(), world.card()
+    world.configure()
+    grok = {"provider": "grok", "model": "grok-4.7"}
+    models.put(world.db, world.owner, BOARD, {"main": None, "worker": None})
+    models.put_workspace(world.db, world.owner, {"main": grok, "worker": grok})
+    lease = world.claim(world.a)
+    assert world.orch_start(world.a, lease, first, "s1")["model"] == grok
+    assert world.lease()["modelSelection"] == {"instanceId": "grok", "model": "grok-4.7"}
+    world.set_models(MODEL)  # the project's own choice for main and worker
+    assert world.orch_start(world.a, lease, second, "s2")["model"] == {
+        "provider": PROVIDER,
+        "model": MODEL,
+    }
+
+
 def test_r10d_model_is_pinned_at_insert(world):
     """R10d: (i) a model change between attempts of a step is a 409; (ii) a queued job
     launches with its pinned model; a new step uses the new model."""

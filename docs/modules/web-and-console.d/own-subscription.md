@@ -1,0 +1,3 @@
+- **Owns:** The "Agent models" section of workspace settings (card #661, `mountWorkspaceModels`, `workspaceModelsHTML`, `ownAccountsHTML` in `projects.js`), the account line per role (`accountWords`) in the project and workspace pickers, the suggested Grok option, and the "Your accounts" rows in Needs me (`accountItems` in `needs.js`).
+- **Promises:** Members see the choices read-only and no owner controls; anyone can link their own account. No field asks for a key or token. Copy reuses the existing settings components.
+- **Tests:** `tests/workspace_models_view.mjs` through `tests/test_workspace_models_view.py`, `tests/projects_view.mjs`.

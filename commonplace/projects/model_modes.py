@@ -6,8 +6,9 @@ project (scope = the board slug); the project record wins as a whole. With no re
 
 A person's *connection* says: this machine of mine is signed in to my own account for a provider.
 It holds a provider name, a label of the person's choosing and the machine, never a credential.
-A machine behind an active connection is private to that person: it serves no other person's
-start and no org run, in every mode.
+A machine carries at most one active connection per provider, all of one person (card #661: one
+machine can hold both a Grok and a Claude subscription). A machine behind an active connection is
+private to that person: it serves no other person's start and no org run, in every mode.
 
 ``resolve_account`` is the one place the precedence matrix lives. It reads the control rows and
 returns a ``Decision``: the account a run is billed to and its run-record fields, or a refusal with a code,
@@ -59,8 +60,9 @@ CREATE TABLE IF NOT EXISTS model_connections (
     created_at TEXT NOT NULL,
     revoked_at TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS model_connections_machine
-    ON model_connections(machine_id) WHERE revoked_at IS NULL;
+DROP INDEX IF EXISTS model_connections_machine;
+CREATE UNIQUE INDEX IF NOT EXISTS model_connections_machine_provider
+    ON model_connections(machine_id, provider) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS model_connections_person
     ON model_connections(workspace_id, user_id) WHERE revoked_at IS NULL;
 CREATE TABLE IF NOT EXISTS model_person_prefs (
@@ -77,6 +79,14 @@ CREATE TABLE IF NOT EXISTS model_connection_needs (
     provider TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (workspace_id, user_id, board, provider)
+);
+CREATE TABLE IF NOT EXISTS model_signin_needs (
+    workspace_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, user_id, machine_id, provider)
 );
 """
 
@@ -298,11 +308,21 @@ def _usable(conn, workspace_id: str, user_id: str) -> list:
     ).fetchall()
 
 
-def connection_of_machine(conn, workspace_id: str, machine_id: str):
-    """The active connection that makes a machine private to one person, or ``None``."""
+def connection_of_machine(conn, workspace_id: str, machine_id: str, provider: str | None = None):
+    """The machine's active connection for ``provider`` (with no provider: its first), or ``None``.
+
+    Every active connection of a machine belongs to the same person, so any of them says whose
+    private machine it is."""
+    if provider is not None:
+        return conn.execute(
+            "SELECT id, user_id, provider, label, machine_id FROM model_connections "
+            "WHERE workspace_id=? AND machine_id=? AND provider=? AND revoked_at IS NULL",
+            (workspace_id, machine_id, provider),
+        ).fetchone()
     return conn.execute(
         "SELECT id, user_id, provider, label, machine_id FROM model_connections "
-        "WHERE workspace_id=? AND machine_id=? AND revoked_at IS NULL",
+        "WHERE workspace_id=? AND machine_id=? AND revoked_at IS NULL "
+        "ORDER BY created_at, id LIMIT 1",
         (workspace_id, machine_id),
     ).fetchone()
 
@@ -352,8 +372,14 @@ def add_connection(db, principal, body) -> dict:
         ).fetchone()[0]
         if held >= MAX_CONNECTIONS:
             raise InvalidMode("too many connections")
-        if connection_of_machine(conn, principal.workspace_id, machine["id"]) is not None:
-            raise InvalidMode("this machine already has a connection")
+        present = connection_of_machine(conn, principal.workspace_id, machine["id"])
+        if present is not None and present["user_id"] != principal.user_id:
+            raise ModeDenied("not found")  # another person's private machine does not exist
+        if (
+            connection_of_machine(conn, principal.workspace_id, machine["id"], body["provider"])
+            is not None
+        ):
+            raise InvalidMode("this machine already has a connection for this provider")
         connection = "mc_" + secrets.token_hex(8)
         conn.execute(
             "INSERT INTO model_connections "
@@ -463,13 +489,15 @@ def set_use_own(db, principal, body) -> dict:
 # ------------------------------------------------------------------ the decision
 
 
-def _missing(board: str, provider: str | None) -> Refusal:
+def _missing(board: str | None, provider: str | None) -> Refusal:
     what = f"your own {provider} account" if provider else "your own account"
+    where = board if board is not None else "the workspace"
+    scope = "This project" if board is not None else "This workspace"
     return Refusal(
         "connection_missing",
-        f"This project uses each person's own account, and you have not connected {what}. "
+        f"{scope} uses each person's own account, and you have not connected {what}. "
         "Connect it in Settings under Your own accounts, or ask the workspace owner to switch "
-        f"{board} to hybrid.",
+        f"{where} to hybrid.",
     )
 
 
@@ -488,6 +516,7 @@ class AccountSnapshot:
     use_own: bool
     private: dict | None
     machine: dict | None
+    machine_connections: tuple = ()
 
     def resolve(self, *, provider=None, substitute=False) -> Decision:
         return _resolve_snapshot(self, provider, substitute)
@@ -508,10 +537,18 @@ def snapshot_account(db, workspace_id, board, *, person, machine=None) -> Accoun
                 if person
                 else None
             )
-            private = (
-                connection_of_machine(conn, workspace_id, machine["id"])
+            held = (
+                tuple(
+                    dict(row)
+                    for row in conn.execute(
+                        "SELECT id, user_id, provider, label, machine_id FROM model_connections "
+                        "WHERE workspace_id=? AND machine_id=? AND revoked_at IS NULL "
+                        "ORDER BY created_at, id",
+                        (workspace_id, machine["id"]),
+                    )
+                )
                 if machine is not None
-                else None
+                else ()
             )
             return AccountSnapshot(
                 board,
@@ -519,8 +556,9 @@ def snapshot_account(db, workspace_id, board, *, person, machine=None) -> Accoun
                 rule,
                 own,
                 bool(pref and pref["use_own"]),
-                dict(private) if private is not None else None,
+                held[0] if held else None,
                 dict(machine) if machine is not None else None,
+                held,
             )
     except sqlite3.Error as exc:
         raise ModeUnavailable("model modes cannot be read") from exc
@@ -529,7 +567,7 @@ def snapshot_account(db, workspace_id, board, *, person, machine=None) -> Accoun
 def resolve_account(
     db,
     workspace_id: str,
-    board: str,
+    board: str | None,
     *,
     person: str | None,
     provider: str | None = None,
@@ -576,8 +614,11 @@ def _resolve_snapshot(snapshot, provider, substitute) -> Decision:
         )  # another person's machine does not exist here
     if want is None:
         if private is not None:
+            served = next(
+                (c for c in snapshot.machine_connections if c["provider"] == provider), private
+            )
             return Decision(
-                **base, kind="person", label=private["label"], connection_id=private["id"]
+                **base, kind="person", label=served["label"], connection_id=served["id"]
             )
         return Decision(**base, exclude_private=machine is not None)
     if want == "org":
@@ -715,13 +756,128 @@ def needs(db, principal) -> list[dict]:
     return items
 
 
-def effective_for(db, workspace_id: str, board: str, person: str | None, roles: dict) -> dict:
+def linked_providers(db, workspace_id: str, user_id: str | None) -> frozenset:
+    """Providers for which this person has a usable own connection (an enabled, unrevoked
+    machine). Only kinds and names: never a label of anyone else, never a credential."""
+    if not user_id:
+        return frozenset()
+    try:
+        with db._lock:
+            rows = _usable(db._conn, workspace_id, user_id)
+    except sqlite3.Error as exc:
+        raise ModeUnavailable("model modes cannot be read") from exc
+    return frozenset(row["provider"] for row in rows)
+
+
+def effective_for(
+    db,
+    workspace_id: str,
+    board: str | None,
+    person: str | None,
+    roles: dict,
+    *,
+    linked_for: str | None = None,
+) -> dict:
     """The account each role would run on for ``person``: ``roles`` maps a role to its model's
-    provider (or ``None``). A role with nothing usable carries the refusal's reason."""
+    provider (or ``None``); ``board`` ``None`` reads the workspace's own record. A role with
+    nothing usable carries the refusal's reason; ``linked`` says whether ``linked_for`` (the
+    caller, default ``person``) has their own account for the role's provider."""
+    linked = linked_providers(db, workspace_id, linked_for or person)
     result = {}
     for role, provider in roles.items():
         decision = resolve_account(db, workspace_id, board, person=person, provider=provider)
         entry = decision.public()
         entry["reason"] = decision.refusal.message if decision.refusal else None
+        entry["linked"] = provider is not None and provider in linked
         result[role] = entry
     return result
+
+
+# ------------------------------------------------------------------ a sign-in that stopped working
+
+
+def note_signed_out(db, workspace_id: str, user_id: str, machine_id: str, provider: str) -> None:
+    """A person's CLI on their machine said it is signed out: one Needs me row per machine and
+    provider until it answers again. Nothing about the sign-in itself is kept."""
+    with db._lock, db._tx() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO model_signin_needs "
+            "(workspace_id, user_id, machine_id, provider, created_at) VALUES (?,?,?,?,?)",
+            (workspace_id, user_id, machine_id, provider, _now()),
+        )
+
+
+def clear_signed_out(db, workspace_id: str, machine_id: str, provider: str) -> None:
+    """That CLI on that machine answered: its sign-in works again."""
+    with db._lock, db._tx() as conn:
+        conn.execute(
+            "DELETE FROM model_signin_needs WHERE workspace_id=? AND machine_id=? AND provider=?",
+            (workspace_id, machine_id, provider),
+        )
+
+
+def signin_needs(db, principal) -> list[dict]:
+    """The person's own sign-in items; a row whose machine is gone clears itself."""
+    if not principal.person or getattr(principal, "runner", None) is not None:
+        return []
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT n.machine_id, n.provider, m.label, m.enabled, m.revoked_at "
+            "FROM model_signin_needs n LEFT JOIN runner_machines m "
+            "ON m.id=n.machine_id AND m.workspace_id=n.workspace_id "
+            "WHERE n.workspace_id=? AND n.user_id=? ORDER BY n.provider, n.machine_id",
+            (principal.workspace_id, principal.user_id),
+        ).fetchall()
+    items, gone = [], []
+    for row in rows:
+        if row["label"] is None or row["revoked_at"] or not row["enabled"]:
+            gone.append((row["machine_id"], row["provider"]))
+            continue
+        items.append(
+            {
+                "kind": "model_signin",
+                "provider": row["provider"],
+                "machine": row["label"],
+                "message": signed_out_words(row["provider"], row["label"]),
+                "action": {"label": "Sign in again", "type": "model_connections"},
+            }
+        )
+    if gone:
+        with db._lock, db._tx() as conn:
+            conn.executemany(
+                "DELETE FROM model_signin_needs WHERE workspace_id=? AND user_id=? "
+                "AND machine_id=? AND provider=?",
+                [(principal.workspace_id, principal.user_id, *key) for key in gone],
+            )
+    return items
+
+
+def cli_problem_words(code: str, provider: str, machine_label: str | None, model=None) -> str:
+    """What a person reads when their own CLI refused a run: why, and the next step."""
+    if code == "cli_signed_out":
+        return signed_out_words(provider, machine_label)
+    where = f"on {machine_label}" if machine_label else "on your runner"
+    name = provider or "chat CLI"
+    after = " Nothing was sent to another account or provider."
+    if code == "cli_not_entitled":
+        what = f" to {model}" if model else ""
+        return (
+            f"Your {name} account {where} is signed in, but the provider refused access{what} "
+            "for your plan. Pick another model for this role in Agent models, or change your "
+            "plan with the provider, then send your message again." + after
+        )
+    return (
+        f"The {name} command line tool {where} is too old for the provider. Update it on that "
+        "machine, then send your message again." + after
+    )
+
+
+def signed_out_words(provider: str, machine_label: str | None) -> str:
+    where = f"on {machine_label}" if machine_label else "on your runner"
+    name = provider or "chat CLI"
+    how = f" (for example `{provider} login` in its terminal)" if provider else ""
+    return (
+        f"Your {name} sign-in {where} has expired or was signed out, so it could not answer. "
+        f"Sign in again on that machine{how}, then send your message again. Nothing was sent "
+        "to another account or provider."
+    )

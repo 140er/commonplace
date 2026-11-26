@@ -353,6 +353,24 @@ Without `tools: true`, validation requires that tools-off shape and rejects
 `--plugin-dir`, `--agents`, `--agent` and `--permission-mode`, including their
 `--flag=value` forms.
 
+### Your Grok subscription
+
+You can answer chat with your own Grok subscription, without any API key. On this
+machine, install the Grok command line tool and sign in once from its terminal with
+its device sign-in: it prints a link and a short code, you open the link, sign in
+with your Grok account and enter the code. The sign-in stays on this machine;
+Commonplace never sees it. Then add a Grok entry to the chat command lines in the
+file above, link this machine for Grok in Settings under Your own accounts, and pick
+Grok 4.7 for a role in Agent models. With the project in personal mode, its chat
+answers run here on your subscription. The exact entry, the sign-in command and the
+safety rules it must follow are in the technical notes on model modes.
+
+A Grok entry runs with tools off, for one turn, without memory, helpers or web
+search; a setting that would allow more is refused when the file is checked. If
+Grok says your sign-in expired, your plan does not include the model, or the tool
+is too old, the chat tells you which and what to do. The message is never sent to
+another account or provider.
+
 **Every executable except `claude`, including Codex, requires explicit
 `"tools": true`.** Validation uses the executable's basename, not its CLI label. This
 acknowledgement bypasses tools-off validation, including for a Claude entry.

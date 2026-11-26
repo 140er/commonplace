@@ -1,0 +1,2 @@
+- **Promises:** A config-driven start of a role with no project choice pins the workspace's choice for that role (card #661), and the launch carries it as the runner host's provider (`modelSelection: {instanceId: "grok", model: "grok-4.7"}` for Grok); a project's own choice still wins. No change to the start path itself.
+- **Tests:** `tests/test_orch_runner.py` (`test_r10e_...`).

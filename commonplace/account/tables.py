@@ -72,6 +72,7 @@ RULES = {
     "model_connections": Rule(user=_U, workspace=_W),
     "model_person_prefs": Rule(user=_U, workspace=_W),
     "model_connection_needs": Rule(user=_U, workspace=_W),
+    "model_signin_needs": Rule(user=_U, workspace=_W),
     "chat_runner_jobs": Rule(user=_U, workspace=_W),
     "chat_runners_seen": Rule(user=_U, workspace=_W),
     "connections": Rule(user=_U, workspace=_W),

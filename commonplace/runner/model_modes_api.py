@@ -8,6 +8,11 @@
   Only that person reads or changes them; a foreign or missing id answers the same 404.
 - ``GET /api/me/model-mode`` and the read-only ``model_mode`` tool: the mode, where it comes from and
   the account the caller's next run would use. There is no tool that changes a mode.
+
+Every role read-back (card #661) carries ``provider``, ``model``, ``source`` (``project``,
+``workspace``, ``default`` or ``none``), ``mode``, ``mode_source``, the account ``kind`` and the
+caller's own ``label``, ``linked`` (the caller has their own account for that provider) and the
+``reason`` when nothing would serve it. Never a credential, never another person's label.
 """
 
 import logging
@@ -51,14 +56,32 @@ def _guard(call, *args, **kwargs):
         raise ToolError("no: " + str(exc)) from None
 
 
+def _roles(ctx, board, effective):
+    """Each role's model, its source and the account it would run on for the caller."""
+    principal, db, ws = ctx.principal, ctx.db, ctx.principal.workspace_id
+    accounts = model_modes.effective_for(
+        db,
+        ws,
+        board,
+        principal.user_id if principal.person else None,
+        {role: item.choice.provider if item.choice else None for role, item in effective.items()},
+        linked_for=principal.user_id,
+    )
+    return {role: {**item.public(), **accounts[role]} for role, item in effective.items()}
+
+
 def mode_view(ctx, args):
     """The mode as the caller sees it: the workspace's, and for one project the role-by-role account
     this caller's next run would use. Other people's connections never appear."""
     if not isinstance(args, dict) or args.keys() - TOOL_ARGUMENTS:
         raise ToolError("no: invalid arguments")
-    principal, db, ws = ctx.principal, ctx.db, ctx.principal.workspace_id
-    person = principal.user_id if principal.person else None
-    result = {"workspace": model_modes.effective_mode(db, ws, None)}
+    db, ws = ctx.db, ctx.principal.workspace_id
+    result = {
+        "workspace": {
+            **model_modes.effective_mode(db, ws, None),
+            "roles": _roles(ctx, None, models.workspace_roles(db, ws)),
+        }
+    }
     if args.get("board") is None:
         readable = {}
         for slug in model_modes.records(db, ws)["projects"]:
@@ -70,14 +93,10 @@ def mode_view(ctx, args):
         result["projects"] = readable
         return result
     board = _board(ctx, args["board"])["slug"]
-    roles = {
-        role: effective.choice.provider if effective.choice else None
-        for role, effective in models.effective_roles(db, ws, board).items()
-    }
     result["project"] = {
         "board": board,
         **model_modes.effective_mode(db, ws, board),
-        "roles": model_modes.effective_for(db, ws, board, person, roles),
+        "roles": _roles(ctx, board, models.effective_roles(db, ws, board)),
     }
     return result
 

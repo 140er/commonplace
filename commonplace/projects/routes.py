@@ -44,8 +44,14 @@ def _may_write(service, board):
 
 def _effective(gateway, principal, slug):
     """Each role's model and source, and (model modes, card #617) the account it would run on for
-    the caller: mode, where the mode comes from, account kind and the caller's own label."""
-    roles = models.effective_roles(gateway.db, principal.workspace_id, slug)
+    the caller: mode, where the mode comes from, account kind, the caller's own label and (card
+    #661) whether the caller has linked their own account for that role's provider."""
+    return _with_accounts(
+        gateway, principal, slug, models.effective_roles(gateway.db, principal.workspace_id, slug)
+    )
+
+
+def _with_accounts(gateway, principal, slug, roles):
     view = {role: effective.public() for role, effective in roles.items()}
     if getattr(gateway, "runner_installed", False):
         try:
@@ -55,6 +61,7 @@ def _effective(gateway, principal, slug):
                 slug,
                 principal.user_id if principal.person else None,
                 {role: e.choice.provider if e.choice else None for role, e in roles.items()},
+                linked_for=principal.user_id,
             )
         except (model_modes.ModeUnavailable, sqlite3.Error):
             accounts = {}
@@ -63,11 +70,68 @@ def _effective(gateway, principal, slug):
     return view
 
 
+def workspace_models_view(gateway, principal) -> dict:
+    """The workspace's default model per role (card #661) in the project view's shape."""
+    db, ws = gateway.db, principal.workspace_id
+    listed = models.catalog(db, ws, models.WORKSPACE)
+    return {
+        "can_configure": principal.person and principal.role == "owner",
+        "models": {
+            role: choice.public() if choice is not None else None
+            for role, choice in models.get(db, ws, models.WORKSPACE).items()
+        },
+        "models_effective": _with_accounts(
+            gateway, principal, None, models.workspace_roles(db, ws)
+        ),
+        "model_catalog": [choice.public() for choice in listed],
+        "model_suggestions": [choice.public() for choice in models.suggestions(listed)],
+    }
+
+
+def workspace_models_route(gateway, h):
+    """``GET|PUT|POST /api/settings/models``: any signed-in person reads the workspace's default
+    model per role; only the signed-in owner changes it (``PUT``) or adds a model to the
+    workspace's list (``POST``). Anyone else gets the 404 of an unknown route, so the setting's
+    editability is not shown. Writes are audited (``models.workspace``, ``project.model_catalog``)."""
+    principal = require_principal(gateway, h)
+    if principal is None:
+        return
+    if not principal.person or (h.command != "GET" and principal.role != "owner"):
+        send_json(h, 404, {"error": "not found"})
+        return
+    if h.command in ("PUT", "POST"):
+        try:
+            body = read_json(h)
+        except ValueError:
+            return
+        if isinstance(body, dict):
+            body.pop("rules_seq", None)
+        try:
+            if h.command == "PUT":
+                models.put_workspace(gateway.db, principal, body)
+            else:  # add one model to the workspace's own list
+                models.catalog_add(gateway.db, principal, models.WORKSPACE, body)
+        except models.UnknownModel:
+            send_json(h, 400, {"error": "Unknown model", "code": "unknown_model"})
+            return
+        except ProjectDenied:
+            send_json(h, 404, {"error": "not found"})
+            return
+        except sqlite3.OperationalError:
+            send_json(h, 409, {"error": "busy", "code": "busy"})
+            return
+        except ValueError:
+            send_json(h, 400, {"error": "Invalid models"})
+            return
+    send_json(h, 200, workspace_models_view(gateway, principal))
+
+
 def _view(gateway, principal, board):
     service = BoardService(ToolContext(principal=principal, gateway=gateway))
     with service.store.connection() as conn:
         project_limits = limits.get(conn, board["id"])
     choices = models.get(gateway.db, principal.workspace_id, board["slug"])
+    listed = models.catalog(gateway.db, principal.workspace_id, board["slug"])
     rule = escalation.get(gateway.db, principal.workspace_id, board["slug"])
     result = {
         "board": board["slug"],
@@ -84,10 +148,8 @@ def _view(gateway, principal, board):
             for role, choice in choices.items()
         },
         "models_effective": _effective(gateway, principal, board["slug"]),
-        "model_catalog": [
-            choice.public()
-            for choice in models.catalog(gateway.db, principal.workspace_id, board["slug"])
-        ],
+        "model_catalog": [choice.public() for choice in listed],
+        "model_suggestions": [choice.public() for choice in models.suggestions(listed)],
         "escalation": rule.public() if rule is not None else None,
         "can_configure": principal.person and principal.role == "owner",
         "can_edit_panel": _may_write(service, board),
@@ -367,6 +429,10 @@ def install(gateway) -> None:
     for method in ("GET", "PUT"):
         gateway.add_route(
             method, "/api/settings/orchestration", lambda h: orchestration_route(gateway, h)
+        )
+    for method in ("GET", "PUT", "POST"):
+        gateway.add_route(
+            method, "/api/settings/models", lambda h: workspace_models_route(gateway, h)
         )
     for method in ("GET", "POST", "PUT", "PATCH"):
         gateway.add_prefix_route(method, "/api/projects/", lambda h: _route(gateway, h))

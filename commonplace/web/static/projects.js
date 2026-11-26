@@ -225,10 +225,14 @@ const parseModel = (value) => { const at = value.indexOf(" "); return at < 1 ? n
 // Each role picks from the workspace's list; the stored choice always stays an option and is shown as stored.
 export const MODEL_ROLE_LABELS = {main: "Bot", worker: "Builder", reviewer: "Reviewer", gate: "Gate"};
 
-function modelOptions(project, e, choice, empty) {
+// Role pickers also offer the built-in suggestions (`model_suggestions`, for example Grok 4.7): never a
+// default, and on the list only once chosen.
+function modelOptions(project, e, choice, empty, { suggest = false } = {}) {
   const catalog = project.model_catalog || [];
-  const options = choice && !catalog.some((item) => sameModel(item, choice)) ? [...catalog, choice] : catalog;
-  return `<option value="">${empty}</option>` + options.map((item) => `<option value="${e(modelValue(item))}"${sameModel(item, choice) ? " selected" : ""}>${e(item.provider)} · ${e(item.model)}</option>`).join("");
+  const suggested = suggest ? (project.model_suggestions || []).filter((item) => !catalog.some((listed) => sameModel(listed, item))) : [];
+  const offered = [...catalog, ...suggested];
+  const options = choice && !offered.some((item) => sameModel(item, choice)) ? [...offered, choice] : offered;
+  return `<option value="">${empty}</option>` + options.map((item) => `<option value="${e(modelValue(item))}"${sameModel(item, choice) ? " selected" : ""}>${e(item.provider)} · ${e(item.model)}${suggested.includes(item) ? " (suggested)" : ""}</option>`).join("");
 }
 
 export function escalationHTML(project, e) {
@@ -253,12 +257,27 @@ export function effectiveWords(project, role) {
   return `${item.provider}/${item.model} (${SOURCE_WORDS[item.source] || "source not known"})`;
 }
 
-export function modelsHTML(project, e) {
+// Whose account a role's next run uses for the reader (card #661): the reason when nothing would
+// serve it, else the account kind; and whether the reader linked their own account for its provider.
+export function accountWords(project, role) {
+  const item = project.models_effective?.[role], account = item?.account;
+  if (!account || !item.provider) return "";
+  const own = `Your own ${item.provider} account: ${account.linked ? "linked" : "not linked"}.`;
+  if (account.reason) return `${account.reason} ${own}`;
+  const on = account.kind === "person" ? `On your own account${account.label ? ` (${account.label})` : ""}.` : account.kind === "org" ? "On the workspace account." : "";
+  return [on, own].filter(Boolean).join(" ");
+}
+
+function roleFieldsHTML(project, e, empty) {
   const disabled = project.can_configure ? "" : "disabled";
-  const roles = Object.keys(MODEL_ROLE_LABELS).map((role) => {
-    const choice = project.models?.[role];
-    return `<fieldset ${disabled}><legend>${MODEL_ROLE_LABELS[role]}</legend><label>Model<select name="${role}_model" data-model-role="${role}">${modelOptions(project, e, choice, "Default")}</select></label>${choice ? `<p class="set-note">Stored: <code data-model-stored="${role}">${e(choice.provider)}/${e(choice.model)}</code></p>` : ""}<p class="set-note">Runs on: <span data-model-effective="${role}">${e(effectiveWords(project, role))}</span></p></fieldset>`;
+  return Object.keys(MODEL_ROLE_LABELS).map((role) => {
+    const choice = project.models?.[role], account = accountWords(project, role);
+    return `<fieldset ${disabled}><legend>${MODEL_ROLE_LABELS[role]}</legend><label>Model<select name="${role}_model" data-model-role="${role}">${modelOptions(project, e, choice, empty, { suggest: true })}</select></label>${choice ? `<p class="set-note">Stored: <code data-model-stored="${role}">${e(choice.provider)}/${e(choice.model)}</code></p>` : ""}<p class="set-note">Runs on: <span data-model-effective="${role}">${e(effectiveWords(project, role))}</span></p>${account ? `<p class="set-note" data-model-account="${role}">${e(account)}</p>` : ""}</fieldset>`;
   }).join("");
+}
+
+export function modelsHTML(project, e) {
+  const roles = roleFieldsHTML(project, e, "Default");
   const add = project.can_configure ? `<form data-project-model-add><h3>Add a model to the list</h3><label>Provider<input name="provider" maxlength="128" autocomplete="off" required></label><label>Model<input name="model" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Add to list</button><p role="status" data-project-model-add-status></p></form>` : "";
   return `<form data-project-models><p>Pick a model from this workspace's list, or leave a role on the default: the first model in the list. A role with no model and an empty list cannot start, and Waiting on you says so.</p>${roles}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>${escalationHTML(project, e)}${add}`;
 }
@@ -1029,6 +1048,140 @@ function installOrchestrationStyles() {
     @media(max-width:699px) {.orchestration-controls label {min-height:44px}}
   `);
   document.adoptedStyleSheets = [...document.adoptedStyleSheets, orchestrationSheet];
+}
+
+// Workspace settings, "Agent models" (card #661): the model each role uses in every project that
+// has no choice of its own. Everyone reads it; only the owner sees the pickers enabled and saves.
+export function workspaceModelsHTML(view, e) {
+  return `<form data-workspace-models><p>Pick the model each role uses in projects that have no choice of their own. A project's own choice wins. With nothing picked a role uses the first model in the list. A provider outside this machine, such as Grok, is used only when you pick it here or in a project, and runs on your own signed-in account in personal mode.</p>${roleFieldsHTML(view, e, "No workspace choice")}${view.can_configure ? '<button class="blockbtn" type="submit">Save workspace models</button>' : ""}<p role="status" data-workspace-model-status></p></form>${view.can_configure ? '<form data-workspace-model-add><h3>Add a model to the workspace list</h3><label>Provider<input name="provider" maxlength="128" autocomplete="off" required></label><label>Model<input name="model" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Add to list</button><p role="status" data-workspace-model-add-status></p></form>' : ""}`;
+}
+
+// "Your own accounts": the reader's own signed-in subscriptions. The sign-in itself happens on their
+// machine in the provider's CLI (for Grok: `grok login`); this list holds a provider, a label and the
+// machine, never a credential. Absent where the runner is not installed.
+// Owner only: whose account runs these roles (the workspace's model mode, card #617). The settings
+// screen with the effect preview is a later slice; this is the plain switch.
+export const MODE_WORDS = {
+  unset: "Current setup (nothing chosen)",
+  org: "The workspace's account",
+  personal: "Each person's own account",
+  hybrid: "The workspace's account, or a person's own where allowed",
+};
+export function modeHTML(record, e) {
+  if (record === undefined) return "";
+  const current = record?.mode || "unset";
+  const options = Object.entries(MODE_WORDS).map(([value, words]) => `<option value="${value}"${value === current ? " selected" : ""}>${e(words)}</option>`).join("");
+  return `<form data-workspace-mode><h3>Whose account runs these roles</h3><label>Account<select name="mode">${options}</select></label><label class="set-check"><input type="checkbox" name="allow_person_override"${record?.allow_person_override ? " checked" : ""}> People may use their own account (only with the last choice)</label><p class="set-note">To run a role on your own subscription, such as Grok, choose each person's own account and link yours below. Nothing falls back to another account or provider.</p><button class="opt" type="submit">Save account choice</button><p role="status" data-workspace-mode-status></p></form>`;
+}
+
+export function ownAccountsHTML(own, e) {
+  if (!own) return "";
+  const rows = (own.connections || []).map((item) => `<li><span><b>${e(item.label)}</b> · ${e(item.provider)} · ${e(item.machine)}</span><button class="btn sm" type="button" data-own-remove="${e(item.id)}" aria-label="Remove ${e(item.label)}">Remove</button></li>`).join("");
+  return `<section data-own-accounts><h3>Your own accounts</h3><p class="set-note">To use your own subscription, sign in on one of your runner machines first: install the provider's command line tool and sign in from that machine's terminal (for Grok: <code>grok login --device-auth</code>, which shows a link and a code; open the link, sign in with your Grok account and enter the code). Turn that provider on in the runner, then add the machine here. No API key is asked for or stored.</p>${rows ? `<ul class="set-list" data-own-list>${rows}</ul>` : '<p class="set-note" data-own-empty>No own account linked yet.</p>'}<form data-own-add><label>Provider<input name="provider" maxlength="128" autocomplete="off" placeholder="grok" required></label><label>Label<input name="label" maxlength="60" autocomplete="off" placeholder="my Grok subscription" required></label><label>Machine<input name="machine" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Link this account</button></form><p role="status" data-own-status></p></section>`;
+}
+
+export function mountWorkspaceModels(host, { api, e, value, current = () => true }) {
+  let view = value, own = null, record;
+  const active = () => current() && host.isConnected;
+  async function loadOwn(message = "") {
+    try { own = await api("/api/me/model-connections"); } catch { own = null; }
+    try { view = await api("/api/settings/models"); } catch { /* keep the last view */ }
+    if (view.can_configure) {
+      try { record = (await api("/api/settings/model-mode")).workspace; } catch { record = undefined; }
+    }
+    render("", message);
+  }
+  function bindMode() {
+    const form = host.querySelector("[data-workspace-mode]");
+    if (!form) return;
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const mode = form.querySelector('[name="mode"]').value, allow = form.querySelector('[name="allow_person_override"]').checked;
+      const note = form.querySelector("[data-workspace-mode-status]");
+      if (allow && mode !== "hybrid") { note.textContent = "Allowing people's own accounts needs the last choice."; return; }
+      try {
+        if (mode === "unset") { if (record) await api("/api/settings/model-mode", { method: "DELETE" }); }
+        else await api("/api/settings/model-mode", { method: "PUT", body: { mode, allow_person_override: allow } });
+        if (active()) await loadOwn();
+        const saved = host.querySelector("[data-workspace-mode-status]");
+        if (saved) saved.textContent = "Account choice saved.";
+      } catch { if (active()) note.textContent = "Could not save the account choice."; }
+    };
+  }
+  function bindOwn(ownStatus) {
+    const add = host.querySelector("[data-own-add]");
+    if (!add) return;
+    add.onsubmit = async (event) => {
+      event.preventDefault();
+      const read = (name) => add.querySelector(`[name="${name}"]`).value.trim();
+      try {
+        await api("/api/me/model-connections", { method: "POST", body: { provider: read("provider"), label: read("label"), machine: read("machine") } });
+        if (active()) await loadOwn("Account linked.");
+      } catch (failure) {
+        if (active()) ownStatus().textContent = failure?.status === 404 ? "That machine is not one of yours." : String(failure?.payload?.error || "Could not link that account.");
+      }
+    };
+    for (const button of host.querySelectorAll("[data-own-remove]")) {
+      button.onclick = async () => {
+        try {
+          await api(`/api/me/model-connections?id=${encodeURIComponent(button.dataset.ownRemove)}`, { method: "DELETE" });
+          if (active()) await loadOwn("Account removed.");
+        } catch { if (active()) ownStatus().textContent = "Could not remove that account."; }
+      };
+    }
+  }
+  function render(message = "", ownMessage = "") {
+    if (!active()) return;
+    // A redraw (own accounts loaded, an account linked) keeps picks not saved yet.
+    const picks = [...host.querySelectorAll("[data-workspace-models] select[data-model-role]")].map((select) => [select.name, select.value]);
+    host.innerHTML = workspaceModelsHTML(view, e) + (view.can_configure ? modeHTML(record, e) : "") + ownAccountsHTML(own, e);
+    for (const [name, value] of picks) {
+      const select = host.querySelector(`[data-workspace-models] select[name="${name}"]`);
+      if (select && [...select.options].some((option) => option.value === value)) select.value = value;
+    }
+    const ownStatus = () => host.querySelector("[data-own-status]");
+    if (ownMessage && ownStatus()) ownStatus().textContent = ownMessage;
+    bindOwn(ownStatus);
+    bindMode();
+    const form = host.querySelector("[data-workspace-models]"), status = form.querySelector("[data-workspace-model-status]");
+    if (message) status.textContent = message;
+    if (!view.can_configure) return;
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      if (button.disabled) return;
+      const body = {};
+      for (const role of Object.keys(MODEL_ROLE_LABELS)) {
+        const picked = form.querySelector(`[name="${role}_model"]`).value;
+        body[role] = picked ? parseModel(picked) : null;
+      }
+      button.disabled = true;
+      try {
+        const saved = await api("/api/settings/models", { method: "PUT", body });
+        if (!active()) return;
+        view = saved;
+        render("Workspace models saved.");
+      } catch (failure) {
+        if (active()) status.textContent = failure?.payload?.code === "unknown_model" ? PROJECT_COPY.unknownModel : "Could not save workspace models.";
+      } finally { button.disabled = false; }
+    };
+    const add = host.querySelector("[data-workspace-model-add]");
+    add.onsubmit = async (event) => {
+      event.preventDefault();
+      const read = (name) => add.querySelector(`[name="${name}"]`).value.trim();
+      try {
+        const saved = await api("/api/settings/models", { method: "POST", body: { provider: read("provider"), model: read("model") } });
+        if (!active()) return;
+        view = saved;
+        render();
+        host.querySelector("[data-workspace-model-add-status]").textContent = PROJECT_COPY.modelAdded;
+      } catch {
+        if (active()) add.querySelector("[data-workspace-model-add-status]").textContent = PROJECT_COPY.addModelError;
+      }
+    };
+  }
+  render();
+  void loadOwn();
 }
 
 export function mountWorkspaceOrchestration(host, {api, e, enabled, current = () => true}) {

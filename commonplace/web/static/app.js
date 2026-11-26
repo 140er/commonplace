@@ -4,7 +4,7 @@ import { waitingTotal } from "./bot-counts.js";
 import { seatedIn } from "./head-actions.js";
 
 // Controllers load only for their route or an explicitly opened panel. Failed imports can retry.
-let deckPaletteItems, mountWorkspaceOrchestration, mountProjectPanel, mountAgentSchedules, mountToolPolicy, eventItem,
+let deckPaletteItems, mountWorkspaceOrchestration, mountWorkspaceModels, mountProjectPanel, mountAgentSchedules, mountToolPolicy, eventItem,
   ASKED_KEY, DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow,
   queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML,
   bindSwipe, SWIPE, planView, rulesView, rulesHandlers, childProgress,
@@ -21,7 +21,7 @@ function loadRouteModule(name) {
   if (!routeModules.has(name)) routeModules.set(name, (async () => {
     switch (name) {
       case "deck-home-palette": ({ deckPaletteItems } = await import("./deck-home-palette.js")); break;
-      case "projects": ({ mountWorkspaceOrchestration } = await import("./projects.js")); break;
+      case "projects": ({ mountWorkspaceOrchestration, mountWorkspaceModels } = await import("./projects.js")); break;
       case "projectpanel": ({ mountProjectPanel } = await import("./projectpanel.js")); break;
       case "agent-schedules": ({ mountAgentSchedules } = await import("./agent-schedules.js")); break;
       case "tool-policy": ({ mountToolPolicy } = await import("./tool-policy.js")); break;
@@ -1044,6 +1044,7 @@ async function settingsView(epoch) {
   const sections = {
     plan: { path: "/api/plan", name: "Plan", view: planView },
     orchestration: { path: "/api/settings/orchestration", name: "Bot management", view: () => '<section class="settings-section"><h2>Bot management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
+    models: { path: "/api/settings/models", name: "Agent models", view: () => '<section class="settings-section"><h2>Agent models</h2><div data-workspace-models-host></div></section>', ready: (value, host) => mountWorkspaceModels(host.querySelector("[data-workspace-models-host]"), { api, e, value, current }) },
     chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
     connections: { path: "/api/connections", name: "Connected apps", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
     phone: { path: "/api/phone-push", name: "Phone notifications", view: phonePushView, ready: (value) => { state.phonePushPending = value.test?.status === "pending"; } },

@@ -1,0 +1,3 @@
+- **Owns:** The classification of `model_signin_needs` (card #661): a person's own sign-in items, by user and workspace.
+- **Promises:** The rows leave with the person's account; they hold a machine id and a provider name, never anything about the sign-in itself.
+- **Tests:** `tests/test_commonplace_account_tables.py`.
