@@ -134,6 +134,7 @@ EXACT = {
     ("GET", "/api/search-index"): "authenticated",
     ("POST", "/api/import"): "authenticated",
     # File preview/confirmation require a signed-in person and existing import authority.
+    ("GET", "/api/memory/import/rules"): "authenticated",
     ("POST", "/api/memory/import/preview"): "authenticated",
     ("POST", "/api/memory/import/confirm"): "authenticated",
     ("GET", "/api/capture"): "authenticated",

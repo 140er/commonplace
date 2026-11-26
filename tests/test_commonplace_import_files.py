@@ -244,3 +244,59 @@ def test_memory_text_uses_existing_private_parser_and_keeps_exact_bytes(surface)
     messages = store.messages(stored.id)
     assert len(messages) == 2
     assert messages[0].raw.encode() == messages[1].text.encode() == text.encode()
+
+
+RULES = "/api/memory/import/rules"
+
+
+def test_rules_are_the_same_pairs_the_server_accepts(surface):
+    """One table decides which destination takes which file type, for the form and the server."""
+    from commonplace import sync_protocol
+
+    status, rules = api(surface, "GET", RULES)
+    assert status == 200, rules
+    by_scope = {row["scope"]: row for row in rules["destinations"]}
+    assert set(by_scope) == {"threads", "private"}
+    assert by_scope["private"]["available"] is True
+    assert sync_protocol.MEMORY_IMPORT_SOURCE not in by_scope["threads"]["sources"]
+    assert sync_protocol.MEMORY_IMPORT_SOURCE in by_scope["private"]["sources"]
+    assert rules["extensions"][sync_protocol.MEMORY_IMPORT_SOURCE] == [".md", ".txt"]
+    for scope, row in by_scope.items():
+        for source in sorted({*by_scope["threads"]["sources"], sync_protocol.MEMORY_IMPORT_SOURCE}):
+            if source == sync_protocol.MEMORY_IMPORT_SOURCE:
+                body = file_body(
+                    filename="memory.txt", transcript="plain words\n", format="file", source=source
+                )
+            else:
+                body = file_body(source)
+            if scope == "private":
+                body["private"] = True
+            status, result = api(surface, "POST", PREVIEW, body)
+            assert (status == 200) == (source in row["sources"]), (scope, source, result)
+
+
+def test_text_file_with_the_default_destination_is_still_refused(surface):
+    """The server keeps the pair check: a client that sends the default destination is refused."""
+    from commonplace import sync_protocol
+
+    body = file_body(
+        filename="notes.txt", transcript="plain words\n", format="file", source="native-memory"
+    )
+    assert body["source"] == sync_protocol.MEMORY_IMPORT_SOURCE
+    status, result = api(surface, "POST", PREVIEW, body)
+    assert status == 403
+    assert result["error"] == "Memory text files require your private imported history destination"
+
+
+def test_rules_mark_private_unavailable_for_a_member_with_a_reason(surface):
+    user = surface.db.create_user("member@example.test")
+    surface.db.add_member(surface.workspace, user, "member", actor=surface.user)
+    surface.cookie = sessions.start_session(surface.db, user, surface.workspace)
+    status, rules = api(surface, "GET", RULES)
+    assert status == 200
+    private = next(row for row in rules["destinations"] if row["scope"] == "private")
+    assert private["available"] is False and private["reason"]
+
+
+def test_rules_need_a_signed_in_session(surface):
+    assert api(surface, "GET", RULES, cookie=False)[0] == 401

@@ -98,6 +98,7 @@ test('Deck consent blocks confirmation, unchecking blocks it again, retries keep
   const node = mount(), calls = [], payload = Buffer.from(' \r\n[{"role":"user","content":" café "}]\r\n');
   const preview = { total: 1, messages: 1, source_bytes: payload.length, scope: 'threads', source: 'cursor', preview: 'preview-token' };
   const ui = createMemoryImport({ mount: node, me: {}, look: 'deck', api: async (path, options) => {
+    if (path.endsWith('/rules')) return;
     calls.push([path, options.body]);
     if (path.endsWith('/preview')) return preview;
     throw Error('interrupted');

@@ -8,7 +8,7 @@ import logging
 from . import import_grant, imports, sync_protocol
 from .handoff.api import _RequestError, _text
 from .http_util import log_failure
-from .import_sources import SOURCES, parse_import
+from .import_sources import EXTENSIONS, SOURCES, accepts, parse_import, rules, scope_for
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_BODY_BYTES = 6 * MAX_FILE_BYTES + 4096
@@ -29,12 +29,12 @@ def prepare(principal, data, path):
     memory_file = source == sync_protocol.MEMORY_IMPORT_SOURCE
     if source not in (*SOURCES, sync_protocol.MEMORY_IMPORT_SOURCE):
         raise _RequestError(400, "Unsupported source")
-    if memory_file and path != "grant":
+    scope = scope_for(path)
+    if not accepts(scope, source):
         raise _RequestError(
             403, "Memory text files require your private imported history destination"
         )
-    extensions = (".md", ".txt") if memory_file else (".json", ".jsonl", ".ndjson")
-    if not filename.lower().endswith(extensions):
+    if not filename.lower().endswith(EXTENSIONS[source]):
         raise _RequestError(415, "Choose a file matching the selected export format")
     transcript = _text(data, "transcript")
     raw = transcript.encode("utf-8")
@@ -51,7 +51,6 @@ def prepare(principal, data, path):
     if memory_file:
         identity = sync_protocol.memory_thread_id("file", "content", identity)
     item = {"thread_id": identity, "transcript": transcript, "format": fmt}
-    scope = "private" if path == "grant" else "threads"
     digest = import_grant.request_digest(
         "file-preview",
         {
@@ -74,6 +73,19 @@ def prepare(principal, data, path):
 
 
 def register(ctx):
+    def read_rules(handler):
+        try:
+            principal = ctx.gateway.principal_for(handler)
+            if principal is None:
+                raise _RequestError(401, "Sign in")
+            if not principal.person or principal.auth != "session":
+                raise _RequestError(403, "Use your signed-in session to choose a file")
+            ready = import_grant.eligible(ctx.control_db, principal.user_id, principal.workspace_id)
+            status, result = 200, rules(ready, import_grant.OWNER_ONLY_TEXT)
+        except _RequestError as error:
+            status, result = error.status, {"error": error.message}
+        handler._send_json(status, result)
+
     def handle(handler, *, confirm=False):
         handler._handoff_body_read = False
         try:
@@ -112,5 +124,6 @@ def register(ctx):
         handler.close_connection = True
         handler._send_json(status, result, {"Connection": "close"})
 
+    ctx.gateway.add_route("GET", "/api/memory/import/rules", read_rules)
     ctx.gateway.add_route("POST", "/api/memory/import/preview", handle)
     ctx.gateway.add_route("POST", "/api/memory/import/confirm", lambda h: handle(h, confirm=True))

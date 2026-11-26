@@ -12,7 +12,7 @@ function fixture(api, selected = file, look = "classic") {
   const listeners = new Map();
   const mount = { innerHTML: "", addEventListener(type, fn) { listeners.set(type, fn); }, removeEventListener(type, fn) { assert.equal(listeners.get(type), fn); listeners.delete(type); }, querySelector() { return { focus() {} }; } };
   let closed = 0;
-  const ui = createMemoryImport({ mount, api, me: {}, look, onClose() { closed++; ui.stop(); } });
+  const ui = createMemoryImport({ mount, api: (path, options) => (path.endsWith("/rules") ? Promise.resolve() : api(path, options)), me: {}, look, onClose() { closed++; ui.stop(); } });
   const choose = () => listeners.get("submit")({ preventDefault() {}, target: { matches: () => true, elements: { file: { files: [selected] }, format: { value: "2" }, scope: { value: "threads" } } } });
   const click = (action) => listeners.get("click")({ target: { closest: () => ({ dataset: { importAction: action } }) } });
   return { mount, listeners, ui, choose, click, closed: () => closed };
@@ -162,4 +162,84 @@ test("invalid UTF-8 and oversized files are refused before any upload", async ()
     assert.ok(f.mount.innerHTML.includes('role="alert"'));
     f.ui.stop();
   }
+});
+
+const rules = {
+  destinations: [
+    { scope: "threads", sources: ["claude-code", "codex", "cursor", "t3", "grok-bot", "chatgpt", "claude-ai"], available: true },
+    { scope: "private", sources: ["claude-code", "codex", "cursor", "t3", "grok-bot", "chatgpt", "claude-ai", "native-memory"], available: true },
+  ],
+  extensions: { "native-memory": [".md", ".txt"] },
+};
+function option(value) { return { value, disabled: false }; }
+function form(formatValue, scopeValue = "threads") {
+  const note = { textContent: "", hidden: true, setAttribute() {} };
+  const submit = { disabled: false };
+  const scope = { value: scopeValue, options: [option("threads"), option("private")] };
+  const format = { value: formatValue };
+  return { note, submit, scope, format, elements: { scope, format }, querySelector: (selector) => ({ "[data-import-reason]": note, '[type="submit"]': submit })[selector] ?? null };
+}
+const memoryIndex = "7";
+async function withRules(payload, me = { can_admin: true }) {
+  const listeners = new Map();
+  const mount = { innerHTML: "", addEventListener(type, fn) { listeners.set(type, fn); }, removeEventListener() {}, querySelector() { return { focus() {} }; } };
+  const ui = createMemoryImport({ mount, api: async (path) => (path.endsWith("/rules") ? payload : checked), me, look: "deck" });
+  await tick();
+  const pick = (f, value) => { f.format.value = value; listeners.get("change")({ target: { matches: (s) => s === 'select[name="format"]', form: f } }); };
+  return { mount, ui, pick };
+}
+
+test("a text file with the default choices lands on a destination that accepts it", async () => {
+  const { ui, pick, mount } = await withRules(rules);
+  assert.ok(mount.innerHTML.includes("data-import-reason"));
+  const f = form("0");
+  pick(f, memoryIndex);
+  assert.equal(f.scope.value, "private");
+  assert.deepEqual(f.scope.options.map((o) => o.disabled), [true, false]);
+  assert.equal(f.note.hidden, false);
+  assert.equal(f.note.textContent, "Memory text (.md or .txt) can only be saved into your private imported history.");
+  assert.equal(f.submit.disabled, false);
+  pick(f, "0");
+  assert.deepEqual(f.scope.options.map((o) => o.disabled), [false, false]);
+  assert.equal(f.note.hidden, true);
+  ui.stop();
+});
+
+test("a combination that cannot work is explained before a file is chosen", async () => {
+  const reason = "Importing history is available only to the owner in their personal workspace.";
+  const blocked = { ...rules, destinations: [rules.destinations[0], { ...rules.destinations[1], available: false, reason }] };
+  const { ui, pick } = await withRules(blocked);
+  const f = form("0");
+  pick(f, memoryIndex);
+  assert.equal(f.submit.disabled, true);
+  assert.equal(f.note.hidden, false);
+  assert.equal(f.note.textContent, reason);
+  pick(f, "0");
+  assert.equal(f.submit.disabled, false);
+  assert.equal(f.scope.value, "threads");
+  ui.stop();
+});
+
+test("the form works unchanged when the rules cannot be read", async () => {
+  const { ui, pick, mount } = await withRules(undefined);
+  assert.ok(!mount.innerHTML.includes("data-import-reason"));
+  const f = form("0");
+  pick(f, memoryIndex);
+  assert.equal(f.scope.value, "threads");
+  assert.equal(f.submit.disabled, false);
+  ui.stop();
+});
+
+test("file extensions come from the rules when they are known", async () => {
+  const calls = [];
+  const listeners = new Map();
+  const mount = { innerHTML: "", addEventListener(type, fn) { listeners.set(type, fn); }, removeEventListener() {}, querySelector() { return { focus() {} }; } };
+  const text = Buffer.from("plain words\n");
+  const picked = { name: "notes.txt", size: text.length, arrayBuffer: async () => text };
+  const ui = createMemoryImport({ mount, me: { can_admin: true }, look: "deck", api: async (path, options) => { if (path.endsWith("/rules")) return rules; calls.push(options.body); return { ...checked, scope: "private" }; } });
+  await tick();
+  await listeners.get("submit")({ preventDefault() {}, target: { matches: () => true, elements: { file: { files: [picked] }, format: { value: memoryIndex }, scope: { value: "private" } } } });
+  assert.equal(calls.length, 1);
+  assert.deepEqual([calls[0].source, calls[0].private, calls[0].filename], ["native-memory", true, "notes.txt"]);
+  ui.stop();
 });

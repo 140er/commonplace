@@ -19,7 +19,7 @@ from .handoff.models import THREADS_WING
 from .handoff.thread_store import ThreadConflict, ThreadStorageLimit, canonical_sha256
 from .http_util import log_failure
 from .import_parts import append_part, native_records, validate_part
-from .import_sources import SOURCES, parse_import
+from .import_sources import accepts, parse_import, scope_for
 from .workspace_store import thread_path, workspace_path
 
 MAX_IMPORT_BYTES = 64 * 1024 * 1024
@@ -112,9 +112,7 @@ def register(ctx):
                 raise _RequestError(401, "Sign in")
             data, path = _import_envelope(ctx, principal, handler)
             source = _text(data, "source", required=True)
-            if source not in (*SOURCES, sync_protocol.MEMORY_IMPORT_SOURCE) or (
-                source == sync_protocol.MEMORY_IMPORT_SOURCE and path != "grant"
-            ):
+            if not accepts(scope_for(path), source):
                 raise _RequestError(400, "Unsupported source")
             threads = data.get("threads")
             if not isinstance(threads, list) or not 1 <= len(threads) <= MAX_THREADS:

@@ -1,0 +1,4 @@
+- **Owns:** `docs/usability-audit-372/fix-665-*.png`, the before and after views of importing a `.txt` memory file with the default choices (gap 5 of the usability audit).
+- **Promises:** The screenshots come from throwaway instances with a synthetic file and show no token or real account; the guide `docs/usability-audit-372.md` is unchanged.
+- **How it fails:** Not covered by a test; a stale screenshot only misdescribes the import form.
+- **Tests:** `tests/test_docs_obligations.py` and `tests/test_docs_fragments.py` keep the fragment well formed.
