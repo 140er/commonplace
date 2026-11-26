@@ -1,0 +1,2 @@
+- **Promises:** The invite context route, its identical refusal for every unusable invite, the invite sign-in screen and the empty Deck board steps are pinned by real-instance and node-harness cases.
+- **Tests:** `tests/test_commonplace_invites.py` (context cases), `tests/commonplace_signin_render.mjs` (invite and three-step cases) and `tests/deck_board.mjs` (empty board steps); the route sits in the `tests/test_commonplace_public_surface.py` inventory.
