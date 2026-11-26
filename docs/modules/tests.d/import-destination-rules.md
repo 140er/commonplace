@@ -1,0 +1,4 @@
+- **Owns:** The rules cases of `tests/test_commonplace_import_files.py` and of `tests/memory_import.mjs`.
+- **Promises:** The server tests check over real HTTP that every destination and source pair in the rules is accepted or refused by preview exactly as listed, that a text file sent to the default destination is still refused, and that a member sees private history as unavailable with a reason. The node cases check the default destination follows the file type, an impossible combination is explained before a file is chosen, and the form is unchanged when the rules are missing.
+- **How it fails:** A form that offers a pair the server refuses, or a rules table that differs from the server check, fails these tests.
+- **Tests:** They are the tests.

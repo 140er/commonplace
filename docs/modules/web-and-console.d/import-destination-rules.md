@@ -1,0 +1,4 @@
+- **Owns:** `memory-import.js` reads `GET /api/memory/import/rules` once when the import form opens and applies it in `applyRules`: the "Save into" choice, which destinations are disabled, the one-line note and the Preview button.
+- **Promises:** Picking a file type selects a destination that takes it, disables the others, and says why in one plain line. When no destination can take the type, the line (the server's reason) shows before a file is chosen and Preview is disabled. The file extension check also comes from the rules. Stored words are never touched.
+- **How it fails:** If the rules cannot be read the form behaves as before and the server still refuses an incompatible pair after Preview.
+- **Tests:** `tests/memory_import.mjs`.
