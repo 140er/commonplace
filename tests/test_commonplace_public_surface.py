@@ -68,6 +68,7 @@ EXACT = {
     ("POST", "/app/auth/email/verify"): "public",
     ("POST", "/app/logout"): "authenticated",
     ("GET", "/app/join"): "public",
+    ("GET", "/app/join/context"): "public",
     ("POST", "/app/join"): "authenticated",
     ("GET", "/api/invites"): "authenticated",
     ("POST", "/api/invites"): "authenticated",
@@ -496,6 +497,7 @@ def test_sessions_have_separate_600_request_budgets(surface):
     [
         ("GET", "/app/login"),
         ("GET", "/app/join"),
+        ("GET", "/app/join/context"),
         ("POST", "/app/auth/email"),
         ("GET", "/app/auth/email/verify"),
         ("POST", "/app/auth/email/verify"),

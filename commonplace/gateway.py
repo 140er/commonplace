@@ -2841,7 +2841,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
-            or path in ("/app/login", "/app/join")
+            or path in ("/app/login", "/app/join", "/app/join/context")
             or self.command == "POST"
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
@@ -2874,7 +2874,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 or path in ("/app", "/app/")
                 or path.startswith("/app/")
                 and not path.startswith("/app/auth/")
-                and path not in ("/app/login", "/app/join")
+                and path not in ("/app/login", "/app/join", "/app/join/context")
             )
             policies.append((ratelimit.APP_SHELL if shell else ratelimit.ANONYMOUS, ip))
         gateway = self.server.gateway
