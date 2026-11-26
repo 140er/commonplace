@@ -103,12 +103,12 @@ test('a running job still wins over everything and links its card (no regression
   assert.match(now(html), /<b>Working now<\/b> <span>Running the checks<\/span> <a href="#\/card\/12">Open the card<\/a>/);
 });
 
-test('the all-bots conversations page is titled Bot conversations, counts "All bots", and names rows by the bot', async () => {
-  const h = page(path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] } : path === '/api/coworkers' ? { bots: [], conversations: [] } : { models: {} }, '#/bots/-/coworkers');
+test('a bot\'s conversations page is titled by the bot, counts "Conversations", and names rows by the bot; no second bots list', async () => {
+  const h = page(path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas', board: 'product' }] } : path === '/api/coworkers' ? { bots: [], conversations: [] } : { models: {} }, '#/bots/bot/coworkers');
   await settle(); const html = h.body.innerHTML; h.ui.stop();
-  assert.match(html, /<h1>Bot conversations<\/h1>/);
-  assert.match(html, /aria-current="page">All bots <span>1<\/span><\/a>/);
-  assert.doesNotMatch(html, />Bots <span>/);
+  assert.match(html, /<h1>Atlas<\/h1>/);
+  assert.match(html, /aria-current="page">Conversations <span>1<\/span><\/a>/);
+  assert.doesNotMatch(html, /Bot conversations|All bots|>Bots <span>/);
   assert.match(html, /<button type="button" class="cb-worker"[^>]*>[^]*?<b>Atlas /, 'the row is the bot\'s own name, not "<Project> bot"');
   assert.doesNotMatch(html, /Product bot|Atlas bot/);
 });

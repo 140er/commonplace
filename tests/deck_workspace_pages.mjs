@@ -17,7 +17,9 @@ test('legacy workspace links resolve once, retaining conversations and message a
     const routes = [
       ['#/compute', deck ? '#/compute' : '#/compute/management'],
       ['#/compute-map', deck ? '#/compute' : '#/compute-map'],
-      ['#/coworkers', '#/bots/-/coworkers'],
+      // In Deck the bots index is the one list of bots; the older addresses resolve to it. Classic keeps its own page.
+      ['#/coworkers', deck ? '#/bots' : '#/bots/-/coworkers'],
+      ['#/bots/-/coworkers', deck ? '#/bots' : '#/bots/-/coworkers'],
       ['#/coworkers/c-1?message=m-2', '#/bots/-/coworkers/conversations/c-1?message=m-2'],
       ['#/bots/coworkers', '#/bots/coworkers'], // an existing bot ID is never stolen
       ['#/bots/project-1/coworkers', '#/bots/project-1/coworkers'],
