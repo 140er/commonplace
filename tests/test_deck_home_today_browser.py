@@ -11,6 +11,21 @@ from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_board_authority import fresh as authority_fresh
 from tests.test_deck_phone_navigation_browser import open_app
 
+SETTLE = """(selector) => {
+  // Settled: the same element, at the same place, for 400 ms (no redraw replaced or moved it).
+  const node = document.querySelector(selector);
+  const box = node && node.getBoundingClientRect();
+  const key = box ? [box.x, box.y, box.width, box.height].join(",") : "";
+  const seen = window.__settle || (window.__settle = {});
+  const last = seen[selector];
+  const now = performance.now();
+  if (!node || !last || last.node !== node || last.key !== key) {
+    seen[selector] = { node, key, since: now };
+    return false;
+  }
+  return now - last.since >= 400;
+}"""
+
 
 @pytest.fixture
 def fresh(hub):
@@ -76,7 +91,15 @@ def test_home_today_live_actions(hub, fresh, width):
                 assert await page.locator(".bh-composer").count() == 0
                 await page.evaluate("document.fonts.ready")
                 if width == 390:
-                    assert (await page.locator(".bt-card").first.bounding_box())["x"] == 14
+                    # Measure the first card once the queue has stopped redrawing (data still arriving
+                    # after load can replace it), and read its box in the same step.
+                    await page.wait_for_function(SETTLE, arg=".bt-card", polling=100)
+                    assert (
+                        await page.evaluate(
+                            "document.querySelector('.bt-card').getBoundingClientRect().x"
+                        )
+                        == 14
+                    )
                     await expect(page.locator("#phone-bar .m-top > b")).to_have_text(
                         "Waiting on you"
                     )

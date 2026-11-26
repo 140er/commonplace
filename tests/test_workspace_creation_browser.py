@@ -9,6 +9,21 @@ import pytest
 from commonplace import sessions
 from tests.test_commonplace_invites import world  # noqa: F401
 
+SETTLE = """(selector) => {
+  // Settled: the same element, at the same place, for 400 ms (no redraw replaced or moved it).
+  const node = document.querySelector(selector);
+  const box = node && node.getBoundingClientRect();
+  const key = box ? [box.x, box.y, box.width, box.height].join(",") : "";
+  const seen = window.__settle || (window.__settle = {});
+  const last = seen[selector];
+  const now = performance.now();
+  if (!node || !last || last.node !== node || last.key !== key) {
+    seen[selector] = { node, key, since: now };
+    return false;
+  }
+  return now - last.since >= 400;
+}"""
+
 
 @pytest.fixture
 def browser():
@@ -64,6 +79,9 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
 
     def switcher():
         if look == "deck":
+            # A page that has just loaded may still redraw its rail as data arrives; act once the rail
+            # is the same element in the same place for 400 ms, so the click never lands mid-redraw.
+            page.wait_for_function(SETTLE, arg="#board-nav", polling=100)
             # The Deck palette lists destinations only; the switcher lives in the account menu at the
             # foot of the sidebar, and on a phone in the sheet the header's More button opens.
             if size[0] == 1280:
