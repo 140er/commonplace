@@ -1050,27 +1050,6 @@ function installOrchestrationStyles() {
   document.adoptedStyleSheets = [...document.adoptedStyleSheets, orchestrationSheet];
 }
 
-export function mountWorkspaceOrchestration(host, {api, e, enabled, current = () => true}) {
-  installOrchestrationStyles();
-  let busy = false, status = "";
-  const active = () => current() && host.isConnected;
-  function render() {
-    if (!active()) return;
-    host.innerHTML = `<div class="orchestration-controls"><label><input type="checkbox" data-orchestration-enabled ${enabled ? "checked" : ""} ${busy ? "disabled" : ""}> Bots manage agent starts</label><p>Only each project's bot can request agent starts. Projects default to three agents at once. Turning this off removes trust and runner access granted to project seats.</p><p role="status">${e(status)}</p></div>`;
-    host.querySelector("[data-orchestration-enabled]").onchange = async event => {
-      const next = event.target.checked;
-      if (busy || !active()) return;
-      busy = true; status = ""; render();
-      try {
-        const result = await api("/api/settings/orchestration", {method: "PUT", body: {enabled: next}});
-        if (active()) { enabled = result.enabled; status = "Saved"; }
-      } catch { if (active()) status = "Could not save bot management settings"; }
-      finally { busy = false; render(); }
-    };
-  }
-  render();
-}
-
 // Workspace settings, "Agent models" (card #661): the model each role uses in every project that
 // has no choice of its own. Everyone reads it; only the owner sees the pickers enabled and saves.
 export function workspaceModelsHTML(view, e) {
@@ -1197,6 +1176,27 @@ export function mountWorkspaceModels(host, { api, e, value, current = () => true
   }
   render();
   void loadOwn();
+}
+
+export function mountWorkspaceOrchestration(host, {api, e, enabled, current = () => true}) {
+  installOrchestrationStyles();
+  let busy = false, status = "";
+  const active = () => current() && host.isConnected;
+  function render() {
+    if (!active()) return;
+    host.innerHTML = `<div class="orchestration-controls"><label><input type="checkbox" data-orchestration-enabled ${enabled ? "checked" : ""} ${busy ? "disabled" : ""}> Bots manage agent starts</label><p>Only each project's bot can request agent starts. Projects default to three agents at once. Turning this off removes trust and runner access granted to project seats.</p><p role="status">${e(status)}</p></div>`;
+    host.querySelector("[data-orchestration-enabled]").onchange = async event => {
+      const next = event.target.checked;
+      if (busy || !active()) return;
+      busy = true; status = ""; render();
+      try {
+        const result = await api("/api/settings/orchestration", {method: "PUT", body: {enabled: next}});
+        if (active()) { enabled = result.enabled; status = "Saved"; }
+      } catch { if (active()) status = "Could not save bot management settings"; }
+      finally { busy = false; render(); }
+    };
+  }
+  render();
 }
 
 // Owner-only: config versions to accept and cards an agent can no longer release.

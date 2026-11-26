@@ -17,6 +17,7 @@ SETTINGS = [
     "/api/phone-push",
     "/api/chat-settings",
     "/api/settings/orchestration",
+    "/api/settings/models",
 ]
 SHARED = ["/api/boards?view=shell"]
 
@@ -91,6 +92,7 @@ const values = {
   '/api/connections': {}, '/api/webhooks': { webhooks: [] },
   '/api/plan': { plan: 'free' }, '/api/phone-push': {},
   '/api/chat-settings': { front: { enabled: false }, usage: { used_today: 0, user_used_today: 0 } },
+  '/api/settings/models': { can_configure: true, models: {}, models_effective: {}, model_catalog: [], model_suggestions: [] },
 };
 const reads = [], stalled = [];
 const context = {
@@ -129,6 +131,8 @@ const context = {
   voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<section class="settings-section"><h2>Connected apps</h2></section>',
   // Scheduled prompts mount into their own section; tests/agent_schedules_view.mjs covers that module.
   mountAgentSchedules() {},
+  // Agent models mount into their own section; tests/workspace_models_view.mjs covers that module.
+  mountWorkspaceModels() {},
 };
 vm.createContext(context);
 vm.runInContext(read('api.js').replace(/export /g, '') + '\nconst e = escape;', context);
@@ -226,7 +230,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
   const label = {
     '/api/connections': 'Connected apps', '/api/webhooks': 'Webhooks', '/api/plan': 'Plan',
     '/api/phone-push': 'Phone notifications', '/api/chat-settings': 'Chat',
-    '/api/settings/orchestration': 'Bot management',
+    '/api/settings/orchestration': 'Bot management', '/api/settings/models': 'Agent models',
   }[path] || path;
   assert.match(visible, /Could not load|timed out|unavailable|Invalid JSON/, 'A failed read must surface an error');
   assert.ok(visible.includes(label), `Error must identify ${label}: ${visible}`);
