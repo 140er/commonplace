@@ -25,7 +25,7 @@ The body has three optional parts:
   choice. Roles that are left out keep what they have.
 
 Unknown keys, duplicate keys, a coworker pointing at a key that is not in `bots`, text that the redactor
-recognises as a credential, more than 50 projects and a body over 64 KiB are refused before anything is
+recognises as a credential (in a name, instructions, a title or a model label), more than 50 projects and a body over 64 KiB are refused before anything is
 stored. Proposing exactly the body of a proposal that is still `proposed` answers that proposal again
 instead of a new version, and at most 20 proposals wait at once.
 

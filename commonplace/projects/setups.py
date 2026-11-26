@@ -149,6 +149,13 @@ def _choices(value, path: str) -> dict:
             raise _refuse(
                 "invalid", "must be {provider, model} or null", f"{path}.{role}"
             ) from None
+        for field in ("provider", "model"):
+            if redact.redact(getattr(entry, field))[1]:
+                raise _refuse(
+                    "looks_secret",
+                    "looks like a credential; never put one in a setup",
+                    f"{path}.{role}.{field}",
+                )
         result[role] = entry.public()
     return result
 

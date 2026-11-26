@@ -186,6 +186,16 @@ BAD = [
     ),
     ({"models": {"workspace": {"front": GROK}}}, "unknown_field", "models.workspace"),
     ({"models": {"workspace": {"main": {"provider": "grok"}}}}, "invalid", "models.workspace.main"),
+    (
+        {"models": {"workspace": {"main": {"provider": "grok", "model": "sk-ant-" + "x" * 40}}}},
+        "looks_secret",
+        "models.workspace.main.model",
+    ),
+    (
+        {"models": {"projects": {"work": {"gate": {"provider": "ghp_" + "a" * 36, "model": "m"}}}}},
+        "looks_secret",
+        "models.projects.work.gate.provider",
+    ),
     ({"setup": {}}, "unknown_field", ""),
 ]
 
@@ -227,6 +237,12 @@ def test_a_bad_setup_is_refused_on_every_surface_and_nothing_is_stored(projects_
             said = _tool(h, h.a1, "setup_propose", **body)
             assert not said["ok"] and f"({code})" in said["text"], said
     assert _rows(h) == []
+    # A credential-shaped model label is never stored, so no read can return it.
+    for auth in (h.owner, h.a1):
+        listed = h.request(auth, "GET", ROUTE)[2]
+        assert b"sk-ant-" not in listed and b"ghp_" not in listed
+    shown = _tool(h, h.a1, "setup_show")["text"]
+    assert "sk-ant-" not in shown and "ghp_" not in shown
 
 
 # ---------------------------------------------------------------- who is answered
