@@ -1,4 +1,5 @@
 // Deck Board presentation. Card mutations, drag/drop and drawer lifecycle stay in the shell.
+import { releaseActions, seatActions } from './head-actions.js';
 import { snoozedLine } from './card-controls.js';
 import { segHTML } from './seg.js';
 import { escape as e, actor } from './api.js';
@@ -114,7 +115,10 @@ export function bindDeckBoard(root) {
     root.querySelectorAll('[data-board-column]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.boardColumn === closest.dataset.status)));
   };
   scroller.addEventListener('scrollend', syncColumn);
+  // Add card sits in the desktop title bar; app.js handles its click from the shell, so it needs no listener of its own.
+  const add = root.querySelector('.deck-board .board-tools > .deck-board-add');
+  if (add) seatActions(add);
   const activeColumn = scroller.querySelector('[data-active="true"]'), firstColumn = scroller.querySelector('.col');
   if (activeColumn && firstColumn && scroller.scrollWidth > scroller.clientWidth) scroller.scrollLeft = activeColumn.offsetLeft - firstColumn.offsetLeft;
-  return () => scroller.removeEventListener('scrollend', syncColumn);
+  return () => { scroller.removeEventListener('scrollend', syncColumn); if (add) releaseActions(add); };
 }

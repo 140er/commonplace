@@ -1,3 +1,4 @@
+import { once, releaseActions, seatActions } from "./head-actions.js";
 import { wingLabel } from "./wing-label.js";
 import { mountMap } from "./map.js";
 import { api as request, escape as e, actor } from "./api.js";
@@ -223,7 +224,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
   let inflight = null, typing = null;
   const cancelSearch = () => { inflight?.abort(new Error("Superseded")); inflight = null; if (typing) clearTimeout(typing); typing = null; };
-  let importer = null, importDialog = null;
+  let importer = null, importDialog = null, actionsEl = null;
   let mapDispose = null, mapOpen = null, mapMode = false;
   const person = typeof me === "string" ? me : me.actor;
   const draw = () => {
@@ -231,7 +232,8 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     for (const room of state.note?.choices?.wings || []) if (!state.boards.some(board => board.wing === room.wing)) state.boards = [...state.boards, { slug: `notes:${room.wing}`, name: room.name, wing: room.wing, notesOnly: true }];
     const focused = mount.ownerDocument?.activeElement;
     let restore = null;
-    if (focused && (mount.contains(focused) || panel?.contains(focused))) {
+    const inBar = focused?.closest?.("#head-actions");
+    if (focused && (mount.contains(focused) || panel?.contains(focused) || (inBar && actionsEl?.contains(focused)))) {
       const selector = focused.matches("[data-memory-result]") ? `[data-memory-result="${focused.dataset.memoryResult}"]`
         : focused.matches("[data-memory-expand]") ? `[data-memory-expand="${focused.dataset.memoryExpand}"]`
         : focused.matches("[data-memory-room]") ? `[data-memory-room="${focused.dataset.memoryRoom}"]`
@@ -239,13 +241,15 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
         : focused.matches("[data-memory-post]") ? `[data-memory-post="${focused.dataset.memoryPost}"]`
         : focused.name && ["query", "project", "source", "from", "when", "card", "note-text", "note-wing", "note-room"].includes(focused.name) ? `[name="${focused.name}"]` : null;
       if (selector) {
-        const owner = panel?.contains(focused) ? panel : mount, start = focused.selectionStart, end = focused.selectionEnd;
+        const owner = inBar ? inBar : panel?.contains(focused) ? panel : mount, start = focused.selectionStart, end = focused.selectionEnd;
         restore = () => { const node = owner.querySelector(selector); node?.focus(); if (node?.setSelectionRange && typeof start === "number") node.setSelectionRange(start, end); };
       }
     }
     if (look === "deck") state.filtersOpen = mount.querySelector(".memory-filters")?.open ?? state.filtersOpen;
     if (state.note) state.note.previewOpen = mount.querySelector(".memory-note-preview")?.open ?? state.note.previewOpen;
     mount.innerHTML = renderMemory(state);
+    actionsEl = mount.querySelector(".memory-actions");
+    if (actionsEl) { actionsEl.addEventListener("click", click); seatActions(actionsEl); } else releaseActions();
     if (panel) {
       panel.hidden = !state.selected;
       panel.innerHTML = renderMemoryPanel({ ...state, result: state.selected, me: person, chatOpen: dock?.isOpen?.() ?? state.chatOpen });
@@ -338,6 +342,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     const epoch = ++searchEpoch;
     ++sourceEpoch;
     mapDispose?.(); mapDispose = null; mapMode = true;
+    if (actionsEl) { releaseActions(actionsEl); actionsEl = null; }
     state.filters.project = project;
     state.selected = null;
     if (panel) { panel.hidden = true; panel.innerHTML = ""; }
@@ -450,7 +455,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     } catch { if (epoch === sourceEpoch) state.notice = "That action could not be completed. Try again."; }
     finally { writing = false; if (!stopped && (epoch === sourceEpoch || action === "delete-confirm")) draw(); }
   }
-  function click(event) {
+  function onClick(event) {
     const drawer = event.target.closest("[data-note-drawer]");
     if (drawer?.dataset.noteDrawer) { event.preventDefault(); void openDrawer(drawer.dataset.noteDrawer); return; }
     const noteAction = event.target.closest("[data-memory-action]")?.dataset.memoryAction;
@@ -479,7 +484,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       function closeImport() {
         importer?.stop(); importer = null;
         importDialog?.close(); importDialog?.remove(); importDialog = null;
-        draw(); mount.querySelector('[data-memory-action="import"]')?.focus();
+        draw(); (mount.querySelector('[data-memory-action="import"]') ?? actionsEl?.querySelector('[data-memory-action="import"]'))?.focus();
       }
       importer = createMemoryImport({ mount: importDialog || mount, me, api, look, onClose() {
         closeImport();
@@ -554,6 +559,8 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       mount.querySelector(`[data-memory-result="${index}"]`)?.focus();
     }
   }
+  // Add a note and Import sit in the desktop title bar; a click there and in the page reaches onClick once.
+  const click = once(onClick);
   for (const node of new Set([mount, panel].filter(Boolean))) {
     node.addEventListener("input", input); node.addEventListener("click", click); node.addEventListener("submit", submit); node.addEventListener("change", change); node.addEventListener("keydown", keydown);
   }
@@ -576,6 +583,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     stop() {
       importer?.stop(); importer = null;
       importDialog?.close(); importDialog?.remove(); importDialog = null;
+      if (actionsEl) { releaseActions(actionsEl); actionsEl = null; }
       cancelSearch(); stopped = true; ++searchEpoch; ++sourceEpoch; mapDispose?.(); mapDispose = null;
       for (const node of new Set([mount, panel].filter(Boolean))) {
         node.removeEventListener("input", input); node.removeEventListener("click", click); node.removeEventListener("submit", submit); node.removeEventListener("change", change); node.removeEventListener("keydown", keydown);

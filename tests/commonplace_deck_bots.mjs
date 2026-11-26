@@ -6,7 +6,7 @@ import { escape as e } from '../commonplace/web/static/api.js';
 
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(setImmediate); };
 const bot = (id, extra = {}) => ({ id, name: id === 'atlas' ? 'Atlas' : 'Harbor', job: 'Website and sign-in', state: 'idle', ...extra });
-function harness({ deck = true, bots = [bot('atlas', { board: 'northwind' }), bot('harbor')], readProject = async () => ({ cards: [], children: [] }), readThread } = {}) {
+function harness({ deck = true, bots = [bot('atlas', { board: 'northwind' }), bot('harbor')], readProject = async () => ({ cards: [], children: [] }), readThread, canConfigure = false, shared = async () => ({ bots: [] }) } = {}) {
   const data = new Map();
   globalThis.sessionStorage = { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: (k) => data.delete(k) };
   globalThis.document = { documentElement: { dataset: deck ? { ui: 'deck' } : {} } };
@@ -20,7 +20,9 @@ function harness({ deck = true, bots = [bot('atlas', { board: 'northwind' }), bo
     setTimer: (fn, delay) => { timers.set(delay, fn); return delay; }, clearTimer: (id) => timers.delete(id),
     api: async (path, options = {}) => {
       calls.push([path, options.method || 'GET']);
-      if (path === '/api/bots') return { bots };
+      if (path === '/api/bots') return { bots, can_configure: canConfigure };
+      if (path === '/api/bots/shared') return shared();
+      if (path === '/api/me' || path === '/api/bots/settings') return {};
       if (path.startsWith('/api/boards/')) return readProject(path);
       if (path.includes('/messages')) return readThread ? readThread(path) : { bot: bots.find((b) => path.includes(`/${b.id}/`)), messages: [], waiting: [] };
       throw new Error(`Unexpected call ${path}`);
@@ -213,4 +215,21 @@ test('new CSS is entirely Deck-scoped, token-based, and loaded for the Bots rout
   assert.match(css, /bb\.decision\[data-state="open"\]::before[^]*content: "Waiting on you"/);
   assert.match(read('index.html'), /href="\/app\/deck.css"/);
   assert.match(read('route-styles.js'), /bots: \[.*'deck-bots\.css'/);
+});
+
+test('a deep link to a frozen bot waits for the shared list before it looks the bot up', async () => {
+  let release;
+  const arrives = new Promise((resolve) => { release = resolve; });
+  const frozen = { id: 'frozen', name: 'Frozen', frozen: true, members: [], access: [] };
+  const h = harness({ canConfigure: true, shared: async () => { await arrives; return { bots: [frozen] }; } });
+  const shown = h.ui.show('frozen');
+  await settle();
+  assert.ok(h.calls.some(([path]) => path === '/api/bots/shared'), 'the shared list was asked for');
+  assert.deepEqual(h.calls.filter(([path]) => path.includes('/messages') || path === '/api/me'), [], 'nothing opens for the bot while the shared list is still on its way');
+  release();
+  await shown;
+  await settle();
+  assert.deepEqual(h.calls.filter(([path]) => path.includes('/messages')), [], 'the frozen bot is found, so its sharing sheet opens instead of a thread read');
+  assert.ok(h.calls.some(([path]) => path === '/api/me'), 'the sharing sheet loads once the bot is known');
+  h.ui.stop();
 });

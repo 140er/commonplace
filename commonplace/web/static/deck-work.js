@@ -87,11 +87,27 @@ export function pageHTML({ boards = null, cards = new Map(), bots = null, me = '
 }
 
 function styles(doc) {
-  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-work.css')) return;
+  if (globalThis.commonplaceAssetManifest?.styles?.includes('deck-work.css')) return;
   if (!doc?.head || doc.querySelector('link[data-work-style]')) return;
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-work.css', import.meta.url).href;
   link.setAttribute('data-work-style', ''); doc.head.append(link);
+}
+
+/** Cards are read one project at a time on the hub, so a refresh keeps at most this many of those reads in flight. */
+export const CARD_READS = 4;
+/** Like Promise.allSettled over items.map(read), but never more than `limit` reads at once; results keep the item order. */
+export async function settledPool(items, read, limit = CARD_READS) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      try { results[index] = { status: 'fulfilled', value: await read(items[index], index) }; } catch (reason) { results[index] = { status: 'rejected', reason }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** Mount the screen. The shell calls refresh() when the queue or the route changes; nothing here polls. */
@@ -121,7 +137,7 @@ export function mount(context) {
       let boards = Array.isArray(ctx.boards) && ctx.boards.length ? ctx.boards : null;
       const roster = api('/api/bots', options).then(answer => answer?.bots || null, () => null);
       boards ||= (await api('/api/boards?view=shell', options))?.boards || [];
-      const reads = await Promise.allSettled(boards.map(board => api(`/api/boards/${encodeURIComponent(board.slug)}/cards`, options)));
+      const reads = await settledPool(boards, board => api(`/api/boards/${encodeURIComponent(board.slug)}/cards`, options), CARD_READS);
       const bots = await roster;
       if (stopped || mine !== epoch) return;
       const cards = new Map(view.cards);

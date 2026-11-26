@@ -128,7 +128,7 @@ export function queryHistory(me, storage) {
   };
 }
 export function memoryStyles(doc) {
-  if (globalThis.commonplaceAssetManifest?.styles.includes('deck-memory.css')) return;
+  if (globalThis.commonplaceAssetManifest?.styles?.includes('deck-memory.css')) return;
   if (!doc?.head || doc.querySelector('link[data-memory-style]')) return;
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-memory.css', import.meta.url).href;

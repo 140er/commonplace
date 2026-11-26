@@ -21,6 +21,9 @@ export function resolveRoute(hash, { boards = [], last, deck = false } = {}) {
   if (route === "#/needs" && deck) return "#/";
   if (route === "#/compute-map" && deck) return "#/compute";
   if (route === "#/compute" && !deck) return "#/compute/management";
+  // In Deck #/bots is the one list of bots: the workspace-wide conversations index resolves to it, and a bot's own
+  // conversations and setup open from the bot (#/bots/<id>/coworkers).
+  if ((route === "#/coworkers" || route === "#/bots/-/coworkers") && deck) return "#/bots";
   if (route === "#/coworkers") return "#/bots/-/coworkers";
   const coworkers = /^#\/coworkers\/([^/?]+)(\?message=[^&#]+)?$/.exec(route);
   if (coworkers) return `#/bots/-/coworkers/conversations/${coworkers[1]}${coworkers[2] || ""}`;

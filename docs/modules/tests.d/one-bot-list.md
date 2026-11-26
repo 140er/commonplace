@@ -1,0 +1,3 @@
+- **Tests:**
+
+  - `tests/deck_workspace_pages.mjs` pins that, in Deck, `#/bots/-/coworkers` and the older `#/coworkers` resolve to the one bot list `#/bots` while classic keeps both addresses and no redirect loops; `tests/deck_shell.mjs` pins the phone title of the conversations pages (never "Bots" or "Bot conversations"); `tests/deck_coworker_empty_states.mjs` pins that a bot's conversations page is titled by the bot, counts "Conversations" and shows no second bots list; `tests/test_deck_shell_browser.py` opens a bot's own conversations page on the phone and checks its composer and voice button.

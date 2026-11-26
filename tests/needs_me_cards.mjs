@@ -5,7 +5,6 @@ import { escape as e } from '../commonplace/web/static/api.js';
 import { needsMeCount, setNeedsQueue, BUCKETS, previewText, tidyGaps } from '../commonplace/web/static/needs-me.js';
 import { removeNeed, displayText, createNeedLedger } from '../commonplace/web/static/deck-home-today.js';
 import { cardHTML, summaryLine } from '../commonplace/web/static/deck-today-capy.js';
-import { waitingHint } from '../commonplace/web/static/deck-home.js';
 import { boardView } from '../commonplace/web/static/board.js';
 import { boardCopy } from '../commonplace/web/static/deck-board.js';
 import { renderDeckTabs, renderDeckBar } from '../commonplace/web/static/deck.js';
@@ -69,14 +68,13 @@ test('a removed reference leaves no blank gap behind it', () => {
   assert.doesNotMatch(visibleText(cardHTML({ ...approval, title: 'Gate (PR #7) run' }, [], state)), /\(\s*\)|\s,|\s{2}/);
 });
 
-test('Today, Home, the badges and the Board report the same count for the same queue', () => {
+test('Today, the badges and the Board report the same count for the same queue', () => {
   const needs = queue();
   const expected = 7;
   assert.equal(needsMeCount(needs), expected, 'a stale count field never wins over the listed cards');
   assert.equal(summaryLine(needs), `${expected} ${expected === 1 ? 'item' : 'items'} waiting`);
   assert.equal(summaryLine({ asks: [question] }), '1 item waiting');
   assert.equal(summaryLine({ count: 0 }), 'Nothing is waiting');
-  assert.match(waitingHint(needs), new RegExp(`>${expected} waiting on you<`));
   const shown = { needs: needsMeCount(needs), bots: [{ id: 'a', name: 'A' }] };
   assert.match(renderDeckTabs(shown), new RegExp(`class="count need">${expected}`));
   assert.match(renderDeckBar(shown), new RegExp(`class="count need">${expected}`));
@@ -131,7 +129,7 @@ test('the shell ledger derives the shell count from the listed cards and tells t
 });
 
 test('no screen keeps a count of its own', () => {
-  for (const file of ['deck.js', 'deck-home.js', 'deck-today-capy.js', 'deck-board.js']) {
+  for (const file of ['deck.js', 'deck-today-capy.js', 'deck-board.js']) {
     const source = readFileSync(new URL(`../commonplace/web/static/${file}`, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /needs\??\.count|state\.needs\.count|\.needs\?\.count/, `${file} reads a separate needs count`);
   }
