@@ -68,7 +68,7 @@ for (const name of files) {
 }
 const board = ['board.js', 'children.js', 'projectpanel.js', 'chatdock.js', 'cardmove.js'];
 const routes = {
-  shell: [], home: ['deck-home.js'], bots: ['bots.js'], board,
+  shell: [], home: ['deck-today-capy.js'], bots: ['bots.js'], board,
   card: [...board, 'details.js', 'deck-board.js', 'card-reviewer.js', 'blockers.js', 'lifecycle.js', 'decide.js'],
   memory: ['memory.js', 'board.js', 'chatdock.js'],
   settings: ['projects.js', 'agent-schedules.js', 'tool-policy.js', 'plan.js', 'agents.js'],

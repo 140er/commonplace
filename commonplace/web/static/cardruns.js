@@ -51,7 +51,7 @@ export const refusalWords = (error) => {
 const START_REFUSALS = {
   no_machine: "No runner machine is set up, so a bot cannot run this card yet. Set one up in Admin; machines on the Cloud workspaces map are only checked.",
   machine_unavailable: "The machine this project starts agents on is switched off, removed or not attested. Check it in Admin > Runner machines.",
-  binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in ~/.t3/userdata/settings.json).",
+  binding_not_attested: "The machine is not attested yet. Attest it in Admin > Runner machines. The form asks for the provider instance id: it is filled in when the machine has reported it, otherwise read it on the machine (the one name under providerInstances in the T3 settings stored on that machine).",
   setup_waiting: "The machine you added connected and waits for your approval. Bots do not run on it in this version.",
   setup_unfinished: "The machine you added is not finished. Bots do not run on it in this version.",
   setup_only: "The machine you added only checks itself in this version. Bots do not run on it in this version.",

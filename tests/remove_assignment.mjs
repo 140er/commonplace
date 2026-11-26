@@ -129,3 +129,51 @@ context.onNeeds = ()=>false;
 await context.click({target:{closest:()=>({dataset:{action:'cancel-form'}})}});
 assert.equal(dismissed,true,'Only explicit dismissal removes the refusal');
 console.log('An in-flight foreground read preserves the refusal until Close');
+
+// A refresh of the open card that would draw the same card leaves an open removal form, and the reason typed in it, alone;
+// a card that changed, or a card panel without the form, still draws as before.
+for (const deck of [false, true]) {
+  const open = { version: String(card.version) };
+  const redraws = [];
+  const surface = {
+    innerHTML: 'removal form with typed reason', hidden: false,
+    querySelector: selector => selector === '[data-form="remove-assignment"] input[name="version"]' && surface.form ? { value: surface.form.version } : null,
+    querySelectorAll: () => [], form: open,
+  };
+  const reads = [];
+  const drawn = {
+    ...context, detailsUI: null,
+    root: { querySelector: selector => selector === '#card-panel' ? surface : null, querySelectorAll: () => [], addEventListener() {} },
+    state: { ...state, deck: { on: () => deck }, card, route: '#/card/1', base: '#/board/work', screen: 0, panelRequest: 0, pending: new Set(), boards: [], needs: {}, me: { actor: 'me', people: [], can_admin: true }, chat: [], chatBoard: null, deckBots: [] },
+    remember: () => ({}), restore() {}, showLoading() {}, releaseControl: () => '', callTree: () => '', conversation: () => '', drawerCopy: extra => extra,
+    cardId: () => '', enc: encodeURIComponent, placeLifecycle() {}, message: text => text, openSelectedCard() {},
+    createDetails: () => ({ show: async () => { redraws.push('drawn'); surface.innerHTML = 'details redrawn'; }, selectTab() {}, stop() {} }),
+    api: async path => { reads.push(path); return { ...card }; },
+  };
+  runInNewContext(slice('async function cardPanel(', 'function newCardForm('), drawn);
+  await drawn.cardPanel(1, 0);
+  assert.deepEqual(reads, ['/api/cards/1']);
+  assert.equal(surface.innerHTML, 'removal form with typed reason', `${deck ? 'Deck' : 'Classic'}: the same card must not redraw an open removal form`);
+  assert.deepEqual(redraws, []);
+  assert.equal(surface.form, open);
+  // Cancel takes the form out first, so the same card's read draws the drawer again.
+  let removed = 0;
+  drawn.root.querySelector = selector => selector === '#card-panel' ? surface : selector === '#card-panel [data-form="remove-assignment"]' ? { remove() { removed++; surface.form = null; } } : null;
+  drawn.root.addEventListener = (name, fn) => { drawn[name] = fn; };
+  drawn.onNeeds = () => false; drawn.refresh = async () => { await drawn.cardPanel(1, 0); };
+  runInNewContext(slice('root.addEventListener("click",', 'root.addEventListener("submit",'), drawn);
+  await drawn.click({ target: { closest: () => ({ dataset: { action: 'cancel-form' } }) } });
+  assert.equal(removed, 1);
+  assert.equal(surface.innerHTML, 'details redrawn', 'Cancel returns to the drawer');
+  surface.innerHTML = 'removal form with typed reason'; surface.form = open; redraws.length = 0;
+  // The card changed underneath the form: the drawer draws the new version.
+  drawn.api = async () => ({ ...card, version: card.version + 1 });
+  await drawn.cardPanel(1, 0);
+  assert.equal(surface.innerHTML, 'details redrawn', 'A new card version still redraws the drawer');
+  // No removal form open: the drawer draws as it always did.
+  surface.innerHTML = 'details'; surface.form = null; redraws.length = 0;
+  drawn.api = async () => ({ ...card });
+  await drawn.cardPanel(1, 0);
+  assert.equal(redraws.length, 1, 'Without a removal form the drawer still draws');
+}
+console.log('An open removal form survives refreshes of the same card and gives way to a new version');

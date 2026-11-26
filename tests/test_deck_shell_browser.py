@@ -162,7 +162,7 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.wait_for_function(
                             "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
                         )
-                        await page.goto(url + "#/bots/-/coworkers")
+                        await page.goto(url + "#/bots/" + bot["id"] + "/coworkers")
                         await page.locator(".cb-composer").wait_for(state="visible")
                         await page.locator(".cb-composer .deck-composer-mic").wait_for(
                             state="visible"
@@ -197,7 +197,7 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         }""")
                         await page.screenshot(path=str(output / "rail-states-fixture.png"))
                     if width == 390:
-                        await page.goto(url + "#/bots/-/coworkers")
+                        await page.goto(url + "#/bots/" + bot["id"] + "/coworkers")
                         await page.locator(".cb-composer .deck-composer-mic").click()
                         metrics = await page.evaluate("""() => {
                           const tabs=document.querySelector('#phone-tabs'), error=document.querySelector('#screen-error');

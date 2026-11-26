@@ -1,6 +1,7 @@
 import { loadRouteStyles } from "./route-styles.js";
 import { boundedRequest } from "./request-deadline.js";
 import { waitingTotal } from "./bot-counts.js";
+import { seatedIn } from "./head-actions.js";
 
 // Controllers load only for their route or an explicitly opened panel. Failed imports can retry.
 let deckPaletteItems, mountWorkspaceOrchestration, mountProjectPanel, mountAgentSchedules, mountToolPolicy, eventItem,
@@ -518,7 +519,10 @@ function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
   // A redraw keeps focus on the same header control (Details, Chat).
   const head = root.querySelector("#head-actions"), active = document.activeElement, keep = active?.closest?.("#head-actions") && active.id;
+  // A page's main action, seated in the bar by the page itself, survives the redraw.
+  const seated = seatedIn(head);
   head.innerHTML = actions;
+  if (seated) head.append(seated);
   if (keep) head.querySelector(`#${CSS.escape(keep)}`)?.focus({ preventScroll: true });
   document.title = `${text} · Commonplace`;
 }
@@ -867,6 +871,9 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
     if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
+    // An open removal form was drawn from one card version: a read of that same version has nothing new to show,
+    // so the form and the reason typed in it stay. Cancel removes the form first, which lets the drawer draw again.
+    if (!opening && panel.querySelector('[data-form="remove-assignment"] input[name="version"]')?.value === String(card.version)) return;
     state.card = card;
     // A shared card link draws its own board behind the card, once.
     const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
@@ -1992,6 +1999,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
       root.querySelector("#card-panel .assignment-refusal")?.remove();
+      root.querySelector('#card-panel [data-form="remove-assignment"]')?.remove();
       // Needs me redraws the item's detail; a card route reads the card again.
       const needs = onNeeds() ? state.needsUI : null;
       if (needs?.paused()) needs.pause(false); else await refresh();

@@ -6,7 +6,8 @@ topology canvas; Management opens the existing authenticated controller at
 classic navigation and its `#/compute-map` screen remain unchanged.
 
 Coworkers belong under Bots: `#/bots/<bot-id>/coworkers` extends the existing Bot
-detail route; `#/bots/-/coworkers` lists the workspace's project-backed Bots.
+detail route; in classic `#/bots/-/coworkers` lists the workspace's project-backed Bots,
+and in Deck it resolves to the one bot list `#/bots`.
 Rows show the parent Bot, its existing project/repository association and recorded
 child threads. The displayed worker role is Coworker, including forwarded replies
 in Deck Bot threads. Wire names and stored fields are unchanged. The current

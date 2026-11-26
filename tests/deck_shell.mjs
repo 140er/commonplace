@@ -221,7 +221,7 @@ test('the account menu and sheet call the server console "Server admin", and its
   }
   assert.match(renderDeckTop({ hash: '#/instance-admin' }), /<b>Server admin<\/b>/);
   assert.match(renderDeckTop({ hash: '#/admin' }), /<b>Admin<\/b>/);
-  assert.match(renderDeckTop({ hash: '#/bots/-/coworkers' }), /<b>Bot conversations<\/b>/, 'the phone title of the bot conversations page is not "Bots"');
+  assert.match(renderDeckTop({ hash: '#/bots/-/coworkers' }), /<b>Conversations<\/b>/, 'the phone title of the conversations page is not "Bots"');
   assert.match(renderDeckTop({ hash: '#/bots' }), /<b>Bots<\/b>/);
   const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
   assert.match(app, /dataset\?\.ui === "deck"\) text = \{ "Workspace administration": "Admin", "Instance console": "Server admin" \}\[text\] \|\| text;/);
@@ -254,9 +254,9 @@ test('review fixes in the stylesheets: full-width bot bar, shared page column, r
   assert.match(system, /\.console-empty \{[^}]*max-width: var\(--page-width\)/);
   assert.match(system, /\.rules-empty \{ max-width: var\(--page-width\)/);
   assert.match(read('deck-pipeline.css'), /\.pl-empty \{[^}]*max-width: var\(--page-width\)/);
-  // Unchecked settings boxes are outlined in --control-line (over 3:1 on the card); checked stays violet.
+  // Unchecked settings boxes are outlined in --control-line (over 3:1 on the card); checked stays the primary colour.
   assert.match(system, /\.capy-settings input\[type="checkbox"\] \{[^}]*appearance: none;[^}]*border: 1\.5px solid var\(--control-line\)/);
-  assert.match(system, /\.capy-settings input\[type="checkbox"\]:checked \{ border-color: var\(--violet\); background: var\(--violet\); \}/);
+  assert.match(system, /\.capy-settings input\[type="checkbox"\]:checked \{ border-color: var\(--primary\); background: var\(--primary\); \}/);
   // The phone bar names where you are, so the coworkers breadcrumb goes there.
   const coworkers = read('deck-coworkers.css');
   assert.match(coworkers.slice(coworkers.indexOf('@media (max-width: 699px)')), /\.cb-crumbs \{ display: none; \}/);
@@ -299,4 +299,14 @@ test('every desktop page starts 20px under the bar: pages that #content already 
   assert.match(css, /> \.bots-roster \{[^}]*padding-top: 0/, 'Bots');
   assert.match(css, /#content \.admin\.settings \{ padding-top: 0; \}/, 'Admin');
   assert.match(css, /#content\.capy-coworkers \{ padding-top: 20px; \}/, 'Coworkers');
+});
+
+test('the Deck stylesheet names its accent roles --primary and --ok, and keeps the old colour names as aliases', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-system.css', import.meta.url), 'utf8');
+  assert.match(css, /--primary: #9bbbe0;/);
+  assert.match(css, /--primary-ink: #9bbbe0;/);
+  assert.match(css, /--ok: #7dcea4;/);
+  assert.match(css, /--violet: var\(--primary\); --violet-ink: var\(--primary-ink\); --cyan: var\(--ok\);/, 'the old names resolve to the new ones');
+  const rules = css.replace(/\/\*[^]*?\*\//g, '').split('\n').filter(line => !/^\s*--(violet|violet-ink|cyan):/.test(line)).join('\n');
+  assert.doesNotMatch(rules, /var\(--(violet|violet-ink|cyan)\)/, 'this sheet reads only the new names');
 });

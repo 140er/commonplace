@@ -1,0 +1,4 @@
+- **Owns:** `scripts/web-build/build.mjs` owns the route-to-module lists the web bundle is built from.
+- **Promises:** The `home` route lists the module that renders Home now (`deck-today-capy.js`) instead of the removed Home hero, so the Home page still loads its own screen ahead of time.
+- **Tests:** `tests/test_web_bundle.py` builds the bundle and checks every route resolves.
+- **How it fails:** A route that names a module that does not exist stops the build with the module name.

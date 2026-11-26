@@ -1,0 +1,3 @@
+- **Owns:** The head-actions harness (`tests/head_actions.mjs`, run by `tests/test_head_actions.py`) and the shell and Memory harness stubs for the title-bar seat.
+- **Promises:** Seating, handing back on a phone, release, stale-page and single-click cases run on a minimal fake tree; the Needs me, digest speech and Memory map harnesses stub the three new helpers and keep every existing check.
+- **Tests:** `tests/test_head_actions.py`, `tests/test_commonplace_home.py`, `tests/test_commonplace_digest.py` and `tests/test_memory_map_restore.py`.

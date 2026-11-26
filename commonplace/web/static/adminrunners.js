@@ -43,7 +43,7 @@ export function grantBody(values) {
 
 // What the hub already knows of the machine's provider instance id: the attested one, else the one the machine reported.
 export const providerGuess = machine => machine?.binding_provider_instance_id || machine?.scope?.record?.provider_instance_id || '';
-export const PROVIDER_HINT = 'The name of the coding tool on the machine: the one entry under providerInstances in its T3 settings (~/.t3/userdata/settings.json). It is filled in when the machine has reported it.';
+export const PROVIDER_HINT = 'The name of the coding tool on the machine: the one entry under providerInstances in the T3 settings stored on that machine. It is filled in when the machine has reported it.';
 
 export function attestBody(values, machine = null) {
   const body = {
