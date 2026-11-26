@@ -67,6 +67,40 @@ def test_removal_keeps_the_existing_handoff_audit(hub, fresh):
     assert receiver.work.task_take_next(task=number)["status"] == "doing"
 
 
+def test_reserved_card_names_its_holder_and_dropping_clears_it(hub, fresh):
+    card, receiver = reservation(fresh)
+    number = card["number"]
+    # The owner and a member read the holder by name, never by the raw actor reference.
+    for auth in (fresh.cookie, member_cookie(hub, fresh)):
+        status, shown_card = api(hub, auth, "GET", f"/api/cards/{number}")
+        assert status == 200, shown_card
+        assert shown_card["reserved_for"] == "receiver"
+        status, listing = api(hub, auth, "GET", "/api/boards/work/cards")
+        assert status == 200, listing
+        assert [c["reserved_for"] for c in listing["cards"] if c["number"] == number] == [
+            "receiver"
+        ]
+    # Dropping from the card is the existing handoff route; the marker goes with the reservation.
+    status, result = api(
+        hub,
+        fresh.cookie,
+        "POST",
+        f"/api/cards/{number}/handoff",
+        {"to": "anyone", "note": "Reservation dropped", "version": card["version"]},
+    )
+    assert status == 200, result
+    assert result["assignee"] is None and not result.get("reserved_for")
+    assert fresh.owner.task_show(number)["events"][-1]["kind"] == "handoff"
+
+
+def test_started_card_is_not_reserved(hub, fresh):
+    card, receiver = reservation(fresh)
+    receiver.work.task_take_next(task=card["number"])
+    status, shown_card = api(hub, fresh.cookie, "GET", f"/api/cards/{card['number']}")
+    assert status == 200 and shown_card["status"] == "doing"
+    assert not shown_card.get("reserved_for")
+
+
 @pytest.mark.parametrize("refusal", ["active", "non-owner", "origin", "blank"])
 def test_removal_refusals_leave_card_and_audit_unchanged(hub, fresh, refusal):
     card, receiver = reservation(fresh, refusal)
@@ -82,7 +116,7 @@ def test_removal_refusals_leave_card_and_audit_unchanged(hub, fresh, refusal):
         f"/api/cards/{number}/handoff",
         {
             "to": "anyone",
-            "note": "" if refusal == "blank" else "Remove assignment",
+            "note": "" if refusal == "blank" else "Drop reservation",
             "version": card["version"],
         },
     )
@@ -183,7 +217,15 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
     card, _ = reservation(fresh)
     context, page = open_drawer(browser, hub, fresh, card, width, look)
     try:
-        action = page.get_by_role("button", name="Remove assignment", exact=True)
+        # The holder shows by name on the board card face and in the card header.
+        shown(page.locator("[data-reserved-for]").first)
+        assert "Reserved for receiver" in page.locator("[data-reserved-for]").first.inner_text()
+        assert (
+            "Reserved for receiver"
+            in page.locator(f'.card[data-card="{card["number"]}"]').inner_text()
+        )
+        shot(page, look, "reserved", width)
+        action = page.get_by_role("button", name="Drop reservation", exact=True)
         if look == "deck":
             assert (
                 action.bounding_box()["y"] + action.bounding_box()["height"]
@@ -197,8 +239,8 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
         shot(page, look, "before", width)
         action.click()
         form = page.locator('[data-form="remove-assignment"]')
-        reason = form.get_by_label("Reason" if look == "deck" else "Reason (required)", exact=True)
-        assert reason.get_attribute("required") is not None
+        reason = form.get_by_label("Reason (optional)", exact=True)
+        assert reason.get_attribute("required") is None
         assert form.locator('input[name="to"]').count() == 0
         shown(
             form.get_by_text(
@@ -225,10 +267,8 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         if look == "deck":
             assert reason.input_value() == ""
-            assert form.locator(".confirm-removal").is_disabled()
-            reason.fill("   ")
-            assert form.locator(".confirm-removal").is_disabled()
-            reason.fill("")
+            # The reason is optional: confirm is one click away with the field empty.
+            assert form.locator(".confirm-removal").is_enabled()
             shot(page, look, "confirm-empty", width)
         reason.fill("Available for the next person")
         if look == "deck":
@@ -240,7 +280,7 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
             assert reason.evaluate("el=>getComputedStyle(el).borderWidth") == "0px"
         shot(page, look, "confirm-filled", width)
         with page.expect_response(lambda response: response.url.endswith("/handoff")) as response:
-            form.get_by_role("button", name="Remove assignment", exact=True).click()
+            form.get_by_role("button", name="Drop reservation", exact=True).click()
         assert response.value.status == 200
         editing_fields(page).get_by_text(
             "Anyone who can work on this project can pick it up."
@@ -265,9 +305,9 @@ def test_browser_removal_shows_server_refusal(browser, hub, fresh, refusal, widt
     card, receiver = reservation(fresh, refusal)
     context, page = open_drawer(browser, hub, fresh, card, width, "deck")
     try:
-        page.get_by_role("button", name="Remove assignment", exact=True).click()
+        page.get_by_role("button", name="Drop reservation", exact=True).click()
         form = page.locator('[data-form="remove-assignment"]')
-        form.get_by_label("Reason", exact=True).fill("Remove this reservation")
+        form.get_by_label("Reason (optional)", exact=True).fill("Remove this reservation")
         if refusal == "non-owner":
             cookie = member_cookie(hub, fresh)["Cookie"]
             name, value = cookie.split("=", 1)
@@ -282,17 +322,17 @@ def test_browser_removal_shows_server_refusal(browser, hub, fresh, refusal, widt
             receiver.work.task_take_next(task=card["number"])
         before = snapshot(fresh.owner, card["number"])
         with page.expect_response(lambda response: response.url.endswith("/handoff")) as response:
-            form.get_by_role("button", name="Remove assignment", exact=True).click()
+            form.get_by_role("button", name="Drop reservation", exact=True).click()
         reply = response.value.json()
         assert response.value.status == (409 if refusal == "active" else 403), reply
         error = page.locator("#card-panel .assignment-refusal")
         error.wait_for()
         expected = {
-            "active": "receiver (connected app) has started working on this card, so its assignment stays.",
-            "non-owner": "Only the workspace owner can remove this assignment.",
+            "active": "receiver (connected app) has started working on this card, so its reservation stays.",
+            "non-owner": "Only the workspace owner can drop this reservation.",
             "origin": "This card is still locked by the bot that made it. The owner can unlock it in the card, then try again.",
         }[refusal]
-        shown(error.get_by_role("heading", name="Assignment not removed"))
+        shown(error.get_by_role("heading", name="Reservation not dropped"))
         shown(error.get_by_text(expected, exact=True))
         assert error.locator("button").count() == 1
         shown(error.get_by_role("button", name="Close", exact=True))

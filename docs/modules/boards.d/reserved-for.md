@@ -1,0 +1,4 @@
+- **Owns:** The `reserved_for` field of the card read in `commonplace/boards/service.py`: the display name of whoever holds a not-started reservation (a Todo card with an assignee, no running claim and no pending or rejected proposal), absent otherwise.
+- **Promises:** Every reader of the card, owner or member, gets the holder's name instead of the raw actor reference, from the same read that already carried the assignee; no new permission is granted and no write path changes. Dropping a reservation still goes through the existing versioned handoff route and its authority checks.
+- **How it fails:** An assignee the workspace cannot resolve to a person leaves the field absent, so the card shows no marker rather than a raw reference.
+- **Tests:** `tests/test_remove_assignment.py` checks the name for the owner and a member on the card read and board list, that a started card has none, and that dropping through the handoff route clears it.

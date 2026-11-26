@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - Reserved Todo cards offer Remove assignment through the existing versioned handoff route and required reason. Deck shows it only to workspace owners, uses an empty Reason field and white confirmation pill, and explains project pickup after removal under Nobody yet. Known authority, origin and concurrent-start refusals replace the form with Assignment not removed and one Close button; unknown refusals retain the server text. Classic keeps its existing presentation. Authority and audit rules are unchanged.
+  - Reserved Todo cards say who holds them (a Reserved for marker on the board card and in the card header, from the card's `reserved_for` display name) and offer Drop reservation through the existing versioned handoff route. The reason is optional; a blank reason is saved as the default note Reservation dropped. Deck shows the control only to workspace owners, uses an empty Reason (optional) field and white confirmation pill, and explains project pickup after the drop under Nobody yet. Known authority, origin and concurrent-start refusals replace the form with Reservation not dropped and one Close button; unknown refusals retain the server text. Classic keeps its existing presentation. Authority and audit rules are unchanged.
 
 - **Tests:**
 

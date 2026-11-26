@@ -1031,6 +1031,9 @@ class BoardService(lifecycle.LifecycleMixin):
             if snoozed:
                 result["snoozed"] = snoozed
             result.update(lifecycle.card_fields(conn, row, q))
+            holder = self._reserved_for(row)
+            if holder:
+                result["reserved_for"] = holder
             if self._restricted_origin(row):
                 result["restricted"] = True
             if self._awaits_origin_release(row):
@@ -1332,6 +1335,28 @@ class BoardService(lifecycle.LifecycleMixin):
             and self._origin_released(row)
             and self._can_release_origin(self.principal, row)
         )
+
+    def _reserved_for(self, row):
+        """The name of whoever holds a not-started reservation, else None.
+
+        A connection's ref already carries its name; a person shows by name, the way
+        the app's people list does. Never the raw ref.
+        """
+        holder = str(row["assignee"] or "")
+        if (
+            not holder
+            or row["status"] != "todo"
+            or row["claim_until"]
+            or row["proposal_status"] in ("pending", "rejected")
+        ):
+            return None
+        if holder.startswith("conn:"):
+            return holder[5:]
+        try:
+            user = self.ctx.db.user(holder.removeprefix("user:"))
+        except ControlError:
+            return None
+        return user["name"] or user["email"].split("@", 1)[0]
 
     def _member_reservation(self, row):
         """Non-owner people cannot change another actor's todo/doing status or hand it off."""

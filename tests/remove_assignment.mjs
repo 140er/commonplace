@@ -8,9 +8,14 @@ const app = await read('app.js');
 const source = (await read('details.js')).replace(/(from\s*)(['"])\.\/([\w-]+\.js)\2/g,
   (_all, from, _quote, name) => from + JSON.stringify(new URL(`../commonplace/web/static/${name}`, import.meta.url).href));
 const details = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-const card = { number: 1, version: 7, status: 'todo', assignee: 'conn:reserved', title: 'Release notes', body: '', events: [] };
+const card = { number: 1, version: 7, status: 'todo', assignee: 'conn:reserved', reserved_for: 'reserved', title: 'Release notes', body: '', events: [] };
 const html = details.renderDetails(card);
 assert.match(html, /data-action="remove-assignment"/);
+assert.match(html, /<button class="btn" data-action="remove-assignment">Drop reservation<\/button>/);
+assert.doesNotMatch(html, /Remove assignment/);
+assert.match(html, /<span class="tag wait" data-reserved-for>Reserved for reserved<\/span>/, 'The header names the holder');
+assert.doesNotMatch(details.renderDetails({...card, reserved_for:undefined, assignee:null}), /data-reserved-for/);
+assert.doesNotMatch(details.renderDetails({...card, status:'doing', reserved_for:undefined}), /data-reserved-for/);
 for (const other of [{status:'doing'}, {status:'done'}, {assignee:null}, {claim_until:'later'}, {proposal_status:'pending'}, {proposal_status:'rejected'}]) {
   assert.doesNotMatch(details.renderDetails({...card, ...other}), /data-action="remove-assignment"/);
 }
@@ -23,10 +28,13 @@ const withoutEditing = ownerHTML.replace(/<details class="deck-card-controls"[\s
 assert.match(withoutEditing, /data-action="remove-assignment"/, 'Removal is reachable without opening Edit card');
 assert.equal((ownerHTML.match(/data-action="remove-assignment"/g)||[]).length, 1);
 assert.match(details.deckAssignmentForm(card), /This card goes back to the pool/);
+assert.match(details.deckAssignmentForm(card), /<h2>Drop reservation<\/h2>/);
+assert.match(details.deckAssignmentForm(card), /Reserved for reserved/);
 assert.doesNotMatch(ownerHTML, /Anyone eligible|Anyone who can work/);
 const memberHTML = details.renderDetails(card, {deck:true, canRemove:false});
 assert.doesNotMatch(memberHTML, /data-action="remove-assignment"/);
 assert.match(memberHTML, /Only the workspace owner can change this/);
+assert.match(memberHTML, /Reserved for reserved/, 'Members see who holds the card');
 assert.match(details.renderDetails({...card, assignee:null}, deckOwner), /Nobody yet.*Anyone who can work on this project can pick it up/);
 const slice = (start, end) => {
   const at = app.indexOf(start), stop = app.indexOf(end, at);
@@ -50,7 +58,9 @@ const context = {
 runInNewContext(slice('function removeAssignmentForm(', 'function handoffForm('), context);
 runInNewContext(slice('root.addEventListener("click",', 'root.addEventListener("submit",'), context);
 await context.click({target:{closest:()=>({dataset:{action:'remove-assignment'}})}});
-assert.match(panel.innerHTML, /name="note"[^>]*required/);
+assert.match(panel.innerHTML, /<h2>Drop reservation<\/h2>/);
+assert.match(panel.innerHTML, /Reason \(optional\)/);
+assert.doesNotMatch(panel.innerHTML, /name="note"[^>]*required|Reason \(required\)|Remove assignment/);
 assert.match(panel.innerHTML, /name="version" value="7"/);
 assert.match(panel.innerHTML, /Anyone eligible to work on this board can pick it up/);
 assert.doesNotMatch(panel.innerHTML, /name="to"|name="options"|name="context"/);
@@ -66,14 +76,15 @@ assert.equal(requests[0].method, 'POST');
 assert.deepEqual(JSON.parse(JSON.stringify(requests[0].body)), {to:'anyone',note:'No longer assigned',version:7});
 form.values.note = ' ';
 await submit(); await settle();
-assert.equal(requests.length, 1, 'A blank reason must not send a request');
+assert.equal(requests.length, 2, 'The reason is optional');
+assert.deepEqual(JSON.parse(JSON.stringify(requests[1].body)), {to:'anyone',note:'Reservation dropped',version:7}, 'A blank reason sends the default note');
 form.values.note = 'Keep the exact reason';
 for (const [status, message] of [[409,'Card changed.'],[403,'Card is reserved for another connection.'],[403,'This card came from a restricted connection and has not been released.']]) {
   context.api = async()=>{throw Object.assign(new Error(message),{status});};
   await submit(); await settle();
   assert.equal(errors.at(-1),message, 'Show the server reason verbatim');
 }
-console.log('Removal button, form, request, blank reason and refusal messages pass');
+console.log('Drop reservation button, form, request, optional reason and refusal messages pass');
 
 // Deck runs the same click, form and submit handlers as Classic.
 state.deck = {on:()=>true};
@@ -83,22 +94,15 @@ await context.click({target:{closest:()=>({dataset:{action:'remove-assignment'}}
 assert.equal(panel.innerHTML, '', 'Non-owners cannot open removal');
 state.me.can_admin = true;
 await context.click({target:{closest:()=>({dataset:{action:'remove-assignment'}})}});
-assert.match(panel.innerHTML, /<label>Reason<textarea[^>]*required><\/textarea>/);
-assert.match(panel.innerHTML, /type="submit" disabled/);
+assert.match(panel.innerHTML, /<label>Reason \(optional\)<textarea(?![^>]*required)[^>]*><\/textarea>/);
+assert.doesNotMatch(panel.innerHTML, /type="submit" disabled/, 'Confirm is one click away');
 assert.match(panel.innerHTML, /Saved in the card&#39;s activity|Saved in the card's activity/);
 assert.match(panel.innerHTML, /Anyone who can work on this project/);
-assert.doesNotMatch(panel.innerHTML, /Reason \(required\)|var\(--block\)/);
-const button = {disabled:true};
-runInNewContext(slice('root.addEventListener("input",', 'root.addEventListener("change",'), context);
-const input = {dataset:{}, value:' ', closest:()=>({dataset:{card:'1'}, querySelector:()=>button})};
-context.input({target:input});
-assert.equal(button.disabled,true);
-input.value = 'Ready for someone else'; context.input({target:input});
-assert.equal(button.disabled,false);
+assert.doesNotMatch(panel.innerHTML, /Reason \(required\)|var\(--block\)|Remove assignment/);
 const known = [
-  [403, {code:'handoff_refused', error:'Card is reserved for another connection; the workspace owner can move it.'}, 'Only the workspace owner can remove this assignment.'],
+  [403, {code:'handoff_refused', error:'Card is reserved for another connection; the workspace owner can move it.'}, 'Only the workspace owner can drop this reservation.'],
   [403, {code:'handoff_refused', error:'This card came from a restricted connection and has not been released, so it cannot be handed off.'}, 'This card is still locked by the bot that made it. The owner can unlock it in the card, then try again.'],
-  [409, {current:{status:'doing',assignee:'conn:receiver'}}, 'receiver (connected app) has started working on this card, so its assignment stays.'],
+  [409, {current:{status:'doing',assignee:'conn:receiver'}}, 'receiver (connected app) has started working on this card, so its reservation stays.'],
   [403, {code:'future_refusal',error:'<Unknown reason>'}, '&lt;Unknown reason&gt;'],
   [403, {code:'handoff_refused',error:'A new restriction.'}, 'A new restriction.'],
 ];
@@ -106,12 +110,12 @@ for (const [status,payload,expected] of known) {
   context.api = async()=>{throw Object.assign(new Error(payload.error || 'card changed'),{status,payload});};
   await submit(); await settle();
   assert.ok(panel.innerHTML.includes(expected), panel.innerHTML);
-  assert.match(panel.innerHTML, /Assignment not removed/);
+  assert.match(panel.innerHTML, /Reservation not dropped/);
   assert.match(panel.innerHTML, />Close<\/button>/);
   assert.doesNotMatch(panel.innerHTML, /<form|<textarea|confirm-removal/);
   assert.equal((panel.innerHTML.match(/<button/g)||[]).length,1);
 }
-console.log('Deck ownership, blank/filled reason, three refusal states and unknown fallback pass');
+console.log('Deck ownership, optional reason, three refusal states and unknown fallback pass');
 
 // A read started before the refusal must not replace it, even if it was foreground.
 const savedCard = state.card;

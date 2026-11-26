@@ -997,7 +997,7 @@ function removeAssignmentForm(card) {
   if (!canRemoveAssignment(card) || (state.deck?.on() && !state.me.can_admin)) return;
   detailsUI?.stop(); detailsUI = null;
   const panel = root.querySelector("#card-panel");
-  panel.innerHTML = state.deck?.on() ? deckAssignmentForm(card) : `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>${e(assignmentPickup(card))}</p><label>Reason (required)<textarea name="note" required></textarea></label><p class="set-note">The reason will be saved in the card's activity.</p><button class="btn confirm-removal" type="submit">Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.innerHTML = state.deck?.on() ? deckAssignmentForm(card) : `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Drop reservation</h2><p>Drop the reservation on #${card.number} ${e(card.title)}?${card.reserved_for ? ` Reserved for ${e(card.reserved_for)}.` : ""}</p><p>${e(assignmentPickup(card))}</p><label>Reason (optional)<textarea name="note"></textarea></label><p class="set-note">A reason is saved in the card's activity.</p><button class="btn confirm-removal" type="submit">Drop reservation</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></form>`;
   panel.querySelector('textarea[name="note"]').focus();
 }
 function handoffForm(card, prefill = {}) {
@@ -1868,9 +1868,6 @@ async function move(number, status, extra = {}) {
   if (ok && moved?.status !== card.status) showNotice(moveNotice(moved, state.me.actor, status));
 }
 root.addEventListener("input", (event) => {
-  const removal = event.target.closest('[data-form="remove-assignment"]');
-  if (removal && state.deck?.on()) removal.querySelector('[type="submit"]').disabled = !event.target.value.trim() || state.pending.has(`card-${removal.dataset.card}`);
-
   if (event.target.dataset.draft) {
     const key = event.target.dataset.draft;
     state.drafts.set(key, event.target.value);
@@ -2064,7 +2061,6 @@ root.addEventListener("submit", async (event) => {
   if (kind === "reply" && !payload.reply?.trim()) { showError("Enter a reply."); return; }
   const blockerNumbers = kind === "blockers" ? parseBlockerNumbers(payload.blockers) : null;
   if (kind === "blockers" && !blockerNumbers) { showError("Enter the card number that blocks this card."); return; }
-  if (kind === "remove-assignment" && !payload.note?.trim()) { showError("Enter a reason for removing the assignment.", { drawer: true }); return; }
   if (kind === "handoff" && (!payload.note?.trim() || !payload.to?.trim())) { showError("Enter a recipient and a note."); return; }
   if (kind === "handoff" && form.dataset.connectionsOnly === "true" && !/^conn:\S+$/.test(payload.to)) {
     showError("Choose an agent using conn: followed by its name.");
@@ -2116,7 +2112,7 @@ root.addEventListener("submit", async (event) => {
     });
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "release-origin") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/approve`, { method: "POST", body: { approve: true, version: state.card.version, reason: payload.reason } }));
-    else if (kind === "remove-assignment") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { to: "anyone", note: payload.note, version: Number(payload.version) } }), { serverReason: true, onError: state.deck?.on() ? (error) => {
+    else if (kind === "remove-assignment") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { to: "anyone", note: payload.note?.trim() ? payload.note : "Reservation dropped", version: Number(payload.version) } }), { serverReason: true, onError: state.deck?.on() ? (error) => {
       const panel = root.querySelector("#card-panel");
       panel.innerHTML = assignmentRefusal(error);
       panel.querySelector(".assignment-refusal").focus();

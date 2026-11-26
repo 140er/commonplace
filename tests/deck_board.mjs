@@ -41,15 +41,22 @@ test('only personal action cards get the amber edge; routine waits never do', ()
   assert.match(proposal.split('id="col-doing"')[0],/data-card="7"/,'owner decisions never disappear in collapsed Backlog');
   assert.doesNotMatch(proposal,/class="backlog"/);
 });
+test('a reserved card names its holder on the face; others stay unmarked', () => {
+  const reserved=boardView({...options,cards:[{...base,status:'todo',need:'idle',assignee:'conn:receiver',reserved_for:'receiver'}]});
+  assert.match(reserved,/Reserved for receiver/);
+  const plain=boardView({...options,cards:[{...base,status:'todo',need:'idle',assignee:null}]});
+  assert.doesNotMatch(plain,/Reserved for/);
+  assert.doesNotMatch(boardView({...options,cards:[{...base,status:'doing',need:'working',assignee:'conn:receiver'}]}),/Reserved for/);
+});
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
-  for(const label of ['Summary','Bot','Assigned to','Version','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
+  for(const label of ['Summary','Bot','Assigned to','Version','Edit card','Who','Drop reservation','Approve','Hold']) assert.ok(visible(html).includes(label),label);
   assert.match(html,/<code[^>]*>abc1234<\/code>/);
   assert.doesNotMatch(visible(html),/~\/|review\.json|Evidence:|P-7|#7/);
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
   assert.match(html,/data-choice="Approve"/);
   assert.match(html,/data-choice="Hold"/);
-  assert.ok(html.indexOf('data-action="remove-assignment"') < html.indexOf('data-deck-card-controls'), 'Remove assignment is directly reachable before Edit card');
+  assert.ok(html.indexOf('data-action="remove-assignment"') < html.indexOf('data-deck-card-controls'), 'Drop reservation is directly reachable before Edit card');
   const missing=renderDetails(base,{...options,bots:[]});
   assert.doesNotMatch(missing,/Review gate|Checks.*Passed|abc1234/,'no invented progress');
 });
