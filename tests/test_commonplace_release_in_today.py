@@ -42,12 +42,14 @@ def test_member_does_not_see_the_waiting_card(hub, fresh):
     hub.db.add_member(fresh.workspace, user, "member", actor=fresh.user)
     member = service(hub, sessions.person_principal(hub.db, user, fresh.workspace))
     try:
-        groups = member.needs_me()
+        listed = release_numbers(member.needs_me())
     except ToolError:
-        return
-    assert number not in release_numbers(groups)
+        listed = []
+    assert number not in listed
     with pytest.raises(ToolError):
         member.task_approve(number, reason="Not the owner")
+    shown = member.task_show(number)
+    assert "creator" not in shown and not shown.get("can_approve")
 
 
 def test_release_from_today_uses_the_existing_release_path(fresh):

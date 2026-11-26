@@ -1035,9 +1035,11 @@ class BoardService(lifecycle.LifecycleMixin):
                 result["restricted"] = True
             if self._awaits_origin_release(row):
                 result["awaiting_release"] = True
-                result["creator"] = self._creator_trust(row)
                 if q.person or row["proposal_status"] != "pending":
                     result["can_approve"] = self._can_release_origin(q, row)
+                # Who made the card and how far they are trusted: only for someone who can release it.
+                if result.get("can_approve"):
+                    result["creator"] = self._creator_trust(row)
             if self._feature_on():
                 result.update(
                     blocked_by=[
