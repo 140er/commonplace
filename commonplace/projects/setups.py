@@ -521,6 +521,50 @@ def listing(ctx, status=None) -> dict:
     return {"proposals": [_view(ctx, row, boards) for row in visible]}
 
 
+def pending(ctx) -> list[dict]:
+    """Waiting on you (slice 3): the proposals still ``proposed``, newest first, for the signed-in
+    owner only (anyone else gets an empty list, so the bucket does not exist for them).
+
+    One item each: what Today shows and the digest it posts back to apply or reject."""
+    principal, db = ctx.principal, ctx.db
+    if not is_signed_in_owner(principal):
+        return []
+    with db._lock:
+        if not db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='setup_proposals'"
+        ).fetchone():
+            return []
+        rows = db._conn.execute(
+            "SELECT * FROM setup_proposals WHERE workspace_id=? AND status='proposed' "
+            "ORDER BY id DESC LIMIT ?",
+            (principal.workspace_id, MAX_LISTED),
+        ).fetchall()
+    if not rows:
+        return []
+    boards = readable_boards(ctx)
+    items = []
+    for row in rows:
+        view = _view(ctx, row, boards)
+        items.append(
+            {
+                "kind": "setup",
+                "id": view["id"],
+                "ref": view["ref"],
+                "sha256": view["sha256"],
+                "proposed_by": view["proposed_by"],
+                "proposer_name": view["proposer_name"],
+                "proposed_at": view["proposed_at"],
+                "summary": view["summary"],
+                "changes": [
+                    {key: line[key] for key in ("kind", "action", "text", "problem") if key in line}
+                    for line in view["changes"]
+                ],
+                "problems": view["problems"],
+            }
+        )
+    return items
+
+
 def _emit(ctx, kind: str, number: int, sha: str) -> None:
     """Refs-only event after the commit; a failure to emit never fails the call."""
     from commonplace import events

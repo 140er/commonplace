@@ -5176,6 +5176,8 @@ class BoardService(lifecycle.LifecycleMixin):
                 groups["count"] += len(groups["model_roles"])
                 groups["config_proposals"] = self._config_proposals()
                 groups["count"] += len(groups["config_proposals"])
+                groups["setup_proposals"] = self._setup_proposals()
+                groups["count"] += len(groups["setup_proposals"])
                 if getattr(self.ctx.gateway, "runner_installed", False):
                     from commonplace.runner import install_receipts
 
@@ -5210,6 +5212,16 @@ class BoardService(lifecycle.LifecycleMixin):
                 groups["model_signins"] = expired
                 groups["count"] += len(expired)
         return groups
+
+    def _setup_proposals(self):
+        """Proposed workspace setups (card #675) the signed-in owner applies or rejects."""
+        from commonplace.projects import setups
+
+        try:
+            return setups.pending(self.ctx)
+        except sqlite3.Error as exc:
+            log_failure(logger, "setup proposals unavailable", exc)
+            return []
 
     def _config_proposals(self):
         """Proposed Coworker configs the owner can accept or reject, one item each."""

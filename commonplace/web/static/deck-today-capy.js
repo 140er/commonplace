@@ -1,7 +1,7 @@
 import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
-import { addStyles, primaryAction, needsCards, configProposals, removeNeed, removeConfig, configKey, todayKey, stamp, displayText, actionRequest, avatar, timeHTML, needsMeCount } from './deck-home-today.js';
+import { addStyles, primaryAction, needsCards, configProposals, setupProposals, removeNeed, removeConfig, removeSetup, configKey, setupKey, todayKey, stamp, displayText, actionRequest, avatar, timeHTML, needsMeCount } from './deck-home-today.js';
 import { previewText } from './needs-me.js';
 
 export const TITLE = 'Waiting on you';
@@ -92,6 +92,28 @@ export function configHTML(item, { busy = new Set(), errors = new Map(), confirm
     : `<div class="bt-actions"><button type="button" class="bt-approve bt-primary" data-bt-config-action="accept"${disabled}>Accept</button><button type="button" class="bt-secondary" data-bt-config-action="reject"${disabled}>Reject</button></div><p class="bt-approve-note">${escape(live ? `Accept means yes: ${project} uses ${item.ref} from now on.` : `Accept means yes: ${item.ref} is accepted as an experiment. The live config for ${project} does not change.`)}</p>`;
   return `<article class="bt-card bt-waiting" data-bt-config="${escape(key)}" data-bt-kind="review" tabindex="-1" aria-labelledby="bt-title-${escape(key)}"><header>${who ? `${avatar({ name: who }, escape)}<b>${escape(who)}</b>` : ''}<span class="bt-verb">suggests a new config</span>${timeHTML(item.proposed_at, escape)}</header><h2 id="bt-title-${escape(key)}">${escape(asked)}</h2><p class="bt-body bt-preview">${escape(project)}: config ${escape(item.ref)}${escape(where)}</p>${changes}${actions}${errors.has(key) ? `<p class="bt-error" role="alert">${escape(errors.get(key))}</p>` : ''}</article>`;
 }
+/** A proposed workspace setup (card #675): who proposed it, what it does in one line, every change behind "Changes",
+ *  and Approve or Reject. Approve applies exactly the version shown (its sha256). Same markup as a config proposal. */
+export function setupHTML(item, { busy = new Set(), errors = new Map(), confirming = new Set(), open = new Set() } = {}, escape = e) {
+  const key = setupKey(item), disabled = busy.has(key) ? ' disabled' : '';
+  const who = displayText(item.proposer_name || ''), lines = Array.isArray(item.changes) ? item.changes : [];
+  const asked = previewText(displayText(item.summary || 'A new setup'), 220);
+  const problem = line => line.problem ? ` (cannot be done now: ${line.problem === 'unknown_project' ? 'the project is gone' : 'it would fail'})` : '';
+  const text = lines.length ? lines.map(line => `${{ create: '+', unchanged: '=' }[line.action] || '~'} ${line.text}${problem(line)}`).join('\n') : 'Could not load the changes';
+  const count = lines.filter(line => line.action !== 'unchanged').length, failing = Number(item.problems) || 0;
+  const changes = `<details class="bt-full" data-bt-setup-changes="${escape(key)}"${open.has(key) ? ' open' : ''}><summary>Changes</summary><p class="bt-full-text" data-setup-changes>${escape(text)}</p></details>`;
+  const actions = confirming.has(key)
+    ? `<div class="bt-actions" role="group" aria-label="Reject setup ${escape(item.ref)}"><p class="bt-body">Reject setup ${escape(item.ref)}? Nothing is created or changed. This version cannot be approved after rejection.</p><button type="button" class="bt-approve bt-secondary" data-bt-setup-action="reject-confirm"${disabled}>Reject version</button><button type="button" class="bt-quiet" data-bt-setup-action="cancel"${disabled}>Cancel</button></div>`
+    : `<div class="bt-actions"><button type="button" class="bt-approve bt-primary" data-bt-setup-action="apply"${disabled}>Approve</button><button type="button" class="bt-secondary" data-bt-setup-action="reject"${disabled}>Reject</button></div><p class="bt-approve-note">${escape(`Approve means yes: everything under Changes is created or set for you now, exactly as listed.${failing ? ` ${failing} of them cannot be done now and will be reported.` : ''}`)}</p>`;
+  return `<article class="bt-card bt-waiting" data-bt-setup="${escape(key)}" data-bt-kind="review" tabindex="-1" aria-labelledby="bt-title-${escape(key)}"><header>${who ? `${avatar({ name: who }, escape)}<b>${escape(who)}</b>` : ''}<span class="bt-verb">suggests a setup</span>${timeHTML(item.proposed_at, escape)}</header><h2 id="bt-title-${escape(key)}">${escape(asked)}</h2><p class="bt-body bt-preview">${escape(`Setup ${item.ref}: ${count} change${count === 1 ? '' : 's'} to your bots, Coworkers and models`)}</p>${changes}${actions}${errors.has(key) ? `<p class="bt-error" role="alert">${escape(errors.get(key))}</p>` : ''}</article>`;
+}
+/** What an approved setup did, in one line: all of it, or how many parts could not be done. */
+export function appliedLine(result, item) {
+  const results = Array.isArray(result?.results) ? result.results : [], failed = results.filter(entry => !entry.ok).length;
+  return result?.status === 'partial'
+    ? `Approved. Setup ${item.ref} is only partly in place: ${failed} of ${results.length} parts could not be done. The rest is in place.`
+    : `Approved. Setup ${item.ref} is in place: everything under Changes was created or set.`;
+}
 /** The list when nothing is open: one calm line once loaded, otherwise the plain loading line. */
 export const emptyCardsHTML = (loaded, filtered = false) => `<p class="bt-calm" role="status">${loaded ? filtered ? 'Nothing here. Choose All to see everything waiting on you.' : 'Nothing waits on you. Questions and finished work from your bots show up here.' : 'Loading…'}</p>`;
 export function mount(context) {
@@ -103,7 +125,7 @@ export function mount(context) {
   const region = name => root.querySelector(`[data-bt="${name}"]`);
   const dialog = root.querySelector('dialog'), form = dialog.querySelector('form');
   let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', currentAnswering = false, confirmTimer = null, focused = null, filter = 'all', needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
-  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set(), openChanges = new Set(), confirming = new Set(), settledConfigs = new Set();
+  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set(), openChanges = new Set(), confirming = new Set(), settledConfigs = new Set(), settledSetups = new Set();
   const botName = card => (bots.find(bot => bot.board && bot.board === card.board)?.name || card.bot_name || '');
   function cards() {
     const list = needsCards(needs).filter(card => !settled.has(stamp(card)));
@@ -114,17 +136,19 @@ export function mount(context) {
   // Config proposals are decisions to approve, so they sit under All and Reviews, ahead of the cards.
   const configs = () => configProposals(needs).filter(item => !settledConfigs.has(configKey(item)));
   const visibleConfigs = () => filter === 'all' || filter === 'review' ? configs() : [];
+  const setups = () => setupProposals(needs).filter(item => !settledSetups.has(setupKey(item)));
+  const visibleSetups = () => filter === 'all' || filter === 'review' ? setups() : [];
   function focus(number) {
     focused = number;
     root.querySelector(`[data-bt-card="${number}"]`)?.focus({ preventScroll: true });
   }
   function paint() {
     if (!active) return;
-    const all = cards(), list = visible(), proposed = visibleConfigs(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
+    const all = cards(), list = visible(), proposed = visibleConfigs(), suggested = visibleSetups(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
     region('summary').textContent = loaded || needsMeCount(needs) ? summaryLine(needs) : 'Loading…';
-    region('chips').innerHTML = chipsHTML([...all, ...configs().map(item => ({ ...item, actions: ['approve', 'reject'] }))], filter);
-    region('keys').hidden = !(list.length || proposed.length);
-    region('cards').innerHTML = list.length || proposed.length ? proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0);
+    region('chips').innerHTML = chipsHTML([...all, ...[...setups(), ...configs()].map(item => ({ ...item, actions: ['approve', 'reject'] }))], filter);
+    region('keys').hidden = !(list.length || proposed.length || suggested.length);
+    region('cards').innerHTML = list.length || proposed.length || suggested.length ? suggested.map(item => setupHTML(item, { busy, errors, confirming, open: openChanges })).join('') + proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0 || setups().length > 0);
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
@@ -154,6 +178,7 @@ export function mount(context) {
         needs = queue.value || { count: 0 };
         for (const card of needsCards(needs)) if (settled.has(stamp(card)) || exiting.has(stamp(card))) needs = removeNeed(needs, card);
         for (const item of configProposals(needs)) if (settledConfigs.has(configKey(item))) needs = removeConfig(needs, item);
+        for (const item of setupProposals(needs)) if (settledSetups.has(setupKey(item))) needs = removeSetup(needs, item);
         loaded = true;
       }
       if (roster.status === 'fulfilled') bots = roster.value?.bots || [];
@@ -247,6 +272,35 @@ export function mount(context) {
       if ([403, 404, 409].includes(error.status)) await refresh();
     } finally { writes.delete(controller); busy.delete(key); paint(); }
   }
+  // Approve and Reject post the digest shown to the setup's own routes; only the signed-in owner is accepted there.
+  async function decideSetup(item, action) {
+    const key = setupKey(item);
+    if (!active || busy.has(key) || settledSetups.has(key)) return;
+    const controller = new AbortController(); writes.add(controller); busy.add(key); errors.delete(key); confirming.delete(key); paint();
+    try {
+      const result = await api(`/api/setup-proposals/${item.id}/${action}`, { method: 'POST', body: { sha256: item.sha256 }, signal: controller.signal, timeoutMs: 30000 });
+      if (!active) return;
+      activity.unshift({ at: new Date().toISOString(), text: `You ${action === 'apply' ? 'approved' : 'rejected'} setup ${item.ref}`, fresh: true });
+      confirm(action === 'apply' ? appliedLine(result, item) : `Rejected. Nothing from setup ${item.ref} was created or changed.`);
+      settledSetups.add(key); needs = removeSetup(needs, item); ctx.onNeedsChanged?.(item);
+    } catch (error) {
+      if (!active) return;
+      errors.set(key, error.status === 409 ? 'This setup changed or was already decided. Review the latest version.' : error.message || 'Could not send. Try again.');
+      if ([403, 404, 409].includes(error.status)) await refresh();
+    } finally { writes.delete(controller); busy.delete(key); paint(); }
+  }
+  function onSetupClick(event) {
+    const button = event.target.closest?.('[data-bt-setup-action]');
+    if (!button) return false;
+    event.preventDefault();
+    const key = button.closest('[data-bt-setup]')?.dataset.btSetup, item = setups().find(item => setupKey(item) === key);
+    if (!item || button.disabled) return true;
+    const action = button.dataset.btSetupAction;
+    if (action === 'reject') { confirming.add(key); paint(); [...root.querySelectorAll('[data-bt-setup-action="cancel"]')].find(node => node.closest('[data-bt-setup]')?.dataset.btSetup === key)?.focus?.(); }
+    else if (action === 'cancel') { confirming.delete(key); paint(); }
+    else void decideSetup(item, action === 'reject-confirm' ? 'reject' : 'apply');
+    return true;
+  }
   function onConfigClick(event) {
     const button = event.target.closest?.('[data-bt-config-action]');
     if (!button) return false;
@@ -260,7 +314,7 @@ export function mount(context) {
     return true;
   }
   function onClick(event) {
-    if (onConfigClick(event)) return;
+    if (onSetupClick(event) || onConfigClick(event)) return;
     if (event.target.closest?.('[data-bt-cancel]')) { dialog.close(); current = null; return; }
     const chip = event.target.closest?.('[data-bt-filter]');
     if (chip) { filter = chip.dataset.btFilter; paint(); return; }
@@ -290,7 +344,7 @@ export function mount(context) {
     const choice = current.ask_options?.[Number(form.elements.choice.value)];
     void act(current, 'reply', { submit: true, answering: currentAnswering, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
   }
-  function onGroupToggle(event) { const group = event.target; if (group.matches?.('[data-bt-config-changes]')) { const key = group.dataset.btConfigChanges; if (group.open) openChanges.add(key); else openChanges.delete(key); return; }
+  function onGroupToggle(event) { const group = event.target; if (group.matches?.('[data-bt-config-changes], [data-bt-setup-changes]')) { const key = group.dataset.btConfigChanges || group.dataset.btSetupChanges; if (group.open) openChanges.add(key); else openChanges.delete(key); return; }
     if (group.matches?.('.bt-full')) { const number = Number(group.dataset.btFull); if (group.open) openFull.add(number); else openFull.delete(number); return; }
     if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
   root.addEventListener('toggle', onGroupToggle, true);

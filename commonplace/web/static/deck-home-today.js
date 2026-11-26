@@ -1,8 +1,8 @@
 // Shared Home/Today presentation and action contracts. No new write authority.
 import { elapsed } from './api.js';
-import { BUCKETS, needsCards, needsMeCount, configProposals, hasQueue, hideReferences, setNeedsQueue } from './needs-me.js';
+import { BUCKETS, needsCards, needsMeCount, configProposals, setupProposals, hasQueue, hideReferences, setNeedsQueue } from './needs-me.js';
 
-export { needsCards, needsMeCount, configProposals };
+export { needsCards, needsMeCount, configProposals, setupProposals };
 const positive = text => /^(?:yes\b|accept\b|approve\b|ship\b|start\b|send\b|publish\b|proceed\b|go ahead\b)/i.test(String(text));
 const holding = text => /^(?:hold\b|wait\b|not now\b|later\b)/i.test(String(text));
 const actionable = card => Number.isSafeInteger(card.number) && card.number > 0 && Number.isSafeInteger(card.version) && card.version > 0;
@@ -10,6 +10,9 @@ export const stamp = card => `${card.number}:${card.version}`;
 /** A config proposal has a board and a version but no card number. */
 export const isConfig = item => !item?.number && typeof item?.board === 'string' && typeof item?.sha256 === 'string';
 export const configKey = item => `config:${item.board}:${item.version}`;
+/** A setup proposal (card #675) has a proposal id and a digest, no card number and no board. */
+export const isSetup = item => item?.kind === 'setup' && Number.isSafeInteger(item?.id) && typeof item?.sha256 === 'string';
+export const setupKey = item => `setup:${item.id}`;
 // Display copy only; the source card and submitted choice are kept verbatim.
 export const displayText = value => hideReferences(String(value ?? '').replace(/\s+/g, ' '), /\bPR\s*#\d+\b|#\d+\b/gi, /(?:~\/|\/(?:home|Users|tmp|var|srv|opt|etc|mnt|work|api)\/|[A-Z]:\\)\S+/g);
 export function removeNeed(needs = {}, card) {
@@ -27,6 +30,15 @@ export function removeConfig(needs = {}, item) {
   next.count = hasQueue(next) ? needsMeCount(next) : Math.max(0, needsMeCount(needs) - 1);
   return next;
 }
+/** The same for a decided setup proposal. */
+export function removeSetup(needs = {}, item) {
+  const next = { ...needs };
+  if (Array.isArray(needs.setup_proposals)) next.setup_proposals = needs.setup_proposals.filter(other => other.id !== item.id);
+  next.count = hasQueue(next) ? needsMeCount(next) : Math.max(0, needsMeCount(needs) - 1);
+  return next;
+}
+const settleKey = item => isSetup(item) ? setupKey(item) : isConfig(item) ? configKey(item) : stamp(item);
+const removeAny = (needs, item) => isSetup(item) ? removeSetup(needs, item) : isConfig(item) ? removeConfig(needs, item) : removeNeed(needs, item);
 /** Keep a pre-decision read from restoring a badge, scoped to one signed-in person. */
 export function createNeedLedger() {
   let identity = '', settled = new Map();
@@ -35,11 +47,11 @@ export function createNeedLedger() {
     if (identity !== next) { identity = next; settled = new Map(); }
   }
   return {
-    settle(card, me) { scope(me); settled.set(isConfig(card) ? configKey(card) : stamp(card), card); },
+    settle(card, me) { scope(me); settled.set(settleKey(card), card); },
     // The shell's one entry for a queue it read: settled cards removed, `count` derived from the listed cards, and
     // the Board told which queue is current. Everything the shell shows as a count comes out of here.
     apply(needs, me) {
-      scope(me); for (const card of settled.values()) needs = isConfig(card) ? removeConfig(needs, card) : removeNeed(needs, card);
+      scope(me); for (const card of settled.values()) needs = removeAny(needs, card);
       const next = { ...needs, count: needsMeCount(needs) };
       setNeedsQueue(next);
       return next;
