@@ -266,7 +266,7 @@ PREFIX = {
     ("POST", "/api/console/agents/"): "authenticated",
     ("GET", "/api/chat/"): "authenticated",
     **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT", "PATCH")},
-    ("GET", "/api/setup-proposals/"): "authenticated",
+    **{(method, "/api/setup-proposals/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/learned/"): "authenticated" for method in ("GET", "PATCH", "DELETE")},
     ("POST", "/api/learned/"): "authenticated",
 }

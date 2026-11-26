@@ -95,6 +95,8 @@ def test_the_same_body_still_waiting_is_answered_again_and_a_changed_one_is_a_ne
     h = projects_hub
     status, first = _propose(h, h.owner)
     assert status == 201, first
+    # A person is named by display name only, never by any part of their address.
+    assert first["proposed_by"].startswith("user:") and "owner" not in first["proposer_name"]
     reordered = {"models": SETUP["models"], "coworkers": SETUP["coworkers"], "bots": SETUP["bots"]}
     status, again = _propose(h, h.a1, reordered)
     assert status == 200 and (again["id"], again["sha256"]) == (first["id"], first["sha256"])
@@ -136,8 +138,11 @@ def test_every_read_carries_plain_words_changes_against_the_workspace_now(projec
     assert coworker["text"] == 'Creates a Coworker on work with the bot "Work lead": "Work"'
     models = {(line["board"], line["role"]): line for line in by_kind["model"]}
     assert models[(None, "main")]["action"] == "unchanged"
-    assert models[(None, "main")]["text"] == "Workspace default Bot: stays grok/grok-4.7"
+    assert models[(None, "main")]["text"] == "Workspace default: the Bot model stays grok/grok-4.7"
     assert models[(None, "worker")]["action"] == "set"
+    assert models[(None, "worker")]["text"] == (
+        "Workspace default: the Builder model goes from no choice to grok/grok-4.7"
+    )
     assert models[("work", "reviewer")]["action"] == "set"
     # A model not on the project's list yet is added to it first on apply, and the line says so.
     assert models[("work", "reviewer")]["adds_to_list"] is True

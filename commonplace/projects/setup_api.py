@@ -4,9 +4,12 @@
   the proposal that already holds the same body).
 - ``setup_show`` (MCP), ``GET /api/setup-proposals[?status=]`` and ``GET /api/setup-proposals/<id>``:
   the newest proposals or one, each with its digest, its plain-words diff and, once decided, results.
+- ``POST /api/setup-proposals/<id>/apply`` and ``.../reject`` with ``{sha256}``: the signed-in owner's
+  decision on the exact version shown. There is no tool for it: an agent token, even the owner's,
+  gets 403 ``owner_only``.
 
 Only the workspace owner (the signed-in owner or a connection of the owner) is answered. Everyone
-else gets the 404 of an unknown route and does not see the tools. Nothing here applies a setup.
+else gets the 404 of an unknown route and does not see the tools.
 """
 
 from __future__ import annotations
@@ -180,6 +183,8 @@ def route(gateway, h) -> None:
             except ValueError:
                 return
             if isinstance(body, dict):
+                # The web shell adds its rules version to every write. The freshness check runs on
+                # the MCP tool (a checked write); these routes answer the owner only.
                 body.pop("rules_seq", None)
             view, created = setups.propose(ctx, body)
             send_json(h, 201 if created else 200, view)
@@ -192,6 +197,25 @@ def route(gateway, h) -> None:
             return
         if h.command == "GET" and len(parts) == 1 and _number(parts[0]) is not None:
             send_json(h, 200, setups.show(ctx, _number(parts[0])))
+            return
+        if (
+            h.command == "POST"
+            and len(parts) == 2
+            and parts[1] in ("apply", "reject")
+            and _number(parts[0]) is not None
+        ):
+            try:
+                body = read_json(h)
+            except ValueError:
+                return
+            if isinstance(body, dict):
+                # The web shell adds its rules version to every write. The freshness check runs on
+                # the MCP tool (a checked write); these routes answer the owner only.
+                body.pop("rules_seq", None)
+            if not isinstance(body, dict) or set(body) != {"sha256"}:
+                raise setups.SetupError("invalid", "send {sha256}", path="sha256")
+            decide = setups.apply if parts[1] == "apply" else setups.reject
+            send_json(h, 200, decide(ctx, _number(parts[0]), body["sha256"]))
             return
         raise setups.Hidden()
     except setups.Hidden:
@@ -208,4 +232,5 @@ def route(gateway, h) -> None:
 def install(gateway) -> None:
     for method in ("GET", "POST"):
         gateway.add_route(method, ROUTE, lambda h: route(gateway, h))
-    gateway.add_prefix_route("GET", ROUTE + "/", lambda h: route(gateway, h))
+    for method in ("GET", "POST"):
+        gateway.add_prefix_route(method, ROUTE + "/", lambda h: route(gateway, h))
