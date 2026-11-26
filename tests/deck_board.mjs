@@ -21,6 +21,15 @@ test('Deck cards use exactly one state phrase from live card state', () => {
     assert.doesNotMatch(visible(html), /P-7|#7|builder|fix round/i);
   }
 });
+test('Deck cards show the real status next to the state word, in the words of the status select', () => {
+  for (const [patch, word, status] of [[{}, 'Building', 'Doing'], [{status:'todo',need:'idle'}, 'Ready', 'Todo'], [{status:'review',need:'idle'}, 'In review', 'Review'], [{status:'done',need:'done'}, 'Live', 'Done'], [{status:'backlog',need:'you',ask:'Ship?',ask_to:'user:owner'}, 'Needs you', 'Backlog']]) {
+    const html = htmlFor(patch);
+    // "In review" already is the status, so the card face does not say it twice; the drawer header always names it.
+    if (word === 'In review') assert.doesNotMatch(html, /data-card-status/);
+    else assert.match(html, new RegExp(`data-card-state>${word}</span><span aria-hidden="true">·</span><span data-card-status>${status}<`));
+    assert.match(renderDetails({...base,...patch},options), new RegExp(`${word}<span aria-hidden="true">·</span><span data-card-status>${status}</span></div>`));
+  }
+});
 test('only personal action cards get the amber edge; routine waits never do', () => {
   for(const patch of [{need:'working'},{status:'review',need:'idle',ask:'Check?',ask_to:'conn:reviewer'},{need:'checks'},{need:'plan'},{status:'done',need:'done'},{waiting:{code:'project_limit',text:'Waiting for a slot'}}]) assert.doesNotMatch(htmlFor(patch), /class="card[^\"]* is-you/);
   assert.match(htmlFor({need:'you'}),/class="card[^\"]* is-you/);

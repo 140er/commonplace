@@ -1,23 +1,24 @@
 // A person moving a card between the Deck board's columns. The server stays the authority on who
 // may move what; this only names the destinations the way the board does and says plainly why a
 // move did not happen.
-import { boardGroup } from './deck-board.js';
+import { boardGroup, STATUS_NAMES } from './deck-board.js';
 
-const NAMES = { todo: 'Needs you', doing: 'Active', review: 'In review', done: 'Shipped' };
-// Needs you holds what waits for a person, so it is never somewhere a card is moved to.
-const COLUMNS = ['doing', 'review', 'done'];
-// The status a person's move to each column sets, by the card's status now.
+const NAMES = { todo: 'Waiting on you', doing: 'Active', review: 'In review', done: 'Shipped' };
+// The lane each status shows in on the board (a card that waits on a person shows in Waiting on you instead).
+const LANE = { backlog: 'Off the board lanes', todo: NAMES.doing, doing: NAMES.doing, review: NAMES.review, done: NAMES.done };
+// The statuses a person may move a card to, by the status it has now. The server stays the authority and refuses the rest.
 const FROM = {
-  backlog: { doing: 'todo' },
-  todo: { doing: 'doing', review: 'review' },
-  doing: { review: 'review', done: 'done' },
-  review: { doing: 'doing', done: 'done' },
-  done: { doing: 'todo' },
+  backlog: ['backlog', 'todo'],
+  todo: ['backlog', 'todo', 'doing', 'review'],
+  doing: ['backlog', 'todo', 'doing', 'review', 'done'],
+  review: ['backlog', 'todo', 'doing', 'review', 'done'],
+  done: ['backlog', 'todo', 'done'],
 };
-// A person's move to Active only marks the card started: no run begins from it, except that typed work with
+// What to do first when a status cannot be reached directly.
+const FIRST = { backlog: 'Todo', done: 'Todo' };
+// A person's move to Doing only marks the card started: no run begins from it, except that typed work with
 // an assigned holder starts for that holder. Say which one, so the entry never promises a run it does not make.
 const startNote = (card) => (card.task_type && card.assignee ? 'Starts its assigned work' : 'Marks it as started');
-const NOTE = { done: 'Reopen it' };
 // The column a status asked for ends up in when the move works (a reopened card goes back to Active).
 const WANTED = { todo: 'doing', doing: 'doing', review: 'review', done: 'done' };
 export const BUSY = 'The workspace is busy for a moment. Nothing was lost; try the move again in a few seconds.';
@@ -28,19 +29,25 @@ export const columnName = (card, me) => NAMES[boardGroup(card, me, null)];
 // What to tell the person after a move, from the card's real state, and plainly when it is not where they asked.
 export function moveNotice(card, me, asked) {
   const got = boardGroup(card, me, null), wanted = WANTED[asked];
-  return wanted && wanted !== got ? `Moved. It now shows in ${NAMES[got]}, not ${NAMES[wanted]}.` : `Moved to ${NAMES[got]}.`;
+  const status = STATUS_NAMES[card.status] || STATUS_NAMES[asked];
+  if (wanted && wanted !== got) return `Moved to ${status}. It now shows in ${NAMES[got]}, not ${NAMES[wanted]}.`;
+  return card.status === 'backlog' ? `Moved to ${status}.` : `Moved to ${status}. It shows in ${NAMES[got]}.`;
 }
 
+// Every status, in board order, with the lane it shows in; the ones the person may not move to are listed with why.
 export function moveOptions(card, me) {
-  const here = boardGroup(card, me);
   const asked = card.status === 'review' && card.review_kind !== 'moved';
   const locked = asked ? 'Answer its question first.' : card.proposal_status === 'pending' ? 'Approve or reject the proposal first.' : '';
-  return COLUMNS.map((column) => {
-    const status = locked ? undefined : FROM[card.status]?.[column];
-    const current = !status && here === column;
-    const base = { column, name: NAMES[column], status, current };
-    if (status) return { ...base, note: card.status === 'todo' && column === 'doing' ? startNote(card) : card.status === 'done' ? NOTE.done : '' };
-    return { ...base, disabled: true, note: current ? 'now here' : locked || 'Move it to Active first.' };
+  return Object.keys(STATUS_NAMES).map((status) => {
+    const base = { status, name: STATUS_NAMES[status], current: status === card.status };
+    if (base.current) return { ...base, disabled: true, note: locked || 'now here' };
+    if (locked) return { ...base, disabled: true, note: locked };
+    if (!FROM[card.status]?.includes(status)) {
+      return { ...base, disabled: true, note: `Move it to ${FIRST[card.status] || 'Doing'} first.` };
+    }
+    const lane = LANE[status];
+    const how = status === 'doing' && card.status === 'todo' ? ` · ${startNote(card)}` : card.status === 'done' && status !== 'backlog' ? ' · Reopens it' : '';
+    return { ...base, note: `${lane}${how}` };
   });
 }
 

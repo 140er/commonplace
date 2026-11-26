@@ -16,7 +16,7 @@ from tests.test_commonplace_board_authority import fresh as fresh
 from tests.test_commonplace_boards import api
 
 OPTIONS_SCRIPT = Path(__file__).with_name("card_move_options.mjs")
-COLUMN_STATUS = {"doing": "doing", "review": "review", "done": "done"}
+STATUS_NAMES = ["Backlog", "Todo", "Doing", "Review", "Done"]
 
 
 def patch(hub, fresh, number, **body):
@@ -134,21 +134,19 @@ def menu_options():
 
 
 @pytest.mark.parametrize("status", ["backlog", "todo", "doing", "review", "done"])
-def test_the_menu_offers_exactly_the_moves_the_server_accepts(hub, fresh, status):
+def test_the_menu_lists_every_status_and_the_server_agrees(hub, fresh, status):
     options = menu_options()[status]
-    assert [o["name"] for o in options] == ["Active", "In review", "Shipped"]
+    assert [o["name"] for o in options] == STATUS_NAMES
+    assert [o["status"] for o in options] == [n.lower() for n in STATUS_NAMES]
     for option in options:
         number = card_in(hub, fresh, status)
-        if option.get("current"):
-            continue
-        # The destination a click sends: the option's own status, or the column's when it is off.
-        target = option.get("status") or COLUMN_STATUS[option["column"]]
-        code, reply = patch(hub, fresh, number, status=target)
-        if option.get("disabled"):
-            assert code == 403, (status, option["name"], reply)
+        code, reply = patch(hub, fresh, number, status=option["status"])
+        if option.get("disabled") and not option.get("current"):
+            # Listed with its reason, and the server refuses the same move.
+            assert code == 403 and option["note"], (status, option["name"], reply)
         else:
             assert code == 200, (status, option["name"], reply)
-            assert fresh.owner.task_show(number)["status"] == target
+            assert fresh.owner.task_show(number)["status"] == option["status"]
 
 
 def test_a_question_waiting_for_the_owner_disables_every_move(hub, fresh):

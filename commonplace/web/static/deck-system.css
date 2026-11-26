@@ -293,6 +293,7 @@
 :root[data-ui="deck"] .deck-board .card > .card-meta { grid-column: 1; grid-row: 2; min-width: 0; flex-wrap: nowrap; column-gap: 8px; }
 :root[data-ui="deck"] .deck-board .card-meta > .deck-board-bot { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { flex: none; }
+:root[data-ui="deck"] .deck-board .card-meta > [data-card-status] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink3); }
 /* No separator dot: when the line wraps, the state moves down whole instead of leaving a dangling "·". */
 :root[data-ui="deck"] .deck-board .card-meta > span[aria-hidden="true"]:not(.deck-board-avatar) { display: none; }
 :root[data-ui="deck"] .deck-board .card-meta > [data-card-state] { color: var(--ink3); }
