@@ -148,6 +148,23 @@ and cannot be accepted. Experiments run through `orch_card_start(config_ref=
 "exp:<name>")` or an owner's `card_start(config_ref=…)`; triggers always use
 live. Only accepted versions run.
 
+### Benchmark-gated promotion
+
+`commonplace.orch.benchmark` compares an accepted `exp:<name>` candidate with the
+live version on the same replayed tasks (outcome, cost in micro-USD, tokens,
+latency per task) and stores the results next to its decision. The decision
+promotes only when the candidate's success rate is at least live's, no task that
+passed on live fails on the candidate, and at least one metric is strictly better.
+Thresholds (`min_tasks`, `min_metric_gain`, `budget_micro_usd`) only tighten it.
+
+The owner promotes a winning benchmark by the candidate's sha256: the text becomes
+a new live version and the replaced version is recorded. Rollback writes the
+replaced text back as another new version with the same sha256. A candidate that
+touches limits, runner or runtime mode, triggers, fleet or factory rules, mcps, a
+role's structure, a reviewer or gate role, or a gate or review workflow step is
+refused when recorded and again when promoted. This slice has no tools, routes or
+UI, and never runs a model.
+
 ## Who may do what
 
 | Action | Who |
