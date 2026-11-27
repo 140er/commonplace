@@ -255,7 +255,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         page.locator('.card[data-card="2"] h3').click()
         page.wait_for_selector('.deck-card-drawer[data-card="2"]')
         drawer.locator(".deck-card-controls summary").click()
-        removal = drawer.get_by_role("button", name="Remove assignment", exact=True)
+        removal = drawer.get_by_role("button", name="Drop reservation", exact=True)
         assert removal.is_visible()
         assert drawer.locator("#card-status").is_visible()
         assert drawer.get_by_role("button", name="Hand off", exact=True).is_visible()

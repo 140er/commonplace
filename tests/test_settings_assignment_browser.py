@@ -104,9 +104,9 @@ def test_removal_without_edit_disclosure_uses_handoff(browser, hub, fresh, width
         assert form.get_by_text("This card goes back to the pool.", exact=False).is_visible()
         assert form.locator('[name="to"]').count() == 0
         evidence(page, "confirmation", width, {"text": form.inner_text()})
-        form.get_by_label("Reason", exact=True).fill("Ready for the pool")
+        form.get_by_label("Reason (optional)", exact=True).fill("Ready for the pool")
         with page.expect_response(lambda reply: reply.url.endswith("/handoff")) as response:
-            form.get_by_role("button", name="Remove assignment", exact=True).click()
+            form.get_by_role("button", name="Drop reservation", exact=True).click()
         assert response.value.request.post_data_json == {
             "to": "anyone",
             "note": "Ready for the pool",

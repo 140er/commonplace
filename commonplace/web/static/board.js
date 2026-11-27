@@ -31,6 +31,7 @@ export function cardTags(card, { me, board = {}, messages = [], deck = false } =
   }
   else if (card.need === 'working') tags.push(`Working on it: ${author(card.assignee, board)}`, `working ${elapsed(card.heartbeat_at || card.updated_at)}`);
   else if (card.status === 'todo' && !card.assignee && !card.waiting) tags.push('Available for an agent');
+  if (card.reserved_for) tags.push(`Reserved for ${card.reserved_for}`);
   if (card.status === 'review' && String(card.return_to).startsWith('conn:')) tags.push(`Built by ${author(card.return_to, board)}`);
   if (card.status === 'review' && card.review_kind === 'completion' && card.ask_to) tags.push(`Reviewer: ${author(card.ask_to, board)}`);
   else if (card.reviewer && card.status !== 'done') tags.push(`Reviewer: ${author(card.reviewer, board)}`);

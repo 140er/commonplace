@@ -1,6 +1,6 @@
 - **Owns:** `app.js` owns when the card drawer draws again (`cardPanel`) and what Cancel does to
-  an open Remove assignment form (`cancel-form`).
-- **Promises:** An open Remove assignment form, in the Classic and the Deck look, is left in
+  an open Drop reservation form (`cancel-form`).
+- **Promises:** An open Drop reservation form, in the Classic and the Deck look, is left in
   place while a read of the card returns the same card version the form was drawn from, so the
   form node and the reason typed in it survive polls and refreshes that arrive often. A new
   card version, a card that is closed, or another route still draws the drawer again. Cancel
