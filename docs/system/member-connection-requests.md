@@ -1,0 +1,6 @@
+### Members request their own connections
+
+- A workspace member requests a connection from Connections, with a name or purpose and an optional note. It waits for the owner in Waiting on you. The member can cancel it; the owner can approve it or decline it with an optional reason. A request receives one decision, and repeated identical decisions do not create another connection.
+- Approval creates an untrusted connection owned by that member, expiring 90 days after approval. It can read shared memory and write to the inbox, has no private-memory or other-workspace grant, and its cards still need the existing release approval. Either the member or owner can revoke it.
+- The owner never receives the secret. The approved connection has no usable token until the member chooses Collect token on Connections. Collection stores a hash and returns the secret once with no-store headers; no plaintext secret is retained or logged. Owners cannot rotate these member connections. If that response is lost, the member revokes it and requests a replacement.
+- Account export includes the member's requests and exact notes and decline reasons. Account and workspace purges remove their request rows through the existing ownership classification.

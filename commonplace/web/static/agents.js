@@ -23,8 +23,9 @@ export function agentName(value) {
 }
 
 export function validateAgentName(form) {
-  const input = form.elements.namedItem("name"), result = agentName(input.value);
   const section = form.closest(".agents-settings");
+  if (section.dataset.memberRequests) return true;
+  const input = form.elements.namedItem("name"), result = agentName(input.value);
   const duplicate = [...section.querySelectorAll("[data-agent-identifier]")].some(row => row.dataset.agentIdentifier === result.identifier);
   const error = result.error || (duplicate ? `A connection with identifier “${result.identifier}” already exists. Choose another name.` : "");
   input.setCustomValidity(error);
@@ -80,10 +81,11 @@ function oauthControls(c) {
 }
 
 function agentRows(rows, wings = []) {
-  return rows.map((c) => `<div class="setting-row"><span data-agent-identifier="${e(c.name)}">${e(c.display_name || c.name)}<br>${c.display_name && c.display_name !== c.name ? `<small>Identifier: ${e(c.name)}</small><br>` : ""}<small>${e(deck() ? connectionLabel(c.client) : c.client)} · ${c.revoked_at ? "Revoked" : c.expires_at && Date.parse(c.expires_at) <= Date.now() ? "Expired" : c.last_used_at ? usedText(c.last_used_at) : "Unused"}</small></span>${deck() && Array.isArray(c.scopes) ? c.scopes.map(scopeHTML).join(" ") : ""}${decideAccess(c)}${botsAccess(c)}${oauthControls(c)}${active(c) ? `${readAccess(c, wings)}${c.import_read ? `<small>Imported history: allowed.</small>${details(readerDetail)}` : ""}${agentTypesControl(c)}${tokenGroup(tokenButton(c, "agent-rotate", "Rotate"), tokenButton(c, "agent-revoke", "Revoke"))}` : ""}</div>`).join("") || '<p class="message">No apps connected yet</p>';
+  return rows.map((c) => `<div class="setting-row"><span data-agent-identifier="${e(c.name)}">${e(c.display_name || c.name)}<br>${c.user_name ? `<small>${e(c.user_name)}</small><br>` : ""}${c.display_name && c.display_name !== c.name ? `<small>Identifier: ${e(c.name)}</small><br>` : ""}<small>${e(deck() ? connectionLabel(c.client) : c.client)} · ${c.revoked_at ? "Revoked" : c.expires_at && Date.parse(c.expires_at) <= Date.now() ? "Expired" : c.last_used_at ? usedText(c.last_used_at) : "Unused"}</small></span>${deck() && Array.isArray(c.scopes) ? c.scopes.map(scopeHTML).join(" ") : ""}${decideAccess(c)}${botsAccess(c)}${oauthControls(c)}${active(c) ? `${readAccess(c, wings)}${c.import_read ? `<small>Imported history: allowed.</small>${details(readerDetail)}` : ""}${agentTypesControl(c)}${tokenGroup(...(c.can_rotate === false ? [] : [tokenButton(c, "agent-rotate", "Rotate")]), tokenButton(c, "agent-revoke", "Revoke"))}` : ""}</div>`).join("") || '<p class="message">No apps connected yet</p>';
 }
 
 export function agentsView(payload) {
+  if (payload.member_requests) return memberConnectionsView(payload);
   const rows = payload.connections || [];
   return `<section class="settings-section agents-settings" data-decide-consent="${e(payload.decide_consent || "")}" data-bots-chat-consent="${e(payload.bots_consent?.chat || "")}" data-bots-confirm-consent="${e(payload.bots_consent?.confirm || "")}" data-bots-learned-consent="${e(payload.bots_consent?.learned || "")}"><h2>Connected apps</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" aria-label="Name" required maxlength="120" autocomplete="off" aria-describedby="agent-name-preview agent-name-error"><small id="agent-name-preview" data-agent-name-preview>Identifier appears as you type.</small><small id="agent-name-error" data-agent-name-error role="alert"></small></label><label>Client<select name="client">${options("claude-code")}</select></label><label class="agent-consent"><input type="checkbox" name="import">${e(importConsent)}</label><label class="agent-consent"><input type="checkbox" name="import_read">${e(readerConsent)}</label>${details(readerDetail)}${payload.decide_consent ? `<label class="agent-consent"><input type="checkbox" name="decide">${e(payload.decide_consent)}</label>${payload.decide_detail ? details(payload.decide_detail) : ""}` : ""}<details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows, payload.wings || [])}</div></section>`;
 }
@@ -112,6 +114,11 @@ export function changeAgentClient(select) {
 }
 
 async function refresh(section) {
+  if (section.dataset.memberRequests) {
+    const payload = await api('/api/connection-requests');
+    if (section.isConnected) section.querySelector('[data-agent-list]').innerHTML = memberRequestRows(payload.requests || []);
+    return;
+  }
   const payload = await api("/api/connections");
   if (!section.isConnected) return;
   section.querySelector("[data-agent-list]").innerHTML = agentRows(payload.connections, payload.wings || []);
@@ -132,8 +139,19 @@ async function mutation(section, run) {
 }
 
 export async function createAgent(form) {
+  const section = form.closest('.agents-settings');
+  if (section.dataset.memberRequests) {
+    const data = Object.fromEntries(new FormData(form));
+    await mutation(section, async () => {
+      await api('/api/connection-requests', { method: 'POST', body: data });
+      if (!section.isConnected) return;
+      form.reset();
+      await refresh(section);
+    });
+    return;
+  }
   if (!validateAgentName(form)) { form.reportValidity(); return; }
-  const section = form.closest(".agents-settings"), data = Object.fromEntries(new FormData(form));
+  const data = Object.fromEntries(new FormData(form));
   const name = agentName(data.name);
   data.name = name.identifier;
   data.display_name = name.displayName;
@@ -167,6 +185,18 @@ export async function agentAction(button) {
     try { await navigator.clipboard.writeText(text); }
     catch { throw new Error("Copy failed. Select the value and copy it manually."); }
     section.querySelector("[data-agent-copy-status]").textContent = "Copied";
+    return;
+  }
+  if (action === 'agent-request-refresh') { await mutation(section, () => refresh(section)); return; }
+  if (['agent-request-cancel', 'agent-request-collect', 'agent-request-revoke'].includes(action)) {
+    await mutation(section, async () => {
+      const operation = action.slice('agent-request-'.length);
+      const result = await api(`/api/connection-requests/${encodeURIComponent(button.dataset.requestId)}/${operation}`, { method: 'POST', body: {} });
+      if (!section.isConnected) return;
+      if (operation === 'collect') reveal(section, result);
+      if (operation === 'revoke' && section.querySelector('[data-agent-reveal]').dataset.agentId === button.dataset.agentId) section.querySelector('[data-agent-reveal]').replaceChildren();
+      await refresh(section);
+    });
     return;
   }
   if (action === "agent-wings") {
@@ -213,4 +243,19 @@ export async function agentAction(button) {
 
 export function clearAgentSecret(root) {
   root.querySelector("[data-agent-reveal]")?.replaceChildren();
+}
+
+export function memberRequestRows(requests) {
+  const button = (item, action, text) => `<button type="button" data-action="agent-request-${action}" data-request-id="${e(item.id)}" data-agent-id="${e(item.connection_id || '')}" data-agent-mutation>${text}</button>`;
+  return requests.map(item => {
+    const connection = item.connection;
+    const ended = connection?.revoked_at || (connection?.expires_at && Date.parse(connection.expires_at) <= Date.now());
+    const status = item.status === 'pending' ? 'Requested, waiting for the owner' : item.status === 'declined' ? 'Declined' : item.status === 'cancelled' ? 'Cancelled' : connection?.revoked_at ? 'Revoked' : ended ? 'Expired' : item.collected_at ? 'Connected' : 'Approved. Your connection is ready.';
+    const actions = item.status === 'pending' ? button(item, 'cancel', 'Cancel request') : item.status === 'approved' && connection && !ended ? `${!item.collected_at ? button(item, 'collect', 'Collect token') : ''}${button(item, 'revoke', 'Revoke connection')}` : '';
+    return `<div class="setting-row"><div><strong>${e(item.name)}</strong><p>${e(status)}</p>${item.note ? `<p class="quote">${e(item.note)}</p>` : ''}${item.reason ? `<p>Reason: ${e(item.reason)}</p>` : ''}${connection ? `<small>${e(item.requester_name)} · Expires ${e(connection.expires_at)}</small>` : ''}</div>${actions}</div>`;
+  }).join('') || '<p class="message">No connection requests yet.</p>';
+}
+
+export function memberConnectionsView(payload) {
+  return `<section class="settings-section agents-settings" data-member-requests="true"><h2>Connections</h2><p>Request a connection for your Coworker. The workspace owner approves it. It lasts 90 days; you or the owner can revoke it. After approval, collect the token here once.</p><div data-agent-reveal></div><form class="agent-form" data-form="agent" data-connection-request-form><label>Name or purpose<input name="name" required maxlength="120" autocomplete="off"></label><label>Note (optional)<textarea name="note" maxlength="2000" rows="3"></textarea></label><button class="blockbtn" data-agent-mutation>Request connection</button></form><button type="button" data-action="agent-request-refresh" data-agent-mutation>Refresh requests</button><div data-agent-list>${memberRequestRows(payload.requests || [])}</div></section>`;
 }
