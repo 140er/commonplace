@@ -240,6 +240,7 @@ def test_owner_decisions_are_person_only_and_workspace_scoped(hub, crew):
     )
     for action in ("approve", "decline"):
         assert act(hub, crew, row, action)[0] == 403
+        assert act(hub, crew, row, action, body={"reason": None})[0] == 403
         path = f"{ROUTE}/{row['id']}/{action}"
         assert http(hub, "POST", path, cookie=outsider, body={})[0] == 404
         assert http(hub, "POST", path, token=bearer, body={})[0] == 403

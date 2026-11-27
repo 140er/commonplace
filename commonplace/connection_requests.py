@@ -231,6 +231,8 @@ def route(gateway, h):
     try:
         _person(db, principal)
         parts = path_parts(h, ROUTE)
+        if len(parts) == 2 and parts[1] in ("approve", "decline"):
+            _person(db, principal, owner=True)
         if h.command == "GET" and not parts:
             with db._lock:
                 rows = db._conn.execute(
