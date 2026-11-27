@@ -17,8 +17,11 @@ test('a waiting card opens with who made it, their trust, a reason field, Releas
   assert.doesNotMatch(html, /Approve|Release origin/);
 });
 
-test('only a person who may release sees the block', () => {
-  assert.equal(releaseBlock({ ...waiting, can_approve: false }), '');
+test('only a person who may release gets the controls; others see who can', () => {
+  const member = releaseBlock({ ...waiting, can_approve: false });
+  assert.match(member, /data-release-owner-only/);
+  assert.match(member, /Only the workspace owner, or this project&#39;s coordinator, can release this card\./);
+  assert.doesNotMatch(member, /data-release-origin|name="reason"/);
   assert.equal(releaseBlock({ ...waiting, awaiting_release: false }), '');
 });
 
