@@ -1,0 +1,4 @@
+- **Owns:** The browser check of the decision announcement for card review comments (`tests/test_card_review_decision_browser.py`).
+- **Promises:** After a decision the status line says "The bot stops answering these comments", plus whether the card moved to Backlog or still has a question. The check expects the same bot wording as `tests/test_card_reviews_browser.py`; the product words did not change.
+- **How it fails:** A decision whose confirmed or partial result is not announced fails all twelve Deck and Classic, desktop and phone cases; there are no retries, sleeps or longer timeouts.
+- **Tests:** `tests/test_card_review_decision_browser.py`.
