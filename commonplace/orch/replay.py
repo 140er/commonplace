@@ -311,14 +311,29 @@ class Replays:
                 )
             else:
                 report = self.get(board, replay_id)
-                sides = {
-                    side: [
-                        TaskResult(r["task"], bool(r["passed"]), None, r["tokens"], r["latency_ms"])
-                        for r in report["attempts"]
-                        if r["side"] == side and r["state"] == "complete"
-                    ]
-                    for side in configs
-                }
+                sides: dict[str, list[TaskResult]] = {side: [] for side in configs}
+                for task in spec["tasks"]:
+                    for side in configs:
+                        attempts = [
+                            r
+                            for r in report["attempts"]
+                            if r["task"] == task["id"] and r["side"] == side
+                        ]
+                        completed_attempt = next(r for r in attempts if r["state"] == "complete")
+                        tokens = (
+                            sum(r["tokens"] for r in attempts)
+                            if all(r["tokens"] is not None for r in attempts)
+                            else None
+                        )
+                        sides[side].append(
+                            TaskResult(
+                                task["id"],
+                                bool(completed_attempt["passed"]),
+                                None,
+                                tokens,
+                                sum(r["latency_ms"] for r in attempts),
+                            )
+                        )
                 entry = self.benchmarks.record(
                     principal,
                     board,

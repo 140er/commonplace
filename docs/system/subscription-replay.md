@@ -59,7 +59,9 @@ A CLI plan-limit response ends the experiment as **paused: plan limit**, without
 fallback. Explicit `commonplace orch benchmark resume 1 --repository . --workspace personal
 --board demo` retains completed sides and repeats only unfinished work, against the same manifest
 and versions. Already active workers finish before the pause returns. A crash/interruption is a
-refusal, not an automatic repeat of an uncertain model call. All workers and subprocess pipes
+refusal, not an automatic repeat of an uncertain model call. Resumed metrics include all attempts'
+reported tokens and elapsed time; an unreported partial attempt keeps that side's token total unknown.
+All workers and subprocess pipes
 finish before database teardown. Processes have no total runtime cutoff: only 15 minutes without
 output, a real error or an output/resource limit stops them. The existing machine memory probe
 refuses starts when available memory is known to be below 8192 MB. Raw CLI/test output is discarded;

@@ -258,6 +258,10 @@ def test_plan_pause_survives_reopen_and_resumes_only_unfinished_sides(experiment
     assert report["state"] == "complete" and report["promote"]
     assert len(report["attempts"]) == len(fake_cli.calls(models=True)) == 11
     assert sum(a["state"] == "complete" for a in report["attempts"]) == 10
+    assert report["summary"]["candidate"]["tokens"] is None
+    assert report["summary"]["candidate"]["latency_ms"] == sum(
+        a["latency_ms"] for a in report["attempts"] if a["side"] == "candidate"
+    )
 
 
 def test_small_concurrency_is_bounded_and_workers_finish(experiment, fake_cli, monkeypatch):

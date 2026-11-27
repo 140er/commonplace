@@ -84,7 +84,10 @@ def capture(argv, *, cwd, env, prompt="") -> Capture:
         except (BrokenPipeError, OSError):
             pass
         finally:
-            stdin.close()
+            try:
+                stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
 
     workers = [
         Thread(target=read, args=(proc.stdout, 0)),
