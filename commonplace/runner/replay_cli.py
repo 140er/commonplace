@@ -362,13 +362,12 @@ class SubscriptionCLI:
                 and data.get("apiProvider") == "firstParty"
                 and data.get("subscriptionType") in ("pro", "max", "team", "enterprise")
             )
-        # Without a session id, `usage --json` queries the signed-in plan, not a
-        # model. An old CLI, signed-out session or API-only account cannot succeed.
-        # Its versioned limit fields are intentionally not interpreted as tokens.
+        # A successful usage query alone is not proof of subscription auth.
+        # Only an explicit positive marker is accepted; unknown formats refuse.
         plan = data.get("plan")
         return (
-            bool(data)
+            isinstance(plan, dict)
+            and plan.get("subscription") is True
             and not data.get("error")
             and not data.get("is_error")
-            and not (isinstance(plan, dict) and plan.get("subscription") is False)
         )

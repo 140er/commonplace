@@ -38,7 +38,7 @@ if status:
     elif cli == 'codex':
         print('Logged in using ChatGPT' if mode == 'subscription' else 'Logged in using an API key', file=sys.stderr)
     else:
-        print(json.dumps({{'plan': {{'subscription': mode == 'subscription'}}}}))
+        print(json.dumps(options.get('status_payload', {{'plan': {{'subscription': mode == 'subscription'}}}})))
     with log.open('a') as f: f.write(json.dumps(entry) + '\\n')
     sys.exit(0)
 data = json.loads(sys.stdin.read())
@@ -181,6 +181,23 @@ def test_paid_or_unsigned_auth_never_starts_a_model(cli, auth, fake_cli):
     assert not fake_cli.calls(models=True)
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"usage": {"tokens": 5}},
+        {"plan": {}},
+        {"plan": {"subscription": False}},
+        {"plan": {"subscription": 1}},
+        {"plan": {"subscription": True}, "error": "denied"},
+    ],
+)
+def test_grok_requires_explicit_positive_subscription_proof(payload, fake_cli):
+    fake_cli.options(status_payload=payload)
+    reply = SubscriptionCLI("grok").run("unused")
+    assert reply.state == "refused" and reply.reason == "subscription_not_verified"
+    assert not fake_cli.calls(models=True)
+
+
 @pytest.mark.parametrize("cli", ["claude", "codex", "grok"])
 def test_cli_plan_limit_is_paused_without_retry_or_fallback(cli, fake_cli):
     fake_cli.options(limit_at=1)
@@ -315,6 +332,19 @@ def test_owner_cli_starts_shows_promotes_and_rolls_back(
     repo, manifest = historical_tasks
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
+    from argparse import Namespace
+
+    from commonplace.orch.cli import _context
+
+    principal, st, _names = _context(
+        Namespace(data=str(data), workspace="personal", by=None), owner=True
+    )
+    interrupted = Replays(st).create(principal, "personal", "exp:repair", manifest)
+    with st.transaction() as conn:
+        conn.execute("UPDATE orch_replays SET state='running' WHERE id=?", (interrupted,))
+    recovered = json.loads(cli("orch", "benchmark", "recover", str(interrupted), *workspace))
+    assert recovered["state"] == "refused" and recovered["reason"] == "replay_interrupted"
+    assert not fake_cli.calls(models=True)
     report = json.loads(
         cli(
             "orch",
@@ -355,6 +385,30 @@ def test_refusal_and_unknown_usage_are_recorded_without_credentials(experiment, 
     assert report["state"] == "refused" and report["reason"] == "subscription_not_verified"
     assert report["attempts"][0]["tokens"] is None
     assert not fake_cli.calls(models=True)
+
+
+def test_hard_interruption_has_explicit_owner_recovery_without_model_repeat(experiment, fake_cli):
+    replays, replay, repo, manifest, _, candidate = experiment
+    with replays.store.transaction() as conn:
+        conn.execute("UPDATE orch_replays SET state='running' WHERE id=?", (replay,))
+    with pytest.raises(OrchError, match="replay_not_ready"):
+        replays.run(OWNER, BOARD, replay, repo, resume=True)
+    with pytest.raises(OrchError, match="owner_only"):
+        replays.recover(MEMBER, BOARD, replay)
+    report = replays.recover(OWNER, BOARD, replay)
+    assert report["state"] == "refused" and report["reason"] == "replay_interrupted"
+    assert not fake_cli.calls(models=True)
+    assert replays.create(OWNER, BOARD, candidate.channel, manifest) != replay
+
+
+def test_report_construction_does_not_take_a_write_transaction(experiment, monkeypatch):
+    replays, replay, *_ = experiment
+
+    def unexpected_write():
+        raise AssertionError("report construction must not take a write transaction")
+
+    monkeypatch.setattr(replays.store, "transaction", unexpected_write)
+    assert Replays(replays.store).get(BOARD, replay)["state"] == "ready"
 
 
 def test_original_test_files_cannot_be_patched(experiment, fake_cli):

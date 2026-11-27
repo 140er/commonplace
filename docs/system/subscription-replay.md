@@ -49,20 +49,29 @@ The adapters have fixed argv and an allowlisted environment: provider keys, auth
 proxy/base URLs, cloud-provider switches and inherited CLI settings are absent. A fresh CLI config
 directory links only the owner's existing auth file; the adapter never reads, copies or logs it.
 Claude must report a first-party subscription login, Codex must report ChatGPT login and is forced
-to that mode, and Grok must successfully query its signed-in plan with `usage --json`. Missing,
-API-only or unverifiable login refuses before inference. No login is attempted. Grok versions
-without the plan query refuse safely. Its [CLI reference](https://docs.x.ai/build/cli/reference)
+to that mode, and Grok's `usage --json` response must contain the explicit positive marker
+`plan.subscription: true`. A successful query or an unrecognized response is not sufficient.
+Missing, API-only or unverifiable login refuses before inference. No login is attempted. Grok
+versions without that positive plan proof refuse safely. Its [CLI reference](https://docs.x.ai/build/cli/reference)
 and [configuration reference](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md)
 describe the headless flags and config isolation contract.
 
 A CLI plan-limit response ends the experiment as **paused: plan limit**, without retry or API
 fallback. Explicit `commonplace orch benchmark resume 1 --repository . --workspace personal
 --board demo` retains completed sides and repeats only unfinished work, against the same manifest
-and versions. Already active workers finish before the pause returns. A crash/interruption is a
-refusal, not an automatic repeat of an uncertain model call. Resumed metrics include all attempts'
+and versions. Already active workers finish before the pause returns. A caught interruption is a
+refusal. After a hard process or machine failure, `commonplace orch benchmark recover 1 --workspace
+personal --board demo` marks the leftover running row refused without repeating any model call.
+Recovery is a local owner command under the existing exclusive data-directory lock, so it cannot
+run beside an active local experiment. The owner can then start a fresh experiment explicitly.
+Resumed metrics include all attempts'
 reported tokens and elapsed time; an unreported partial attempt keeps that side's token total unknown.
 All workers and subprocess pipes
 finish before database teardown. Processes have no total runtime cutoff: only 15 minutes without
 output, a real error or an output/resource limit stops them. The existing machine memory probe
 refuses starts when available memory is known to be below 8192 MB. Raw CLI/test output is discarded;
 only bounded, fixed failure reasons and numeric results are persisted.
+
+These aliases inherit the existing authenticated GET/POST `/api/orch/` prefix classification in
+`tests/test_commonplace_public_surface.py`. Their owner and cross-board refusals are exercised by
+`tests/test_orch_surfaces.py`; no public route or classification rule changes.

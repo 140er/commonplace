@@ -326,6 +326,10 @@ class Benchmarks:
         self.store = store
         # Older stores required invented zeroes for unknown usage. Copy every row in
         # one transaction before replacing that constraint; no history is discarded.
+        with store.connection() as conn:
+            columns = conn.execute("PRAGMA table_info(orch_benchmark_results)").fetchall()
+        if not any(c["name"] in ("tokens", "cost_micro_usd") and c["notnull"] for c in columns):
+            return
         with store.transaction() as conn:
             columns = conn.execute("PRAGMA table_info(orch_benchmark_results)").fetchall()
             if any(c["name"] in ("tokens", "cost_micro_usd") and c["notnull"] for c in columns):

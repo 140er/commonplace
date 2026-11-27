@@ -257,6 +257,9 @@ def cmd_benchmark(args) -> int:
     if action == "show":
         _print(replays.get(args.board, args.replay))
         return 0
+    if action == "recover":
+        _print(replays.recover(principal, args.board, args.replay))
+        return 0
     if action == "promote":
         result = replays.promote(
             principal, args.board, args.replay, sha256=args.sha256, connections=names
@@ -356,7 +359,7 @@ def add_parsers(sub) -> None:
     benchmarks = orch.add_parser(
         "benchmark", help="subscription-only Coworker experiments"
     ).add_subparsers(dest="benchmark_action", required=True)
-    for action in ("start", "resume", "show", "promote", "rollback"):
+    for action in ("start", "resume", "show", "recover", "promote", "rollback"):
         s = benchmarks.add_parser(action)
         workspace(s, by=True)
         s.set_defaults(func=cmd_benchmark)

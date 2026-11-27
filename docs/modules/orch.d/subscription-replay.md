@@ -11,3 +11,5 @@
 - **How it fails:**
 
   - Plan limits pause without retry or fallback. Missing subscription auth, unsupported config changes, unsafe manifests, altered known outcomes and invalid patches refuse with a persisted reason. Owner accepts recompute the existing decision and protected-key check; rollback restores the exact previous body. All execution workers are joined before returning.
+
+  - Local owner `benchmark recover` holds the existing exclusive data-directory lock and marks a leftover running experiment refused, never repeating an uncertain call. Nullable-schema probes are read-only on migrated stores; only an actual upgrade takes a write transaction.

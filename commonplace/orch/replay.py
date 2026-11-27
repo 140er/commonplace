@@ -208,6 +208,25 @@ class Replays:
             ]
         return report
 
+    def recover(self, principal, board, replay_id):
+        """Local owner CLI only, while holding its exclusive data-directory lock.
+
+        An active CLI run holds that same lock. A leftover running row is therefore
+        an interrupted process, not permission to repeat an uncertain model call.
+        """
+        require_owner(principal)
+        with self.store.transaction() as conn:
+            row = self._row(conn, board, replay_id)
+            if row["state"] != "running":
+                raise OrchError(
+                    "replay_not_running", "only an interrupted running replay needs recovery"
+                )
+            conn.execute(
+                "UPDATE orch_replays SET state='refused',reason='replay_interrupted' WHERE id=?",
+                (replay_id,),
+            )
+        return self.get(board, replay_id)
+
     def _state(self, replay_id, state, reason=None):
         with self.store.transaction() as conn:
             conn.execute(
