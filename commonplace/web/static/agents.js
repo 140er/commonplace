@@ -23,8 +23,9 @@ export function agentName(value) {
 }
 
 export function validateAgentName(form) {
-  const input = form.elements.namedItem("name"), result = agentName(input.value);
   const section = form.closest(".agents-settings");
+  if (section.dataset.memberRequests) return true;
+  const input = form.elements.namedItem("name"), result = agentName(input.value);
   const duplicate = [...section.querySelectorAll("[data-agent-identifier]")].some(row => row.dataset.agentIdentifier === result.identifier);
   const error = result.error || (duplicate ? `A connection with identifier “${result.identifier}” already exists. Choose another name.` : "");
   input.setCustomValidity(error);

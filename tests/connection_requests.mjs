@@ -35,6 +35,20 @@ test('members can request, cancel, collect, and see a decline reason on Connecti
   assert.doesNotMatch(owner, /agent-rotate/);
 });
 
+test('typing a member purpose accepts plain words without owner identifier validation', async t => {
+  const originalDocument = globalThis.document, listeners = new Map();
+  t.after(() => { globalThis.document = originalDocument; });
+  globalThis.document = { addEventListener: (type, callback) => listeners.set(type, callback) };
+  await import('../commonplace/web/static/agents.js?member-input');
+  const section = { dataset: { memberRequests: 'true' }, querySelectorAll: () => [] };
+  const form = { closest: () => section, elements: { namedItem: () => input }, querySelector: () => null };
+  const input = { name: 'name', value: 'Plan café / next week?', closest: () => form,
+    setCustomValidity(value) { this.validationMessage = value; }, setAttribute() {} };
+  assert.doesNotThrow(() => listeners.get('input')({ target: input }));
+  assert.equal(input.validationMessage || '', '');
+  assert.equal(input.value, 'Plan café / next week?');
+});
+
 test('Waiting on you counts each request once and both approval lists show the requester and exact words', () => {
   assert.equal(connectionRequests(queue([item(), item(), null, item({ status: 'declined' })])).length, 1);
   assert.equal(needsMeCount(queue([item(), item()])), 1);
