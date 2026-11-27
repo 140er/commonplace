@@ -1,13 +1,19 @@
 """Opt-in email about new Today items: opt-in, privacy, one mail per item, rate cap."""
 
 import os
+import threading
+from types import SimpleNamespace
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import pytest
 
 from commonplace import mailer, urls
 from commonplace.boards import service as board_service
+from commonplace.control_db import ControlDB
 from commonplace.extensions import RetryableToolError
+from commonplace.today_email import schema
+from commonplace.today_email.notifier import TodayEmail
 from tests.phone_push_harness import (
     agent,
     api,
@@ -255,3 +261,71 @@ def test_a_busy_memory_is_not_an_empty_today(hub, signup, notifier, monkeypatch)
     monkeypatch.setattr(board_service.BoardService, "needs_me", original)
     assert notifier.reconcile() == 0
     assert len(notifier.mailer.sent) == 1 and f"#{number}" in notifier.mailer.sent[0][2]
+
+
+class ClosedConnection:
+    """Records any statement run once the database is meant to be closed."""
+
+    def __init__(self, conn):
+        self.conn, self.late, self.closed = conn, [], False
+
+    def execute(self, sql, *args):
+        if self.closed:
+            self.late.append(sql)
+        return self.conn.execute(sql, *args)
+
+    def close(self):
+        self.conn.close()
+        self.closed = True
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
+
+class SettlingEvent(threading.Event):
+    """Says when the notifier thread is waiting out its settle period."""
+
+    def __init__(self, settle):
+        super().__init__()
+        self.settle, self.settling = settle, threading.Event()
+
+    def wait(self, timeout=None):
+        if timeout == self.settle:
+            self.settling.set()
+        return super().wait(timeout)
+
+
+def running_notifier(tmp_path):
+    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    schema.ensure(db)
+    boundary = ClosedConnection(db._conn)
+    db._conn = cast(Any, boundary)
+    notifier = TodayEmail(SimpleNamespace(db=db), FakeMail(), settle_seconds=60)
+    notifier._stop = SettlingEvent(60)
+    db.add_pre_close_callback(notifier.stop)
+    notifier.start()
+    return db, boundary, notifier
+
+
+def test_closing_the_database_while_the_notifier_settles_runs_no_late_sql(tmp_path):
+    db, boundary, notifier = running_notifier(tmp_path)
+    assert notifier._stop.settling.wait(3)
+    boundary.closed = True  # The server has closed: no statement is allowed from here on.
+    db.close()
+    assert not notifier.thread.is_alive()
+    assert boundary.late == []
+
+
+def test_a_stopped_pass_issues_no_statements(tmp_path):
+    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    schema.ensure(db)
+    boundary = ClosedConnection(db._conn)
+    db._conn = cast(Any, boundary)
+    notifier = TodayEmail(SimpleNamespace(db=db), FakeMail())
+    boundary.closed = True  # From here on, any statement counts as late.
+    halt = threading.Event()
+    halt.set()
+    assert notifier.reconcile(halt=halt) == 0
+    assert boundary.late == []
+    boundary.closed = False
+    db.close()
