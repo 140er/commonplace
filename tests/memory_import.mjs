@@ -243,3 +243,79 @@ test("file extensions come from the rules when they are known", async () => {
   assert.deepEqual([calls[0].source, calls[0].private, calls[0].filename], ["native-memory", true, "notes.txt"]);
   ui.stop();
 });
+
+// A DOM-like mount: every innerHTML write builds a fresh form with default choices, like a real redraw.
+function liveMount() {
+  const listeners = new Map();
+  let form = null;
+  const mount = {
+    ownerDocument: { activeElement: null },
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener() {},
+    set innerHTML(html) {
+      form = null;
+      if (!html.includes("data-import-choose")) return;
+      const options = (...values) => values.map((value) => ({ value, disabled: false }));
+      const note = { textContent: "", hidden: true, setAttribute() {} };
+      const submit = { disabled: false };
+      const filename = { textContent: "No file chosen" };
+      const elements = {
+        format: { value: "0", options: options("0", "1", "2", "3", "4", "5", "6", "7") },
+        scope: { value: "threads", options: options("threads", "private") },
+        file: { replaceWith(node) { elements.file = node; } },
+      };
+      const selectors = { "[data-import-reason]": html.includes("data-import-reason") ? note : null, '[type="submit"]': submit, "[data-import-filename]": filename };
+      form = { elements, note, submit, filename, querySelector: (selector) => selectors[selector] ?? null };
+    },
+    querySelector(selector) {
+      if (selector === "form[data-import-choose]") return form;
+      if (selector === "[data-import-filename]") return form?.filename ?? null;
+      return { focus() {} };
+    },
+  };
+  return { mount, listeners, form: () => form };
+}
+async function openBeforeRules(me = { can_admin: true }) {
+  const { mount, listeners, form } = liveMount();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const ui = createMemoryImport({ mount, me, look: "deck", api: (path) => (path.endsWith("/rules") ? held : Promise.resolve(checked)) });
+  const pick = (name, value) => { form().elements[name].value = value; listeners.get("change")({ target: { matches: (s) => s === 'select[name="format"]' && name === "format", form: form() } }); };
+  const choosePicked = (picked) => { form().elements.file = picked; form().filename.textContent = picked.name; };
+  return { ui, form, pick, choosePicked, rulesArrive: async (payload) => { release(payload); await tick(); } };
+}
+
+test("a format and file picked before the rules arrive survive the rules load", async () => {
+  const f = await openBeforeRules();
+  const picked = { name: "notes.md", size: 5, replaceWith() {} };
+  f.pick("format", "3");
+  f.choosePicked(picked);
+  const before = f.form();
+  await f.rulesArrive(rules);
+  assert.notEqual(f.form(), before, "the rules load redraws the form");
+  assert.equal(f.form().elements.format.value, "3");
+  assert.equal(f.form().elements.file, picked);
+  assert.equal(f.form().filename.textContent, "notes.md");
+  assert.equal(f.form().note.hidden, true);
+  f.ui.stop();
+});
+
+test("a pick the rules do not allow moves only the destination, with the note", async () => {
+  const f = await openBeforeRules();
+  f.pick("format", memoryIndex);
+  await f.rulesArrive(rules);
+  assert.equal(f.form().elements.format.value, memoryIndex);
+  assert.equal(f.form().elements.scope.value, "private");
+  assert.equal(f.form().note.hidden, false);
+  assert.equal(f.form().note.textContent, "Memory text (.md or .txt) can only be saved into your private imported history.");
+  f.ui.stop();
+});
+
+test("a destination picked before the rules arrive is kept when the format accepts it", async () => {
+  const f = await openBeforeRules();
+  f.pick("format", "5");
+  f.form().elements.scope.value = "private";
+  await f.rulesArrive(rules);
+  assert.deepEqual([f.form().elements.format.value, f.form().elements.scope.value], ["5", "private"]);
+  f.ui.stop();
+});

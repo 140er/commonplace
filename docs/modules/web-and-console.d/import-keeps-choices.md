@@ -1,0 +1,1 @@
+- **Promises:** When the rules arrive after the import form opened, the form is redrawn without losing what the person already picked: the file type, the "Save into" choice, the chosen file and which control had focus. The rules are then applied to that pair, so the destination changes only when the picked one cannot take the file type, with the usual note.
