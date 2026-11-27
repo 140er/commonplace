@@ -90,6 +90,7 @@ import { applyDeck, createDeck } from "./deck.js";
 import { createNeedLedger } from "./deck-home-today.js";
 import { currentNeeds, needsCards as queuedCards } from "./needs-me.js";
 import { releaseBlock } from "./release-block.js";
+import { ownerOnlySectionHTML } from "./owner-only.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -1079,7 +1080,7 @@ async function settingsView(epoch) {
   const current = () => state.me === viewer && epoch === state.screen && request === state.settingsRequest;
   const sections = {
     plan: { path: "/api/plan", name: "Plan", view: planView },
-    orchestration: { path: "/api/settings/orchestration", name: "Bot management", view: () => '<section class="settings-section"><h2>Bot management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current }) },
+    orchestration: { path: "/api/settings/orchestration", name: "Bot management", view: () => '<section class="settings-section"><h2>Bot management</h2><div data-workspace-orchestration></div></section>', ready: (value, host) => mountWorkspaceOrchestration(host.querySelector("[data-workspace-orchestration]"), { api, e, enabled: value.enabled, current, owner: viewer?.can_admin === true }) },
     models: { path: "/api/settings/models", name: "Agent models", view: () => '<section class="settings-section"><h2>Agent models</h2><div data-workspace-models-host></div></section>', ready: (value, host) => mountWorkspaceModels(host.querySelector("[data-workspace-models-host]"), { api, e, value, current }) },
     chat: { path: "/api/chat-settings", name: "Chat", view: (value) => `<section class="settings-section"><h2>Chat</h2><p>${e(value.front.enabled && value.front.provider !== "none" ? `Answers by ${value.front.provider}/${value.front.model}` : value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(value.usage.used_today)} · Yours: ${e(value.usage.user_used_today)}</p>${value.usage.last_error ? `<p role="status">Last model error: ${e(value.usage.last_error)}</p>` : ""}</section>` },
     connections: { path: "/api/connections", name: "Connected apps", view: (value) => agentsView(value).replace(/<\/section>$/, () => (value.wings_state && value.wings_state !== "ready" ? message(value.wings_state === "unavailable" ? "Memory wings unavailable. Retry to refresh." : "Still loading memory wings…", true) : "") + "</section>") },
@@ -1111,7 +1112,7 @@ async function settingsView(epoch) {
     } catch (error) {
       if (!current()) return;
       const host = content.querySelector(`[data-settings-part="${key}"]`);
-      if (host) host.innerHTML = `<section class="settings-section"><h2>${section.name}</h2>${message(`Could not load ${section.name}: ${error.message}`, true)}</section>`;
+      if (host) host.innerHTML = ownerOnlySectionHTML(section.name, error, viewer) || `<section class="settings-section"><h2>${section.name}</h2>${message(`Could not load ${section.name}: ${error.message}`, true)}</section>`;
     }
     if (current()) { state.deck?.settings(content); restore(saved); }
   }));

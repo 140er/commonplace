@@ -138,8 +138,10 @@ vm.createContext(context);
 vm.runInContext(read('api.js').replace(/export /g, '') + '\nconst e = escape;', context);
 vm.runInContext(slice('const message = ', '// The board lists child'), context);
 const projects = read('projects.js');
+// The owner-only lines come from owner-only.js; the shell and the orchestration form call them.
+vm.runInContext(read('owner-only.js').replace(/^import .*$/gm, '').replace(/export /g, ''), context);
 vm.runInContext('function installOrchestrationStyles() {}\n' +
-  projects.slice(projects.indexOf('export function mountWorkspaceOrchestration('), projects.indexOf('export function mountOrchestratorTrust(')).replace('export ', ''), context);
+  projects.slice(projects.indexOf('export function workspaceOrchestrationHTML('), projects.indexOf('export function mountOrchestratorTrust(')).replace(/export /g, ''), context);
 // refresh() closes over the real queue ledger and roster helper of the complete shell.
 vm.runInContext(slice('function rememberDeckBots(', 'function setBotsWaiting(') +
   slice('function phonePushView(', 'async function memoryView(') +

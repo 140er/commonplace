@@ -88,6 +88,45 @@ A member reads and writes shared memory and boards in that workspace. A member c
 - find a thread they may not read in a listing, or read it by its id (it answers
   exactly like a thread that does not exist).
 
+## What a member sees instead of an owner-only control
+
+A member is never left guessing. Where an owner-only control would sit, the member sees one
+plain line, "Only the workspace owner can change this." (sometimes with a short pointer to
+ask the owner). The line is screen copy only: the server refuses the write either way, and
+the line names no counts, people or other data the member cannot read.
+
+| Control | Where | Member sees |
+| --- | --- | --- |
+| Connected apps, create or change a connection | Settings | "Only the workspace owner can add or change connected apps. To connect an app of your own, ask the workspace owner to create a connection for you." |
+| Scheduled prompts, What bots may do without asking | Settings | "Only the workspace owner can change this." |
+| Bots manage agent starts (workspace switch) | Settings | The switch is shown off-limits with "Only the workspace owner can turn this on or off." |
+| Agent models | Settings, project settings | The current choices, with "Only the workspace owner can change the models." |
+| Project settings (bot, limits, trust, models, escalation) | Project settings | A line at the top, and "Only the workspace owner can change this." where a Save button would be |
+| Priority and task type | Card | The current value, with "Only the workspace owner can change the priority or task type." |
+| Release a waiting card | Card | "Waiting for release" with "Only the workspace owner, or this project's coordinator, can release this card." The creator and its trust level are not shown |
+| Remove a card's assignment, appoint a coordinator, add a machine, end a Coworker lease, resume a Coworker, spend and budgets | Card, project settings, Compute, Spend | The existing owner-only line next to the control |
+| Admin page | Admin address | "Only the workspace owner can open Admin. Ask the workspace owner if you need something changed there." |
+
+### Absent by design
+
+These are not shown to a member at all, because there is nothing a member could do with
+them. The owner sees them; the server refuses a member who asks anyway.
+
+- The **Admin** and **Compute map** links in the menu, and everything on them: people,
+  invites, runners, trust levels of connections, agent limits table, backups.
+- **Waiting on you** items that only an owner answers: Coworker config proposals (accept,
+  reject), cards waiting for release, budget warnings.
+- The **Voice** switch in Settings and the Disable bot button on a bot.
+- The native-memory export format and the "private imported history" destination in the
+  memory import dialog; a member imports into the workspace conversations only.
+
+### Members and connections (decision pending)
+
+Today only the workspace owner creates connections (tokens). A member who wants an app of
+their own connected asks the owner, and the owner creates the connection. Whether members
+may create their own is an open product and security decision for the owner. This page
+and the screen copy change only when the owner decides.
+
 `tests/test_commonplace_invite_canary.py` proves these from the second person's side:
 after a real invite and join it calls every memory tool and every `GET` route with the
 member's own session and requires that no canary filed in a private wing, a private

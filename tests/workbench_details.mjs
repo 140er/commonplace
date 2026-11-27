@@ -78,9 +78,9 @@ const cases = {
     assert.ok(owner.includes('<option value="high" selected>High</option>'));
     for (const name of ['urgent', 'normal', 'low']) assert.ok(owner.includes(`<option value="${name}">`), name);
     const reader = renderDetails({ ...card, priority: 'urgent', can_prioritize: false }, opts);
-    assert.ok(!reader.includes('id="card-priority"')); assert.ok(reader.includes('<dt>Priority</dt><dd>Urgent</dd>'));
+    assert.ok(!reader.includes('id="card-priority"')); assert.ok(reader.includes('<dt>Priority</dt><dd>Urgent <small class="set-note" data-owner-only>Only the workspace owner can change the priority or task type.</small></dd>'));
     // A card from an older server reads as normal.
-    assert.ok(renderDetails({ ...card }, opts).includes('<dt>Priority</dt><dd>Normal</dd>'));
+    assert.ok(renderDetails({ ...card }, opts).includes('<dt>Priority</dt><dd>Normal <small class="set-note" data-owner-only>'));
   },
   tabs() {
     assert.ok(html.includes('role="tablist" aria-label="Context"'));

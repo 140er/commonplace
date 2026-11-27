@@ -1,3 +1,4 @@
+import { ownerOnlyNote } from "./owner-only.js";
 // Scheduled prompts per agent: list, create, pause, resume and cancel (owners only).
 const when = (stamp) => (stamp ? new Date(stamp).toLocaleString() : "none");
 const labels = { owner_gone: "the owner is no longer an owner", agent_gone: "the agent is revoked or expired", not_coordinator: "the agent is no longer the board's coordinator", board_gone: "the board is gone", missed: "missed while the hub was down", interrupted: "interrupted by a restart", error: "an unexpected error" };
@@ -20,7 +21,7 @@ export function mountAgentSchedules(host, { api, e, current = () => true }) {
       [data, { connections: agents = [] }, { boards = [] }] = await Promise.all([api("/api/agent-schedules"), api("/api/connections"), api("/api/boards")]);
       agents = agents.filter((c) => !c.revoked_at && (!c.expires_at || Date.parse(c.expires_at) > Date.now()));
     } catch (error) {
-      if (active()) { if (error.status === 403) host.replaceChildren(); else host.innerHTML = `<p class="message" role="alert">Could not load scheduled prompts</p>`; }
+      if (active()) { if (error.status === 403) host.innerHTML = ownerOnlyNote(); else host.innerHTML = `<p class="message" role="alert">Could not load scheduled prompts</p>`; }
       return;
     }
     render();

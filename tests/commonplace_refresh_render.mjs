@@ -13,6 +13,7 @@ function slice(start, end) {
 const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const apiUrl = url(await read("api.js"));
 const { planView } = await import(url((await read("plan.js")).replace('"./api.js"', `"${apiUrl}"`)));
+const { ownerOnlySectionHTML } = await import(url((await read("owner-only.js")).replace('"./api.js"', `"${apiUrl}"`)));
 const which = process.argv[2];
 const consoleCase = which === "console_background_first";
 const base = consoleCase ? "#/console" : "#/settings";
@@ -63,7 +64,7 @@ const context = {
   navigation() { navigationCalls++; },
   mountToolPolicy() {},
   waitingTotal: (bots) => bots.reduce((total, bot) => total + bot.waiting, 0),
-  title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView,
+  title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView, ownerOnlySectionHTML,
   agentsView: () => "", phonePushView: () => "", todayEmailView: () => "", voice: { settings: () => "" },
   mountWorkspaceOrchestration() {}, mountAgentSchedules() {},
   consoleScreen() { renders++; content.innerHTML = "Console controls"; },
