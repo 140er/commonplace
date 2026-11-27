@@ -29,6 +29,8 @@ from pathlib import Path
 
 from mempalace.sqlite_crypto import connect, encryption_settings, is_workspace_database
 
+from .redact import redact_tail
+
 LOCK_NAME = ".commonplace.lock"
 #: Taken exclusive by an online backup, shared by one-shot CLI commands.
 FENCE_NAME = ".commonplace-fence.lock"
@@ -158,6 +160,20 @@ def _process_path(value: str, proc: Path) -> Path:
     return path.resolve()
 
 
+def _describe_process(args, source: str, value: str, state: str) -> str:
+    """What a refusal says about a process: its command line (credential shapes redacted, cut short), the
+    variable or argument that named the data tree, and its kernel state. Never the environment itself."""
+    line = " ".join(os.fsdecode(arg) for arg in args if arg)
+    return f"cmdline={redact_tail(line, 240)!r} matched {source}={value!r} state={state}"
+
+
+def _process_state(proc: Path) -> str:
+    try:
+        return (proc / "stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return "?"
+
+
 def _verify_offline(root: Path, exempt=()) -> None:
     """Reject live processes naming this data tree, including orphan workers.
 
@@ -201,7 +217,12 @@ def _verify_offline(root: Path, exempt=()) -> None:
             ):
                 value = env.get(name)
                 if value and _inside(_process_path(os.fsdecode(value), proc), root):
-                    raise BackupError(f"data directory is in use by worker process {proc.name}")
+                    raise BackupError(
+                        f"data directory is in use by worker process {proc.name} "
+                        + _describe_process(
+                            args, name.decode(), os.fsdecode(value), _process_state(proc)
+                        )
+                    )
             if named_worker:
                 for index, arg in enumerate(args):
                     value = None
@@ -210,7 +231,12 @@ def _verify_offline(root: Path, exempt=()) -> None:
                     elif arg.startswith((b"--palace=", b"--data=")):
                         value = arg.split(b"=", 1)[1]
                     if value and _inside(_process_path(os.fsdecode(value), proc), root):
-                        raise BackupError(f"data directory is in use by process {proc.name}")
+                        raise BackupError(
+                            f"data directory is in use by process {proc.name} "
+                            + _describe_process(
+                                args, "argument", os.fsdecode(value), _process_state(proc)
+                            )
+                        )
         except (FileNotFoundError, ProcessLookupError):
             continue  # Process exited during the check.
         except PermissionError as exc:

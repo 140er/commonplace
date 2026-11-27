@@ -328,6 +328,135 @@ def test_console_script_with_spaced_path_blocks_active_data(
         module._verify_offline(data)
 
 
+def _fake_proc(tmp_path, monkeypatch, *, arguments, environ=(), state="S", name=None):
+    """A /proc tree with one same-user Python process, so the scan runs on known input."""
+    import importlib
+
+    module = importlib.import_module("commonplace.backup")
+    proc_root = tmp_path / "proc"
+    (proc_root / "self").mkdir(parents=True)
+    (proc_root / "self" / "environ").write_bytes(b"")
+    process = proc_root / (name or str(os.getpid() + 1000000))
+    process.mkdir()
+    (process / "cmdline").write_bytes(b"\x00".join(os.fsencode(arg) for arg in arguments) + b"\x00")
+    (process / "environ").write_bytes(b"".join(os.fsencode(entry) + b"\x00" for entry in environ))
+    (process / "stat").write_text(f"4242 (python3) {state} 1 1 1 0 -1\n")
+    monkeypatch.setattr(module, "_PROC_ROOT", proc_root)
+    return module, process.name
+
+
+@pytest.mark.parametrize("sibling", ["data2", "data-old", "database", "data.bak"])
+@pytest.mark.parametrize("name", ["MEMPALACE_PALACE_PATH", "COMMONPLACE_DATA"])
+def test_a_process_in_a_sibling_that_shares_the_name_prefix_is_not_a_writer(
+    tmp_path, monkeypatch, sibling, name
+):
+    # Another run's data directory whose name starts with ours (``data`` and ``data2``) shares a
+    # string prefix, not the tree: only a path inside the exact directory counts.
+    data = tmp_path / "data"
+    other = tmp_path / sibling / "workspaces" / "a" / "palace"
+    module, _pid = _fake_proc(
+        tmp_path,
+        monkeypatch,
+        arguments=["python3", "-m", "commonplace", "--data", str(tmp_path / sibling)],
+        environ=[f"{name}={other}"],
+    )
+
+    module._verify_offline(data)
+
+
+def test_a_process_with_a_relative_path_resolves_it_against_its_own_directory(
+    tmp_path, monkeypatch
+):
+    data = tmp_path / "data"
+    (tmp_path / "data2").mkdir()
+    module, pid = _fake_proc(
+        tmp_path,
+        monkeypatch,
+        arguments=["python3", "-m", "commonplace", "--data", "data"],
+        environ=["COMMONPLACE_DATA=data"],
+    )
+    process = tmp_path / "proc" / pid
+    (process / "cwd").symlink_to(tmp_path / "data2")
+
+    module._verify_offline(data)
+
+    (process / "cwd").unlink()
+    (process / "cwd").symlink_to(tmp_path)
+    data.mkdir()
+    with pytest.raises(BackupError, match="data directory is in use"):
+        module._verify_offline(data)
+
+
+@pytest.mark.parametrize("name", ["MEMPALACE_PALACE_PATH", "COMMONPLACE_DATA"])
+def test_a_foreign_writer_in_the_exact_data_directory_still_blocks_and_is_named(
+    tmp_path, monkeypatch, name
+):
+    data = tmp_path / "data"
+    module, pid = _fake_proc(
+        tmp_path,
+        monkeypatch,
+        arguments=["python3", "-m", "commonplace", "--api-key=sk-ant-api03-" + "a" * 40],
+        environ=[f"{name}={data / 'workspaces' / 'a' / 'palace'}"],
+        state="D",
+    )
+
+    with pytest.raises(BackupError) as caught:
+        module._verify_offline(data)
+
+    message = str(caught.value)
+    assert f"worker process {pid} " in message
+    assert "python3 -m commonplace" in message
+    assert f"matched {name}=" in message
+    assert "state=D" in message
+    assert "sk-ant-api03" not in message
+    assert "[redacted:anthropic_key]" in message
+
+
+def test_a_foreign_process_naming_the_exact_data_directory_by_argument_is_named(
+    tmp_path, monkeypatch
+):
+    data = tmp_path / "data"
+    module, pid = _fake_proc(
+        tmp_path,
+        monkeypatch,
+        arguments=["python3", "-m", "commonplace", "--data", str(data)],
+        state="R",
+    )
+
+    with pytest.raises(BackupError) as caught:
+        module._verify_offline(data)
+
+    message = str(caught.value)
+    assert f"in use by process {pid} " in message
+    assert "matched argument=" in message
+    assert "state=R" in message
+
+
+def test_the_online_backup_refusal_carries_the_matching_process(tmp_path, monkeypatch):
+    from commonplace import backup_online
+
+    data = tmp_path / "data"
+    module, pid = _fake_proc(
+        tmp_path,
+        monkeypatch,
+        arguments=["python3", "-m", "commonplace", "--data", str(data)],
+        state="S",
+    )
+    monkeypatch.setattr(backup_online, "_verify_offline", module._verify_offline)
+    cut = object.__new__(backup_online._Cut)
+    cut.root = data
+    cut.control = type("Control", (), {"exempt": lambda self, workers: set()})()
+
+    with pytest.raises(backup_online.OnlineBackupError) as caught:
+        cut._scan(workers=False)
+
+    message = str(caught.value)
+    assert f"process {pid} outside the gateway uses the data directory" in message
+    assert "cmdline='python3 -m commonplace --data" in message
+    assert "matched argument=" in message
+    assert "state=S" in message
+
+
 def test_parent_that_looks_like_a_worker_is_not_one(populated, tmp_path):
     # docker-init under compose `init: true` (or any wrapper) runs with our
     # command line and COMMONPLACE_DATA; it is an ancestor, not a writer.
