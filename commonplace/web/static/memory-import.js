@@ -69,11 +69,33 @@ export function renderImport(state, me = {}, look = "classic") {
 
 export function createMemoryImport({ mount, me, api = request, onClose = () => {}, look = mount.ownerDocument?.documentElement?.dataset.ui || "classic" }) {
   let state = { phase: "choose" }, upload = null, stopped = false, epoch = 0, rules = null;
+  // Redrawing the choose form (the rules arrive after it opens) must not undo what the person already picked.
+  function holdChoices() {
+    const form = state.phase === "choose" ? mount.querySelector("form[data-import-choose]") : null;
+    const { format, scope, file } = form?.elements || {};
+    if (!format || !scope || !file) return null;
+    const active = mount.ownerDocument?.activeElement;
+    return { format: format.value, scope: scope.value, file, name: mount.querySelector("[data-import-filename]")?.textContent, focus: active && form.contains?.(active) ? active.name : "" };
+  }
+  function restoreChoices(held, form) {
+    const { format, scope, file } = form?.elements || {};
+    if (!format || !scope || !file) return;
+    const has = (select, value) => [...(select.options || [])].some((option) => option.value === value);
+    if (has(format, held.format)) format.value = held.format;
+    if (has(scope, held.scope)) scope.value = held.scope;
+    file.replaceWith(held.file);
+    const name = mount.querySelector("[data-import-filename]");
+    if (name && held.name) name.textContent = held.name;
+    form.elements[held.focus]?.focus?.();
+  }
   function draw() {
     if (stopped) return;
+    const held = holdChoices();
     mount.innerHTML = renderImport({ ...state, rules }, me, look);
-    mount.querySelector("#memory-import-title")?.focus();
-    if (state.phase === "choose") applyRules(mount.querySelector("form[data-import-choose]"), rules);
+    const form = mount.querySelector("form[data-import-choose]");
+    if (held) restoreChoices(held, form);
+    else mount.querySelector("#memory-import-title")?.focus();
+    if (state.phase === "choose") applyRules(form, rules);
   }
   function reset() { ++epoch; upload = null; state = { phase: "choose" }; draw(); }
   async function choose(event) {

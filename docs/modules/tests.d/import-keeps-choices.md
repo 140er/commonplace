@@ -1,0 +1,1 @@
+- **Promises:** `tests/memory_import.mjs` holds the rules response on a DOM-like mount, picks a file type, destination and file, releases the rules and checks the picks are still there, that an impossible pair moves only the destination with the note, and that a destination the file type accepts is kept.
