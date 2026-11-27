@@ -166,6 +166,8 @@ EXACT = {
     ("POST", "/api/phone-push"): "authenticated",
     ("DELETE", "/api/phone-push"): "authenticated",
     ("POST", "/api/phone-push/test"): "authenticated",
+    ("GET", "/api/today-email"): "authenticated",
+    ("POST", "/api/today-email"): "authenticated",
     ("GET", "/api/account"): "authenticated",
     ("GET", "/api/account/export"): "authenticated",
     ("POST", "/api/account/deletion"): "authenticated",

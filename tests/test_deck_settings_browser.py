@@ -192,12 +192,12 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             "15px" if width >= 700 else "16px"
         )
         # No notification service here: the card has nothing to act on, so it folds to one quiet line
-        # with no surface of its own, and the owner's next step stays a link.
+        # with no surface of its own; the owner is not told to ask anyone.
         push = page.locator("#phone-push")
         assert "deck-quiet-line" in push.get_attribute("class")
         assert push.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
-        assert "not set up on this server" in push.inner_text()
-        assert push.locator('a[href="#/admin"]').is_visible()
+        assert "Phone push isn't available on this server." in push.inner_text()
+        assert "Ask the workspace owner" not in push.inner_text()
         if width == 390:
             assert page.locator("#content").evaluate(
                 "el => [getComputedStyle(el).paddingLeft, getComputedStyle(el).paddingRight]"
@@ -240,7 +240,9 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
         ) == ["rgb(36, 49, 64)", "8px"]
         page.locator('[data-deck-setting="phone-push"]').click()
-        assert "not set up on this server" in page.locator("#phone-push").inner_text()
+        assert (
+            "Phone push isn't available on this server." in page.locator("#phone-push").inner_text()
+        )
         assert page.locator("#phone-push.deck-quiet-line").count() == 1
     finally:
         context.close()

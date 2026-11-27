@@ -150,7 +150,8 @@ Total to accept: 4 interactions plus one scroll; nothing leads there.
 
 | Step | Possible | Clicks / screens | Where a user gets stuck | Mirrors |
 |---|---|---|---|---|
-| Phone notifications | no | n/a | The owner is told "Ask the workspace owner to connect a notification service" ([screenshot](usability-audit-372/26-settings-notifications.png)); there is nothing to enable | push settings |
+| Phone notifications | partial | n/a | Read as after card #672: an owner never reads "ask the owner"; with no notification service they see "Phone push isn't available on this server.", with one they see how to turn it on. A member still sees who to ask (before: [screenshot](usability-audit-372/26-settings-notifications.png)) | push settings |
+| Email for Today items | yes | 1 / 1 (Settings, Email for Today, Turn on) | Off by default; says "Email isn't set up on this server." when the server has no mail sender; a new item sends one title-and-link email ([owner](usability-audit-372/672-email-owner.png), [member](usability-audit-372/672-email-member.png)) | Email settings |
 | Webhooks | partial | not counted | A form with URL, project, "Waiting on" and an event filter exists under Workspace; not exercised past the form | `webhook_add` |
 | In-app | partial | 0 | Today badge and sidebar count only. Config proposals are counted since #662; no count yet for release waits (flow 4) | |
 
@@ -291,6 +292,7 @@ works but is hard to find or understand; `low` polish.
 ### 12. Notifications that work for the owner
 
 - Priority: low
+- Status: shipped in card #672 (copy, opt-in email, title-only, hourly cap).
 - Problem: Phone notifications tell the owner to ask the owner. Nothing alerts the person to new
   Today items outside the app.
 - Fix: For owners, show how to enable phone push, or a plain "not available on this server" line;

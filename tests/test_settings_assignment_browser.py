@@ -41,7 +41,7 @@ def test_common_settings_before_collapsed_advanced(browser, width):
         assert advanced.get_attribute("open") is None
         assert not page.locator("[data-tool-policy-filter]").is_visible()
         titles = page.locator(".deck-settings-main > section > h2").all_text_contents()
-        assert titles[:3] == ["Phone notifications", "Look", "Connected apps"]
+        assert titles[:4] == ["Phone notifications", "Email for Today", "Look", "Connected apps"]
         assert page.locator("#deck-settings-nav").bounding_box()["y"] < 350
         assert page.locator("#phone-push").bounding_box()["y"] < 550
         for label, target in [

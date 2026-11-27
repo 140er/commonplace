@@ -64,7 +64,7 @@ const context = {
   mountToolPolicy() {},
   waitingTotal: (bots) => bots.reduce((total, bot) => total + bot.waiting, 0),
   title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView,
-  agentsView: () => "", phonePushView: () => "", voice: { settings: () => "" },
+  agentsView: () => "", phonePushView: () => "", todayEmailView: () => "", voice: { settings: () => "" },
   mountWorkspaceOrchestration() {}, mountAgentSchedules() {},
   consoleScreen() { renders++; content.innerHTML = "Console controls"; },
   showError: (error) => assert.equal(error, ""),

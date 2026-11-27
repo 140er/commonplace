@@ -1,6 +1,6 @@
 ## chat-and-voice
 
-- **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
+- **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`, `commonplace/today_email/`
 - **Owns:**
 
   - Chat installation also installs the coworker package, so the Coworkers routes and background runtime start with the chat front.

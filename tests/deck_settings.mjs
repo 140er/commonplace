@@ -70,20 +70,17 @@ test('permission labels ignore prototype members and use notification outcomes',
   for (const [name,label] of Object.entries(expected)) assert.equal(permissionLabel({name}),label);
   assert.equal(ui(true).policyPresentation().introduction(10), 'Ask sends the request to Today first. Deny refuses it.');
 });
-test('notification guidance distinguishes the owner and tolerates a missing connection heading', () => {
+test('an unavailable phone push section folds to one quiet line and keeps its own wording', () => {
   for (const owner of [false,true]) {
     const added = [];
-    const notice = {textContent:'Not set up on this server.',insertAdjacentHTML:(where,html)=>added.push(html)};
+    const notice = {textContent:owner?"Phone push isn't available on this server.":"Phone push isn't available on this server. Ask the workspace owner to set it up."};
     const heading = {classList:{add:name=>added.push(`h2.${name}`)}};
-    const section = {querySelector:q=>q==='h2'?heading:notice,classList:{add:name=>added.push(`section.${name}`)}};
+    const section = {querySelector:q=>q==='h2'?heading:q==='[data-no-phone-push]'?notice:null,classList:{add:name=>added.push(`section.${name}`)}};
     const connection = {querySelector:()=>null};
     const box = {querySelector:q=>q==='#phone-push'?section:q==='.agents-settings'?connection:null,
       querySelectorAll:()=>[],prepend(){},insertAdjacentHTML(){}};
     assert.doesNotThrow(()=>arrangeSettings(box,{owner}));
-    // One quiet line, not a card; only the owner gets the link to the Admin page.
-    assert.ok(notice.textContent.startsWith('Phone notifications are not set up on this server.'));
     assert.equal(notice.textContent.includes('Ask the workspace owner'),!owner);
-    assert.equal(added.filter(item=>item.includes('<a href="#/admin">Set up notifications in Admin</a>')).length,owner?1:0);
     assert.ok(added.includes('section.deck-quiet-line')&&added.includes('h2.sr'));
   }
 });
@@ -113,7 +110,7 @@ for (const initial of ['#/boards','#/needs','#/settings']) test(`late Voice afte
     const context={state,root:{querySelector:()=>content},voice:{load:()=>ready,settings:()=>''},
       boundedRequest:async()=>({people:{}}),api:async path=>path==='/api/chat-settings'?{front:{enabled:false},usage:{}}:{},
       setPeople(){},shell(){},schedule(){},signin(){},title(){},remember:()=>({}),restore(){},message:()=>'',e:String,
-      phonePushView:()=>'',planView:()=>'',agentsView:()=>'',mountWorkspaceOrchestration(){},mountAgentSchedules(){},mountToolPolicy(){},
+      phonePushView:()=>'',todayEmailView:()=>'',planView:()=>'',agentsView:()=>'',mountWorkspaceOrchestration(){},mountAgentSchedules(){},mountToolPolicy(){},
       location:{hash:initial,search:'',pathname:'/app/'},URLSearchParams,
       route:async()=>{state.screen++; if(initial==='#/settings') await context.settingsView(state.screen);}};
     runInNewContext(settings+'\n'+boot,context);
