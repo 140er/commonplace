@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { escape as e } from "../commonplace/web/static/api.js";
 import { renderDetails } from "../commonplace/web/static/details.js";
 import { releaseBlock } from "../commonplace/web/static/release-block.js";
-import { escalationHTML, modelsHTML, projectSettingsHTML, workspaceModelsHTML, workspaceOrchestrationHTML } from "../commonplace/web/static/projects.js";
+import { PROJECT_COPY, escalationHTML, modelsHTML, projectSettingsHTML, workspaceModelsHTML, workspaceOrchestrationHTML } from "../commonplace/web/static/projects.js";
 import { mountToolPolicy } from "../commonplace/web/static/tool-policy.js";
 import { mountAgentSchedules } from "../commonplace/web/static/agent-schedules.js";
 import { createAdmin } from "../commonplace/web/static/admin.js";
@@ -36,7 +36,7 @@ test("a member's reason names no data and says who to ask", () => {
   assert.match(text(html), /Waiting for release/);
   assert.doesNotMatch(html, /<input|<button/);
   assert.doesNotMatch(Object.values(ownerOnly.OWNER_ONLY_COPY).join(" "), /orchestrator/i);
-  for (const copy of [ownerOnly.OWNER_ONLY_COPY.connections, ownerOnly.OWNER_ONLY_COPY.project]) assert.match(copy, /ask the workspace owner|Ask the workspace owner/);
+  for (const copy of [ownerOnly.OWNER_ONLY_COPY.connections, PROJECT_COPY.ownerOnlyProject]) assert.match(copy, /ask the workspace owner|Ask the workspace owner/);
 });
 
 test("a refused settings section shows the reason to a member and the error to an owner", () => {

@@ -7,9 +7,6 @@ export const ASK_OWNER = "Ask the workspace owner.";
 
 export const OWNER_ONLY_COPY = {
   connections: "Only the workspace owner can add or change connected apps. To connect an app of your own, ask the workspace owner to create a connection for you.",
-  project: "Only the workspace owner can change this project's settings. You can read them here. Ask the workspace owner for a change.",
-  models: "Only the workspace owner can change the models. Ask the workspace owner for a change.",
-  orchestration: "Only the workspace owner can turn this on or off. Ask the workspace owner for a change.",
   release: "Only the workspace owner, or this project's coordinator, can release this card.",
   priority: "Only the workspace owner can change the priority or task type.",
 };
