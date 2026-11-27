@@ -1,0 +1,1 @@
+- **Promises:** `/app/join/context`, the signed-out invite lookup, counts against the per-address credential rate limit with `/app/login` and `/app/join`, and never against the shell-read budget.

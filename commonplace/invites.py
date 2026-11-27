@@ -363,8 +363,8 @@ def revoke(db: ControlDB, workspace_id: str, invite_id: str, actor_id: str) -> O
     return _view(db, row)
 
 
-def _usable(conn, secret, user_id: str, now: str):
-    """The invite row ``user_id`` may accept now, or raise :class:`InviteError`."""
+def _pending(conn, secret, now: str):
+    """The invite row behind ``secret`` while it is pending and its inviter still owns the workspace."""
     if not looks_like_secret(secret):
         raise _invalid()
     row = conn.execute(
@@ -379,6 +379,12 @@ def _usable(conn, secret, user_id: str, now: str):
     ).fetchone()
     if inviter is None or inviter["role"] != "owner" or inviter["disabled_at"]:
         raise _invalid()
+    return row
+
+
+def _usable(conn, secret, user_id: str, now: str):
+    """The invite row ``user_id`` may accept now, or raise :class:`InviteError`."""
+    row = _pending(conn, secret, now)
     user = conn.execute("SELECT email, disabled_at FROM users WHERE id = ?", (user_id,)).fetchone()
     if user is None or user["disabled_at"]:
         raise _invalid()
@@ -393,6 +399,15 @@ def _usable(conn, secret, user_id: str, now: str):
     return row
 
 
+def _names(db: ControlDB, row) -> dict:
+    """The workspace name and the inviter's display name (their name, else the email before the @)."""
+    inviter = db.user(row["created_by"])
+    return {
+        "workspace_name": db.workspace(row["workspace_id"])["name"],
+        "inviter_name": inviter["name"] or inviter["email"].split("@", 1)[0],
+    }
+
+
 def peek(db: ControlDB, secret, user_id: str) -> dict:
     """What ``user_id`` would join, without using the invite."""
     ensure_schema(db)
@@ -400,8 +415,19 @@ def peek(db: ControlDB, secret, user_id: str) -> dict:
         row = _usable(db._conn, secret, user_id, _iso(_now()))
         return {
             "workspace": row["workspace_id"],
-            "workspace_name": db.workspace(row["workspace_id"])["name"],
+            **_names(db, row),
         }
+
+
+def summary(db: ControlDB, secret) -> dict:
+    """Workspace and inviter names for a signed-out holder of a pending invite.
+
+    Raises the same ``invalid`` refusal as :func:`peek` for every unusable secret, so
+    nothing about a workspace or person leaves for a bad, used, revoked or expired one.
+    """
+    ensure_schema(db)
+    with db._lock:
+        return _names(db, _pending(db._conn, secret, _iso(_now())))
 
 
 def accept(db: ControlDB, secret, user_id: str) -> str:

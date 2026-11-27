@@ -278,6 +278,11 @@ works but is hard to find or understand; `low` polish.
 - Fix: Show the workspace name and inviter on the first invite screen; skip first-project copy for
   invitees. Also make the first screen after sign-up carry the three promised steps.
 - Done when: opening an invite link shows who invited the person to what before any form.
+- Update (card #666): done. An invitee's first screen names the workspace and inviter and drops the
+  first-project copy ([before](usability-audit-372/666-invite-before.png), [after](usability-audit-372/666-invite-after.png),
+  [phone](usability-audit-372/666-invite-phone-after.png)); an unusable invite shows one plain message and names
+  nothing ([after](usability-audit-372/666-invite-invalid-after.png)). The sign-in page and the empty board now share
+  the same three steps ([before](usability-audit-372/666-first-board-before.png), [after](usability-audit-372/666-first-board-after.png)).
 
 ### 7. One vocabulary for project, bot, Coworker, agent, board, and for statuses
 

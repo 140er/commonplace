@@ -1,0 +1,4 @@
+- **Owns:** `docs/usability-audit-372/666-*.png`, the before and after views of the first invite screen, an unusable invite and the first board after sign-up (gap 6 of the usability audit).
+- **Promises:** The screenshots come from throwaway instances with a synthetic account on a reserved domain; the invite token is not visible in any of them.
+- **How it fails:** Not covered by a test; a stale screenshot only misdescribes the screen.
+- **Tests:** `tests/test_docs_obligations.py` and `tests/test_docs_fragments.py` keep the fragment well formed.

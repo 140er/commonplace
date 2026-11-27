@@ -273,3 +273,10 @@ test('the project switch reads as a small button, and the phone drops the repeat
   assert.match(phone, /\.deck-board-title-row \{[^}]*justify-content: flex-end/, 'the actions row stays');
   assert.doesNotMatch(phone, /\.deck-board-heading h1 \{ display: block/);
 });
+test('an empty Deck board carries the three first steps; a board with cards does not', () => {
+  const empty = boardView({ ...options, cards: [] });
+  assert.match(empty, /aria-label="Get started"/);
+  assert.deepEqual([...empty.matchAll(/<li[^>]*><span class="num"[^>]*>\d<\/span><div><h2>([^<]+)<\/h2>/g)].map((m) => m[1]), ['Add your first card', 'Connect an app', 'Ask for something']);
+  for (const action of ['new-card', 'connect-agent', 'open-chat']) assert.match(empty, new RegExp(`data-action="${action}"`));
+  assert.doesNotMatch(boardView({ ...options, cards: [base] }), /aria-label="Get started"/);
+});

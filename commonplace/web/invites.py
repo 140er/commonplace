@@ -6,6 +6,8 @@ owner's token or OAuth connection is refused like a member. ``/app/join`` is
 the page behind an invite link. It moves the secret out of the address into a
 short-lived HttpOnly cookie, sends a signed-out visitor through the normal
 sign-in, and asks for one confirming click before the invite is used.
+``/app/join/context`` answers a signed-out visitor holding that cookie with the
+workspace and inviter names, and every unusable invite with one plain refusal.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from commonplace.http_util import path_parts, query, read_json, require_principa
 INVITE_COOKIE = "cmmn_invite"
 INVITE_COOKIE_SECONDS = 3600
 JOIN_PATH = "/app/join"
+CONTEXT_PATH = JOIN_PATH + "/context"
 PREFIX = "/api/invites/"
 OWNER_REQUIRED = "Sign in as a workspace owner to manage invites"
 
@@ -207,7 +210,8 @@ def _join(gateway, h):
                 h,
                 200,
                 "Join " + found["workspace_name"],
-                "You will join this workspace as a member, signed in as "
+                found["inviter_name"]
+                + " invited you to join this workspace as a member, signed in as "
                 + principal.user_email
                 + ".",
                 _CONFIRM,
@@ -233,6 +237,21 @@ def _join(gateway, h):
     headers = [("Location", "/app/"), ("Set-Cookie", _cookie(gateway, "", 0))]
     headers.extend(_move_session(gateway, h, principal, workspace_id))
     _send(h, 303, headers=headers)
+
+
+def _context(gateway, h):
+    """Who invited the visitor to what, read from the invite cookie alone.
+
+    Open to a signed-out visitor so the sign-in screen can say it. The secret never
+    travels in the address; every unusable invite gets the same plain answer.
+    """
+    h.close_connection = True
+    secret = sessions.cookie_value(h.headers.get("Cookie"), INVITE_COOKIE)
+    try:
+        body, status = invites.summary(gateway.db, secret), 200
+    except invites.InviteError:
+        body, status = {"error": "invite_unavailable"}, 404
+    _send(h, status, json.dumps(body).encode("utf-8"), "application/json")
 
 
 def _workspaces(gateway, h):
@@ -368,6 +387,7 @@ def install(gateway):
     gateway.add_prefix_route("POST", PREFIX, bound(_revoke))
     gateway.add_route("GET", JOIN_PATH, bound(_join))
     gateway.add_route("POST", JOIN_PATH, bound(_join))
+    gateway.add_route("GET", CONTEXT_PATH, bound(_context))
     gateway.add_route("GET", "/api/workspaces", bound(_workspaces))
     gateway.add_route("POST", "/api/workspaces", bound(_create_workspace))
     gateway.add_route("POST", "/api/workspaces/switch", bound(_workspaces))

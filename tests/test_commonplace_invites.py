@@ -557,3 +557,101 @@ def test_workspace_list_and_switch_stay_inside_own_memberships(world):
         headers={"Origin": "https://evil.example"},
     )
     assert foreign.status == 403 and guest.browser.me().json()["workspace"] == guest.workspace
+
+
+def _name_owner(world, name):
+    with world.db._lock:
+        world.db._conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, world.owner.id))
+
+
+def _context(browser):
+    return browser.get("/app/join/context")
+
+
+def test_invite_context_names_workspace_and_inviter_before_sign_in(world):
+    _name_owner(world, "Ada Owner")
+    secret = invite(world)["secret"]
+    visitor = Browser(world.port)
+    assert visitor.get(f"/app/join?t={secret}").location == "/app/join"
+    found = _context(visitor)
+    assert found.status == 200
+    assert found.json() == {"workspace_name": "Owner Home", "inviter_name": "Ada Owner"}
+    assert secret not in found.text and invites._hash(secret) not in found.text
+    headers = {name.lower(): value for name, value in found.headers}
+    assert headers["cache-control"] == "no-store"
+    assert headers["referrer-policy"] == "no-referrer"
+    # Looking is not using: the invite is still pending and nobody joined.
+    assert world.owner.browser.get("/api/invites").json()["invites"][0]["state"] == "pending"
+    assert len(world.db.members(world.owner.workspace)) == 1
+
+
+def test_invite_context_falls_back_to_the_email_name_without_the_address(world):
+    secret = invite(world)["secret"]
+    visitor = Browser(world.port)
+    visitor.get(f"/app/join?t={secret}")
+    found = _context(visitor)
+    assert found.json()["inviter_name"] == "owner"
+    assert "@" not in found.text
+
+
+def _spend(world, secret, made):
+    assert join(world, world.guest, secret).status == 303
+
+
+def _revoke(world, secret, made):
+    path = f"/api/invites/{made['invite']['id']}/revoke"
+    assert world.owner.browser.post(path).status == 200
+
+
+def _expire(world, secret, made):
+    with world.db._lock:
+        world.db._conn.execute("UPDATE workspace_invites SET expires_at = '2000-01-01T00:00:00Z'")
+
+
+def _demote_inviter(world, secret, made):
+    with world.db._lock:
+        world.db._conn.execute(
+            "UPDATE memberships SET role = 'member' WHERE workspace_id = ? AND user_id = ?",
+            (world.owner.workspace, world.owner.id),
+        )
+
+
+@pytest.mark.parametrize("how", ["used", "revoked", "expired", "demoted"])
+def test_unusable_invite_context_leaks_nothing(world, how):
+    _name_owner(world, "Ada Owner")
+    made = invite(world)
+    secret = made["secret"]
+    visitor = Browser(world.port)
+    assert visitor.get(f"/app/join?t={secret}").location == "/app/join"
+    assert _context(visitor).status == 200
+    {"used": _spend, "revoked": _revoke, "expired": _expire, "demoted": _demote_inviter}[how](
+        world, secret, made
+    )
+    refused = _context(visitor)
+    assert refused.status == 404
+    assert refused.json() == {"error": "invite_unavailable"}
+    for private in ("Owner Home", "Ada Owner", "owner@example.test", secret):
+        assert private not in refused.text
+
+
+def test_context_for_unknown_malformed_or_missing_invites_is_one_plain_answer(world):
+    _name_owner(world, "Ada Owner")
+    secret = invite(world)["secret"]
+    answers = set()
+    for cookie in (None, "", "nope", "inv_short", "inv_" + "A" * 43, "<script>x</script>"):
+        visitor = Browser(world.port)
+        if cookie is not None:
+            visitor.cookies[INVITE_COOKIE] = cookie
+        refused = _context(visitor)
+        assert refused.status == 404
+        answers.add(refused.text)
+    assert answers == {json.dumps({"error": "invite_unavailable"})}
+    # A signed-in stranger with no invite cookie learns nothing either.
+    assert _context(world.guest.browser).status == 404
+    for private in ("Owner Home", "Ada Owner", "owner@example.test", secret):
+        assert all(private not in text for text in answers)
+
+
+def test_context_does_not_accept_the_secret_in_the_address(world):
+    secret = invite(world)["secret"]
+    assert Browser(world.port).get(f"/app/join/context?t={secret}").status == 404

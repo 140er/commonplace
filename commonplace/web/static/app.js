@@ -330,7 +330,13 @@ async function signin(code = null) {
   const via = /^[a-z]{1,20}$/.test(value) ? value : "";
   if (code !== null) state.error = signinMessage(code, paused, via);
   const path = location.pathname + location.search + location.hash;
-  root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
+  // An invite link leaves its secret in a cookie, so the first screen can say who invited the person to what.
+  let invite = null, inviteUnavailable = false;
+  if (signinNext === "/app/join") {
+    try { invite = await api("/app/join/context"); } catch (error) { inviteUnavailable = error?.status === 404; }
+    if (state.me) return;
+  }
+  root.innerHTML = signinView({ providers, paused, via, error: state.error, invite, inviteUnavailable, next: inviteUnavailable ? "" : signinNext || (path === "/app/" ? "" : path) });
 }
 function currentBoard() {
   const routeSlug = /^#\/(?:board|space)\/([^/?]+)/.exec(state.base)?.[1];

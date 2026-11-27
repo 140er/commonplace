@@ -72,9 +72,22 @@ if (globalThis.document?.adoptedStyleSheets) {
   document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
 }
 
-export function signinView({ providers = [], paused = [], via = "", error = "", next = "" }) {
+const inviteGone = "This invite does not work. It was used, revoked or has expired, or the link is incomplete. Ask the workspace owner for a new invite.";
+// The same three steps the first board shows: a project already exists after sign-in, so none asks to name one.
+const firstSteps = [
+  ["Add your first card", "A card is one piece of work. Write it like a to-do."],
+  ["Connect an app", "A connected app is an AI helper that works on cards. We show you how, step by step."],
+  ["Ask for something", "Write in chat. The bot turns requests into cards."],
+];
+const inviteSteps = [
+  ["Sign in", "Use the email address the invite was sent to."],
+  ["Confirm", "You join as a member after one more click."],
+  ["Open the workspace", "Its projects, cards and chat are waiting."],
+];
+
+export function signinView({ providers = [], paused = [], via = "", error = "", next = "", invite = null, inviteUnavailable = false }) {
   const previous = paused.find((p) => p.id === via);
-  const message = error || (previous ? pausedMessage(previous) : "");
+  const message = error || (inviteUnavailable ? inviteGone : previous ? pausedMessage(previous) : "");
   const expired = message === messages.expired;
   const throttled = message === messages.throttled;
   const links = providers.map(({ id, name, url }) => {
@@ -84,7 +97,7 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
   // Registration is controlled by the server. Sign-in never promises a new account.
   return `<main class="signin"><div class="auth-l">
     <a class="brand-home" href="/app/" aria-label="Commonplace"><span class="mark" aria-hidden="true">C</span>Commonplace</a>
-    <div><h1>${expired ? "Get a new link" : "Sign in"}</h1><p class="lead">${expired ? "Links work once and for 15 minutes. Nothing is lost; get a new one below." : "One place where you and your AI agents share a board, a chat and a memory that keeps your exact words."}</p></div>
+    <div>${invite && !expired ? `<h1>Join ${e(invite.workspace_name)}</h1><p class="lead">${e(invite.inviter_name)} invited you to join ${e(invite.workspace_name)} on Commonplace. Sign in to continue.</p>` : `<h1>${expired ? "Get a new link" : "Sign in"}</h1><p class="lead">${expired ? "Links work once and for 15 minutes. Nothing is lost; get a new one below." : "One place where you and your AI agents share a board, a chat and a memory that keeps your exact words."}</p>`}</div>
     ${links ? `<nav class="providers" aria-label="Sign-in options">${links}</nav>` : ""}
     <form data-form="email-login" action="/app/auth/email" method="post"><input type="hidden" name="next" value="${e(next)}"><label class="lbl">Email<input name="email" type="email" aria-label="Email" placeholder="you@example.com" autocomplete="email" maxlength="254" required></label><button class="btn primary lg">${expired ? "Retry: Email me a new link" : throttled ? "Retry" : "Email a sign-in link"}</button></form>
     ${message ? `<div class="message" role="status">${e(message)}</div>` : ""}
@@ -93,9 +106,7 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
   </div><section class="auth-r" aria-labelledby="signin-next-heading">
     <h2 id="signin-next-heading">What happens next</h2>
     <ol class="steps3">
-      <li><div><b>Name your first project</b><span>A project is one board, one chat and its memory.</span></div></li>
-      <li><div><b>Add a card or ask in chat</b><span>Cards are the work. Agents pick them up.</span></div></li>
-      <li><div><b>Connect an app</b><span>We show you how, step by step.</span></div></li>
+      ${(invite && !expired ? inviteSteps : firstSteps).map(([title, text]) => `<li><div><b>${title}</b><span>${text}</span></div></li>`).join("")}
     </ol>
     <dl class="terms" aria-label="Two words you will see">
       <div><dt>Agent</dt><dd>An AI helper that works on cards, for example a coding assistant on your computer.</dd></div>

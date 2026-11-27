@@ -15,6 +15,9 @@ PIN_PUBLIC = {
     ("GET", "/app/cards/"),
     # The invite page: public so a signed-out visitor can be sent to sign-in.
     ("GET", "/app/join"),
+    # The invite lookup for a signed-out visitor: the invite cookie is the only credential and
+    # every unusable invite gets one identical refusal.
+    ("GET", "/app/join/context"),
     ("GET", "/app/login"),
     ("GET", "/app/settings/memory"),
     ("GET", "/app/static/"),

@@ -550,3 +550,61 @@ test("expired and throttled callback screens provide Retry without reflecting th
     assert.doesNotMatch(page.root.innerHTML, /\{"error"/);
   }
 });
+
+const SECRET = "inv_" + "A".repeat(43);
+test("an invitee sees who invited them to what before any form, with no first-project copy", () => {
+  const html = signinView({ invite: { workspace_name: "Owner Home", inviter_name: "Ada Owner" } });
+  const [head, rest] = html.split('<form data-form="email-login"');
+  assert.ok(rest, "the email form is still there");
+  assert.match(head, /<h1>Join Owner Home<\/h1>/);
+  assert.match(head, /Ada Owner invited you to join Owner Home/);
+  assert.doesNotMatch(html, /Name your first project|first project|Add your first card/i);
+  assert.ok(html.includes(SECRET) === false);
+  assert.match(html, /<h2 id="signin-next-heading">What happens next<\/h2>/);
+});
+
+test("invite names are escaped", () => {
+  const attack = '<img src=x onerror=alert(1)>"&';
+  const html = signinView({ invite: { workspace_name: attack, inviter_name: attack } });
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.ok(html.includes(escape(attack)));
+});
+
+test("an unusable invite gets one plain message with no workspace or person", () => {
+  const html = signinView({ inviteUnavailable: true });
+  assert.match(html, /<div class="message" role="status">This invite does not work\./);
+  assert.match(html, /<h1>Sign in<\/h1>/);
+});
+
+test("a normal sign-in promises the three steps the first board shows", () => {
+  const html = signinView({});
+  const list = html.match(/<ol class="steps3">[\s\S]*?<\/ol>/)[0];
+  assert.deepEqual([...list.matchAll(/<b>([^<]+)<\/b>/g)].map((m) => m[1]), ["Add your first card", "Connect an app", "Ask for something"]);
+  assert.doesNotMatch(html, /Name your first project/);
+});
+
+test("boot asks for the invite context only when the destination is the join page", async () => {
+  const none = app();
+  await settle();
+  assert.deepEqual(none.calls, ["/api/me", "/app/auth/providers"]);
+  const context = { workspace_name: "Owner Home", inviter_name: "Ada Owner" };
+  const page = app({ search: `?next=${encodeURIComponent("/app/join")}`, answers: { "/app/join/context": context } });
+  await settle();
+  assert.ok(page.calls.includes("/app/join/context"));
+  assert.match(page.root.innerHTML, /Ada Owner invited you to join Owner Home/);
+  assert.ok(page.root.innerHTML.includes('name="next" value="/app/join"'), "the invite still follows sign-in");
+  assert.ok(!page.calls.some((call) => call.includes(SECRET)) && !page.root.innerHTML.includes(SECRET));
+});
+
+test("a refused invite context shows the plain message, names nothing and drops the join destination", async () => {
+  const refused = () => { throw Object.assign(new Error("Request failed (404)"), { status: 404 }); };
+  const page = app({ search: `?next=${encodeURIComponent("/app/join")}`, answers: { "/app/join/context": refused } });
+  await settle();
+  assert.match(page.root.innerHTML, /This invite does not work\./);
+  assert.doesNotMatch(page.root.innerHTML, /Owner Home|Ada Owner|invited you/);
+  assert.ok(page.root.innerHTML.includes('name="next" value=""'));
+  const slow = app({ search: `?next=${encodeURIComponent("/app/join")}`, answers: { "/app/join/context": () => { throw new Error("offline"); } } });
+  await settle();
+  assert.doesNotMatch(slow.root.innerHTML, /This invite does not work/);
+  assert.match(slow.root.innerHTML, /<h1>Sign in<\/h1>/);
+});

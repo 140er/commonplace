@@ -47,9 +47,13 @@ An invite in a list has `id`, `email` (empty when unbound), `state`
 1. Opening `/app/join?t=<secret>` moves the secret into a one-hour HttpOnly cookie
    scoped to `/app/join` and redirects to `/app/join`, so the secret does not stay in
    the address bar or history and is never part of the sign-in state.
-2. A signed-out visitor is sent to the normal sign-in and comes back to `/app/join`.
-3. The page names the workspace and the signed-in account and asks for one click on
-   **Join workspace**. Opening or previewing the link joins nobody.
+2. A signed-out visitor is sent to the normal sign-in and comes back to `/app/join`. That
+   first screen says **Join <workspace>** and who invited them, before any form, with no
+   first-project copy. It reads the invite from the cookie, never from the address, and
+   asking joins nobody. An invite that does not work shows one plain "This invite does not
+   work" message that names no workspace or person, and the visitor signs in normally.
+3. The page names the workspace, who invited the person and the signed-in account and asks
+   for one click on **Join workspace**. Opening or previewing the link joins nobody.
 4. Confirming adds the membership, uses up the invite, ends the person's previous
    session and starts a new one in the joined workspace.
 
@@ -57,7 +61,7 @@ Refusals: an unknown, used, revoked or expired invite all show the same "This in
 does not work" page (404); an email-bound invite opened by another account says so
 (403) and stays usable by the right account; someone who is already in the workspace
 is told so and the invite is not used up. An agent token cannot join, and a confirming
-request from another origin is refused. `/app/join` shares the per-address sign-in rate limit
+request from another origin is refused. `/app/join` and `/app/join/context` share the per-address sign-in rate limit
 with the other credential routes.
 
 ## Moving between workspaces
