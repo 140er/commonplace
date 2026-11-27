@@ -181,6 +181,9 @@ def test_requested_connection_uses_existing_restricted_origin_and_private_refusa
     )["drawer_id"]
     failed, answer = tool(hub, token, "memory_get", id=drawer)
     assert failed and "PRIVATE_MEMBER_CANARY" not in answer
+    assert (
+        "PRIVATE_MEMBER_CANARY" not in tool(hub, token, "mempalace_get_drawer", drawer_id=drawer)[1]
+    )
 
 
 @pytest.mark.parametrize("revoker", ["member", "owner"])

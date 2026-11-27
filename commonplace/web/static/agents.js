@@ -138,8 +138,8 @@ async function mutation(section, run) {
 }
 
 export async function createAgent(form) {
-  if (form.hasAttribute('data-connection-request-form')) {
-    const section = form.closest('.agents-settings');
+  const section = form.closest('.agents-settings');
+  if (section.dataset.memberRequests) {
     const data = Object.fromEntries(new FormData(form));
     await mutation(section, async () => {
       await api('/api/connection-requests', { method: 'POST', body: data });
@@ -150,7 +150,7 @@ export async function createAgent(form) {
     return;
   }
   if (!validateAgentName(form)) { form.reportValidity(); return; }
-  const section = form.closest(".agents-settings"), data = Object.fromEntries(new FormData(form));
+  const data = Object.fromEntries(new FormData(form));
   const name = agentName(data.name);
   data.name = name.identifier;
   data.display_name = name.displayName;
