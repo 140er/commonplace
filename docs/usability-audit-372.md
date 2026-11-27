@@ -31,6 +31,47 @@ must act on (a proposed config, a card waiting for release) do not reliably appe
 first-time member gets the sign-in page of a brand-new workspace instead of an invitation. The
 ranked gaps are at the end.
 
+## Current state after the fixes (27 Nov 2026)
+
+The tables in "Flows" below describe what the audit found. This table says where each flow stands on
+develop now. Numbers after a hash are pull requests; "open" means not merged yet. The flows marked
+**walked** are driven end to end, as a brand-new owner with nothing but a browser, by
+the fresh-user browser walk test, named in the tests module docs (sign-up, project, card create, edit, prioritise and move,
+config accept from Today, release from the card, drop reservation, trust in Admin, Coworker stop and
+resume, memory import to Preview). The test makes no API, MCP or bot call while it walks; a seed
+plays the agents beforehand (see its docstring).
+
+| Flow | Now | Pull requests | Still missing |
+|---|---|---|---|
+| 1. Sign-up | partial, walked | none | The sign-in page still promises three steps, then the app lands on a board with no "what now" prompt |
+| 2. Workspace and project setup | partial, walked | #793, #810 (names), #814 open (invite landing) | The invite landing waits for #814; "Ready to start?" still lists model, key and machine as "Needs you" for a plain board |
+| 3. Cards: create, edit, prioritise, move | partial, walked | #810 (Move lists every status), #823 (lanes follow the card) | Priority is only in "Edit card" with no marker on the board; #775 open |
+| 4. Releasing restricted-origin cards | yes, walked | #804 | none |
+| 5. Dropping a reservation | yes, walked | #818 | Handing a card to a chosen agent is not walked |
+| 6. Coworker configs | yes, walked | #803, #819 | none |
+| 7. Giving trust | partial, walked | #811 (Admin explains and changes it), #804 (creator and trust on the card) | The start-permission form still cannot be finished in a workspace with no machine |
+| 8. Starting and stopping agents | partial, walked | #806 (Stop and Resume) | Starting a run needs a registered machine and is not walked; void, reassign and retire are not offered |
+| 9. Agent limits | partial, walked | #816 | No control for the workspace-wide cap |
+| 10. Needs-me items | yes | #803, #804, #819, #825 | none |
+| 11. Tokens and connections | partial | #807 (memory question first) | A member cannot connect their own agent; not walked |
+| 12. Notifications | partial | #822 (owner copy, opt-in email) | Phone push needs a configured server; not walked |
+| 13. Memory import | yes, walked to Preview | #812 | The final Import click is not walked; see the dialog race below |
+| 14. Member view | no change | none | Members still get no reason for a missing control and no way to connect an agent; not walked |
+
+### Still open
+
+- First-run "what now" prompt after sign-up (flow 1).
+- Invite landing shows the workspace and inviter: #814 open.
+- Visible priority marker and picker on the card face: #775 open.
+- Member explanations for owner-only controls and a decision on member tokens (flows 11 and 14).
+- Workspace-wide agent cap control (flow 9).
+- Start-permission form with no machine, and starting a run without a registered machine (flows 7 and 8).
+- Void, reassign and retire from the web app (flow 8).
+- Phone push on a server that has it configured (flow 12).
+- Found by the walk: the memory import dialog loads its destination rules after it opens and then
+  redraws, which resets a format picked in the first moments; the person then previews with the
+  default destination. The walk waits for the rules, so it does not hide the bug.
+
 ## Flows
 
 Legend for "Possible in the UI": **yes** = completes with no API or bot; **partial** = completes
