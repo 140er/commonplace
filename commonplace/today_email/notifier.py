@@ -134,8 +134,10 @@ class TodayEmail:
     def _sql(self, halt):
         """The database lock, refused once ``halt`` is set.
 
-        The check and the statements run under the lock that closing the database also
-        takes, so a stopped pass cannot slip a query in after the connection is gone."""
+        The check and the statements of one block run under the lock that closing the
+        database also takes, so a stopped pass cannot slip those queries in after the
+        connection is gone. Reads that take their own lock (the Today list, share links)
+        are only checked before they start; closing waits briefly for them."""
         with self.db._lock:
             if halt is not None and halt.is_set():
                 raise _Halted
@@ -167,11 +169,16 @@ class TodayEmail:
         return sent
 
     def _person(self, workspace_id, user_id, halt=None) -> int:
+        # These calls do their own locked reads and can take a while, so only the stop
+        # check holds the lock; they never run once the notifier is stopped.
         with self._sql(halt):
-            principal = sessions.person_principal(self.db, user_id, workspace_id)
-            if principal is None:
-                return 0
-            today = self.today(principal)
+            pass
+        principal = sessions.person_principal(self.db, user_id, workspace_id)
+        if principal is None:
+            return 0
+        with self._sql(halt):
+            pass
+        today = self.today(principal)
         key = (workspace_id, user_id)
         now = self.clock()
         with self._sql(halt):
@@ -197,7 +204,8 @@ class TodayEmail:
         if not fresh or recent >= MAX_PER_HOUR:
             return 0  # Over the cap: the items stay un-noted and go out in a later mail.
         with self._sql(halt):
-            subject, text = self._message(workspace_id, sorted(fresh), today)
+            pass
+        subject, text = self._message(workspace_id, sorted(fresh), today)
         # A failed send counts against the cap so a broken server is not hammered.
         with self._sql(halt), self.db._tx() as conn:
             conn.execute(
