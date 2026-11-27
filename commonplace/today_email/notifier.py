@@ -9,6 +9,7 @@ its title and a link, never the card body.
 import logging
 import threading
 import time
+from contextlib import contextmanager
 
 from commonplace import events, mailer, sessions, urls
 from commonplace.boards import service
@@ -22,6 +23,12 @@ MAX_LISTED = 10
 WINDOW_SECONDS = 3600
 _BUCKETS = ("asks", "done_review", "backlog_from_agents", "plans", "approvals")
 _SUBJECT_TITLE = 80
+# How long closing the database waits for a pass that is mid-flight, like email sign-in.
+SHUTDOWN_WAIT = 1.0
+
+
+class _Halted(Exception):
+    """The notifier was stopped: the pass ends without touching the database again."""
 
 
 def _line(text, limit):
@@ -53,7 +60,7 @@ class TodayEmail:
         self._stop.set()
         self._wake.set()
         if self.thread.ident is not None:
-            self.thread.join(timeout=5)
+            self.thread.join(timeout=SHUTDOWN_WAIT)
 
     def on_event(self, event):
         if event["kind"].startswith("card."):
@@ -66,9 +73,11 @@ class TodayEmail:
                 break
             # Let a burst of card changes settle so it goes out as one mail.
             self._stop.wait(self.settle_seconds)
+            if self._stop.is_set():
+                break  # Stopped while settling: the database may be closing, so no pass.
             self._wake.clear()
             try:
-                self.reconcile()
+                self.reconcile(halt=self._stop)
             except Exception as exc:
                 logger.warning("today email pass failed: %s", type(exc).__name__)
 
@@ -121,31 +130,51 @@ class TodayEmail:
 
     # -- sending ------------------------------------------------------------------
 
-    def reconcile(self) -> int:
-        """One pass over everyone who opted in; returns the mails sent."""
+    @contextmanager
+    def _sql(self, halt):
+        """The database lock, refused once ``halt`` is set.
+
+        The check and the statements run under the lock that closing the database also
+        takes, so a stopped pass cannot slip a query in after the connection is gone."""
+        with self.db._lock:
+            if halt is not None and halt.is_set():
+                raise _Halted
+            yield
+
+    def reconcile(self, halt=None) -> int:
+        """One pass over everyone who opted in; returns the mails sent.
+
+        The background thread passes its stop event as ``halt``; a stopped pass ends at
+        its next database step. Callers that drive a pass by hand pass nothing."""
         if not self.available:
             return 0
         sent = 0
-        with self._work:
-            with self.db._lock:
-                people = self.db._conn.execute(
-                    "SELECT workspace_id, user_id FROM today_email_prefs WHERE enabled=1"
-                ).fetchall()
-            for person in people:
-                try:
-                    sent += self._person(person["workspace_id"], person["user_id"])
-                except Exception as exc:
-                    logger.warning("today email failed for one person: %s", type(exc).__name__)
+        try:
+            with self._work:
+                with self._sql(halt):
+                    people = self.db._conn.execute(
+                        "SELECT workspace_id, user_id FROM today_email_prefs WHERE enabled=1"
+                    ).fetchall()
+                for person in people:
+                    try:
+                        sent += self._person(person["workspace_id"], person["user_id"], halt)
+                    except _Halted:
+                        raise
+                    except Exception as exc:
+                        logger.warning("today email failed for one person: %s", type(exc).__name__)
+        except _Halted:
+            pass
         return sent
 
-    def _person(self, workspace_id, user_id) -> int:
-        principal = sessions.person_principal(self.db, user_id, workspace_id)
-        if principal is None:
-            return 0
-        today = self.today(principal)
+    def _person(self, workspace_id, user_id, halt=None) -> int:
+        with self._sql(halt):
+            principal = sessions.person_principal(self.db, user_id, workspace_id)
+            if principal is None:
+                return 0
+            today = self.today(principal)
         key = (workspace_id, user_id)
         now = self.clock()
-        with self.db._lock:
+        with self._sql(halt):
             noted = {
                 row["number"]
                 for row in self.db._conn.execute(
@@ -158,7 +187,7 @@ class TodayEmail:
                 (*key, now - WINDOW_SECONDS),
             ).fetchone()[0]
         fresh = [number for number in today if number not in noted]
-        with self.db._lock, self.db._tx() as conn:
+        with self._sql(halt), self.db._tx() as conn:
             for number in noted - set(today):  # Left Today: a later return is new again.
                 conn.execute(
                     "DELETE FROM today_email_items WHERE workspace_id=? AND user_id=? AND number=?",
@@ -167,9 +196,10 @@ class TodayEmail:
             conn.execute("DELETE FROM today_email_sends WHERE sent_at<=?", (now - WINDOW_SECONDS,))
         if not fresh or recent >= MAX_PER_HOUR:
             return 0  # Over the cap: the items stay un-noted and go out in a later mail.
-        subject, text = self._message(workspace_id, sorted(fresh), today)
+        with self._sql(halt):
+            subject, text = self._message(workspace_id, sorted(fresh), today)
         # A failed send counts against the cap so a broken server is not hammered.
-        with self.db._lock, self.db._tx() as conn:
+        with self._sql(halt), self.db._tx() as conn:
             conn.execute(
                 "INSERT INTO today_email_sends(workspace_id,user_id,sent_at) VALUES (?,?,?)",
                 (*key, now),
@@ -179,7 +209,7 @@ class TodayEmail:
         except mailer.MailError:
             logger.warning("today email not sent")
             return 0
-        with self.db._lock, self.db._tx() as conn:
+        with self._sql(halt), self.db._tx() as conn:
             conn.executemany(
                 "INSERT OR IGNORE INTO today_email_items(workspace_id,user_id,number,noted_at) "
                 "VALUES (?,?,?,?)",
