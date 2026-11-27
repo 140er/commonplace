@@ -80,7 +80,7 @@ export function toolsHTML({ can_admin = false } = {}) {
 /** The shell's handle on Deck. Everything it needs comes in, so it runs without a browser.
  *  context() returns what a screen may read: { me, boards, needs, go(hash) }. */
 export function createDeck({ root, api, context, title, screen = () => 0, reload = () => {}, screens = SCREENS, storage = store(), doc = globalThis.document } = {}) {
-  const shell = createDeckShell({ root, api, context, on: () => deckOn(storage) });
+  const shell = createDeckShell({ root, api, context, on: () => deckOn(storage), storage });
   const appearance = createDeckAppearance({ root, context, on: () => deckOn(storage), doc, storage });
   let active = null;
   const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)(?:\?[^#]*)?$/.exec(base || '')?.[1] || '';

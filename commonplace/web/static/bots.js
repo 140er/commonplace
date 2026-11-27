@@ -384,6 +384,7 @@ const shellHTML = `<div class="bots" data-pane="roster">
   <section class="bots-roster" aria-labelledby="bots-h">
     <header class="bots-bar"><h1 id="bots-h">${BOTS_COPY.title}</h1><p class="deck-bots-intro" hidden>One thread per bot.</p><span class="bots-actions"><a class="bots-new-chat" href="#/bots" data-deck-shell-action="new-thread">${BOTS_COPY.newChat}</a><button type="button" class="bots-new" data-bots-action="new">${BOTS_COPY.newBot}</button></span></header>
     <ul class="bots-list" data-region="roster"></ul>
+    <section class="deck-phone-tree" aria-labelledby="deck-phone-tree-h"><h2 id="deck-phone-tree-h">Bots and projects</h2><p class="deck-rail-error" data-deck-tree-note role="status" hidden></p><div data-deck-bots-page></div></section>
   </section>
   <section class="bots-thread" aria-label="Conversation">
     <header class="bots-head" data-region="head"></header>

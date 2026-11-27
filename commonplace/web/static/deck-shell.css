@@ -126,3 +126,33 @@
   :root[data-ui="deck"] #phone-bar .m-top[data-deck="top"] { display: flex; }
   :root[data-ui="deck"] #phone-tabs .m-tabs[data-deck="tabs"] { display: grid; }
 }
+
+/* ---------- The bot tree: each bot opens onto its projects; rows, indent and states only ---------- */
+:root[data-ui="deck"] .deck-node-chevron { display: grid; place-items: center; flex: none; width: 16px; height: 16px; margin-left: -4px; color: var(--ink3); cursor: pointer; }
+:root[data-ui="deck"] .deck-node-chevron .i { width: 12px; height: 12px; transition: transform 160ms; }
+:root[data-ui="deck"] [aria-expanded="true"] > .deck-node-chevron .i { transform: rotate(90deg); }
+:root[data-ui="deck"] .deck-unassigned-row { cursor: pointer; color: var(--ink2); }
+:root[data-ui="deck"] .deck-tree-empty { display: block; height: 26px; padding: 0 10px 0 18px; line-height: 26px; color: var(--ink3); font-size: 12.5px; }
+:root[data-ui="deck"] .deck-project-li { display: flex; flex-wrap: wrap; align-items: center; }
+:root[data-ui="deck"] .deck-project-li > .deck-project-row { flex: 1; min-width: 0; }
+:root[data-ui="deck"] .deck-project-row small { flex: none; color: var(--amber); font-size: 12px; }
+:root[data-ui="deck"] .deck-move-btn { display: grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); cursor: pointer; opacity: 0; }
+:root[data-ui="deck"] :is(.deck-project-li:hover, .deck-project-li:focus-within) .deck-move-btn, :root[data-ui="deck"] .deck-move-btn[aria-expanded="true"] { opacity: 1; }
+:root[data-ui="deck"] .deck-move-btn:hover { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .deck-move { display: flex; flex: 0 0 100%; flex-direction: column; gap: 2px; padding: 2px 10px 6px 18px; color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .deck-move select { width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font: inherit; }
+/* The phone has no sidebar, so the Bots page carries the same tree. */
+:root[data-ui="deck"] .deck-phone-tree { display: none; }
+@media (max-width: 699px) {
+  /* The list takes its own height here, so the tree below it never overlaps it. */
+  :root[data-ui="deck"] .bots[data-pane="roster"] .bots-list { flex: none; }
+  :root[data-ui="deck"] .deck-phone-tree { display: block; flex: none; padding: 12px 12px 24px; }
+  :root[data-ui="deck"] .deck-phone-tree h2 { margin: 0 0 4px; color: var(--ink3); font-size: 12.5px; font-weight: 500; }
+  :root[data-ui="deck"] .deck-phone-tree :is(.deck-bot-row, .deck-tree-row, .deck-tree-empty) { height: auto; min-height: 44px; }
+  :root[data-ui="deck"] .deck-phone-tree .deck-tree-empty { line-height: 44px; }
+  :root[data-ui="deck"] .deck-phone-tree .deck-node-chevron { width: 32px; height: 32px; margin: 0 -8px 0 -10px; }
+  :root[data-ui="deck"] .deck-phone-tree .deck-move-btn { width: 44px; height: 44px; opacity: 1; }
+  :root[data-ui="deck"] .deck-phone-tree .deck-move select { min-height: 44px; }
+}
+@media (hover: none) { :root[data-ui="deck"] .deck-move-btn { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { :root[data-ui="deck"] .deck-node-chevron .i { transition: none; } }

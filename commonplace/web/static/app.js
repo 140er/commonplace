@@ -135,7 +135,7 @@ const state = {
 // The Deck look (the default; classic is the explicit opt-out): its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => { void shellMenu().catch(error => showError(error.message)); }, singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => { void shellMenu().catch(error => showError(error.message)); }, singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged, onRoster: (bots) => { state.deckRoster = { workspace: state.me?.workspace, actor: state.me?.actor, bots }; } }),
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;
@@ -489,9 +489,12 @@ function navigation() {
   // An unchanged rail is left in place, so an open menu and its buttons are not replaced under the pointer.
   const railHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
   if (boardNav !== state.railNode || railHTML !== state.railHTML) {
+    // A redraw of the rail keeps keyboard focus on the same tree row.
+    const active = globalThis.document?.activeElement, focused = active && boardNav.contains?.(active) ? active.closest?.("[data-deck-item]")?.dataset.deckItem : undefined;
     boardNav.outerHTML = railHTML;
     state.railHTML = railHTML;
     state.railNode = root.querySelector("#board-nav");
+    if (focused !== undefined) [...(state.railNode?.querySelectorAll?.("[data-deck-item]") || [])].find((item) => item.dataset.deckItem === focused)?.focus();
     if (accountOpen) state.railNode?.querySelector?.(".user-menu")?.setAttribute("open", "");
   } else if (!accountOpen) boardNav.querySelector?.(".user-menu")?.removeAttribute?.("open");
   root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
