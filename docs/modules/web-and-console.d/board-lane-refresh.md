@@ -1,0 +1,4 @@
+- **Promises:**
+
+  - After a card action that changes where a card belongs (release, move, drop a reservation, approve, hold), the Deck board lanes behind the open card panel redraw from the answer without a page reload. The owner queue, which decides the Waiting on you lane, is read once beside the card list after the board paints; when its list of cards differs from the one the board drew, the board redraws once from that same read. An action costs one card-list read and one queue read, and a queue that did not change redraws nothing.
+- **Tests:** `tests/test_card_action_refresh_browser.py` moves a card from the drawer and releases a card awaiting release at 1280 and 1024 pixels, asserts the card changes lane with the panel still open, no page reload and exactly one board read and one queue read per action, and keeps the Deck (named and unnamed project) and classic board headers from wrapping one word per line with the panel open.

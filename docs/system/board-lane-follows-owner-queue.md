@@ -1,0 +1,5 @@
+### A card changes lane behind the open panel without a reload
+
+- A usability test (gap 14 of the audit) released a card and the Deck board behind the open card panel kept it in Waiting on you until the page was reloaded. The cause was not a missing refresh: every card action already re-reads the card list. The Waiting on you lane is the owner queue, which the shell reads beside the card list after the board has painted, and that late answer updated the badges but never drew the board again.
+- Decision: the board's cache key and the reuse of drawn card rows now include the list of cards the owner queue names, and the shell redraws the board once when a queue answer changes that list. No new request is added: an action costs one card-list read and one queue read, and an unchanged queue redraws nothing.
+- Not changed: how lanes are grouped, the card actions themselves, and the header layout. The header squeeze of that audit no longer happens on the current Board in either look at 1280 and 1024 pixels; a browser check keeps it that way.

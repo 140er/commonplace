@@ -1,0 +1,4 @@
+- **Owns:** `docs/usability-audit-372/14-lane-*.png`, the before and after views of a released card's lane behind the open card panel (gap 14 of the usability audit).
+- **Promises:** The screenshots come from the real web shell with a synthetic workspace and show no token or real account; the guide `docs/usability-audit-372.md` is unchanged.
+- **How it fails:** Not covered by a test; a stale screenshot only misdescribes the Board page.
+- **Tests:** `tests/test_docs_obligations.py` and `tests/test_docs_fragments.py` keep the fragment well formed.

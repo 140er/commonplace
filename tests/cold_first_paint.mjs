@@ -16,14 +16,14 @@ const context = {state, api(){}, cardAdded(){}, cancelCard(){}, enc:encodeURICom
 if (mode === 'render-count') {
   let renders = 0;
   state.cards = Array.from({length:1000},(_,number)=>({number,title:`Card ${number}`,status:'todo'}));
-  Object.assign(context,{boardCards:()=>state.cards, renderBoard(){renders++;return '<div class="workbench-board">cards</div>';}});
+  Object.assign(context,{boardCards:()=>state.cards, laneQueueKey:()=>'', renderBoard(){renders++;return '<div class="workbench-board">cards</div>';}});
   runInNewContext(slice('function boardView()', '// The form closes'), context);
   context.boardView(); context.boardView();
   assert.equal(renders,1,'An unchanged 1000-card board must reuse its mounted tree');
 } else if (mode === 'selected-done') {
   const {boardView} = await import(pathToFileURL(dir+'/board.js'));
   state.cards = Array.from({length:60},(_,number)=>({number,title:`Card ${number}`,status:'done'}));
-  Object.assign(context,{boardCards:()=>state.cards,renderBoard:boardView});
+  Object.assign(context,{boardCards:()=>state.cards,laneQueueKey:()=>'',renderBoard:boardView});
   runInNewContext(slice('function boardView()', '// The form closes'), context);
   context.boardView();
   assert.doesNotMatch(content.innerHTML,/id="col-done"[^>]*data-all/);

@@ -41,7 +41,7 @@ if (which === 'details-button') {
   const ui = await module('board');
   assert.equal(typeof ui.boardView, 'function');
   helpers();
-  Object.assign(context, { api() {}, renderBoard: ui.boardView, cardId: ui.cardId, chatTag: ui.chatTag, bindBoard: () => () => {}, boardDispose: null, currentBoard: () => board, fillChatTimes() {}, cancelCard() {} });
+  Object.assign(context, { api() {}, laneQueueKey: () => '', renderBoard: ui.boardView, cardId: ui.cardId, chatTag: ui.chatTag, bindBoard: () => () => {}, boardDispose: null, currentBoard: () => board, fillChatTimes() {}, cancelCard() {} });
   run(slice('function boardView()', 'function markOpenCard()') + '\nboardView();');
   // 04c: the tablet board header has Details for the modal card sheet.
   assert.match(titleActions, /<button[^>]*id="details-btn"[^>]*>Details<\/button>/);
