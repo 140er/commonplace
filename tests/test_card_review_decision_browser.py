@@ -44,7 +44,7 @@ def test_the_card_transition_announcement_matches_the_confirmed_result(
     section = page.locator("#card-panel [data-card-reviews]")
     section.locator('[data-review-answer="mine"]').click()
     status = section.locator("[data-review-status]")
-    status.get_by_text("The Coworker stops answering these comments", exact=False).wait_for()
+    status.get_by_text("The bot stops answering these comments", exact=False).wait_for()
     text = status.inner_text()
     if result == "confirmed":
         assert "the card moved to Backlog" in text
