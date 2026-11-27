@@ -31,10 +31,17 @@ export function setupProposals(needs = {}) {
   return [...new Map(list.filter(validSetup).map(item => [item.id, item])).values()];
 }
 
-/** How many items wait on the person. Derived from the listed cards, config proposals and setup proposals; only a
- *  payload with no lists at all (a member who cannot read the queue) falls back to its plain number. */
+/** Machine setup steps waiting on the owner (a consent to approve or confirm). They are decisions with no card
+ *  number: the server counts them with the cards, so every screen that lists the queue shows them too. */
+export function runnerSetupItems(needs = {}) {
+  const list = Array.isArray(needs?.runner_setup) ? needs.runner_setup : [];
+  return list.filter(item => item?.kind === 'runner_consent' && typeof item.id === 'string' && item.id !== '');
+}
+
+/** How many items wait on the person. Derived from the listed cards, config proposals, setup proposals and machine
+ *  setup steps; only a payload with no lists at all (a member who cannot read the queue) falls back to its plain number. */
 export function needsMeCount(needs) {
-  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length + setupProposals(needs).length;
+  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length + setupProposals(needs).length + runnerSetupItems(needs).length;
   return Number.isSafeInteger(needs?.count) && needs.count > 0 ? needs.count : 0;
 }
 

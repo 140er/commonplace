@@ -44,6 +44,14 @@ def test_workspace_name_validation(browser, world, monkeypatch, size, look):  # 
         page.goto(f"{origin}/app/?ui={look}#/board/work")
         expect(page.locator(".shell")).to_be_visible()
         if look == "deck":
+            # The Deck switcher lives in the account menu at the foot of the sidebar, and on a phone
+            # in the sheet the header's More button opens.
+            if size[0] == 1280:
+                page.locator(".rail .user-menu > summary").click()
+            else:
+                page.get_by_role(
+                    "button", name="More: settings, cloud workspaces and account"
+                ).click()
             page.locator('[data-action="switch-workspace"]:visible').first.click()
         else:
             page.keyboard.press("Control+k")

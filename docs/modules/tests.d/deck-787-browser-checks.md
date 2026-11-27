@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_runner_setup_browser.py` measures the consent card against the Deck page column (`.bt-col`, the count line, a 14px phone inset) instead of the old Needs me surface, and `tests/test_workspace_name_browser.py` opens the account menu or the phone More sheet before it picks Switch workspace, as the Deck now keeps that action there.

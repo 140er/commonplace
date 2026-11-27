@@ -75,3 +75,57 @@ export async function decideRunner(api, item, action) {
   if (action === 'attest') return api(`${root}/attest`, { method: 'POST', body: { ...item.binding, setup_attestation: { request_id: item.id, scope_digest: item.scope_digest, fingerprint: item.fingerprint } } });
   return api(`${root}/setup-requests/${encodeURIComponent(item.id)}/decide`, { method: 'POST', body: { approve: true, scope_digest: item.scope_digest, fingerprint: item.fingerprint } });
 }
+
+/** One click inside a consent card, shared by every screen that lists runner setup. `items` is the live list the
+ *  card was drawn from; `setBusy` lets the screen hold its other writes while a decision is saving. */
+export async function runnerConsentClick(button, { items, mount, api, stopped = () => false, busy = () => false, setBusy = () => {}, remove = () => {} }) {
+  const item = items.find(row => row.id === button.dataset.runnerConsent);
+  const card = button.closest('[data-runner-consent-card]');
+  if (!item || !card || busy() || item.ui_result) return;
+  const action = button.dataset.runnerConsentAction;
+  if (action === 'refuse-start' || action === 'refuse-cancel') {
+    item.ui_refusing = action === 'refuse-start'; item.ui_error = '';
+    card.outerHTML = runnerConsent(item);
+    const updated = [...mount.querySelectorAll('[data-runner-consent-card]')].find(el => el.dataset.runnerConsentCard === item.id);
+    updated?.querySelector(`[data-runner-consent-action="${item.ui_refusing ? 'refuse-cancel' : 'refuse-start'}"]`)?.focus();
+    return;
+  }
+  if (action !== 'refuse' && !card.querySelector('[data-runner-fingerprint]')?.checked) return;
+  if (action === 'refuse' && !item.ui_refusing) return;
+  setBusy(true);
+  for (const control of card.querySelectorAll('button,input')) control.disabled = true;
+  card.querySelector('[data-runner-consent-status]').textContent = 'Saving…';
+  try {
+    const result = await decideRunner(api, item, action);
+    if (stopped()) return;
+    if (action === 'device') {
+      if (result.url !== 'https://auth.openai.com/codex/device' || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(result.user_code)) throw new Error();
+      item.ui_device = result.user_code;
+    }
+    item.ui_result = action === 'refuse' ? 'refused' : 'confirmed';
+    item.ui_error = '';
+    if (action === 'refuse') remove(item);
+  } catch {
+    if (!stopped()) item.ui_error = 'Could not save. Refresh Needs me to check the current setup before trying again.';
+  } finally {
+    setBusy(false);
+    if (!stopped()) card.outerHTML = runnerConsent(item);
+  }
+}
+
+/** The checkbox that confirms the fingerprint matches is what enables the card's main button. */
+export function runnerConsentChange(event, busy = false) {
+  if (!event.target.matches?.('[data-runner-fingerprint]')) return;
+  const primary = event.target.closest('[data-runner-consent-card]')?.querySelector('.runner-primary');
+  if (primary) primary.disabled = busy || !event.target.checked;
+}
+
+let adopted = false;
+/** The app's CSP refuses inline style elements, so a screen without its own sheet adopts the consent card's once. */
+export function adoptConsentStyle(doc = globalThis.document) {
+  if (adopted || !doc?.adoptedStyleSheets) return;
+  adopted = true;
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(consentStyle);
+  doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+}
