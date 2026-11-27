@@ -431,8 +431,76 @@ def checkpoint(ctx, board, role, session_id=None):
 
 # ---------------------------------------------------------------- registry
 
+
+def benchmark_get(ctx, board, replay):
+    from .replay import Replays
+
+    _owner(ctx)
+    _board(ctx, board)
+    return Replays(_store(ctx)).get(board, replay)
+
+
+def benchmark_promote(ctx, board, replay, sha256):
+    from dataclasses import asdict
+
+    from .replay import Replays
+
+    _owner(ctx)
+    _board(ctx, board, write=True)
+    result = Replays(_store(ctx)).promote(
+        ctx.principal, board, replay, sha256=sha256, connections=_connection_names(ctx)
+    )
+    if result.accept.arm_needed:
+        _arm(ctx, board)
+    _emit(ctx, "orch.benchmark.promoted", board, board=board, replay=replay)
+    return {"promotion": asdict(result.promotion), "version": _version_ref(result.accept.version)}
+
+
+def benchmark_rollback(ctx, board):
+    from dataclasses import asdict
+
+    from .benchmark import Benchmarks
+
+    _owner(ctx)
+    _board(ctx, board, write=True)
+    result = Benchmarks(_store(ctx)).rollback(
+        ctx.principal, board, connections=_connection_names(ctx)
+    )
+    if result.accept.arm_needed:
+        _arm(ctx, board)
+    _emit(ctx, "orch.benchmark.rolled_back", board, board=board)
+    return {"promotion": asdict(result.promotion), "version": _version_ref(result.accept.version)}
+
+
 # Each entry: handler, properties, required keys, kind, trusted_only, owner_only, text.
 OPERATIONS = {
+    "orch_benchmark_get": (
+        benchmark_get,
+        {"board": BOARD, "replay": VERSION},
+        ("board", "replay"),
+        "read",
+        True,
+        True,
+        "Show a local subscription replay's before/after success, tokens, time and regressions (workspace owner only).",
+    ),
+    "orch_benchmark_promote": (
+        benchmark_promote,
+        {"board": BOARD, "replay": VERSION, "sha256": SHA256},
+        ("board", "replay", "sha256"),
+        "write",
+        True,
+        True,
+        "Accept a winning replay and promote its pinned Coworker config in one owner action.",
+    ),
+    "orch_benchmark_rollback": (
+        benchmark_rollback,
+        {"board": BOARD},
+        ("board",),
+        "write",
+        True,
+        True,
+        "Restore the exact config replaced by the latest benchmark promotion (workspace owner only).",
+    ),
     "orch_config_get": (
         config_get,
         {"board": BOARD, "version": VERSION, "channel": CHANNEL},

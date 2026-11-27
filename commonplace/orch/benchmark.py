@@ -64,12 +64,12 @@ GUARD_STEP = re.compile(r"gate|review|approv|verif|safety", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class TaskResult:
-    """One replayed task on one side. Money is integer micro-USD."""
+    """One replayed task. Unreported tokens/currency remain unknown (None)."""
 
     task: str
     passed: bool
-    cost_micro_usd: int
-    tokens: int
+    cost_micro_usd: int | None
+    tokens: int | None
     latency_ms: int
 
     def __post_init__(self):
@@ -79,6 +79,8 @@ class TaskResult:
             raise ValueError("passed must be a bool")
         for name in METRICS:
             value = getattr(self, name)
+            if value is None and name != "latency_ms":
+                continue
             if type(value) is not int or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
 
@@ -138,7 +140,12 @@ def _by_task(rows: Iterable[TaskResult]) -> dict[str, TaskResult]:
 def _side(rows: Iterable[TaskResult]) -> dict:
     rows = list(rows)
     return {"passed": sum(r.passed for r in rows)} | {
-        name: sum(getattr(r, name) for r in rows) for name in METRICS
+        name: (
+            sum(getattr(r, name) for r in rows)
+            if all(getattr(r, name) is not None for r in rows)
+            else None
+        )
+        for name in METRICS
     }
 
 
@@ -164,11 +171,16 @@ def decide(
     regressions = [t for t in tasks if live_by[t].passed and not cand_by[t].passed]
     reasons += [f"regression:{t}" for t in regressions]
     budget = thresholds.budget_micro_usd
-    if budget is not None and cd["cost_micro_usd"] > budget:
-        reasons.append("over_budget")
+    if budget is not None:
+        if cd["cost_micro_usd"] is None:
+            reasons.append("cost_unknown")
+        elif cd["cost_micro_usd"] > budget:
+            reasons.append("over_budget")
     better = ["success_rate"] if cd["passed"] > lv["passed"] else []
     keep = 1 - Fraction(str(thresholds.min_metric_gain))
-    better += [m for m in METRICS if cd[m] < lv[m] * keep]
+    better += [
+        m for m in METRICS if cd[m] is not None and lv[m] is not None and cd[m] < lv[m] * keep
+    ]
     summary["better"] = sorted(better)
     if not better and not regressions and cd["passed"] >= lv["passed"]:
         reasons.append("no_strict_gain")
@@ -312,6 +324,32 @@ class Benchmarks:
 
     def __init__(self, store: Store):
         self.store = store
+        # Older stores required invented zeroes for unknown usage. Copy every row in
+        # one transaction before replacing that constraint; no history is discarded.
+        with store.connection() as conn:
+            columns = conn.execute("PRAGMA table_info(orch_benchmark_results)").fetchall()
+        if not any(c["name"] in ("tokens", "cost_micro_usd") and c["notnull"] for c in columns):
+            return
+        with store.transaction() as conn:
+            columns = conn.execute("PRAGMA table_info(orch_benchmark_results)").fetchall()
+            if any(c["name"] in ("tokens", "cost_micro_usd") and c["notnull"] for c in columns):
+                conn.execute(
+                    "CREATE TABLE orch_benchmark_results_nullable ("
+                    "benchmark_id INTEGER NOT NULL, "
+                    "side TEXT NOT NULL CHECK(side IN ('live','candidate')), "
+                    "task TEXT NOT NULL, passed INTEGER NOT NULL CHECK(passed IN (0,1)), "
+                    "cost_micro_usd INTEGER CHECK(cost_micro_usd>=0), "
+                    "tokens INTEGER CHECK(tokens>=0), "
+                    "latency_ms INTEGER NOT NULL CHECK(latency_ms>=0), "
+                    "PRIMARY KEY(benchmark_id,side,task))"
+                )
+                conn.execute(
+                    "INSERT INTO orch_benchmark_results_nullable SELECT * FROM orch_benchmark_results"
+                )
+                conn.execute("DROP TABLE orch_benchmark_results")
+                conn.execute(
+                    "ALTER TABLE orch_benchmark_results_nullable RENAME TO orch_benchmark_results"
+                )
 
     def record(
         self,
@@ -322,6 +360,7 @@ class Benchmarks:
         live_results: Iterable[TaskResult],
         candidate_results: Iterable[TaskResult],
         thresholds: Thresholds | None = None,
+        expected_versions: tuple[int, int] | None = None,
     ) -> BenchmarkRecord:
         """Store the replay results of the accepted ``channel`` candidate against the
         accepted live version, with the decision ``decide`` makes. Caller has checked wing
@@ -338,6 +377,8 @@ class Benchmarks:
             raise OrchError("invalid_results", str(exc), path="results") from None
         with store.transaction() as conn:
             live, cand = self._current(conn, board, channel)
+            if expected_versions is not None and (live.version, cand.version) != expected_versions:
+                raise OrchError("stale_benchmark", "live or the candidate changed during replay")
             _protected(_checked_config(live), _checked_config(cand))
             cursor = conn.execute(
                 "INSERT INTO orch_benchmarks(board, channel, candidate_version, "

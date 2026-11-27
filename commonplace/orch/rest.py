@@ -87,6 +87,13 @@ def resolve(method: str, parts: list) -> tuple[str, dict]:
         return "orch_config_diff", board
     if len(rest) == 3 and rest[0] == "experiments" and rest[2] == "retire" and post:
         return "orch_exp_retire", {**board, "name": rest[1]}
+    if len(rest) == 2 and rest[0] == "benchmarks":
+        if rest[1] == "rollback" and post:
+            return "orch_benchmark_rollback", board
+        if get:
+            return "orch_benchmark_get", {**board, "replay": _number(rest[1], "replay")}
+    if len(rest) == 3 and rest[0] == "benchmarks" and rest[2] == "promote" and post:
+        return "orch_benchmark_promote", {**board, "replay": _number(rest[1], "replay")}
     if len(rest) >= 3 and rest[0] == "roles":
         role, tail = {**board, "role": rest[1]}, rest[2:]
         if tail == ["checkpoint"] and get:

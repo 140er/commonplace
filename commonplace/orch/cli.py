@@ -222,6 +222,56 @@ def cmd_exp_retire(args) -> int:
     return 0
 
 
+def cmd_benchmark(args) -> int:
+    """Only this local owner command executes models; MCP exposes reports/decisions."""
+    from dataclasses import asdict
+
+    from .replay import Replays
+
+    principal, st, names = _context(args, owner=True)
+    replays = Replays(st)
+    action = args.benchmark_action
+    if action in ("start", "resume"):
+        if action == "start":
+            try:
+                with open(args.manifest, encoding="utf-8") as handle:
+                    text = handle.read(512_001)
+                manifest = json.loads(text)
+            except (ValueError, UnicodeError):
+                from .store import OrchError
+
+                raise OrchError("invalid_replay", "manifest must be bounded JSON") from None
+            replay_id = replays.create(principal, args.board, args.channel, manifest)
+        else:
+            replay_id = args.replay
+        report = replays.run(
+            principal,
+            args.board,
+            replay_id,
+            args.repository,
+            concurrency=args.concurrency,
+            resume=action == "resume",
+        )
+        _print(report)
+        return 0 if report["state"] == "complete" else 3
+    if action == "show":
+        _print(replays.get(args.board, args.replay))
+        return 0
+    if action == "recover":
+        _print(replays.recover(principal, args.board, args.replay))
+        return 0
+    if action == "promote":
+        result = replays.promote(
+            principal, args.board, args.replay, sha256=args.sha256, connections=names
+        )
+    else:
+        result = replays.benchmarks.rollback(principal, args.board, connections=names)
+    if result.accept.arm_needed:
+        _arm(st, args.board)
+    _print({"promotion": asdict(result.promotion), "version": result.accept.version.public()})
+    return 0
+
+
 def cmd_restore_status(args) -> int:
     _principal, st, _names = _context(args, owner=False)
     state = st.restore_state()
@@ -305,6 +355,26 @@ def add_parsers(sub) -> None:
     workspace(s, by=True)
     s.add_argument("name")
     s.set_defaults(func=cmd_exp_retire)
+
+    benchmarks = orch.add_parser(
+        "benchmark", help="subscription-only Coworker experiments"
+    ).add_subparsers(dest="benchmark_action", required=True)
+    for action in ("start", "resume", "show", "recover", "promote", "rollback"):
+        s = benchmarks.add_parser(action)
+        workspace(s, by=True)
+        s.set_defaults(func=cmd_benchmark)
+        if action == "start":
+            s.add_argument("manifest", help="historical replay tasks as JSON")
+            s.add_argument("--channel", required=True, help="accepted exp:<name> candidate")
+        elif action != "rollback":
+            s.add_argument("replay", type=_version)
+        if action in ("start", "resume"):
+            s.add_argument(
+                "--repository", required=True, help="local repository containing task commits"
+            )
+            s.add_argument("--concurrency", type=int, choices=(1, 2, 3), default=1)
+        if action == "promote":
+            s.add_argument("--sha256", required=True)
 
     s = orch.add_parser("restore-status", help="show the restore flag and the text to type")
     workspace(s, board=False)
