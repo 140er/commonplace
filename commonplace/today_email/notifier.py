@@ -12,7 +12,7 @@ import time
 
 from commonplace import events, mailer, sessions, urls
 from commonplace.boards import service
-from commonplace.extensions import ToolContext, ToolError
+from commonplace.extensions import RetryableToolError, ToolContext, ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +75,16 @@ class TodayEmail:
     # -- per-person state ---------------------------------------------------------
 
     def today(self, principal) -> dict[int, str]:
-        """The needs-you items this person can read, number to title."""
+        """The needs-you items this person can read, number to title.
+
+        A refusal means this person has no Today list to read (empty). A busy or paused
+        memory is not an empty Today: it raises, so nothing is forgotten or seeded from it."""
         try:
             report = service.BoardService(
                 ToolContext(principal=principal, gateway=self.gateway)
             ).needs_me()
+        except RetryableToolError:
+            raise
         except ToolError:
             return {}
         items = {}
@@ -162,7 +167,7 @@ class TodayEmail:
             conn.execute("DELETE FROM today_email_sends WHERE sent_at<=?", (now - WINDOW_SECONDS,))
         if not fresh or recent >= MAX_PER_HOUR:
             return 0  # Over the cap: the items stay un-noted and go out in a later mail.
-        subject, text = self._message(sorted(fresh), today)
+        subject, text = self._message(workspace_id, sorted(fresh), today)
         # A failed send counts against the cap so a broken server is not hammered.
         with self.db._lock, self.db._tx() as conn:
             conn.execute(
@@ -182,8 +187,13 @@ class TodayEmail:
             )
         return 1
 
-    def _message(self, numbers, today):
+    def _message(self, workspace_id, numbers, today):
         shown = numbers[:MAX_LISTED]
+        # Stable links that open in this person's workspace, like every other shared link.
+        card_paths = {number: f"/app/#/card/{number}" for number in shown}
+        links = urls.share_links(
+            self.db, workspace_id, [*card_paths.values(), "/app/#/", "/app/#/settings"]
+        )
         if len(numbers) == 1:
             subject = f"New in Today: {_line(today[numbers[0]], _SUBJECT_TITLE)}"
         else:
@@ -192,15 +202,15 @@ class TodayEmail:
         for number in shown:
             lines += [
                 f"- #{number} {_line(today[number], 200)}",
-                f"  {urls.APP_URL}/app/#/card/{number}",
+                f"  {links[card_paths[number]]}",
             ]
         if len(numbers) > len(shown):
             lines.append(f"- and {len(numbers) - len(shown)} more")
         lines += [
             "",
-            f"Open Today: {urls.APP_URL}/app/#/",
+            f"Open Today: {links['/app/#/']}",
             "",
             "You turned these emails on. Turn them off in Settings, under Email for Today:",
-            f"{urls.APP_URL}/app/#/settings",
+            links["/app/#/settings"],
         ]
         return subject, "\n".join(lines) + "\n"

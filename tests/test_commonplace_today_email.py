@@ -5,7 +5,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from commonplace import mailer
+from commonplace import mailer, urls
+from commonplace.boards import service as board_service
+from commonplace.extensions import RetryableToolError
 from tests.phone_push_harness import (
     agent,
     api,
@@ -102,7 +104,7 @@ def test_opt_in_is_off_by_default_and_reads_back(hub, signup, notifier):
     owner, _ = register()
     code, body = setting(hub, owner)
     assert code == 200 and body["available"] is True and body["enabled"] is False
-    assert body["address"].endswith("@example.test") or "@" in body["address"]
+    assert body["address"] == hub.me(owner)["email"]
     assert setting(hub, owner, True)[1]["enabled"] is True
     assert setting(hub, owner)[1]["enabled"] is True
     assert setting(hub, owner, False)[1]["enabled"] is False
@@ -124,8 +126,13 @@ def test_a_new_today_item_sends_exactly_one_mail_without_card_text(hub, signup, 
     assert to == setting(hub, owner)[1]["address"]
     assert "Pick the database" in subject
     assert f"#{number} Pick the database" in text
-    assert f"https://cp.example/app/#/card/{number}" in text
-    assert "https://cp.example/app/#/settings" in text
+    links = urls.share_links(
+        hub.gateway.db,
+        hub.me(owner)["workspace"],
+        [f"/app/#/card/{number}", "/app/#/", "/app/#/settings"],
+    )
+    for link in links.values():
+        assert link.startswith("https://cp.example/") and link in text
     for secret in (BODY, NOTE, CONTEXT):
         assert secret not in subject + text
 
@@ -175,7 +182,7 @@ def test_a_burst_is_one_mail_and_the_hourly_cap_holds_the_rest(hub, signup, noti
     assert notifier.reconcile() == 1
     ((_, subject, text),) = notifier.mailer.sent
     assert subject == "5 new items in Today"
-    assert text.count("/app/#/card/") == 3 and "and 2 more" in text
+    assert text.count("/s/") == 3 + 2 and "and 2 more" in text
     assert notifier.reconcile() == 0  # All five are noted: no second mail for the same items.
     ask(hub, owner, worker, "Second arrival")
     assert notifier.reconcile() == 1
@@ -221,3 +228,30 @@ def test_an_item_that_leaves_today_is_forgotten(hub, signup, notifier):
     with hub.gateway.db._lock:
         left = hub.gateway.db._conn.execute("SELECT COUNT(*) FROM today_email_items").fetchone()[0]
     assert left == 0
+
+
+def test_a_busy_memory_is_not_an_empty_today(hub, signup, notifier, monkeypatch):
+    _, _, register = signup
+    owner, _ = register()
+    worker = agent(hub, owner, "worker", unrestricted=True)
+    ask(hub, owner, worker)
+    original = board_service.BoardService.needs_me
+
+    def busy(self, *args, **kwargs):
+        raise RetryableToolError("busy", 1, "busy")
+
+    # Turning it on while memory is busy saves nothing instead of seeding an empty Today.
+    monkeypatch.setattr(board_service.BoardService, "needs_me", busy)
+    assert setting(hub, owner, True)[0] == 503
+    monkeypatch.setattr(board_service.BoardService, "needs_me", original)
+    assert setting(hub, owner)[1]["enabled"] is False
+    assert setting(hub, owner, True)[1]["enabled"] is True
+    assert notifier.reconcile() == 0  # What was already waiting is not mailed.
+    number = ask(hub, owner, worker)
+    assert notifier.reconcile() == 1
+    # A busy pass forgets nothing, so the recovered pass does not mail the same item again.
+    monkeypatch.setattr(board_service.BoardService, "needs_me", busy)
+    assert notifier.reconcile() == 0
+    monkeypatch.setattr(board_service.BoardService, "needs_me", original)
+    assert notifier.reconcile() == 0
+    assert len(notifier.mailer.sent) == 1 and f"#{number}" in notifier.mailer.sent[0][2]

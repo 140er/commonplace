@@ -1,5 +1,6 @@
 """Email-for-Today settings route."""
 
+from commonplace.extensions import RetryableToolError
 from commonplace.http_util import read_json, require_principal, send_json
 
 NOT_SET_UP = "no: email is not set up on this server"
@@ -42,7 +43,12 @@ def register(gateway):
         if data["enabled"] and not notifier.available:
             send_json(h, 409, {"error": NOT_SET_UP})
             return
-        notifier.set_enabled(principal, data["enabled"])
+        try:
+            notifier.set_enabled(principal, data["enabled"])
+        except RetryableToolError:
+            # Memory is busy: nothing was saved, so Today is never mistaken for empty.
+            send_json(h, 503, {"error": "no: try again in a moment"})
+            return
         send_json(h, 200, _view(notifier, principal))
 
     gateway.add_route("GET", "/api/today-email", route)

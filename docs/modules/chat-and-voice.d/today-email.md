@@ -7,7 +7,8 @@
 
   - Off by default and per person. Turning it on records what Today already holds, so only items that arrive later send. An item that leaves Today and comes back is new again.
   - What a person is mailed is what their own Today list holds, read through `needs_me`, so nobody hears about an item they cannot read. The mail has the card number, its title and links, never the body, notes or context.
-  - A burst arrives as one mail listing up to ten items, at most three mails per person in any hour; items over the cap stay waiting and go out in a later mail. A failed send counts against the cap and is retried.
+  - A burst arrives as one mail listing up to ten items, at most three mails per person and workspace in any hour (the choice is per workspace too); items over the cap stay waiting and go out in a later mail. A failed send counts against the cap and is retried.
+  - A busy or paused memory is never read as an empty Today: that pass changes nothing, and turning the setting on during it answers "try again" and saves nothing. Links are the app's stable share links, so they open in the workspace the item is in.
   - Without a mail server the setting says "Email isn't set up on this server", saves nothing and no thread runs. The mail names Settings, Email for Today, as the way to turn it off.
 
 - **How it fails:**

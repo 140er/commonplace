@@ -40,7 +40,7 @@ Claude Code: [local setup and repeatable fresh-install check](../docs/commonplac
 
 ### Email for Today items
 
-With mail on, each person can turn on **Email for Today** in Settings. It is off by default. A new item waiting on you in Today then sends one short email with its number, title and a link, never the card text. Items that arrive together share one email, and at most three emails per person go out in an hour; the rest follow in a later email. Without mail the setting reads "Email isn't set up on this server". Turn it off in the same place.
+With mail on, each person can turn on **Email for Today** in Settings. It is off by default. A new item waiting on you in Today then sends one short email with its number, title and a link, never the card text. Items that arrive together share one email, and at most three emails per person and workspace go out in an hour; the rest follow in a later email. Without mail the setting reads "Email isn't set up on this server". Turn it off in the same place.
 
 ## Hosted plans
 
