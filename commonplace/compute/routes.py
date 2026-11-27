@@ -189,8 +189,30 @@ def _pairings(h, store, principal, parts, auth):
     return pairing_routes.dispatch(h, store, principal, parts, auth, _workspace_body)
 
 
-# Route families that share the cloud workspace rules (members read, a reason on every refusal).
-_FAMILIES = {"workspaces": _workspaces, "overview": _overview, "pairings": _pairings}
+def _consent(h, store, principal, parts, auth):
+    from . import consent
+
+    if len(parts) != 1:
+        raise StoreError("not_found", 404)
+    if h.command == "GET":
+        return send_json(
+            h, 200, {"consent": consent.read(store.gateway.db, principal, parts[0], **auth)}
+        )
+    body = _fields(_body(h), ("allowed", "expected_revision"))
+    current, changed = consent.write(store.gateway.db, principal, parts[0], **auth, **body)
+    return send_json(
+        h,
+        200 if changed else 409,
+        {"consent": current, **({} if changed else {"error": "stale_revision"})},
+    )
+
+
+_FAMILIES = {
+    "workspaces": _workspaces,
+    "overview": _overview,
+    "pairings": _pairings,
+    "consent": _consent,
+}
 
 
 def _with_reason(payload, workspace_route):
@@ -353,7 +375,9 @@ def _handle(gateway, handler):
 
 def install(gateway):
     """Register inert REST handlers only; extension-list opt-in is parent-owned."""
-    from . import discovery_routes
+    from . import consent, discovery_routes
+
+    consent.ensure(gateway.db)
 
     for method in ("GET", "POST"):
         gateway.add_route(method, "/api/compute", lambda h: handle(gateway, h))

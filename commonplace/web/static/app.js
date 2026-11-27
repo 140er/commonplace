@@ -478,6 +478,13 @@ function shell() {
   // navigation() replaces the rail; it re-applies the sheet's inert state through this.
   state.shellSync = sync;
 }
+const phoneTabsMarkup = new WeakMap();
+function paintPhoneTabs(html) {
+  const mount = root.querySelector("#phone-tabs");
+  if (!mount || phoneTabsMarkup.get(mount) === html) return;
+  mount.innerHTML = html;
+  phoneTabsMarkup.set(mount, html);
+}
 function navigation() {
   const boardNav = root.querySelector("#board-nav");
   if (!boardNav) return;
@@ -505,7 +512,7 @@ function navigation() {
     if (accountOpen) state.railNode?.querySelector?.(".user-menu")?.setAttribute("open", "");
   } else if (!accountOpen) boardNav.querySelector?.(".user-menu")?.removeAttribute?.("open");
   root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
-  root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
+  paintPhoneTabs(state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting }));
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
@@ -1284,8 +1291,7 @@ function mountWorkbenchChat() {
     document.addEventListener("visibilitychange", visibility);
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
-        const mount = root.querySelector("#phone-tabs");
-        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : /^#\/compute(\/management)?$/.test(state.base) ? "compute" : "", botsWaiting: state.botsWaiting });
+        paintPhoneTabs(state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : /^#\/compute(\/management)?$/.test(state.base) ? "compute" : "", botsWaiting: state.botsWaiting }));
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
