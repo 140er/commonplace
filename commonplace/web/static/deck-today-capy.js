@@ -1,8 +1,9 @@
+import { connectionRequestHTML, connectionRequestClick } from './connection-requests.js';
 import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
-import { addStyles, primaryAction, needsCards, configProposals, setupProposals, removeNeed, removeConfig, removeSetup, configKey, setupKey, todayKey, stamp, displayText, actionRequest, avatar, timeHTML, needsMeCount } from './deck-home-today.js';
-import { previewText, runnerSetupItems } from './needs-me.js';
+import { addStyles, primaryAction, needsCards, configProposals, setupProposals, removeNeed, removeConfig, removeSetup, removeConnection, configKey, setupKey, todayKey, stamp, displayText, actionRequest, avatar, timeHTML, needsMeCount } from './deck-home-today.js';
+import { previewText, runnerSetupItems, connectionRequests } from './needs-me.js';
 import { runnerConsent, runnerConsentClick, runnerConsentChange, adoptConsentStyle } from './runnerconsent.js';
 
 export const TITLE = 'Waiting on you';
@@ -126,7 +127,7 @@ export function mount(context) {
   const region = name => root.querySelector(`[data-bt="${name}"]`);
   const dialog = root.querySelector('dialog'), form = dialog.querySelector('form');
   let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', currentAnswering = false, confirmTimer = null, focused = null, filter = 'all', needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
-  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set(), openChanges = new Set(), confirming = new Set(), settledConfigs = new Set(), settledSetups = new Set();
+  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set(), openChanges = new Set(), confirming = new Set(), settledConfigs = new Set(), settledSetups = new Set(), settledConnections = new Set();
   const botName = card => (bots.find(bot => bot.board && bot.board === card.board)?.name || card.bot_name || '');
   function cards() {
     const list = needsCards(needs).filter(card => !settled.has(stamp(card)));
@@ -142,6 +143,8 @@ export function mount(context) {
   // Machine setup steps are decisions for the owner too: they sit under All and Reviews with the proposals.
   const runnerSetups = () => runnerSetupItems(needs);
   const visibleRunnerSetups = () => filter === 'all' || filter === 'review' ? runnerSetups() : [];
+  const connections = () => connectionRequests(needs).filter(item => !settledConnections.has(item.id));
+  const visibleConnections = () => filter === 'all' || filter === 'review' ? connections() : [];
   let consentBusy = false;
   function focus(number) {
     focused = number;
@@ -149,11 +152,11 @@ export function mount(context) {
   }
   function paint() {
     if (!active) return;
-    const all = cards(), list = visible(), proposed = visibleConfigs(), suggested = visibleSetups(), consents = visibleRunnerSetups(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
+    const all = cards(), list = visible(), proposed = visibleConfigs(), suggested = visibleSetups(), consents = visibleRunnerSetups(), requested = visibleConnections(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
     region('summary').textContent = loaded || needsMeCount(needs) ? summaryLine(needs) : 'Loading…';
-    region('chips').innerHTML = chipsHTML([...all, ...[...setups(), ...configs()].map(item => ({ ...item, actions: ['approve', 'reject'] })), ...runnerSetups().map(item => ({ ...item, actions: ['approve'] }))], filter);
+    region('chips').innerHTML = chipsHTML([...all, ...[...connections(), ...setups(), ...configs()].map(item => ({ ...item, actions: ['approve', 'reject'] })), ...runnerSetups().map(item => ({ ...item, actions: ['approve'] }))], filter);
     region('keys').hidden = !(list.length || proposed.length || suggested.length);
-    region('cards').innerHTML = list.length || proposed.length || suggested.length || consents.length ? consents.map(runnerConsent).join('') + suggested.map(item => setupHTML(item, { busy, errors, confirming, open: openChanges })).join('') + proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0 || setups().length > 0 || runnerSetups().length > 0);
+    region('cards').innerHTML = list.length || proposed.length || suggested.length || consents.length || requested.length ? requested.map(connectionRequestHTML).join('') + consents.map(runnerConsent).join('') + suggested.map(item => setupHTML(item, { busy, errors, confirming, open: openChanges })).join('') + proposed.map(item => configHTML(item, { busy, errors, confirming, open: openChanges })).join('') + list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded, all.length > 0 || configs().length > 0 || setups().length > 0 || runnerSetups().length > 0 || connections().length > 0);
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
@@ -187,6 +190,7 @@ export function mount(context) {
         for (const card of needsCards(needs)) if (settled.has(stamp(card)) || exiting.has(stamp(card))) needs = removeNeed(needs, card);
         for (const item of configProposals(needs)) if (settledConfigs.has(configKey(item))) needs = removeConfig(needs, item);
         for (const item of setupProposals(needs)) if (settledSetups.has(setupKey(item))) needs = removeSetup(needs, item);
+        for (const item of connectionRequests(needs)) if (settledConnections.has(item.id)) needs = removeConnection(needs, item);
         loaded = true;
       }
       if (roster.status === 'fulfilled') bots = roster.value?.bots || [];
@@ -332,8 +336,20 @@ export function mount(context) {
     });
     return true;
   }
+  function onConnectionClick(event) {
+    const button = event.target.closest?.('[data-connection-action]');
+    if (!button) return false;
+    event.preventDefault();
+    void connectionRequestClick(button, { items: connections(), api, stopped: () => !active,
+      done: item => {
+        settledConnections.add(item.id); needs = removeConnection(needs, item); ctx.onNeedsChanged?.(item);
+        confirm('Decision saved. The person can check it in Connections.'); paint();
+      },
+    });
+    return true;
+  }
   function onClick(event) {
-    if (onConsentClick(event) || onSetupClick(event) || onConfigClick(event)) return;
+    if (onConnectionClick(event) || onConsentClick(event) || onSetupClick(event) || onConfigClick(event)) return;
     if (event.target.closest?.('[data-bt-cancel]')) { dialog.close(); current = null; return; }
     const chip = event.target.closest?.('[data-bt-filter]');
     if (chip) { filter = chip.dataset.btFilter; paint(); return; }

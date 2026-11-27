@@ -13,6 +13,13 @@ export const configKey = item => `config:${item.board}:${item.version}`;
 /** A setup proposal (card #675) has a proposal id and a digest, no card number and no board. */
 export const isSetup = item => item?.kind === 'setup' && Number.isSafeInteger(item?.id) && typeof item?.sha256 === 'string';
 export const setupKey = item => `setup:${item.id}`;
+export const isConnection = item => item?.kind === 'connection_request';
+export const connectionKey = item => `connection:${item.id}`;
+export function removeConnection(needs = {}, item) {
+  const next = { ...needs, connection_requests: (needs.connection_requests || []).filter(other => other.id !== item.id) };
+  next.count = hasQueue(next) ? needsMeCount(next) : Math.max(0, needsMeCount(needs) - 1);
+  return next;
+}
 // Display copy only; the source card and submitted choice are kept verbatim.
 export const displayText = value => hideReferences(String(value ?? '').replace(/\s+/g, ' '), /\bPR\s*#\d+\b|#\d+\b/gi, /(?:~\/|\/(?:home|Users|tmp|var|srv|opt|etc|mnt|work|api)\/|[A-Z]:\\)\S+/g);
 export function removeNeed(needs = {}, card) {
@@ -37,8 +44,8 @@ export function removeSetup(needs = {}, item) {
   next.count = hasQueue(next) ? needsMeCount(next) : Math.max(0, needsMeCount(needs) - 1);
   return next;
 }
-const settleKey = item => isSetup(item) ? setupKey(item) : isConfig(item) ? configKey(item) : stamp(item);
-const removeAny = (needs, item) => isSetup(item) ? removeSetup(needs, item) : isConfig(item) ? removeConfig(needs, item) : removeNeed(needs, item);
+const settleKey = item => isConnection(item) ? connectionKey(item) : isSetup(item) ? setupKey(item) : isConfig(item) ? configKey(item) : stamp(item);
+const removeAny = (needs, item) => isConnection(item) ? removeConnection(needs, item) : isSetup(item) ? removeSetup(needs, item) : isConfig(item) ? removeConfig(needs, item) : removeNeed(needs, item);
 /** Keep a pre-decision read from restoring a badge, scoped to one signed-in person. */
 export function createNeedLedger() {
   let identity = '', settled = new Map();

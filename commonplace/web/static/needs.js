@@ -1,3 +1,6 @@
+import { connectionRequestHTML, connectionRequestClick } from './connection-requests.js';
+import { connectionRequests } from './needs-me.js';
+import { removeConnection } from './deck-home-today.js';
 import { runnerConsent, consentStyle, runnerConsentClick, runnerConsentChange } from "./runnerconsent.js";
 import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
@@ -165,6 +168,7 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
   const roles = modelRoleItems(needs, filter);
   const budgets = budgetItems(needs, filter);
   const accounts = accountItems(needs, filter);
+  const requests = filter === "all" || filter === "approvals" ? connectionRequests(needs) : [];
   const setup = filter === "all" || filter === "decisions" ? (needs.runner_setup || []).filter((item) => ["runner_settings", "runner_consent"].includes(item.kind)) : [];
   const setupRows = setup.map((item) => item.kind === "runner_consent" ? runnerConsent(item) : `<article class="row-item" data-runner-setup="${e(item.id)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">Runner settings need owner approval.</div></div><a class="btn" href="#/admin">Review settings</a></article>`).join("");
   const known = new Map([...cards, ...needsItems(needs).map((item) => item.card)].map((card) => [card.number, card]));
@@ -190,8 +194,8 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
   };
   const visibleCards = [...new Set([...items.map((item) => item.card.number), ...held.map((hold) => hold.card)])];
   const projectSlugs = new Set([...visibleCards.map((number) => known.get(number)?.board), ...roles.map((item) => item.board)].filter(Boolean));
-  const total = visibleCards.length + roles.length + setup.length + budgets.length + accounts.length, projectCount = projectSlugs.size;
-  return `<section class="needs-me" aria-label="Waiting on you"><header class="bar"><h1>Waiting on you</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span>${segHTML({ label: "Filter", attr: "data-needs-filter", current: filter, items: Object.entries(filters) })}</header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${setupRows}${budgets.length ? `<h2 class="group-h">Spend</h2>${budgets.map(budgetRow).join("")}` : ""}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${accounts.length ? `<h2 class="group-h">Your accounts</h2>${accounts.map(accountRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length && !budgets.length && !accounts.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
+  const total = visibleCards.length + roles.length + setup.length + budgets.length + accounts.length + requests.length, projectCount = projectSlugs.size;
+  return `<section class="needs-me" aria-label="Waiting on you"><header class="bar"><h1>Waiting on you</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span>${segHTML({ label: "Filter", attr: "data-needs-filter", current: filter, items: Object.entries(filters) })}</header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${requests.map(connectionRequestHTML).join("")}${setupRows}${budgets.length ? `<h2 class="group-h">Spend</h2>${budgets.map(budgetRow).join("")}` : ""}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${accounts.length ? `<h2 class="group-h">Your accounts</h2>${accounts.map(accountRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length && !budgets.length && !accounts.length && !requests.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
 }
 
 export function githubPrUrl(value) {
@@ -288,6 +292,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   const mergedHeads = new Map();
   let holdsLoaded = false, github = null;
   let stopped = false, paused = false, revision = 0, busy = false, confirming = false, chatOpen = false, error = "", lastPoll = 0, holdRead = null;
+  const decidedRequests = new Set();
   const cards = new Map(), notes = new Map(), tooLate = new Set();
   const mounts = [...new Set([mount, detailMount].filter(Boolean))];
   const rememberNote = () => { const value = detailMount?.querySelector("[data-needs-note]")?.value; if (current && value != null) notes.set(current.number, value); };
@@ -531,10 +536,16 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   }
   const click = async (event) => {
     if (paused && detailMount?.contains(event.target)) return;
-    const button = event.target.closest("[data-runner-consent],[data-needs-github],[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
+    const button = event.target.closest("[data-connection-action],[data-runner-consent],[data-needs-github],[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
     if (!button) return;
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
+    if (button.hasAttribute("data-connection-action")) {
+      await connectionRequestClick(button, { items: connectionRequests(data.needs), api, stopped: () => stopped,
+        done: item => { decidedRequests.add(item.id); data.needs = removeConnection(data.needs, item); draw(); onChange(); },
+      });
+      return;
+    }
     if (button.hasAttribute("data-runner-consent")) {
       await runnerConsentClick(button, {
         items: data.needs.runner_setup || [], mount, api, stopped: () => stopped, busy: () => busy, setBusy: (value) => { busy = value; },
@@ -605,6 +616,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     async show(settings = {}) {
       if (stopped) return;
       rememberNote(); data = { needs: {}, boards: [], ...settings };
+      for (const item of connectionRequests(data.needs)) if (decidedRequests.has(item.id)) data.needs = removeConnection(data.needs, item);
       for (const { card } of needsItems(data.needs)) cards.set(card.number, card);
       const number = settings.selected ?? selected ?? items()[0]?.number;
       // Start selection before reading holds; neither response may choose an older card.

@@ -5197,6 +5197,12 @@ class BoardService(lifecycle.LifecycleMixin):
             groups["orchestrator_failing"] = self._orchestrator_failing()
             groups["orchestrator_stalled"] = self._orchestrator_stalled()
             if self.principal.person:
+                from commonplace import connection_requests
+
+                groups["connection_requests"] = connection_requests.pending(
+                    self.ctx.db, self.principal
+                )
+                groups["count"] += len(groups["connection_requests"])
                 groups["model_roles"] = self._missing_model_roles()
                 groups["count"] += len(groups["model_roles"])
                 groups["config_proposals"] = self._config_proposals()

@@ -76,6 +76,7 @@ RULES = {
     "chat_runner_jobs": Rule(user=_U, workspace=_W),
     "chat_runners_seen": Rule(user=_U, workspace=_W),
     "connections": Rule(user=_U, workspace=_W),
+    "connection_requests": Rule(user=_U, workspace=_W, connection=_C),
     "console_settings": Rule(workspace=_W, connection=_C),
     "coworker_model_attempts": Rule(user=_U, workspace=_W),
     "email_challenges": Rule(email=("email",)),

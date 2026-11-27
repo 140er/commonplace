@@ -38,10 +38,15 @@ export function runnerSetupItems(needs = {}) {
   return list.filter(item => item?.kind === 'runner_consent' && typeof item.id === 'string' && item.id !== '');
 }
 
+export function connectionRequests(needs = {}) {
+  const list = Array.isArray(needs?.connection_requests) ? needs.connection_requests : [];
+  return [...new Map(list.filter(item => item?.kind === 'connection_request' && typeof item.id === 'string' && item.id && item.status === 'pending').map(item => [item.id, item])).values()];
+}
+
 /** How many items wait on the person. Derived from the listed cards, config proposals, setup proposals and machine
  *  setup steps; only a payload with no lists at all (a member who cannot read the queue) falls back to its plain number. */
 export function needsMeCount(needs) {
-  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length + setupProposals(needs).length + runnerSetupItems(needs).length;
+  if (hasQueue(needs)) return needsCards(needs).length + configProposals(needs).length + setupProposals(needs).length + runnerSetupItems(needs).length + connectionRequests(needs).length;
   return Number.isSafeInteger(needs?.count) && needs.count > 0 ? needs.count : 0;
 }
 

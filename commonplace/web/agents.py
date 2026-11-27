@@ -225,6 +225,9 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None, include_dis
     }
     if include_display_name:
         view["display_name"] = row["display_name"] or row["name"]
+    if db is not None:
+        user = db.user(row["user_id"])
+        view["user_name"] = user["name"] or user["email"]
     policy = Policy.from_json(row["policy"])
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)
@@ -527,6 +530,10 @@ def _create(gateway, h, principal, reveal):
 
 
 def install(gateway):
+    from commonplace import connection_requests
+
+    connection_requests.install(gateway)
+
     def manage(h):
         from commonplace.control_db import RunnerLinkedError
 
@@ -564,6 +571,13 @@ def install(gateway):
             return
         if h.command == "DELETE":
             _revoke_pat(gateway, h, principal, row)
+            return
+        if h.command == "POST" and connection_requests.requested_connection(gateway.db, row["id"]):
+            send_json(
+                h,
+                403,
+                {"error": "Only the person who requested this connection can collect its token."},
+            )
             return
         try:
             data = read_json(h)
