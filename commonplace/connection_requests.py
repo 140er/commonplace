@@ -28,6 +28,8 @@ CREATE INDEX IF NOT EXISTS connection_requests_workspace
 ON connection_requests(workspace_id, status, created_at);
 CREATE INDEX IF NOT EXISTS connection_requests_member
 ON connection_requests(user_id, workspace_id, created_at);
+CREATE INDEX IF NOT EXISTS connection_requests_connection
+ON connection_requests(connection_id);
 """
 
 
@@ -93,11 +95,12 @@ def pending(db, principal):
         return [view(db, row) for row in rows]
 
 
-def requested_connection(db, connection_id):
+def requested_connection(db, connection_id, workspace_id):
     with db._lock:
         return (
             db._conn.execute(
-                "SELECT 1 FROM connection_requests WHERE connection_id=?", (connection_id,)
+                "SELECT 1 FROM connection_requests WHERE connection_id=? AND workspace_id=?",
+                (connection_id, workspace_id),
             ).fetchone()
             is not None
         )
@@ -235,9 +238,8 @@ def route(gateway, h):
                     "ORDER BY created_at DESC,id",
                     (principal.workspace_id, principal.user_id),
                 ).fetchall()
-                send_json(
-                    h, 200, {"member_requests": True, "requests": [view(db, row) for row in rows]}
-                )
+                result = {"member_requests": True, "requests": [view(db, row) for row in rows]}
+            send_json(h, 200, result)
             return
         if h.command != "POST" or (
             parts

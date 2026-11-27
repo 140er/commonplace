@@ -572,7 +572,9 @@ def install(gateway):
         if h.command == "DELETE":
             _revoke_pat(gateway, h, principal, row)
             return
-        if h.command == "POST" and connection_requests.requested_connection(gateway.db, row["id"]):
+        if h.command == "POST" and connection_requests.requested_connection(
+            gateway.db, row["id"], principal.workspace_id
+        ):
             send_json(
                 h,
                 403,
