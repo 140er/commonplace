@@ -109,6 +109,8 @@ RULES = {
     ),
     "phone_push_state": Rule(parent=("subscription_id", "phone_push_subscriptions", "id")),
     "phone_push_subscriptions": Rule(user=_U, workspace=_W),
+    # A person's environments belong to the account, not to one workspace.
+    "person_environments": Rule(user=_U),
     # Previews belong to a workspace and stay when a person leaves it, like the card history
     # they are noted in; the people named on them are actor labels, not user columns.
     "preview_events": Rule(workspace=_W),

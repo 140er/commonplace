@@ -314,7 +314,14 @@ def _guess_client(client_row) -> str:
 
 
 def create_code(
-    conn, client_row, principal, parameters, *, person_capabilities=(), approve_client=False
+    conn,
+    client_row,
+    principal,
+    parameters,
+    *,
+    person_capabilities=(),
+    approve_client=False,
+    environment_grant=False,
 ) -> str:
     granted = set(parameters["scope"].split())
     if granted & {"bots:chat", "bots:confirm", "bots:learned"} and not (
@@ -366,6 +373,14 @@ def create_code(
     person_actions.record_grants(
         conn, client_row, principal, cid, person_capabilities, now(), parameters["redirect_uri"]
     )
+    if environment_grant:
+        from commonplace import environments as person_environments
+
+        if parameters.get(person_environments.FLAG) != "1":
+            raise OAuthError("invalid_scope")
+        person_environments.record_grant(
+            conn, client_row, principal, cid, now(), parameters["redirect_uri"]
+        )
     code = secrets.token_urlsafe(32)
     conn.execute(
         "INSERT INTO oauth_codes(code_hash, client_id, connection_id, redirect_uri, resource, "

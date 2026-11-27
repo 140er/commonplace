@@ -159,6 +159,9 @@ def _register(db, data: dict) -> dict:
     if "scope" in data:
         if not isinstance(data["scope"], str):
             raise OAuthError("invalid_client_metadata")
+        from commonplace import environments as person_environments
+
+        person_environments.note_request(data)
         store.scope(data["scope"])
     client_id = "cmmn_client_" + secrets.token_urlsafe(24)
     with db._lock:
@@ -229,7 +232,10 @@ def _person(gateway, h):
 
 
 def _show_authorize(gateway, h, *, status=200):
+    from commonplace import environments as person_environments
+
     parameters = query(h.path)
+    person_environments.note_request(parameters)
     client, error_url = _validate_authorization(gateway.db, parameters)
     if error_url:
         redirect(h, error_url)
@@ -322,6 +328,14 @@ def _show_authorize(gateway, h, *, status=200):
                     f'<label><input type="checkbox" name="{field}" value="1"> '
                     f"{escape(text)}</label>"
                 )
+        if person_environments.consent_wanted(parameters, gateway.db, principal):
+            consent += (
+                '<label><input type="checkbox" name="'
+                + person_environments.FIELD
+                + '" value="1"> '
+                + escape(person_environments.TEXT)
+                + "</label>"
+            )
         if bots_grant.CHAT_SCOPE in requested:
             consent += (
                 '<label><input type="checkbox" name="grant_bots_chat" value="1"> '
@@ -499,6 +513,8 @@ def _submit_authorize(gateway, h):
                 if not granted:
                     location = _response(parameters, error="invalid_scope")
                 else:
+                    from commonplace import environments as person_environments
+
                     code = store.create_code(
                         conn,
                         client,
@@ -506,6 +522,9 @@ def _submit_authorize(gateway, h):
                         dict(parameters, scope=" ".join(granted)),
                         person_capabilities=person_capabilities,
                         approve_client=data.get("approve_client") == "1",
+                        environment_grant=person_environments.wants_grant(
+                            parameters, data, db, principal
+                        ),
                     )
                     location = _response(parameters, code=code)
             login = False
