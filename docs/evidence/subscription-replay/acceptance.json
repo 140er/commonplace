@@ -1,0 +1,145 @@
+{
+  "scenario": "Seeded throwaway test board, five past-task snapshots with known failing real tests; integration acceptance, not a production quality claim.",
+  "adapter": "claude -p; signed-in subscription; model alias haiku; fixed arguments; isolated config",
+  "change": "One builder prompt changes from preserving defective code to repairing the implementation.",
+  "source_fixture": "tests/test_subscription_replay.py::historical_tasks",
+  "model_calls": 10,
+  "summary": {
+    "candidate": {
+      "latency_ms": 26882,
+      "passed": 5,
+      "tokens": 15565
+    },
+    "live": {
+      "latency_ms": 34636,
+      "passed": 0,
+      "tokens": 17122
+    },
+    "tasks": 5
+  },
+  "regressions": [],
+  "cost_basis": "tokens and elapsed time; no currency charge is measured",
+  "attempts": [
+    {
+      "latency_ms": 6486,
+      "passed": 0,
+      "reason": "tests_failed",
+      "side": "live",
+      "state": "complete",
+      "task": "past-1",
+      "test_exit": 1,
+      "tokens": 3300,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 5219,
+      "passed": 1,
+      "reason": null,
+      "side": "candidate",
+      "state": "complete",
+      "task": "past-1",
+      "test_exit": 0,
+      "tokens": 3080,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 6553,
+      "passed": 0,
+      "reason": "tests_failed",
+      "side": "live",
+      "state": "complete",
+      "task": "past-2",
+      "test_exit": 1,
+      "tokens": 3355,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 5498,
+      "passed": 1,
+      "reason": null,
+      "side": "candidate",
+      "state": "complete",
+      "task": "past-2",
+      "test_exit": 0,
+      "tokens": 3149,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 6796,
+      "passed": 0,
+      "reason": "tests_failed",
+      "side": "live",
+      "state": "complete",
+      "task": "past-3",
+      "test_exit": 1,
+      "tokens": 3419,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 5578,
+      "passed": 1,
+      "reason": null,
+      "side": "candidate",
+      "state": "complete",
+      "task": "past-3",
+      "test_exit": 0,
+      "tokens": 3124,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 7878,
+      "passed": 0,
+      "reason": "tests_failed",
+      "side": "live",
+      "state": "complete",
+      "task": "past-4",
+      "test_exit": 1,
+      "tokens": 3612,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 5358,
+      "passed": 1,
+      "reason": null,
+      "side": "candidate",
+      "state": "complete",
+      "task": "past-4",
+      "test_exit": 0,
+      "tokens": 3125,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 6923,
+      "passed": 0,
+      "reason": "tests_failed",
+      "side": "live",
+      "state": "complete",
+      "task": "past-5",
+      "test_exit": 1,
+      "tokens": 3436,
+      "tokens_reason": null
+    },
+    {
+      "latency_ms": 5229,
+      "passed": 1,
+      "reason": null,
+      "side": "candidate",
+      "state": "complete",
+      "task": "past-5",
+      "test_exit": 0,
+      "tokens": 3087,
+      "tokens_reason": null
+    }
+  ],
+  "health": [
+    200,
+    {
+      "ok": true
+    }
+  ],
+  "anonymous_report_status": 401,
+  "owner_report_status": 200,
+  "owner_promote_status": 200,
+  "owner_rollback_status": 200,
+  "rollback_restored_original_body_and_sha256": true
+}

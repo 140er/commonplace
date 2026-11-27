@@ -80,8 +80,8 @@ CREATE TABLE IF NOT EXISTS orch_benchmark_results (
  side TEXT NOT NULL CHECK (side IN ('live','candidate')),
  task TEXT NOT NULL,
  passed INTEGER NOT NULL CHECK (passed IN (0,1)),
- cost_micro_usd INTEGER NOT NULL CHECK (cost_micro_usd >= 0),
- tokens INTEGER NOT NULL CHECK (tokens >= 0),
+ cost_micro_usd INTEGER CHECK (cost_micro_usd >= 0),
+ tokens INTEGER CHECK (tokens >= 0),
  latency_ms INTEGER NOT NULL CHECK (latency_ms >= 0),
  PRIMARY KEY (benchmark_id, side, task)
 );
@@ -97,4 +97,32 @@ CREATE TABLE IF NOT EXISTS orch_promotions (
  new_version INTEGER NOT NULL,
  decided_by TEXT NOT NULL,
  created_at TEXT NOT NULL
+);
+
+-- Machine-side subscription replays. Attempts are append-only; a plan pause keeps
+-- completed sides and can only resume explicitly against the same pinned inputs.
+CREATE TABLE IF NOT EXISTS orch_replays (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ board TEXT NOT NULL,
+ channel TEXT NOT NULL,
+ live_version INTEGER NOT NULL,
+ candidate_version INTEGER NOT NULL,
+ specification TEXT NOT NULL,
+ state TEXT NOT NULL,
+ reason TEXT,
+ benchmark_id INTEGER,
+ created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS orch_replay_attempts (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ replay_id INTEGER NOT NULL,
+ task TEXT NOT NULL,
+ side TEXT NOT NULL CHECK(side IN ('live','candidate')),
+ state TEXT NOT NULL,
+ reason TEXT,
+ passed INTEGER NOT NULL CHECK(passed IN (0,1)),
+ tokens INTEGER,
+ tokens_reason TEXT,
+ latency_ms INTEGER NOT NULL,
+ test_exit INTEGER
 );

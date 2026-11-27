@@ -41,6 +41,9 @@ READ_TOOLS = {
     "orch_restore_status",
 }
 OWNER_TOOLS = {
+    "orch_benchmark_get",
+    "orch_benchmark_promote",
+    "orch_benchmark_rollback",
     "orch_config_accept",
     "orch_config_write",
     "orch_config_reject",
@@ -234,6 +237,9 @@ def code_in(text, code):
 def test_r9_owner_role_agent_tokens_are_refused_every_owner_action(env):
     version, digest = env.propose()
     calls = {
+        "orch_benchmark_get": {"board": BOARD, "replay": 1},
+        "orch_benchmark_promote": {"board": BOARD, "replay": 1, "sha256": digest},
+        "orch_benchmark_rollback": {"board": BOARD},
         "orch_config_accept": {"board": BOARD, "version": version, "sha256": digest},
         "orch_config_write": {"board": BOARD, "text": config_text(), "sha256": sha(config_text())},
         "orch_config_reject": {"board": BOARD, "version": version},
@@ -274,6 +280,59 @@ def test_r9_owner_role_agent_tokens_are_refused_every_owner_action(env):
     assert body["accepted"] == f"v{version}" and env.status(BOARD, version) == "accepted"
 
 
+def test_benchmark_report_owner_accept_and_rollback_over_rest(env):
+    from commonplace.orch.benchmark import TaskResult
+    from commonplace.orch.replay import Replays
+
+    st = orch_store.open_store(env.hub.gateway, env.ws)
+    live = st.accepted(BOARD)
+    text = config_text(prompt="A candidate prompt.")
+    candidate = st.write(
+        env.owner, BOARD, text, channel="exp:repair", sha256=sha(text), connections=[]
+    ).version
+    replays = Replays(st)
+    manifest = {
+        "cli": "claude",
+        "role": "main",
+        "tasks": [
+            {
+                "id": str(n),
+                "revision": HEAD,
+                "request": "Synthetic past task",
+                "files": ["source.py"],
+                "test_files": ["test_source.py"],
+                "test_argv": ["python3", "test_source.py"],
+                "known_passed": False,
+            }
+            for n in range(5)
+        ],
+    }
+    replay = replays.create(env.owner, BOARD, candidate.channel, manifest)
+    entry = replays.benchmarks.record(
+        env.owner,
+        BOARD,
+        candidate.channel,
+        live_results=[TaskResult(str(n), False, None, 30, 100) for n in range(5)],
+        candidate_results=[TaskResult(str(n), True, None, 20, 90) for n in range(5)],
+    )
+    with st.transaction() as conn:
+        conn.execute(
+            "UPDATE orch_replays SET state='complete',benchmark_id=? WHERE id=?", (entry.id, replay)
+        )
+    path = f"boards/{BOARD}/benchmarks/{replay}"
+    assert env.rest("GET", path)[0] == 401
+    assert env.rest("GET", path, token=env.a_token)[0] == 403
+    status, report = env.person("GET", path)
+    assert status == 200 and report["summary"]["candidate"]["passed"] == 5
+    assert report["summary"]["live"]["tokens"] == 150 and report["regressions"] == []
+    assert env.person("GET", f"boards/{FRESH}/benchmarks/{replay}")[0] == 404
+    assert env.person("POST", path + "/promote", {"sha256": "0" * 64})[0] == 409
+    status, body = env.person("POST", path + "/promote", {"sha256": candidate.sha256})
+    assert status == 200 and body["version"]["sha256"] == candidate.sha256
+    status, body = env.person("POST", f"boards/{BOARD}/benchmarks/rollback", {})
+    assert status == 200 and body["version"]["sha256"] == live.sha256
+
+
 def test_r9_cli_principal_and_person_owner_pass_runner_child_does_not(env):
     version, digest = env.propose()
     local = env.ctx(env.local())
@@ -305,7 +364,7 @@ def test_r9_cli_principal_and_person_owner_pass_runner_child_does_not(env):
 
 def test_untrusted_tokens_see_only_read_and_propose(env):
     orch = {name for name in extensions.names() if name.startswith("orch_")}
-    assert len(orch) == 24
+    assert len(orch) == 27
     assert {n for n in env.hub.tool_names(env.untrusted_token) if n.startswith("orch_")} == (
         READ_TOOLS | {"orch_config_propose"}
     )
