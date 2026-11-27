@@ -502,8 +502,10 @@ class _Cut:
         except BackupError as exc:
             pid = re.search(r"process (\d+)", str(exc))
             detail = f"process {pid.group(1)} " if pid else "a process "
+            # The matching process's command line follows the pid, so a refusal is diagnosable from its output.
             raise OnlineBackupError(
-                "writer process", detail + "outside the gateway uses the data directory"
+                "writer process",
+                detail + "outside the gateway uses the data directory: " + str(exc),
             ) from exc
 
     # enumeration
