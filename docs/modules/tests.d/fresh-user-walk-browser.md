@@ -1,0 +1,3 @@
+- **Owns:**
+
+  - `tests/test_fresh_user_walk_browser.py` is the fresh-user browser walk of card #372: on an empty instance with only mail captured, a new person signs up, makes a project and walks card create, edit, prioritise and move, accepting a proposed Coworker config from Today, releasing a restricted-origin card from its card, dropping a reservation, changing a connection's trust in Admin, Coworker Stop and Resume, and a memory text import up to Preview, all through the page and with no API, MCP or bot call by the test. A seed plays the agents in process, once the person has signed up and worked a card, and is the only non-UI step.
