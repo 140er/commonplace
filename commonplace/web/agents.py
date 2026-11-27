@@ -226,8 +226,13 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None, include_dis
     if include_display_name:
         view["display_name"] = row["display_name"] or row["name"]
     if db is not None:
+        from commonplace import connection_requests
+
         user = db.user(row["user_id"])
         view["user_name"] = user["name"] or user["email"]
+        view["can_rotate"] = row["auth"] == "pat" and not connection_requests.requested_connection(
+            db, row["id"], row["workspace_id"]
+        )
     policy = Policy.from_json(row["policy"])
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)

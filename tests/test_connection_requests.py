@@ -149,6 +149,7 @@ def test_approval_creates_a_named_untrusted_expiring_connection_and_member_colle
     assert (
         next(c for c in listing["connections"] if c["id"] == cid)["user_name"] == "Member Example"
     )
+    assert next(c for c in listing["connections"] if c["id"] == cid)["can_rotate"] is False
     durable = json.dumps(
         [dict(c) for c in hub.db.connections()] + [dict(c) for c in hub.db.audit_entries()]
     )

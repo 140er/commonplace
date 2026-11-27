@@ -29,6 +29,10 @@ test('members can request, cancel, collect, and see a decline reason on Connecti
   assert.match(memberRequestRows([{ ...approved, connection: { ...approved.connection, revoked_at: '2026-01-01' } }]), /Revoked/);
   assert.doesNotMatch(memberRequestRows([{ ...approved, connection: { ...approved.connection, revoked_at: '2026-01-01' } }]), /Collect token|Revoke connection/);
   assert.match(memberRequestRows([item({ status: 'declined', reason: 'Use & review <this>' })]), /Reason: Use &amp; review &lt;this&gt;/);
+  const owner = agentsView({ connections: [{ id: 'conn1', auth: 'pat', name: 'member-one', display_name: 'My Coworker', user_name: 'Member Example', can_rotate: false }] });
+  assert.match(owner, /Member Example/);
+  assert.match(owner, /agent-revoke/);
+  assert.doesNotMatch(owner, /agent-rotate/);
 });
 
 test('Waiting on you counts each request once and both approval lists show the requester and exact words', () => {
