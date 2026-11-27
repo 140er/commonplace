@@ -96,7 +96,7 @@ class TodayEmail:
             raise
         except ToolError:
             return {}
-        items = {}
+        items: dict[int, str] = {}
         for bucket in _BUCKETS:
             for card in report.get(bucket, ()):
                 items.setdefault(card["number"], card.get("title") or "")

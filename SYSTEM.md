@@ -13,6 +13,10 @@ entry was written.
 
 ## Decisions
 
+### Today email shutdown
+
+See [`docs/system/today-email-shutdown.md`](docs/system/today-email-shutdown.md) for how the Today email thread stops before the database closes.
+
 ### Review comment originals
 
 See [`docs/system/review-comment-originals.md`](docs/system/review-comment-originals.md) for revision-bound original-word reads and reveals.

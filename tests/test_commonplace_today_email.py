@@ -3,6 +3,7 @@
 import os
 import threading
 from types import SimpleNamespace
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import pytest
@@ -298,7 +299,7 @@ def running_notifier(tmp_path):
     db = ControlDB(str(tmp_path / "control.sqlite3"))
     schema.ensure(db)
     boundary = ClosedConnection(db._conn)
-    db._conn = boundary
+    db._conn = cast(Any, boundary)
     notifier = TodayEmail(SimpleNamespace(db=db), FakeMail(), settle_seconds=60)
     notifier._stop = SettlingEvent(60)
     db.add_pre_close_callback(notifier.stop)
@@ -319,7 +320,7 @@ def test_a_stopped_pass_issues_no_statements(tmp_path):
     db = ControlDB(str(tmp_path / "control.sqlite3"))
     schema.ensure(db)
     boundary = ClosedConnection(db._conn)
-    db._conn = boundary
+    db._conn = cast(Any, boundary)
     notifier = TodayEmail(SimpleNamespace(db=db), FakeMail())
     boundary.closed = True  # From here on, any statement counts as late.
     halt = threading.Event()
