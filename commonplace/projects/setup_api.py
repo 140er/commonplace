@@ -214,8 +214,8 @@ def route(gateway, h) -> None:
                 body.pop("rules_seq", None)
             if not isinstance(body, dict) or set(body) != {"sha256"}:
                 raise setups.SetupError("invalid", "send {sha256}", path="sha256")
-            decide = setups.apply if parts[1] == "apply" else setups.reject
-            send_json(h, 200, decide(ctx, _number(parts[0]), body["sha256"]))
+            settle = setups.apply if parts[1] == "apply" else setups.reject
+            send_json(h, 200, settle(ctx, _number(parts[0]), body["sha256"]))
             return
         raise setups.Hidden()
     except setups.Hidden:

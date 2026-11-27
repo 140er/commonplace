@@ -1,0 +1,4 @@
+- **Owns:** The route glue in `commonplace/projects/setup_api.py` that picks `setups.apply` or `setups.reject` for `POST /api/setup-proposals/<id>/apply|reject` (the local is named `settle`, not `decide`).
+- **Promises:** Project code never calls anything named `decide`, `card_start` or `task_add`: the project-sources guard rejects those names so this package cannot reach the decision or card-start paths on its own. Naming the apply/reject picker `settle` keeps the routes behaving exactly as before.
+- **How it fails:** A call named `decide` anywhere in `commonplace/projects/*.py` fails `test_project_sources_generic_and_secret_safe`.
+- **Tests:** `tests/test_projects_guards.py`.

@@ -114,3 +114,9 @@ number of changes, a Changes list (`+` creates, `~` sets or clears, `=` stays), 
 Approve posts the item's own `sha256` to the apply route; Reject asks once and posts it to the reject
 route. A refused or stale tap keeps the item, says why and re-reads the queue. The confirmation says
 that everything under Changes is in place, or how many parts could not be done.
+
+#### Guard on names in project code
+
+`commonplace/projects/*.py` may not call anything named `decide`, `card_start` or `task_add`
+(`tests/test_projects_guards.py`). The apply and reject routes therefore pick `setups.apply` or
+`setups.reject` through a local named `settle`; what the routes do is unchanged.
