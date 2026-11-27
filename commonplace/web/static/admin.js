@@ -1,5 +1,7 @@
 import { boundedRequest } from "./request-deadline.js";
 export { boundedRequest } from "./request-deadline.js";
+// Held here, not in owner-only.js: several test harnesses load this file alone from a data URL.
+export const ADMIN_OWNER_ONLY = "Only the workspace owner can open Admin. Ask the workspace owner if you need something changed there.";
 /** Read-first workspace administration, with independently bounded section loads. Its writes are the owner's machine requester list and the owner's connection trust level. */
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Connected apps',
@@ -310,7 +312,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
   function show() {
     stop(); host = mount();
     if (!host) return;
-    if (!owner()) { host.innerHTML = '<p role="status">a signed-in workspace owner is required</p>'; return; }
+    if (!owner()) { host.innerHTML = `<p role="status" data-owner-only>${e(ADMIN_OWNER_ONLY)}</p>`; return; }
     workspace = current().workspace; live = true; instanceBlocked = false;
     // The runner block sits beside the refreshing sections so its form and one-time tokens survive their redraws.
     if (runners || invites) {

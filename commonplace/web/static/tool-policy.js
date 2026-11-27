@@ -1,3 +1,4 @@
+import { ownerOnlyNote } from "./owner-only.js";
 // Tool policy: the owner sets each tool action to Allowed, Ask first or Off (owners only).
 const LABELS = { allowed: "Allowed", ask: "Ask first", off: "Off" };
 const KINDS = { read: "Reads", write: "Changes things", unknown: "No longer served" };
@@ -30,7 +31,7 @@ export function mountToolPolicy(host, { api, e, current = () => true, presentati
     try {
       data = await api("/api/tool-policy");
     } catch (error) {
-      if (active()) { if (error.status === 403) host.closest("section")?.remove(); else host.innerHTML = `<p class="message" role="alert">Could not load the tool policy</p>`; }
+      if (active()) { if (error.status === 403) host.innerHTML = ownerOnlyNote(); else host.innerHTML = `<p class="message" role="alert">Could not load the tool policy</p>`; }
       return;
     }
     render();

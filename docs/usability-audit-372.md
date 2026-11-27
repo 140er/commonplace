@@ -355,6 +355,15 @@ works but is hard to find or understand; `low` polish.
   members may create their own tokens.
 - Done when: every owner-only control a member would look for either shows a reason or is absent
   by design in a documented list.
+- Status (card #673): done. Members now see a reason line where an owner-only control would sit
+  ([Settings before](usability-audit-372/673-before-member-settings.png),
+  [after](usability-audit-372/673-after-member-settings.png);
+  [project settings before](usability-audit-372/673-before-member-project-settings.png),
+  [after](usability-audit-372/673-after-member-project-settings.png);
+  [waiting card before](usability-audit-372/673-before-member-waiting-card.png),
+  [after](usability-audit-372/673-after-member-waiting-card.png)). The list of controls that stay
+  absent is in the Workspace invites doc. Who may create connections is unchanged and open
+  for the owner to decide.
 
 ### 14. Board freshness and narrow-width layout
 

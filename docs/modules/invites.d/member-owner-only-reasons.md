@@ -1,0 +1,3 @@
+- **Owns:** The "What a member sees instead of an owner-only control" table and the "Absent by design" list in `docs/invites.md`.
+- **Promises:** Every owner-only control a member would look for either shows a reason line or is on the absent-by-design list. Only the workspace owner creates connections; members ask the owner. Changing that is an owner decision and a separate change.
+- **Tests:** `tests/test_member_owner_only_reasons.py` holds the member refusals (connections, trust, bot management, models) next to the reason lines.
