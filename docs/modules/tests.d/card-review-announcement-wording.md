@@ -1,0 +1,4 @@
+- **Owns:** The decision announcement browser checks for card review comments.
+- **Promises:** The announcement check waits for the words the card now shows, "The bot stops answering these comments", the same wording `tests/test_card_reviews_browser.py` and the node harness expect since the Deck rebuild renamed the reviewer from Coworker to bot. The confirmed and partial outcomes are still told apart in Deck and Classic on desktop and phone.
+- **How it fails:** A decision that does not announce its confirmed or partial result in the status line fails every one of the twelve cases; nothing is skipped, retried or given a longer timeout.
+- **Tests:** `tests/test_card_review_decision_browser.py`.
