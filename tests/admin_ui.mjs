@@ -61,7 +61,7 @@ async function main() {
       assert.equal(state.base,'#/admin','Admin must survive the hash allowlist');
       assert.equal(shared,0,'Admin must bypass shared boards/needs/rules fan-in');
       if(can_admin) {assert.match(f.mount.innerHTML,/Users and workspaces/);assert.equal(f.requests.length,6);}
-      else {assert.match(f.mount.innerHTML,/a signed-in workspace owner is required/);assert.equal(f.requests.length,0);}
+      else {assert.match(f.mount.innerHTML,/data-owner-only>Only the workspace owner can open Admin\./);assert.equal(f.requests.length,0);}
       const calls=f.requests.length;
       const background=context.refresh({background:true,events:[{kind:'changed'}]});await flush();
       assert.equal(shared,0,'Background events must not enter the shared fan-in');await background;
