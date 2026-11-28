@@ -40,10 +40,17 @@ def phone(hub, monkeypatch):
     return client
 
 
-def grant(client, capabilities=SCOPES, *, checked=None, oauth_scopes=("memory:read",)):
+def grant(
+    client,
+    capabilities=SCOPES,
+    *,
+    checked=None,
+    oauth_scopes=("memory:read",),
+    redirect_uri="cmmn://auth/callback",
+):
     checked = capabilities if checked is None else checked
     path = client.authorize_path(
-        client.cid, redirect_uri="cmmn://auth/callback", scope=" ".join(oauth_scopes)
+        client.cid, redirect_uri=redirect_uri, scope=" ".join(oauth_scopes)
     )
     status, _, html = client.request("GET", path)
     assert status == 200, html
@@ -62,9 +69,7 @@ def grant(client, capabilities=SCOPES, *, checked=None, oauth_scopes=("memory:re
     query = parse_qs(urlsplit(headers["Location"]).query)
     if "error" in query:
         return query
-    status, _, text = client.exchange(
-        client.cid, query["code"][0], redirect_uri="cmmn://auth/callback"
-    )
+    status, _, text = client.exchange(client.cid, query["code"][0], redirect_uri=redirect_uri)
     assert status == 200, text
     return json.loads(text)
 

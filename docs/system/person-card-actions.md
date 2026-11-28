@@ -5,11 +5,13 @@ phone chat-list summaries. S2 adds the separately consented event feed documente
 in [person-events.md](person-events.md). The fresh web sign-in account-deletion
 token remains a later slice. Existing account safeguards remain unchanged.
 
-`COMMONPLACE_PHONE_ACTIONS=on` is an instance opt-in. Enable it before service
-startup to install the private card prefix. Consent, mint and use check the live
-switch. Every other value is off. Existing clients and tokens gain no authority;
-a new consent creates a new connection and capability association. Disconnecting
-revokes the OAuth tokens. Machinery conversion withdraws phone capabilities.
+`COMMONPLACE_PHONE_ACTIONS=on` is an instance opt-in for delegated phone
+capabilities. Enable it before service startup to install the private card prefix.
+Consent, mint and use of those capabilities check the live switch. Every other
+value is off. A new consent creates a new connection and capability association.
+Disconnecting revokes the OAuth tokens. Machinery conversion withdraws phone
+capabilities. The switch does not gate the workspace owner's own cmmn phone,
+described with the chat routes below.
 
 The phone requests and receives exactly `memory:read`. OAuth metadata, policy
 scopes, default scopes and web session policies remain unchanged. The following
@@ -47,9 +49,19 @@ The chat contract is:
 
 | Route | Consented phone | Ordinary OAuth | Web session |
 | --- | --- | --- | --- |
-| `GET /api/chat` | Person's readable projects plus phone-only summaries | 403 | Existing response |
-| `GET /api/chat/<slug>?last=50` | Same person-readable feed as the web | 403 | Existing feed |
-| `POST /api/boards/<slug>/chat` with `{text}` | Person's own message; 201; no `memory:write` on the bearer | Existing policy refusal or connection reply | Existing person post |
+| `GET /api/chat` | Person's readable projects plus phone-only summaries | 403, except the owner's own cmmn phone | Existing response |
+| `GET /api/chat/<slug>?last=50` | Same person-readable feed as the web | 403, except the owner's own cmmn phone | Existing feed |
+| `POST /api/boards/<slug>/chat` with `{text}` | Person's own message; 201; no `memory:write` on the bearer | Existing policy refusal or connection reply, except the owner's own cmmn phone posts as that owner | Existing person post |
+
+The workspace owner's own cmmn phone uses those three chat routes as that owner
+without ticking `chat:person` and without `COMMONPLACE_PHONE_ACTIONS`. The bearer
+must be an OAuth token for the current workspace owner, its client redirect list
+must be exactly `cmmn://auth/callback`, and the connection must not be agent
+machinery or a board coordinator. The token's scopes stay whatever sign-in
+granted (the phone asks for `memory:read` only). A member, a client with any
+other redirect, a runner, a seat, an agent-started connection, or a coordinator
+still needs the explicit grant plus the switch, or is refused. An existing owner
+phone token picks this up on the next request; refresh cannot add a scope.
 
 The phone capability never makes the authenticated OAuth principal a person
 globally. Only these route-local operations resolve the current person. Settings,
