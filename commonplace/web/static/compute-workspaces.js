@@ -465,7 +465,7 @@ const FIELD_OF_INPUT = { ws_name: "name", ws_image: "image", ws_cpu_cores: "cpu_
 export function createWorkspaces(ctx) {
   let rows = null, total = 0, options = null, canManage = false, loadError = "", configError = "", loading = false;
   let mode = "", step = "edit", values = {}, startValues = null, baseValues = null, base = null, errors = {}, selected = null, busy = false, formError = "", notice = "", requestId = "", opener = null;
-  let stale = false, leaving = false, refused = false, reapply = null, pressed = false, unbind = null, shownTop = "";
+  let stale = false, leaving = false, refused = false, reapply = null, pressed = false, unbind = null, shownTop = "", shownMachines = "";
   const held = new Set();
   const find = id => rows?.find(row => row.id === id);
   const machines = () => (ctx.machines() || []).map(node => ({ id: node.id, name: node.name, state: node.state }));
@@ -505,6 +505,7 @@ export function createWorkspaces(ctx) {
   const problemRole = () => (ctx.outage?.() ? "status" : "alert");
   function html() {
     shownTop = topHTML();
+    shownMachines = JSON.stringify(machines());
     return `<section class="compute-inventory compute-wide compute-ws" aria-labelledby="compute-workspaces"><div data-ws-top>${shownTop}</div>`
       + `<p class="compute-notice compute-ws-notice" data-ws-notice role="status">${e(notice)}</p>`
       + `<p class="compute-error compute-ws-problem" data-ws-problem role="${problemRole()}">${e(problem())}</p><div data-ws-root>${inner()}</div></section>`;
@@ -534,6 +535,7 @@ export function createWorkspaces(ctx) {
       const top = host.querySelector("[data-ws-top]"), next = topHTML();
       if (top && next !== shownTop) { top.innerHTML = next; shownTop = next; }
       root.innerHTML = inner();
+      shownMachines = JSON.stringify(machines());
       writeProblem();
     } else ctx.rerender();
     restore?.();
@@ -572,10 +574,20 @@ export function createWorkspaces(ctx) {
       : control.id === "compute-ws-heading" ? "#compute-ws-heading" : row && control.matches(".compute-ws-name") ? `[data-ws-id="${row.dataset.wsId}"] .compute-ws-name` : control.dataset?.wsAction ? `${row ? `[data-ws-id="${row.dataset.wsId}"] ` : ""}[data-ws-action="${control.dataset.wsAction}"]${control.dataset.focus ? `[data-focus="${control.dataset.focus}"]` : ""}${control.dataset.preset ? `[data-preset="${control.dataset.preset}"]` : ""}` : "";
     const caret = typeof control.selectionStart === "number" ? [control.selectionStart, control.selectionEnd] : null;
     return () => {
-      const again = selector ? ctx.host()?.querySelector?.(selector) : null;
+      const again = control.isConnected ? control : selector ? ctx.host()?.querySelector?.(selector) : null;
       if (!again) return;
       again.focus?.({ preventScroll: true });
       if (caret) try { again.setSelectionRange?.(...caret); } catch { /* number inputs have no caret */ }
+    };
+  }
+  // Keep the controls and native disclosure state when the parent refreshes other inventories.
+  // Changed machine choices need fresh markup; workspace changes are painted by load() itself.
+  function carry() {
+    const root = ctx.host()?.querySelector?.("[data-ws-root]");
+    const sameMachines = shownMachines === JSON.stringify(machines());
+    return () => {
+      const fresh = ctx.host()?.querySelector?.("[data-ws-root]");
+      if (root && fresh && root !== fresh && sameMachines && typeof fresh.replaceWith === "function") fresh.replaceWith(root);
     };
   }
   function restoreFocus(back) {
@@ -623,6 +635,7 @@ export function createWorkspaces(ctx) {
     const [list, config] = await Promise.allSettled([ctx.request(BASE), ctx.request(`${BASE}/images`)]);
     loading = false;
     if (!ctx.valid(page)) return;
+    const before = JSON.stringify([rows, total, options, canManage, loadError, configError]);
     for (const result of [list, config]) if (result.status === "rejected" && result.reason?.status === 401 && ctx.denied(result.reason)) return;
     if (list.status === "rejected" || !Array.isArray(list.value?.workspaces)) { rows = null; loadError = LOAD_ERROR; }
     else { rows = list.value.workspaces; total = Number.isInteger(list.value.total) ? list.value.total : rows.length; canManage = list.value.can_manage === true; }
@@ -632,7 +645,8 @@ export function createWorkspaces(ctx) {
     if (mode && mode !== "create" && !find(selected)) { mode = ""; step = "edit"; selected = null; stale = false; leaving = false; notice = "That cloud workspace is no longer available."; }
     // The list moved on while a form was open: say so now, not only when the person tries to save.
     else if ((mode === "edit" || mode === "discard") && base && find(selected)?.version !== base.version) { stale = true; leaving = false; step = "edit"; refused = false; formError = mode === "discard" ? STALE_DISCARD : STALE; }
-    paint();
+    if (before !== JSON.stringify([rows, total, options, canManage, loadError, configError])) paint();
+    else writeProblem();
     // Said once, through the status line (no focus is taken from whatever the person was doing).
     if (stale) { say("This workspace changed while you had it open. Nothing was saved or discarded; the message in the form says what to do."); ctx.host()?.querySelector?.("[data-ws-summary]")?.scrollIntoView?.({ block: "center" }); }
     else if (announce) {
@@ -868,6 +882,6 @@ export function createWorkspaces(ctx) {
     formError = ""; step = "review"; paint("heading");
     return true;
   }
-  function reset() { unbind?.(); rows = null; total = 0; options = null; canManage = false; loadError = ""; configError = ""; loading = false; mode = ""; step = "edit"; values = {}; startValues = null; baseValues = null; base = null; errors = {}; selected = null; busy = false; formError = ""; notice = ""; requestId = ""; opener = null; stale = false; leaving = false; refused = false; reapply = null; }
-  return { html, holdFocus, load, click, input, submit, keydown, reset, get open() { return mode !== ""; }, get loaded() { return rows !== null; }, get state() { return { rows, mode, step, values, errors, canManage, notice, formError, requestId, stale, leaving, busy }; } };
+  function reset() { unbind?.(); rows = null; total = 0; options = null; canManage = false; loadError = ""; configError = ""; loading = false; mode = ""; step = "edit"; values = {}; startValues = null; baseValues = null; base = null; errors = {}; selected = null; busy = false; formError = ""; notice = ""; requestId = ""; opener = null; stale = false; leaving = false; refused = false; reapply = null; shownMachines = ""; }
+  return { html, holdFocus, carry, load, click, input, submit, keydown, reset, get open() { return mode !== ""; }, get loaded() { return rows !== null; }, get state() { return { rows, mode, step, values, errors, canManage, notice, formError, requestId, stale, leaving, busy }; } };
 }

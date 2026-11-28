@@ -1,0 +1,3 @@
+- **Owns:** `compute.js` carries the existing cloud-workspace controls through a parent inventory repaint and remembers focus on Refresh through a later background read. `compute-workspaces.js` reuses controls while machine choices are unchanged, restores the original focused control, and only repaints a loaded workspace list when its data or configuration changes.
+- **Promises:** Changed workspace records, permissions, image configuration and machine choices still render their current values. Refresh never saves or starts a workspace.
+- **Tests:** `tests/test_compute_workspaces_browser.py` checks an open help disclosure, keyboard focus and an unsaved draft through both halves of a background refresh in Classic and Deck.

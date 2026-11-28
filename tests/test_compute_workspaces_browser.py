@@ -182,7 +182,7 @@ def _open(browser, fx, ui, size, cookie=None, viewport=None, touch=None, clock=F
     page.goto(f"{fx.origin}/app/?ui={ui}{route}")
     page.locator("#compute-workspaces").wait_for()
     # The screen repaints once the inventory has loaded; interact only after it has settled.
-    expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
+    expect(page.locator('[data-compute-action="refresh"]')).to_be_enabled()
     return context, page, errors
 
 
@@ -305,6 +305,66 @@ def _assert_bar_sits_on_the_tab_bar(page):
 
 
 @pytest.mark.parametrize("ui", UIS)
+def test_background_refresh_keeps_the_form_help_and_draft(served, ui):
+    def body(page, label, context):
+        page.get_by_role("button", name="New cloud workspace").click()
+        name = page.get_by_role("textbox", name="Name", exact=True)
+        name.fill("Draft box")
+        page.get_by_role("combobox", name="Image", exact=True).select_option("custom")
+        address = page.get_by_role("textbox", name="Image address", exact=True)
+        address.fill("ghcr.io/acme/draft:1")
+        help_box = _section(page).locator(".compute-ws-help")
+        summary = help_box.locator("summary")
+        summary.click()
+        expect(help_box).to_have_attribute("open", "")
+        expect(summary).to_be_focused()
+
+        def changed(route):
+            feed = route.fetch().json()
+            route.fulfill(json={**feed, "reset": False, "events": [{"kind": "card.updated"}]})
+
+        def background_refresh():
+            page.route("**/api/events?*", changed, times=1)
+            with page.expect_request(re.compile(r"/api/compute$")):
+                page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+
+        held = []
+        page.route("**/api/compute", lambda route: held.append(route))
+        background_refresh()
+        try:
+            expect(help_box).to_have_attribute("open", "")
+            expect(summary).to_be_focused()
+            expect(name).to_have_value("Draft box")
+            expect(address).to_have_value("ghcr.io/acme/draft:1")
+        finally:
+            assert len(held) == 1
+            held[0].continue_()
+        expect(page.locator('[data-compute-action="refresh"]')).to_be_enabled()
+        expect(help_box).to_have_attribute("open", "")
+        expect(summary).to_be_focused()
+        expect(name).to_have_value("Draft box")
+        expect(address).to_have_value("ghcr.io/acme/draft:1")
+        page.unroute("**/api/compute")
+        refresh = page.locator('[data-compute-action="refresh"]')
+        refresh.click()
+        expect(refresh).to_be_focused()
+        background_refresh()
+        expect(refresh).to_be_enabled()
+        expect(refresh).to_be_focused()
+        held.clear()
+        page.route("**/api/compute", lambda route: held.append(route))
+        background_refresh()
+        name.fill("Draft box, still editing")
+        assert len(held) == 1
+        held[0].continue_()
+        expect(refresh).to_be_enabled()
+        expect(name).to_be_focused()
+        expect(name).to_have_value("Draft box, still editing")
+
+    _run(served, ui, "desktop", body)
+
+
+@pytest.mark.parametrize("ui", UIS)
 def test_a_background_repaint_keeps_focus_on_the_saved_row(served, ui):
     """After a save, focus sits on the saved row's heading; the screen's own later repaint (the overview
     re-reads once the list changed) must not take it away from keyboard and screen-reader users."""
@@ -323,7 +383,7 @@ def test_a_background_repaint_keeps_focus_on_the_saved_row(served, ui):
         assert fx.listed()[0]["memory_mib"] == 8192
         # The clock step makes the overview notice the changed list and repaint the whole screen.
         page.clock.run_for(11000)
-        expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
+        expect(page.locator('[data-compute-action="refresh"]')).to_be_enabled()
         expect(heading).to_be_focused()
 
     _run(fx, ui, "desktop", body, clock=True)
@@ -723,8 +783,8 @@ def test_a_server_conflict_and_a_stale_rename_are_explained_and_recoverable(serv
         fx.store.update_workspace(
             fx.principal, mine["id"], **fx.auth, expected_revision=1, name="Mine, renamed elsewhere"
         )
-        page.get_by_role("button", name="Refresh").click()
-        expect(page.get_by_role("button", name="Refresh")).to_be_focused()
+        page.locator('[data-compute-action="refresh"]').click()
+        expect(page.locator('[data-compute-action="refresh"]')).to_be_focused()
         summary = page.locator("[data-ws-summary]")
         expect(summary).to_contain_text("Someone else changed this workspace. Nothing was saved.")
         expect(page.locator("[data-ws-notice]")).to_contain_text("changed while you had it open")
@@ -804,8 +864,8 @@ def test_member_sees_the_list_read_only_and_no_machine_names(served, ui, size):
             "!!document.querySelector('[data-ws-root]'))).observe(document.querySelector('#content') ||"
             " document.body, {childList: true, subtree: true}); }"
         )
-        page.get_by_role("button", name="Refresh").click()
-        expect(page.get_by_role("button", name="Refresh")).to_be_focused()
+        page.locator('[data-compute-action="refresh"]').click()
+        expect(page.locator('[data-compute-action="refresh"]')).to_be_focused()
         expect(section.get_by_role("heading", name="Shared box")).to_be_visible()
         assert all(page.evaluate("window.__sawSection")), (
             "the section never vanished during the reload"
@@ -1341,10 +1401,10 @@ def test_the_stale_and_leave_rows_wrap_instead_of_clipping_on_a_narrow_phone(ser
         fx.store.update_workspace(
             fx.principal, mine["id"], **fx.auth, expected_revision=1, name="Mine, renamed elsewhere"
         )
-        page.get_by_role("button", name="Refresh").click()
+        page.locator('[data-compute-action="refresh"]').click()
         expect(page.get_by_role("button", name="Reload to continue")).to_be_visible()
         # The whole screen repaints once more when the refresh ends: measure the stale row after that.
-        expect(page.get_by_role("button", name="Refresh")).to_be_enabled()
+        expect(page.locator('[data-compute-action="refresh"]')).to_be_enabled()
         page.locator(".compute-ws-stale").scroll_into_view_if_needed()
         _settled(page)
         intact(page, ".compute-ws-stale")
@@ -1541,7 +1601,7 @@ def test_card_621_states_at_every_viewport(served, ui, viewport, touch):
         fx.store.update_workspace(
             fx.principal, mine["id"], **fx.auth, expected_revision=1, name="Mine, renamed elsewhere"
         )
-        page.get_by_role("button", name="Refresh").click()
+        page.locator('[data-compute-action="refresh"]').click()
         summary = page.locator("[data-ws-summary]")
         expect(summary).to_contain_text("Nothing was saved.")
         expect(summary).to_contain_text("What you typed is still in the form below.")
