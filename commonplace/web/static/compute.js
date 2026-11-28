@@ -339,6 +339,9 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   }
   function render() {
     if (!eligible() || !host) return;
+    const focused = host.querySelector?.(":focus");
+    if (typeof focused?.matches === "function") focusRefresh = focused.matches('[data-compute-action="refresh"]');
+    const carryWorkspaces = workspaces.carry();
     let body = "";
     if (inventory?.can_manage === true) {
       const gatewayRows = inventory.gateways.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)))}</p>${credentialNote(row)}${bindButton(row, "gateway", busy || reading || uncertain)}<details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
@@ -358,7 +361,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     const overviewDown = Boolean(overview.state.loadError) || overview.state.refreshFailed;
     const keepFocus = workspaces.holdFocus(), keepOverviewFocus = overview.holdFocus(), keepPairingFocus = pairing.holdFocus(), carryPairing = pairing.carry(), carryOverview = overview.carry();
     host.innerHTML = `<div class="compute"><header class="compute-intro"><div class="compute-title">${title ? "<h1>Cloud workspaces</h1>" : ""}<p>${intro}</p></div>${button("refresh", reading ? "Loading…" : "Refresh", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error && !memberView ? `<p class="compute-error"${overviewDown ? "" : ' role="alert"'}>${e(error)}</p>` : ""}${memberView ? '<p class="compute-notice">You can read this workspace\'s settings. Only its owner can change them.</p>' : ""}${body}</div>`;
-    carryOverview(); carryPairing(); keepFocus(); keepOverviewFocus(); keepPairingFocus();
+    carryWorkspaces(); carryOverview(); carryPairing(); keepFocus(); keepOverviewFocus(); keepPairingFocus();
     // Reload replaces its own button; once it is enabled again, put focus back on it.
     if (focusRefresh && !reading) { focusRefresh = false; host.querySelector?.('[data-compute-action="refresh"]')?.focus?.(); }
   }

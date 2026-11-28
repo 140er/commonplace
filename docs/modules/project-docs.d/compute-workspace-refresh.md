@@ -1,0 +1,1 @@
+- **Owns:** `docs/system/compute-workspace-refresh.md` explains why unrelated inventory refreshes retain cloud-workspace controls and how the browser regression forces that ordering.
