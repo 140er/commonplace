@@ -58,10 +58,11 @@ let queue = null;
 export const setNeedsQueue = needs => { queue = hasQueue(needs) ? needs : null; };
 export const currentNeeds = () => queue;
 
-/** True/false when a queue is loaded, null when the queue is unknown (the caller keeps the card's own flag). */
+/** True/false from the queue, null when it is unknown or lists an older card version (keep the card's own flag). */
 export function inNeedsQueue(card, needs = queue) {
   if (!hasQueue(needs) || !valid(card)) return null;
-  return needsCards(needs).some(item => item.number === card.number);
+  const listed = needsCards(needs).find(item => item.number === card.number);
+  return listed?.version != null && listed.version < card.version ? null : Boolean(listed);
 }
 
 // Display text only. A reference that was removed must not leave a gap behind it; text without a removed

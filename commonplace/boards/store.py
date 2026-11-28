@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS card_snoozes (
  task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
  until TEXT, timezone TEXT,
  after_card INTEGER REFERENCES tasks(id),
- by TEXT NOT NULL, at TEXT NOT NULL,
+ by TEXT NOT NULL, at TEXT NOT NULL, reason TEXT,
  CHECK ((until IS NULL) != (after_card IS NULL))
 );
 CREATE INDEX IF NOT EXISTS card_snoozes_due ON card_snoozes(until);
@@ -548,6 +548,9 @@ class BoardStore:
             )
             conn.execute("BEGIN IMMEDIATE")
             try:
+                snooze_columns = {r[1] for r in conn.execute("PRAGMA table_info(card_snoozes)")}
+                if "reason" not in snooze_columns:
+                    conn.execute("ALTER TABLE card_snoozes ADD COLUMN reason TEXT")
                 board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}
                 if "coordinator" not in board_columns:
                     conn.execute("ALTER TABLE boards ADD COLUMN coordinator TEXT")

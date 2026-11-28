@@ -3916,15 +3916,28 @@ class BoardService(lifecycle.LifecycleMixin):
             self._with_goals(conn, row, result)
             return result
 
-    def task_snooze(self, task, until=None, timezone=None, after_card=None):
+    def task_snooze(self, task, until=None, timezone=None, after_card=None, reason=None):
         """Hide an open card from todo lists, take-next and starts until a time or until
-        another card is done (``commonplace.snooze``). Owner or assignee only."""
+        another card is done. Board coordinators must explain why they park a card."""
+        from commonplace.boards.store import CardRefused
         from commonplace.snooze import store as snooze
 
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             self._write(board, row=row)
-            self._snooze_authority(row)
+            coordinator = self._snooze_authority(row, board)
+            if reason is not None or coordinator:
+                try:
+                    reason = validate_text(
+                        reason, "reason", required=coordinator, limit=snooze.MAX_REASON
+                    )
+                except ToolError:
+                    raise CardRefused(
+                        "invalid_reason",
+                        f"reason must be {'nonempty ' if coordinator else ''}text "
+                        f"of at most {snooze.MAX_REASON} characters",
+                        status=400,
+                    ) from None
             when = snooze.clock()
             record = snooze.set_snooze(
                 conn,
@@ -3934,31 +3947,43 @@ class BoardService(lifecycle.LifecycleMixin):
                 after_card=after_card,
                 actor=self.principal.actor,
                 now=when,
+                reason=reason,
             )
-            self._log(conn, row["id"], "comment", text=record["text"])
+            self._log(conn, row["id"], "comment", text=record["text"], reason=reason)
             self._emit(conn, row["id"], "card.snoozed", snoozed=record)
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
     def task_unsnooze(self, task):
-        """End a card's snooze now. Owner or assignee only; refused when it is not snoozed."""
+        """End a snooze as owner, assignee or the current board coordinator."""
         from commonplace.boards.store import CardRefused
         from commonplace.snooze import store as snooze
 
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             self._write(board, row=row)
-            self._snooze_authority(row)
+            self._snooze_authority(row, board)
             if not snooze.clear(conn, row, actor=self.principal.actor, now=snooze.clock()):
                 raise CardRefused("not_snoozed", "this card is not snoozed", status=409)
             self._log(conn, row["id"], "comment", text="Snooze ended by " + self.principal.actor)
             self._emit(conn, row["id"], "card.woke", by=self.principal.actor)
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
-    def _snooze_authority(self, row):
+    def _snooze_authority(self, row, board):
         from commonplace.snooze import store as snooze
 
-        if not snooze.allowed(self.principal, row):
-            raise ToolError("no: only a workspace owner or the card's assignee can snooze it")
+        if snooze.allowed(self.principal, row):
+            return False
+        bound = self._ask_coordinator(board)
+        coordinator = _can_coordinate(self.principal, board["wing"]) and (
+            (bound is not None and bound.actor == self.principal.actor)
+            or self._holds_lease(self.principal, row)
+        )
+        if not snooze.allowed(self.principal, row, coordinator=coordinator):
+            raise ToolError(
+                "no: only a workspace owner or the card's assignee can snooze it; "
+                "the current board coordinator can also snooze or unsnooze Backlog or Todo cards"
+            )
+        return True
 
     def _position(self, conn, row, updates, before=None, after=None):
         if before is None and after is None:

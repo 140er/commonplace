@@ -2,6 +2,13 @@
 
 # Coworker setup as code
 
+The current coordinator Coworker can park Backlog or Todo cards on its own board
+with a snooze, even when another Coworker holds the card. Give a nonempty
+reason of at most 500 characters and either a return time or another card to wait
+for. The reason stays visible on the card and in its history. Parked cards do not
+count toward the board's stall alarm. Wake a parked card to make it count again;
+the workspace owner can also wake it. Doing, Review and Done cards cannot be parked.
+
 A board can carry one owner-approved Coworker config: the roles that work
 on it, their prompts, workflows, topics and models, the agent limit, the runner
 settings and the `todo` trigger. Commonplace's own runner (see

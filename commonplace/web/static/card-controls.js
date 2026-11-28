@@ -24,7 +24,8 @@ export function snoozedText(card, timezone = personTimezone()) {
   if (!card.snoozed) return '';
   if (!card.snoozed.until) return card.snoozed.text;
   const p = wallParts(new Date(card.snoozed.until), timezone);
-  return `Snoozed until ${dayText(p)} ${p.hour}:${p.minute} ${timezone}`;
+  const reason = card.snoozed.reason ? `; reason: ${card.snoozed.reason}` : '';
+  return `Snoozed until ${dayText(p)} ${p.hour}:${p.minute} ${timezone}${reason}`;
 }
 export const snoozedLine = card => card.snoozed ? `<p class="card-snoozed" data-card-snoozed>${e(snoozedText(card))}</p>` : '';
 const currentGoal = card => card.goals?.chain?.at(-1);

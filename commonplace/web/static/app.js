@@ -866,7 +866,7 @@ const ruleFormInUse = () => {
   const form = root.querySelector("#card-panel [data-preview-rule-form]");
   return form && (form.contains(document.activeElement) || [...form.querySelectorAll("input")].some((input) => input.value !== input.defaultValue)) ? form : null;
 };
-const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal") || ruleFormInUse();
+const panelForm = () => root.querySelector('#card-panel form.form-tile, #card-panel .assignment-refusal, #card-panel [data-form="release-origin"], #card-panel [data-deck-card-controls][open]') || ruleFormInUse();
 async function cardPanel(number, epoch, { keepForm = false } = {}) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
@@ -882,7 +882,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     const card = await (early || api(`/api/cards/${number}`));
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
-    if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
+    if (!opening && (panel.querySelector(".assignment-refusal") || ((keepForm || card.version === state.card?.version) && panelForm()))) return;
     // An open removal form was drawn from one card version: a read of that same version has nothing new to show,
     // so the form and the reason typed in it stay. Cancel removes the form first, which lets the drawer draw again.
     if (!opening && panel.querySelector('[data-form="remove-assignment"] input[name="version"]')?.value === String(card.version)) return;
@@ -1489,7 +1489,7 @@ async function refresh({ background = false, events = [] } = {}) {
     } else state.workbenchChat?.dispose();
     restore(saved); play();
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
-    if (state.route.startsWith("#/card/") && !(background && (panelForm() || root.querySelector('form[data-form="release-origin"]')))) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
+    if (state.route.startsWith("#/card/") && !(background && panelForm())) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
     showError("");
     if (state.base === "#/boards" || state.base.startsWith("#/board/")) {
       // Detailed runner/waiting summaries start after the main data has painted.
