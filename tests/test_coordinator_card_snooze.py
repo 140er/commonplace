@@ -10,11 +10,12 @@ from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolError
 from commonplace.orch import durable, stall, store as orch_store
 from commonplace.snooze import store as snooze
+from commonplace.tool_policy import store as tool_policy
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_card_snooze import LATER, fake_clock  # noqa: F401
 from tests.test_commonplace_board_authority import fresh as fresh
 from tests.test_commonplace_boards import api, mcp
-from tests.test_commonplace_origin_holder_release import edit
+from tests.test_commonplace_origin_holder_release import edit, policy
 from tests.test_orch_durable import BOARD, ROLE, T0, Env, at
 from tests.test_projects_seat_lease import Settings
 
@@ -243,3 +244,29 @@ def test_snooze_tool_schema_exposes_a_bounded_optional_reason(hub, fresh):
     assert schema["properties"]["reason"]["maxLength"] == 500
     assert "reason" not in schema["required"]
     assert "orchestrator" not in json.dumps(next(t for t in tools if t["name"] == "task_snooze"))
+
+
+@pytest.mark.parametrize("name", ["task_snooze", "task_unsnooze"])
+@pytest.mark.parametrize("restriction", ["hidden", "read_only", "owner_off", "owner_ask"])
+def test_coordinator_rest_keeps_the_tool_and_write_policy_gates(hub, fresh, name, restriction):
+    seat = coordinator(fresh)
+    n = fresh.owner.task_add(board="work", title="Keep the permission boundary")["number"]
+    fresh.owner.task_snooze(n, until=LATER)
+    if restriction == "hidden":
+        visible = [t for t in seat.principal.policy.visible_tools() if t != name]
+        policy(hub, seat, tools=visible)
+    elif restriction == "read_only":
+        policy(hub, seat, scopes=["memory:read"])
+    else:
+        tool_policy.set_modes(
+            hub.db,
+            fresh.workspace,
+            {name: "off" if restriction == "owner_off" else "ask"},
+            actor=fresh.owner.principal.actor,
+            now=1.0,
+        )
+    before = fresh.owner.task_show(n)
+    arguments = {"until": LATER, "reason": REASON} if name == "task_snooze" else {}
+    ok, reply = call(hub, seat, "rest", name, n, **arguments)
+    assert not ok, reply
+    assert fresh.owner.task_show(n) == before
