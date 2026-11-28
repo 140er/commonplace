@@ -496,6 +496,76 @@
           "name": "needs_me"
         },
         {
+          "description": "Show a local subscription replay's before/after success, tokens, time and regressions (workspace owner only).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "replay": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "board",
+              "replay"
+            ],
+            "type": "object"
+          },
+          "name": "orch_benchmark_get"
+        },
+        {
+          "description": "Accept a winning replay and promote its pinned Coworker config in one owner action.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "replay": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "sha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "replay",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "name": "orch_benchmark_promote"
+        },
+        {
+          "description": "Restore the exact config replaced by the latest benchmark promotion (workspace owner only).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board"
+            ],
+            "type": "object"
+          },
+          "name": "orch_benchmark_rollback"
+        },
+        {
           "description": "As the lease holder, start the config's runner role on a card. The same step key returns the stored job unless voided (step_voided, 409); a fresh start needs a new key and normal admission. config_ref is live or exp:<name>. While an agent that holds the card's context has capacity the start is refused (agent_has_capacity) unless fresh_reason says why a fresh agent is needed; the step records that reason.",
           "inputSchema": {
             "additionalProperties": false,
@@ -3184,6 +3254,9 @@
       "mempalace_update_drawer",
       "model_mode",
       "needs_me",
+      "orch_benchmark_get",
+      "orch_benchmark_promote",
+      "orch_benchmark_rollback",
       "orch_card_start",
       "orch_checkpoint",
       "orch_config_accept",
@@ -5085,6 +5158,76 @@
             "type": "object"
           },
           "name": "needs_me"
+        },
+        {
+          "description": "Show a local subscription replay's before/after success, tokens, time and regressions (workspace owner only).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "replay": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "board",
+              "replay"
+            ],
+            "type": "object"
+          },
+          "name": "orch_benchmark_get"
+        },
+        {
+          "description": "Accept a winning replay and promote its pinned Coworker config in one owner action.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "replay": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "sha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "replay",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "name": "orch_benchmark_promote"
+        },
+        {
+          "description": "Restore the exact config replaced by the latest benchmark promotion (workspace owner only).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board"
+            ],
+            "type": "object"
+          },
+          "name": "orch_benchmark_rollback"
         },
         {
           "description": "As the lease holder, start the config's runner role on a card. The same step key returns the stored job unless voided (step_voided, 409); a fresh start needs a new key and normal admission. config_ref is live or exp:<name>. While an agent that holds the card's context has capacity the start is refused (agent_has_capacity) unless fresh_reason says why a fresh agent is needed; the step records that reason.",
@@ -7768,6 +7911,9 @@
       "mempalace_traverse",
       "model_mode",
       "needs_me",
+      "orch_benchmark_get",
+      "orch_benchmark_promote",
+      "orch_benchmark_rollback",
       "orch_card_start",
       "orch_checkpoint",
       "orch_config_accept",
