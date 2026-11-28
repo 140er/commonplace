@@ -184,6 +184,68 @@ def test_releasing_a_card_changes_its_lane_behind_the_open_panel(browser, width)
         page.close()
 
 
+def test_released_panel_is_ready_before_the_owner_queue_refresh_answers(browser):  # noqa: F811
+    from playwright.sync_api import expect
+
+    page = browser.new_page(viewport={"width": 1280, "height": 800}, reduced_motion="reduce")
+    cards, queue = workspace()
+    held = []
+    try:
+        start(page, cards, queue, [])
+        open_card(page, 6)
+        page.wait_for_load_state("networkidle")
+        page.route("**/api/needs-me", lambda route: held.append(route))
+        form = page.locator('#card-panel form[data-form="release-origin"]')
+        form.locator('input[name="reason"]').fill("Checked the source")
+        with page.expect_request("**/api/needs-me"):
+            form.locator("[data-release-origin]").click()
+        expect(form).to_have_count(0)
+        expect(page.locator("#card-panel .deck-card-state")).to_contain_text("Ready")
+        assert held, "the owner queue read is still unanswered"
+        page.unroute("**/api/needs-me")
+        for route in held:
+            route.fallback()
+        held.clear()
+        page.wait_for_load_state("networkidle")
+        expect(page.locator("#card-panel .deck-card-state")).to_contain_text("Ready")
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("number", [6, 2], ids=["release-reason", "priority"])
+def test_same_version_panel_read_keeps_live_controls(browser, number):  # noqa: F811
+    from playwright.sync_api import expect
+
+    page = browser.new_page(viewport={"width": 1280, "height": 800}, reduced_motion="reduce")
+    cards, queue = workspace()
+    next(card for card in cards if card["number"] == number).update(
+        can_prioritize=True, priority="high"
+    )
+    held = []
+    try:
+        start(page, cards, queue, [])
+        page.route("**/api/boards/product/cards", lambda route: held.append(route))
+        open_card(page, number)
+        if number == 6:
+            field = page.locator('form[data-form="release-origin"] input[name="reason"]')
+            draft = "Checked the source"
+            field.fill(draft)
+        else:
+            page.locator("#card-panel summary", has_text="Edit card").click()
+            field = page.locator("#card-priority")
+            draft = "urgent"
+            field.select_option(draft)
+        assert held, "the project read is still holding the initial panel refresh"
+        page.unroute("**/api/boards/product/cards")
+        for route in held:
+            route.fallback()
+        held.clear()
+        page.wait_for_load_state("networkidle")
+        expect(field).to_have_value(draft)
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("width", WIDTHS)
 @pytest.mark.parametrize("named", [True, False], ids=["named", "unnamed"])
 def test_board_header_keeps_its_layout_with_the_panel_open(browser, width, named, monkeypatch):  # noqa: F811

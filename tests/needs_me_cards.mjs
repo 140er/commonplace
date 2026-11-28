@@ -6,7 +6,8 @@ import { needsMeCount, setNeedsQueue, BUCKETS, previewText, tidyGaps } from '../
 import { removeNeed, displayText, createNeedLedger } from '../commonplace/web/static/deck-home-today.js';
 import { cardHTML, summaryLine } from '../commonplace/web/static/deck-today-capy.js';
 import { boardView } from '../commonplace/web/static/board.js';
-import { boardCopy } from '../commonplace/web/static/deck-board.js';
+import { boardCopy, stateWord } from '../commonplace/web/static/deck-board.js';
+import { renderDetails } from '../commonplace/web/static/details.js';
 import { renderDeckTabs, renderDeckBar } from '../commonplace/web/static/deck.js';
 import { needItems } from '../commonplace/web/static/home.js';
 
@@ -105,6 +106,20 @@ test('settling a card lowers every count together, and without a queue the board
   assert.equal(needsMeCount(undefined), 0);
   const html = boardView({ board: { slug: 'product', name: 'Product' }, me: 'user:owner', bots: [], deck: true, cards: [{ number: 1, version: 1, board: 'product', title: 'Flagged', status: 'todo', need: 'you', events: [] }] });
   assert.match(html.split('id="col-doing"')[0], /data-card="1"/);
+});
+
+test('a released card is ready while the queue still lists its older version', () => {
+  const me = 'user:owner';
+  const released = { ...approval, version: 5, status: 'todo', need: 'idle', awaiting_release: false, can_approve: false, events: [] };
+  try {
+    setNeedsQueue({ approvals: [{ ...released, version: 4, awaiting_release: true, can_approve: true }] });
+    assert.equal(stateWord(released, me), 'Ready');
+    assert.match(renderDetails(released, { me, deck: true }), /class="deck-card-state"[^]*?Ready<span/);
+    for (const version of [5, 6, undefined, null]) {
+      setNeedsQueue({ approvals: [{ ...released, version }] });
+      assert.equal(stateWord(released, me), 'Needs you', 'a current, newer or unversioned queue keeps its authority');
+    }
+  } finally { setNeedsQueue(null); }
 });
 
 test('every needs-me bucket list in the shell is the same set', () => {

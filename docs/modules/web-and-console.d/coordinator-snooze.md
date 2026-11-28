@@ -1,2 +1,8 @@
-- **Promises:** Board cards and card drawers retain the snooze reason when translating the return time into the reader's timezone. Reasons remain escaped text for both timed and card-dependent snoozes.
-- **Tests:** `tests/card_snooze_controls.mjs` checks escaped coordinator reasons in classic and Deck boards and drawers through `tests/test_card_snooze_controls.py`.
+- **Promises:**
+  - Board cards and card drawers retain the snooze reason when translating the return time into the reader's timezone. Reasons remain escaped text for both timed and card-dependent snoozes.
+  - A fresh card read takes precedence over an older queued version when showing whether the card needs the owner. Releasing an origin shows Ready even while the owner queue refresh is unanswered; current and newer queue entries keep their authority.
+  - An initial card read finishing after a release form or card editor opens does not replace those controls with the same version. Release reasons and priority choices survive the read; a new card version after a write still updates the panel.
+- **Tests:**
+  - `tests/card_snooze_controls.mjs` checks escaped coordinator reasons in classic and Deck boards and drawers through `tests/test_card_snooze_controls.py`.
+  - `tests/needs_me_cards.mjs` checks card and queue version precedence through `tests/test_needs_me_cards.py`; `tests/test_card_action_refresh_browser.py` holds the owner queue read across release and checks the open panel before and after that read answers.
+  - The card action browser checks hold the project read until after a release reason is typed or a priority is selected, then check that the later panel read preserves those controls.
