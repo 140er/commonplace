@@ -2595,7 +2595,7 @@
           "name": "task_show"
         },
         {
-          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner or the card's assignee. It wakes by itself.",
+          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner, the card's assignee, or this board's current coordinator Coworker. A coordinator parking someone else's card must give a nonempty reason (at most 500 characters). It wakes by itself.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2603,6 +2603,11 @@
                 "description": "Wake when this card on the same board is done (instead of until).",
                 "minimum": 1,
                 "type": "integer"
+              },
+              "reason": {
+                "description": "Why this card is parked. Required when using board coordinator authority; optional for the owner or assignee.",
+                "maxLength": 500,
+                "type": "string"
               },
               "session_id": {
                 "description": "Stable identity of this session or run; reuse it for claim writes and orch_resume. Omit only for legacy connection-held claims.",
@@ -2659,7 +2664,7 @@
           "name": "task_take_next"
         },
         {
-          "description": "End a card's snooze now (workspace owner or the card's assignee).",
+          "description": "End a card's snooze now (workspace owner, the card's assignee, or this board's current coordinator Coworker for Backlog or Todo cards).",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4272,7 +4277,7 @@
           "name": "task_show"
         },
         {
-          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner or the card's assignee. It wakes by itself.",
+          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner, the card's assignee, or this board's current coordinator Coworker. A coordinator parking someone else's card must give a nonempty reason (at most 500 characters). It wakes by itself.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4280,6 +4285,11 @@
                 "description": "Wake when this card on the same board is done (instead of until).",
                 "minimum": 1,
                 "type": "integer"
+              },
+              "reason": {
+                "description": "Why this card is parked. Required when using board coordinator authority; optional for the owner or assignee.",
+                "maxLength": 500,
+                "type": "string"
               },
               "session_id": {
                 "description": "Stable identity of this session or run; reuse it for claim writes and orch_resume. Omit only for legacy connection-held claims.",
@@ -4336,7 +4346,7 @@
           "name": "task_take_next"
         },
         {
-          "description": "End a card's snooze now (workspace owner or the card's assignee).",
+          "description": "End a card's snooze now (workspace owner, the card's assignee, or this board's current coordinator Coworker for Backlog or Todo cards).",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -7259,7 +7269,7 @@
           "name": "task_show"
         },
         {
-          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner or the card's assignee. It wakes by itself.",
+          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner, the card's assignee, or this board's current coordinator Coworker. A coordinator parking someone else's card must give a nonempty reason (at most 500 characters). It wakes by itself.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -7267,6 +7277,11 @@
                 "description": "Wake when this card on the same board is done (instead of until).",
                 "minimum": 1,
                 "type": "integer"
+              },
+              "reason": {
+                "description": "Why this card is parked. Required when using board coordinator authority; optional for the owner or assignee.",
+                "maxLength": 500,
+                "type": "string"
               },
               "session_id": {
                 "description": "Stable identity of this session or run; reuse it for claim writes and orch_resume. Omit only for legacy connection-held claims.",
@@ -7323,7 +7338,7 @@
           "name": "task_take_next"
         },
         {
-          "description": "End a card's snooze now (workspace owner or the card's assignee).",
+          "description": "End a card's snooze now (workspace owner, the card's assignee, or this board's current coordinator Coworker for Backlog or Todo cards).",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {

@@ -1,3 +1,4 @@
 - **Tests:**
   - `tests/test_coordinator_card_snooze.py` checks current board coordinators snoozing and unsnoozing Backlog/Todo cards through tools and REST; required bounded reasons and verbatim reads/history/events; refusals for other boards, members, connections and expired, released or replaced leases; owner recovery; additive migration; and no stall event until a parked card is unsnoozed.
   - `tests/card_snooze_controls.mjs` checks reason display and escaping on classic and Deck boards and drawers, including timezone conversion and card-dependent snoozes.
+  - `tests/spaces_surfaces.json` pins the snooze reason schema and coordinator permissions copy for all three tool profiles.
