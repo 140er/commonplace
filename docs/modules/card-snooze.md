@@ -13,7 +13,7 @@
 
   - Waking is correct without the worker: a card whose time has passed (or whose condition card is done) is no longer snoozed anywhere it is read. The wake itself (delete the snooze row, bump the version, log "Snooze ended: ..." on the card, emit `card.woke`) happens once: only the transaction that deletes the row logs it, across the lazy wake on any board read, the worker (every 30 seconds, `COMMONPLACE_SNOOZE_WORKER=off` stops it) and restarts. A crash between the commit and the event leaves the card woken and logged without the event.
 
-  - Owner or assignee only: a workspace owner (person) or the card's assignee snoozes and unsnoozes; others get 403. Snoozing again replaces the earlier snooze.
+  - A workspace owner (person), the card's assignee, or its board's current coordinator Coworker can snooze and unsnooze. Coordinator authority applies only to Backlog and Todo cards on that board and requires a nonempty reason of at most 500 characters when snoozing; owner and assignee reasons remain optional. Snoozing again replaces the earlier snooze.
 
 - **How it fails:**
 

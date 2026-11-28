@@ -1,0 +1,3 @@
+- **Owns:** Coordinator authority for `task_snooze` and `task_unsnooze` reuses the existing live coordinator checks. The snooze tool accepts an optional bounded `reason` schema field, required by the service when coordinator authority is used.
+- **Promises:** Snooze reasons appear in the card's `snoozed` payload, `task_show`, history and events. The board schema adds `reason` without replacing existing rows; owner and assignee snoozes retain their previous permissions.
+- **Tests:** `tests/test_coordinator_card_snooze.py` exercises tool and REST reads and writes, current and former coordinators, reason validation and legacy snooze migration.

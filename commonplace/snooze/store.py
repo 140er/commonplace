@@ -21,6 +21,7 @@ from commonplace.boards.store import CardRefused, append_event, task_row
 
 SNOOZABLE = ("backlog", "todo")
 MAX_DAYS = 366
+MAX_REASON = 500
 
 
 def clock() -> datetime:
@@ -67,21 +68,26 @@ def active(conn, number: int, now: str | None = None) -> dict | None:
 
 
 def view(row) -> dict:
+    text = "Snoozed until " + label(row["until"], row["timezone"], row["after_card"])
+    if row["reason"]:
+        text += "; reason: " + row["reason"]
     return {
         "until": row["until"],
         "timezone": row["timezone"],
         "after_card": row["after_card"],
         "by": row["by"],
         "at": row["at"],
-        "text": "Snoozed until " + label(row["until"], row["timezone"], row["after_card"]),
+        "reason": row["reason"],
+        "text": text,
     }
 
 
-def allowed(principal, row) -> bool:
-    """Who may snooze and unsnooze a card: a workspace owner (person) or its assignee."""
+def allowed(principal, row, *, coordinator=False) -> bool:
+    """Owner, assignee, or the current board coordinator for Backlog/Todo cards."""
     return bool(
         (principal.person and principal.role == "owner")
         or (row["assignee"] and row["assignee"] == principal.actor)
+        or (coordinator and row["status"] in SNOOZABLE)
     )
 
 
@@ -118,7 +124,7 @@ def resolve(until, tz, after_card, now: datetime) -> tuple:
     return times.stamp(moment), tz or "UTC", None
 
 
-def set_snooze(conn, row, *, until, tz, after_card, actor: str, now: datetime) -> dict:
+def set_snooze(conn, row, *, until, tz, after_card, actor: str, now: datetime, reason=None) -> dict:
     """Snooze ``row`` (replacing an earlier snooze); returns the stored view."""
     if row["status"] not in SNOOZABLE:
         raise CardRefused("not_snoozable", "only a Backlog or Todo card can be snoozed", status=409)
@@ -133,8 +139,9 @@ def set_snooze(conn, row, *, until, tz, after_card, actor: str, now: datetime) -
             raise CardRefused("condition_met", f"#{after} is already done", status=409)
     conn.execute("DELETE FROM card_snoozes WHERE task_id=?", (row["id"],))
     conn.execute(
-        "INSERT INTO card_snoozes(task_id,until,timezone,after_card,by,at) VALUES (?,?,?,?,?,?)",
-        (row["id"], stamp, zone_name, after, actor, times.stamp(now)),
+        "INSERT INTO card_snoozes(task_id,until,timezone,after_card,by,at,reason) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (row["id"], stamp, zone_name, after, actor, times.stamp(now), reason),
     )
     _touch(conn, row["id"], actor, now)
     return view(conn.execute("SELECT * FROM card_snoozes WHERE task_id=?", (row["id"],)).fetchone())

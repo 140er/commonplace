@@ -5,8 +5,8 @@
                                         "timezone": "Europe/Amsterdam"} or {"after_card": 12}
     POST /api/card-snooze/<n>/cancel    unsnooze (200, the card)
 
-Signed-in workspace owners only (403 otherwise); an assignee agent uses the ``task_snooze`` and
-``task_unsnooze`` tools. The rules are ``BoardService.task_snooze`` / ``task_unsnooze``.
+Workspace owners, assignees and the current board coordinator share the same rules as
+``task_snooze`` / ``task_unsnooze``. Coordinators must supply a reason to park a card.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from commonplace.boards.store import CardRefused
 from commonplace.extensions import ToolContext, ToolError
 
 PREFIX = "/api/card-snooze"
-_KEYS = {"until", "timezone", "after_card"}
+_KEYS = {"until", "timezone", "after_card", "reason"}
 
 
 def install(gateway) -> None:
@@ -29,14 +29,6 @@ def install(gateway) -> None:
         def send(status, body):
             http_util.send_json(h, status, body)
 
-        if not principal.person or principal.role != "owner":
-            send(
-                403,
-                {
-                    "error": "only a signed-in workspace owner can use this; agents use the task_snooze tool"
-                },
-            )
-            return
         parts = http_util.path_parts(h, PREFIX + "/")
         service = BoardService(ToolContext(principal=principal, gateway=gateway))
         try:

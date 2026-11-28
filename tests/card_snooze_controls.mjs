@@ -32,6 +32,20 @@ test('non-owners can read their goal and return time without mutation controls',
   assert.doesNotMatch(html, /data-card-snooze-choice|data-card-goal-save|data-card-wake/);
 });
 
+test('coordinator snooze reasons survive timezone rendering and are escaped on boards and drawers', () => {
+  const reason = 'Wait <for release> & confirm';
+  for (const until of ['2030-01-08T08:00:00Z', null]) {
+    const snoozed = {...card, snoozed:{until, after_card:until ? null : 9, reason, text:`Snoozed until #9 is done; reason: ${reason}`}};
+    assert.ok(snoozedText(snoozed, 'Europe/Amsterdam').includes(reason));
+    for (const deck of [true, false]) {
+      for (const html of [renderDetails(snoozed, {...options, deck}), boardView({...options, deck, cards:[snoozed]})]) {
+        assert.match(html, /Wait &lt;for release&gt; &amp; confirm/);
+        assert.doesNotMatch(html, /Wait <for release>/);
+      }
+    }
+  }
+});
+
 test('shortcuts use the person’s calendar across DST, month, year and Monday boundaries', () => {
   const zone = 'Europe/Amsterdam';
   assert.deepEqual(snoozeChoice('tomorrow', new Date('2030-03-30T08:00Z'), zone), {until:'2030-03-31T09:00', timezone:zone});

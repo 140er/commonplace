@@ -1,0 +1,5 @@
+### Coordinator parking with a reason
+
+- A board's current coordinator Coworker can snooze and unsnooze Backlog/Todo cards on that board, including work assigned to someone else. The existing configured-coordinator and live coordinator-lease identity checks apply; no new role is introduced. Other boards, ended leases and ordinary connections grant no authority.
+- A snooze using coordinator authority requires nonempty text of at most 500 characters. Owner and assignee reasons remain optional. The nullable reason column is added in place, preserving existing snoozes; reasons are stored verbatim and appear in card reads, tool output, board displays, history and snooze events. The owner can always unsnooze.
+- REST and tools use the same service checks. The stall detector already excludes active snoozes; the regression proves that a board with only coordinator-snoozed Todo work emits no stall event and that unsnoozing makes the work count again. No existing board cards are changed by this feature.

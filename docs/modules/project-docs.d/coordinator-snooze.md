@@ -1,0 +1,1 @@
+- **Owns:** The board API and Coworker setup guides explain coordinator parking of Backlog/Todo work on the same board, required reasons, optional owner/assignee reasons and stall-alarm suppression.

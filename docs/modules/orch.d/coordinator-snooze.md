@@ -1,0 +1,2 @@
+- **Promises:** The Coworker setup guide explains that the current board coordinator can park Backlog/Todo work on that board with a required reason. Active coordinator snoozes use the existing stall exclusion; unsnoozing restores eligibility for stall nudges.
+- **Tests:** `tests/test_coordinator_card_snooze.py` proves stall event suppression and restoration, current lease authority and project-settings seat access.

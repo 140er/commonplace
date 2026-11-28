@@ -1,0 +1,2 @@
+- **Promises:** Board cards and card drawers retain the snooze reason when translating the return time into the reader's timezone. Reasons remain escaped text for both timed and card-dependent snoozes.
+- **Tests:** `tests/card_snooze_controls.mjs` checks escaped coordinator reasons in classic and Deck boards and drawers through `tests/test_card_snooze_controls.py`.
